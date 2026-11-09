@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -21,6 +22,11 @@ type SourceObservability struct {
 	MACAttributedCount int    `json:"mac_attributed_count"`
 }
 
+type RecognitionBrandCount struct {
+	Brand string `json:"brand"`
+	Count int    `json:"count"`
+}
+
 type DeviceRecognitionSummary struct {
 	BrandInferenceConflicts int                            `json:"brand_inference_conflicts"`
 	BrandInferenceEnabled   bool                           `json:"brand_inference_enabled"`
@@ -34,6 +40,7 @@ type DeviceRecognitionSummary struct {
 	MACAttributedEventCount int                            `json:"mac_attributed_event_count"`
 	MACAttributionRate      float64                        `json:"mac_attribution_rate"`
 	Observability           []SourceObservability          `json:"observability"`
+	TopBrands               []RecognitionBrandCount        `json:"top_brands,omitempty"`
 	EcosystemMatched        int                            `json:"ecosystem_matched"`
 	EcosystemAttributed     int                            `json:"ecosystem_attributed"`
 	EcosystemUnattributed   int                            `json:"ecosystem_unattributed"`
@@ -109,6 +116,26 @@ func (s *DBStore) GetDeviceRecognitionSummary(ctx context.Context, version strin
 	result.TotalEndpoints = len(items)
 	for _, key := range []string{"vendor", "brand", "model", "device_type", "os_family", "ecosystem", "brand_inferred"} {
 		result.Coverage[key] = coverage(counts[key], result.TotalEndpoints)
+	}
+	brandCounts := map[string]int{}
+	for _, item := range items {
+		brand := item.Brand
+		if brand == "" || brand == "unknown" || deviceDimensionConflict(item, "brand") || item.BrandConfidence < .8 {
+			continue
+		}
+		brandCounts[brand]++
+	}
+	for brand, count := range brandCounts {
+		result.TopBrands = append(result.TopBrands, RecognitionBrandCount{Brand: brand, Count: count})
+	}
+	sort.Slice(result.TopBrands, func(i, j int) bool {
+		if result.TopBrands[i].Count == result.TopBrands[j].Count {
+			return result.TopBrands[i].Brand < result.TopBrands[j].Brand
+		}
+		return result.TopBrands[i].Count > result.TopBrands[j].Count
+	})
+	if len(result.TopBrands) > 8 {
+		result.TopBrands = result.TopBrands[:8]
 	}
 	data, err := s.ch.query(ctx, fmt.Sprintf(`SELECT count() AS event_count,countIf(endpoint_id!='') AS attributed_event_count FROM normalized_events PREWHERE timestamp>=now()-INTERVAL 24 HOUR FORMAT JSONEachRow`))
 	if err != nil {

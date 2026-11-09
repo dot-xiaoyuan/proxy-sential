@@ -476,6 +476,7 @@ export const handlers = [
     event_attribution_rate: 0,
     mac_attributed_event_count: 285_518,
     mac_attribution_rate: 285_518 / 3_795_418,
+    top_brands: [{ brand: '华为', count: 3 }, { brand: 'Hikvision', count: 2 }],
     observability: [
       { source_event_type: 'mdns', event_count: 1_402_118, mac_attributed_count: 0 },
       { source_event_type: 'dns', event_count: 964_230, mac_attributed_count: 0 },

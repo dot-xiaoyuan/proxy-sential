@@ -7112,6 +7112,14 @@ components:
         event_attribution_rate: { type: number, minimum: 0, maximum: 1 }
         mac_attributed_event_count: { type: integer }
         mac_attribution_rate: { type: number, minimum: 0, maximum: 1 }
+        top_brands:
+          type: array
+          items:
+            type: object
+            required: [brand, count]
+            properties:
+              brand: { type: string }
+              count: { type: integer }
         observability:
           type: array
           items: { $ref: "#/components/schemas/SourceObservability" }

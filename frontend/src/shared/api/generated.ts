@@ -6940,6 +6940,10 @@ export interface components {
             event_attribution_rate: number;
             mac_attributed_event_count?: number;
             mac_attribution_rate?: number;
+            top_brands?: {
+                brand: string;
+                count: number;
+            }[];
             observability?: components["schemas"]["SourceObservability"][];
             ecosystem_matched: number;
             ecosystem_attributed: number;

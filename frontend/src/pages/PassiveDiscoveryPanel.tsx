@@ -256,6 +256,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
           {qualityItem('型号覆盖',quality.data.coverage.model,quality.data.total_endpoints)}
           {qualityItem('系统覆盖',quality.data.coverage.os_family,quality.data.total_endpoints)}
           <span className="recognition-quality-item"><Typography.Text type="secondary">链路层归属</Typography.Text><Typography.Text strong>{Math.round((quality.data.mac_attribution_rate??0)*100)}%</Typography.Text></span>
+          {quality.data.top_brands?.length?<span className="recognition-quality-brands"><Typography.Text type="secondary">厂商 Top</Typography.Text>{quality.data.top_brands.map(item=><Tag key={item.brand}>{item.brand} {item.count}</Tag>)}</span>:null}
         </>}
         {quality.isLoading&&<Typography.Text type="secondary">识别质量读取中</Typography.Text>}
       </div>}
