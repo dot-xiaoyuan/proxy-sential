@@ -62,6 +62,11 @@ type HandshakeClue = components['schemas']['DiscoveryHandshakeClue']
 const protocols: Record<string,string> = { dhcp:'DHCP', dhcpv6:'DHCPv6', dns_sd:'DNS-SD', ssdp:'SSDP', ws_discovery:'WS-Discovery', arp:'ARP', ndp:'NDP', ieee1905_client:'IEEE 1905', ieee1905_client_association:'IEEE 1905', lldp:'LLDP', cdp:'CDP', snmp:'SNMP', ipp:'IPP', onvif:'ONVIF', nbns:'NBNS', llmnr:'LLMNR', bacnet:'BACnet/IP', coap:'CoAP', mqtt:'MQTT', http:'HTTP', tls:'TLS', rtsp:'RTSP', fdb:'交换机 MAC 表', neighbor:'邻居表', active:'探测响应' }
 const capabilities: Record<string,string> = { printing:'打印', scanning:'扫描', casting:'投屏', network_video:'网络视频', media_rendering:'媒体播放', voice:'语音通话' }
 const states: Record<string,string> = { identified:'证据有效', expired:'证据已过期', conflict:'类型证据冲突', candidate:'发现线索' }
+function qualityItem(label:string,value:{known:number;rate:number}|undefined,total:number) {
+  if(!value)return null
+  return <span className="recognition-quality-item" key={label}><Typography.Text type="secondary">{label}</Typography.Text><Typography.Text strong>{Math.round(value.rate*100)}%</Typography.Text><Typography.Text type="secondary">{value.known}/{total}</Typography.Text></span>
+}
+
 function dumbTerminal(item: Device) {
   const caps = item.capabilities ?? []
   if (caps.includes('printing') || caps.includes('scanning')) return '打印/扫描'
@@ -110,6 +115,8 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const search = params.get('discovery_search') || ''
   const [draft,setDraft] = useState(search)
   const [moreOpen,setMoreOpen] = useState(false)
+  const [qualityOpen,setQualityOpen] = useState(false)
+  const quality=useQuery({queryKey:['device-recognition-summary'],queryFn:({signal})=>request<components['schemas']['DeviceRecognitionSummary']>('/device-recognition/summary',{signal}),enabled:qualityOpen,staleTime:60_000})
   const [pageSize,setPageSize] = useState(20)
   const filterKey = [view,search,pageSize,...['category','type','protocol','state','domain','vlan','window','capability'].map(k=>params.get(`discovery_${k}`)||'')].join('|')
   const [paging,setPaging] = useState({key:filterKey,page:0})
@@ -240,7 +247,18 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
         setPaging({key:filterKey,page:nextPage-1})
       }} totalText={discoveryMetadata.data?`共 ${discoveryMetadata.data.total} 个设备`:(discoveryMetadata.isError?'数量读取失败':'正在统计数量')} />
     </section>}
-    <details className="terminal-diagnostics"><summary>采集与识别状态</summary>    <section className="surface center-list-toolbar">
+    <details className="terminal-diagnostics" open={qualityOpen}><summary onClick={event=>{event.preventDefault();setQualityOpen(value=>!value)}}>采集与识别状态</summary>    <section className="surface center-list-toolbar">
+      {qualityOpen&&<div className="recognition-quality-strip" aria-label="识别质量">
+        {quality.isError&&<AppErrorAlert title="识别质量读取失败" message={quality.error.message} />}
+        {quality.data&&<>
+          {qualityItem('类型覆盖',quality.data.coverage.device_type,quality.data.total_endpoints)}
+          {qualityItem('品牌覆盖',quality.data.coverage.brand,quality.data.total_endpoints)}
+          {qualityItem('型号覆盖',quality.data.coverage.model,quality.data.total_endpoints)}
+          {qualityItem('系统覆盖',quality.data.coverage.os_family,quality.data.total_endpoints)}
+          <span className="recognition-quality-item"><Typography.Text type="secondary">链路层归属</Typography.Text><Typography.Text strong>{Math.round((quality.data.mac_attribution_rate??0)*100)}%</Typography.Text></span>
+        </>}
+        {quality.isLoading&&<Typography.Text type="secondary">识别质量读取中</Typography.Text>}
+      </div>}
       {catalogue.isError&&<AppErrorAlert title="读取设备类型失败" message={catalogue.error.message} />}
       {fresh&&fresh.status!=='ready'&&<Alert type={fresh.status==='failed'?'error':'warning'} showIcon title={fresh.status==='failed'?'设备数据处理失败':fresh.status==='delayed'?'设备数据更新延迟':'设备数据处理中'} description={fresh.oldest_pending_at?`最早待处理时间：${observedTimeTitle(fresh.oldest_pending_at)}`:undefined}/>}
       {coverage.data?.capture_scope?.status==='expiring'&&<Alert type="warning" showIcon title="镜像采集范围即将到期" description={coverage.data.capture_scope.valid_until?`有效期至 ${observedTimeTitle(coverage.data.capture_scope.valid_until)}，请提前更新采集范围。`:undefined}/>}
