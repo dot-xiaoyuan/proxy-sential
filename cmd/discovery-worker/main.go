@@ -145,6 +145,13 @@ func main() {
 		}
 		collection.PassiveARPDedupWindow = window
 	}
+	if raw := os.Getenv("PROXY_SENTINEL_PASSIVE_SUBJECT_CAP"); raw != "" {
+		window, parseErr := time.ParseDuration(raw)
+		if parseErr != nil || window < 0 || window > time.Hour {
+			log.Fatalf("invalid PROXY_SENTINEL_PASSIVE_SUBJECT_CAP %q", raw)
+		}
+		collection.PassiveSubjectCapWindow = window
+	}
 	if *allowCIDRs == "" {
 		*allowCIDRs = collection.AllowedCIDRs
 	}

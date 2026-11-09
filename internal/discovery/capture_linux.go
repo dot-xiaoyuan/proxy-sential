@@ -166,6 +166,7 @@ func captureConfiguredWithPersist(ctx context.Context, iface, spool string, sour
 	}()
 	pending := newCaptureCoalescer()
 	arpDedup := newARPDedupCache(config.PassiveARPDedupWindow)
+	subjectCap := newCaptureSubjectCap(config.PassiveSubjectCapWindow)
 	lastFlush, lastStats := time.Now(), time.Now()
 	flush := func() error {
 		stats.recordQueue(len(queue), cap(queue), false)
@@ -230,6 +231,9 @@ func captureConfiguredWithPersist(ctx context.Context, iface, spool string, sour
 				continue
 			}
 			if !arpDedup.allow(event) {
+				continue
+			}
+			if !subjectCap.allow(event) {
 				continue
 			}
 			stats.recordEligible(event.SourceEventType, pending.add(event))

@@ -50,6 +50,9 @@ type CollectionConfig struct {
 	// this window. Runtime-only so the durable capture volume changes only
 	// when the site explicitly opts in.
 	PassiveARPDedupWindow time.Duration `json:"-"`
+	// Bound capture events per subject address and protocol to one per window.
+	// Runtime-only; the default zero keeps every decoded event.
+	PassiveSubjectCapWindow time.Duration `json:"-"`
 	EventBindings           []EventBinding   `json:"event_bindings"`
 	EnrichmentPaths         []EnrichmentPath `json:"enrichment_paths"`
 	Version                 int              `json:"version"`
