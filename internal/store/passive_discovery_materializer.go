@@ -489,6 +489,9 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 		}
 		o.Origin, o.Explanation, o.ValidUntil = "sip", "SIP 话机或网关自报标识", at.Add(30*time.Minute)
 		o.Confidence = "strong"
+		if kind, brand, model := discovery.SIPPhoneIdentity(passiveString(event.Payload, "user_agent")); kind != "" {
+			o.DeviceType, o.Manufacturer, o.ModelName = kind, brand, model
+		}
 	case "ssdp":
 		if !scope.allows(ip) {
 			return discovery.Observation{}, "ssdp_out_of_scope"
