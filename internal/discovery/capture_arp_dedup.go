@@ -36,6 +36,16 @@ func newARPDedupCache(window time.Duration) *arpDedupCache {
 	}
 }
 
+// arpRequestAllowed keeps only ARP replies when replies-only capture is on.
+// Replies carry an authoritative sender binding; requests are broadcast
+// queries that dominate the storm and are frequently spoofed.
+func arpRequestAllowed(repliesOnly bool, event normalized.Event) bool {
+	if !repliesOnly || event.SourceEventType != "arp" {
+		return true
+	}
+	return event.Payload != nil && event.Payload["address_binding"] == true
+}
+
 // allow reports whether the event should be written to the capture batch.
 // Non-ARP events, withdrawals, and incomplete ARP subjects always pass.
 func (c *arpDedupCache) allow(event normalized.Event) bool {

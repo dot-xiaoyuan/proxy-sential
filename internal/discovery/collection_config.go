@@ -53,6 +53,9 @@ type CollectionConfig struct {
 	// Bound capture events per subject address and protocol to one per window.
 	// Runtime-only; the default zero keeps every decoded event.
 	PassiveSubjectCapWindow time.Duration `json:"-"`
+	// Keep only ARP replies (authoritative bindings) and drop broadcast
+	// requests. Runtime-only; default keeps both directions.
+	PassiveARPRepliesOnly bool `json:"-"`
 	EventBindings           []EventBinding   `json:"event_bindings"`
 	EnrichmentPaths         []EnrichmentPath `json:"enrichment_paths"`
 	Version                 int              `json:"version"`

@@ -233,6 +233,9 @@ func captureConfiguredWithPersist(ctx context.Context, iface, spool string, sour
 			if !arpDedup.allow(event) {
 				continue
 			}
+			if !arpRequestAllowed(config.PassiveARPRepliesOnly, event) {
+				continue
+			}
 			if !subjectCap.allow(event) {
 				continue
 			}
