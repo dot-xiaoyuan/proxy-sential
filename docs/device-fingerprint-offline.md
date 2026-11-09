@@ -58,6 +58,21 @@ go run ./cmd/proxy-sentinel device-fingerprint verify \
 
 源版本、下载地址、校验值、许可、原始输入及每条处理结果见 `internal/fingerprint/data/multisource-{catalog,provenance}.json`。目录包含原有六类来源；本次从 184 读取的实际旧包只有 11 条 OUI、1 条 DHCP 引导数据，NextDNS/HaGeZi 未加载，完整历史 Fingerbank 也不冒充已经导入。本次尝试刷新旧来源时网络超时，保留原包内容。
 
+
+## 目录更新后的受控重评
+
+指纹目录编译在程序里或随包发布，更新规则不会自动重算已经识别的终端。需要让现有终端立即使用新目录时，用有界重评命令只标记当前终端，不触碰历史：
+
+```bash
+proxy-sentinel recognition requeue --postgres-dsn "$PROXY_SENTINEL_POSTGRES_DSN" --batch-size 2000 --pause 2s
+```
+
+- 只写入 `endpoint_recognition_dirty_log`，由现有 dispatcher 合并为 `endpoint_recognition_jobs`，继续走识别 lane 的领取、租约和批量提交，不新建全量回填任务。
+- 按 `endpoint_id` 键集分页、分批插入并暂停；`--limit` 用于小范围试点，`--dry-run` 只统计当前终端数。
+- 204 实测：7,610 个终端在 2 vCPU 的 PostgreSQL 上约 2 个/秒重评，排空约 1 小时；期间识别 lane 继续处理新观测，列表读路径不受影响。
+- 规则命中属于辅助证据，重评增加证据与指纹库覆盖，不把辅助命中升级为确定的品类、品牌或型号。
+- 历史重算仍需显式开启回填配置，不由该命令触发。
+
 ## 可重复构建与验证
 
 转换依赖 Python 3、PyYAML 6.0.3 和项目 Go 工具链。不联网重建全部已分发快照：

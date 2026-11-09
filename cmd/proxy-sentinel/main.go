@@ -90,6 +90,8 @@ func run(args []string) error {
 		return runEvaluate(args[1:])
 	case "backfill":
 		return runBackfill(args[1:])
+	case "recognition":
+		return runRecognition(args[1:])
 	case "device-fingerprint":
 		return runDeviceFingerprint(args[1:])
 	case "device-signal":
