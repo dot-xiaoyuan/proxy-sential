@@ -313,7 +313,7 @@ func normalize(source Source, chunk []byte, absoluteOffset int64, sensorID strin
 		if err != nil {
 			return nil, stats, err
 		}
-	case "zeek-iot", "zeek-proxy", "zeek-dhcp", "zeek-dhcp-binding", "zeek-software", "zeek-mdns", "zeek-nbns", "zeek-llmnr", "zeek-ttl", "zeek-conn", "zeek-dns", "zeek-http", "zeek-http-device", "zeek-ssl", "zeek-x509", "zeek-lldp", "zeek-ssdp", "zeek-snmp":
+	case "zeek-iot", "zeek-proxy", "zeek-dhcp", "zeek-dhcp-binding", "zeek-software", "zeek-mdns", "zeek-nbns", "zeek-llmnr", "zeek-ttl", "zeek-conn", "zeek-dns", "zeek-http", "zeek-http-device", "zeek-ssl", "zeek-x509", "zeek-lldp", "zeek-ssdp", "zeek-snmp", "zeek-sip":
 		logKind := strings.TrimPrefix(source.Kind, "zeek-")
 		if source.Kind == "zeek-dhcp-binding" {
 			logKind = "dhcp"
