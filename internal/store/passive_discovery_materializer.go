@@ -206,7 +206,7 @@ func (s *DBStore) passiveDiscoveryEvents(ctx context.Context, sensorID string, c
 	if os.Getenv("PROXY_SENTINEL_PASSIVE_DISCOVERY_DHCP_ONLY") == "true" {
 		where += " AND source_event_type='dhcp'"
 	} else {
-		where += " AND source_event_type IN ('dhcp','arp','ndp','mdns','ssdp','ws_discovery','lldp','cdp','ieee1905_client_association','ieee1905_topology','ttl','http-device','snmp','tls','ssl','x509')"
+		where += " AND source_event_type IN ('dhcp','arp','ndp','mdns','ssdp','ws_discovery','lldp','cdp','ieee1905_client_association','ieee1905_topology','ttl','http-device','snmp','tls','ssl','x509','sip')"
 	}
 	query := fmt.Sprintf(`SELECT formatDateTime(timestamp,'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') event_timestamp,event_id,source,source_event_type,type,sensor_id,campus_id,subject_ip,subject_mac,observer_json,payload_json,flow_json,confidence FROM passive_discovery_events_v2 PREWHERE %s ORDER BY timestamp,event_id LIMIT %d SETTINGS max_threads=1,max_memory_usage=268435456,max_execution_time=20 FORMAT JSONEachRow`, where, limit)
 	raw, err := s.ch.query(ctx, query)
@@ -479,6 +479,15 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 		}
 		o.Origin, o.Explanation, o.ValidUntil = "ieee1905", "IEEE 1905 网格拓扑声明", at.Add(10*time.Minute)
 		o.DeviceType, o.Capabilities = "access_point", []string{"routing"}
+		o.Confidence = "strong"
+	case "sip":
+		if ip != "" && !scope.allows(ip) {
+			return discovery.Observation{}, "sip_out_of_scope"
+		}
+		if ip == "" && mac == "" {
+			return discovery.Observation{}, "sip_without_identity"
+		}
+		o.Origin, o.Explanation, o.ValidUntil = "sip", "SIP 话机或网关自报标识", at.Add(30*time.Minute)
 		o.Confidence = "strong"
 	case "ssdp":
 		if !scope.allows(ip) {

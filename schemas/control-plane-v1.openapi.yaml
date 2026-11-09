@@ -291,7 +291,7 @@ paths:
         - { name: window, in: query, description: "Last-observation window, at most 720h. Legacy all maps to 720h; response window reports the effective range.", schema: { type: string, default: 24h } }
         - { name: search, in: query, description: 'Searches structured IP, MAC, name, manufacturer, and model fields. Fewer than three characters use a prefix; three or more use contains matching.', schema: { type: string } }
         - { name: type, in: query, schema: { type: string } }
-        - { name: category, in: query, schema: { type: string, enum: [mobile, tablet, desktop, printer, camera, network, media, identity_only] } }
+        - { name: category, in: query, schema: { type: string, enum: [mobile, tablet, desktop, printer, camera, network, media, voice, identity_only] } }
         - { name: capability, in: query, schema: { type: string } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
         - { name: cursor, in: query, description: Opaque cursor bound to all filters and the last observed device. Numeric offset pagination is not supported., schema: { type: string, minLength: 1 } }
@@ -316,7 +316,7 @@ paths:
         - { name: mode, in: query, schema: { type: string, enum: [passive, infrastructure, active, all], default: all } }
         - { name: window, in: query, description: "Last-observation window, at most 720h. Legacy all maps to 720h; response window reports the effective range.", schema: { type: string, default: 24h } }
         - { name: search, in: query, description: 'Searches structured IP, MAC, name, manufacturer, and model fields. Fewer than three characters use a prefix; three or more use contains matching.', schema: { type: string } }
-        - { name: category, in: query, schema: { type: string, enum: [mobile, tablet, desktop, printer, camera, network, media, identity_only] } }
+        - { name: category, in: query, schema: { type: string, enum: [mobile, tablet, desktop, printer, camera, network, media, voice, identity_only] } }
         - { name: capability, in: query, schema: { type: string } }
       responses:
         '200':
@@ -4452,6 +4452,7 @@ paths:
               - camera
               - network
               - media
+              - voice
               - identity_only
         - name: capability
           in: query

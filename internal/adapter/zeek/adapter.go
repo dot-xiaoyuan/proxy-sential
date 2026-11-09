@@ -170,6 +170,8 @@ func (p logParser) convertLine(raw []byte, lineOffset int, opts Options) (normal
 		return infrastructureDiscoveryEventFromFields(raw, fields, lineOffset, opts)
 	case "snmp":
 		return snmpDiscoveryEventFromFields(fields, lineOffset, opts)
+	case "sip":
+		return sipDiscoveryEventFromFields(fields, lineOffset, opts)
 	}
 	if isSoftwareFields(fields) {
 		return softwareEventFromFields(raw, fields, lineOffset, opts)
@@ -220,6 +222,33 @@ func snmpDiscoveryEventFromFields(fields map[string]string, lineOffset int, opts
 	event.Flow["direction"] = "management"
 	event.Payload["peer_ip"] = peerIP
 	event.Confidence = 0.9
+	return event, nil
+}
+
+func sipDiscoveryEventFromFields(fields map[string]string, lineOffset int, opts Options) (normalized.Event, error) {
+	timestamp := normalizeTimestamp(first(fields, "ts", "timestamp"))
+	origIP, respIP := first(fields, "id.orig_h", "src_ip"), first(fields, "id.resp_h", "dst_ip")
+	method, userAgent := first(fields, "method"), first(fields, "user_agent")
+	if method == "-" {
+		method = ""
+	}
+	if userAgent == "-" {
+		userAgent = ""
+	}
+	// The User-Agent belongs to the requester. Rows without a request method or
+	// agent are not device identity evidence.
+	if timestamp == "" || origIP == "" || respIP == "" || method == "" || userAgent == "" {
+		return normalized.Event{}, fmt.Errorf("missing Zeek SIP identity fields")
+	}
+	payload := map[string]any{"origin": "sip", "method": method, "user_agent": userAgent}
+	copyPayload(payload, fields, "status_code", "status")
+	copyPayload(payload, fields, "content_type", "content_type")
+	copyPayload(payload, fields, "vlan", "vlan")
+	flow := zeekFlow(fields, origIP, respIP)
+	flow["direction"] = "client"
+	event := zeekNetworkEvent(nil, fields, lineOffset, opts, "device", "sip", timestamp, origIP, respIP, flow, payload)
+	event.Subject = map[string]any{"ip": origIP, "entity_role": "endpoint"}
+	event.Confidence = 0.85
 	return event, nil
 }
 

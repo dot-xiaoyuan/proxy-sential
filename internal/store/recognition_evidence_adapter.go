@@ -70,7 +70,7 @@ func passiveRecognitionSignals(hints []DiscoveryRecognitionHint) []fingerprint.E
 
 func recognitionProtocolDirection(field string) (string, string) {
 	switch {
-	case field == "user_agent" || field == "sip_user_agent" || field == "ja3" || field == "ja4" || field == "tcp_signature":
+	case field == "user_agent" || field == "ja3" || field == "ja4" || field == "tcp_signature":
 		return "client", "client"
 	case field == "dhcp_message_type" || field == "dhcp_vendor_class" || field == "dhcp_requested_options":
 		return "dhcp", "device"
@@ -80,7 +80,9 @@ func recognitionProtocolDirection(field string) (string, string) {
 		return "tls", "server"
 	case strings.HasPrefix(field, "ssh_"):
 		return "ssh", "server"
-	case strings.HasPrefix(field, "sip_"):
+	case field == "sip_user_agent":
+		return "sip", "client"
+	case field == "sip_server":
 		return "sip", "server"
 	case strings.HasPrefix(field, "snmp_"):
 		return "snmp", "device"

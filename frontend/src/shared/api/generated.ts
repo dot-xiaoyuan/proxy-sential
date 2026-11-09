@@ -4299,7 +4299,7 @@ export interface paths {
                     window?: string;
                     /** @description Searches structured IP, MAC, name, manufacturer, and model fields. Fewer than three characters use a prefix; three or more use contains matching. */
                     search?: string;
-                    category?: "mobile" | "tablet" | "desktop" | "printer" | "camera" | "network" | "media" | "identity_only";
+                    category?: "mobile" | "tablet" | "desktop" | "printer" | "camera" | "network" | "media" | "voice" | "identity_only";
                     capability?: string;
                     page?: number;
                     limit?: number;
@@ -9869,7 +9869,7 @@ export interface operations {
                 window?: string;
                 /** @description Searches structured IP, MAC, name, manufacturer, and model fields. Fewer than three characters use a prefix; three or more use contains matching. */
                 search?: string;
-                category?: "mobile" | "tablet" | "desktop" | "printer" | "camera" | "network" | "media" | "identity_only";
+                category?: "mobile" | "tablet" | "desktop" | "printer" | "camera" | "network" | "media" | "voice" | "identity_only";
                 capability?: string;
                 limit?: number;
                 /** @description Opaque cursor bound to all filters and the last observed device. Numeric offset pagination is not supported. */
@@ -9914,7 +9914,7 @@ export interface operations {
                 window?: string;
                 /** @description Searches structured IP, MAC, name, manufacturer, and model fields. Fewer than three characters use a prefix; three or more use contains matching. */
                 search?: string;
-                category?: "mobile" | "tablet" | "desktop" | "printer" | "camera" | "network" | "media" | "identity_only";
+                category?: "mobile" | "tablet" | "desktop" | "printer" | "camera" | "network" | "media" | "voice" | "identity_only";
                 capability?: string;
             };
             header?: never;

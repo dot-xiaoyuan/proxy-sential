@@ -93,5 +93,16 @@
 
   {"pattern":"\\bHP[- ]?(LaserJet|OfficeJet|DeskJet|Color LaserJet)[- A-Za-z0-9]*","input":"http_title","brand":"HP","device_type":"printer","confidence":0.85},
   {"pattern":"\\b(Hikvision|海康威视)\\b","input":"http_title","brand":"Hikvision","device_type":"camera","confidence":0.80},
-  {"pattern":"\\bDahua\\b","input":"http_title","brand":"Dahua","device_type":"camera","confidence":0.80}
+  {"pattern":"\\bDahua\\b","input":"http_title","brand":"Dahua","device_type":"camera","confidence":0.80},
+  {"pattern":"^Huawei eSpace (\\d+) V[\\w.]+","input":"sip_user_agent","brand":"Huawei","model_replacement":"eSpace $1","device_type":"voip_phone","confidence":0.90},
+  {"pattern":"^Yealink (SIP-T\\d+[A-Z]?|T\\d+[A-Z]?|SIP-\\w+)","input":"sip_user_agent","brand":"Yealink","model_replacement":"$1","device_type":"voip_phone","confidence":0.90},
+  {"pattern":"^Polycom\\s*(?:SoundPointIP|SoundPoint IP)?[-\\s]*(SPIP[_\\s]?\\d+|VVX\\s?\\d+|SoundStation\\s?\\w+|Trio\\s?\\d+)","input":"sip_user_agent","brand":"Polycom","model_replacement":"$1","device_type":"voip_phone","confidence":0.88},
+  {"pattern":"^Cisco-CP-(\\d+G?[A-Z]*)","input":"sip_user_agent","brand":"Cisco","model_replacement":"CP-$1","device_type":"voip_phone","confidence":0.90},
+  {"pattern":"^Grandstream (GXP\\d+|GRP\\d+|GXV\\d+|HT\\d+)","input":"sip_user_agent","brand":"Grandstream","model_replacement":"$1","device_type":"voip_phone","confidence":0.90},
+  {"pattern":"^snom(\\d+[A-Za-z-]*)","input":"sip_user_agent","brand":"Snom","model_replacement":"snom$1","device_type":"voip_phone","confidence":0.90},
+  {"pattern":"^Fanvil (X\\d+[A-Za-z]*)","input":"sip_user_agent","brand":"Fanvil","model_replacement":"$1","device_type":"voip_phone","confidence":0.90},
+  {"pattern":"^Avaya (J\\d+|B\\d+|96\\d+|one-X \\w+)","input":"sip_user_agent","brand":"Avaya","model_replacement":"$1","device_type":"voip_phone","confidence":0.88},
+  {"pattern":"^Mitel (\\w+)","input":"sip_user_agent","brand":"Mitel","model_replacement":"$1","device_type":"voip_phone","confidence":0.85},
+  {"pattern":"^Panasonic (KX-\\w+)","input":"sip_user_agent","brand":"Panasonic","model_replacement":"$1","device_type":"voip_phone","confidence":0.88},
+  {"pattern":"^OpenStage (\\d+)","input":"sip_user_agent","brand":"Unify","model_replacement":"OpenStage $1","device_type":"voip_phone","confidence":0.88}
 ]
