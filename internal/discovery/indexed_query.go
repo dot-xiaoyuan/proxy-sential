@@ -46,6 +46,11 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 			baseWhere = append(baseWhere, fmt.Sprintf("coalesce(data->>'%s','')=$%d", filter.key, len(args)))
 		}
 	}
+	if query.RandomMAC {
+		// Locally administered addresses (second-least-significant bit) rotate,
+		// so this cohort needs its own identity handling.
+		baseWhere = append(baseWhere, `(CASE WHEN coalesce(l.data->>'mac','') ~ '^[0-9a-fA-F]{2}' THEN ((('x'||substr(l.data->>'mac',1,2))::bit(8)::int) & 2)=2 ELSE false END)`)
+	}
 	if len(origins) > 0 {
 		parts := make([]string, len(origins))
 		for i, origin := range origins {

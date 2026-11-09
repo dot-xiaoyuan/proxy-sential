@@ -7,6 +7,7 @@ import { useEffect,
   useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button,
+  Checkbox,
   Collapse,
   Input,
   Modal,
@@ -139,7 +140,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const query = new URLSearchParams({mode:'passive',limit:String(pageSize)})
   if(view==='iot')query.set('view','iot')
   if(search)query.set('search',search)
-  for(const key of ['category','type','protocol','state','domain','vlan','window','capability']){const value=params.get(`discovery_${key}`);if(value)query.set(key,value)}
+  for(const key of ['category','type','protocol','state','domain','vlan','window','capability','random_mac']){const value=params.get(`discovery_${key}`);if(value)query.set(key,value)}
   const position=useCursorPagePosition({path:'/discovery/devices/position',query,page:page+1,pageSize})
   if(position.cursor)query.set('cursor',position.cursor)
   const devices = useQuery({queryKey:['discovery-center',query.toString()],queryFn:({signal})=>request<Page>(`/discovery/devices?${query}`,{signal}),enabled:position.ready})
@@ -256,7 +257,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
         filters={<>
           <Select aria-label="设备类型" showSearch optionFilterProp="label" value={params.get('discovery_type')||''} options={[{value:'',label:'全部设备类型'},...(catalogue.data?.items??[]).map(t=>({value:t.id,label:t.label}))]} onChange={v=>change('type',v)}/>
           <Select aria-label="证据状态" value={params.get('discovery_state')||''} options={[{value:'',label:'全部证据状态'},...Object.entries(states).filter(([k])=>view!=='iot'||k!=='candidate').map(([value,label])=>({value,label}))]} onChange={v=>change('state',v)}/>
-          <Button size="small" type="text" onClick={()=>setMoreOpen(value=>!value)}>{moreOpen?'收起筛选':'更多筛选'}{['type','protocol','window','domain','vlan'].filter(key=>params.get(`discovery_${key}`)).length?`（${['type','protocol','window','domain','vlan'].filter(key=>params.get(`discovery_${key}`)).length}）`:''}</Button>
+          <Button size="small" type="text" onClick={()=>setMoreOpen(value=>!value)}>{moreOpen?'收起筛选':'更多筛选'}{['type','protocol','window','domain','vlan','random_mac'].filter(key=>params.get(`discovery_${key}`)).length?`（${['type','protocol','window','domain','vlan','random_mac'].filter(key=>params.get(`discovery_${key}`)).length}）`:''}</Button>
         </>}
         extra={<div className="discovery-list-actions">{searching&&<span className="discovery-search-status" role="status" aria-live="polite"><LoadingOutlined aria-hidden="true" spin /> {draft.trim()||search?'正在搜索…':'正在加载…'}</span>}<span className="terminal-page-summary" aria-label="发现设备摘要"><span>当前页 <strong>{items.length}</strong> 个设备</span><span>本页明确类型 <strong>{typedPageCount}</strong></span><span>本页近15分钟观测 <strong>{recentPageCount}</strong></span></span><Button size="small" icon={<DownloadOutlined aria-hidden="true"/>} loading={exporting} onClick={()=>void exportDevices()}>导出</Button><Button type="link" size="small" onClick={()=>setParams(current=>{const next=new URLSearchParams(current);for(const key of [...next.keys()])if(key.startsWith("discovery_")&&key!=="discovery_view")next.delete(key);return next})}>清除筛选</Button></div>}
       panel={moreOpen?<div className="app-filter-panel">
@@ -264,6 +265,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
           <Select aria-label="最近观测范围" value={params.get('discovery_window')==='all'?'720h':params.get('discovery_window')||''} options={[{value:'',label:'近 24 小时'},{value:'168h',label:'近 7 天'},{value:'720h',label:'近 30 天'}]} onChange={v=>change('window',v)}/>
           <Input aria-label="网络域" placeholder="网络域" allowClear value={params.get('discovery_domain')||''} onChange={e=>change('domain',e.target.value)}/>
           <Input aria-label="VLAN" placeholder="VLAN" allowClear value={params.get('discovery_vlan')||''} onChange={e=>change('vlan',e.target.value)}/>
+          <Checkbox checked={params.get('discovery_random_mac')==='true'} onChange={e=>change('random_mac',e.target.checked?'true':'')}>随机 MAC</Checkbox>
         </div>:undefined}
       />
         <nav className="terminal-type-shortcuts" aria-label="快捷设备类型">{[{value:'',label:'全部设备'},{value:'printer',label:'打印机'},{value:'camera',label:'摄像机'},{value:'access_point',label:'无线 AP'},{value:'router',label:'路由器'},{value:'switch',label:'交换机'},{value:'desktop',label:'电脑'},{value:'mobile',label:'手机'},{value:'voip_phone',label:'VoIP 话机'}].map(t=><Button key={t.value} type={(params.get('discovery_type')||'')===t.value&&!dumbFilter?'primary':'default'} onClick={()=>shortcut(t.value)}>{t.label}</Button>)}<Button type={dumbFilter?'primary':'default'} onClick={()=>shortcut('',dumbFilter?'':'dumb')}>哑终端线索</Button></nav>

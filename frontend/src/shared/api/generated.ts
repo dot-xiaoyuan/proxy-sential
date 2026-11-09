@@ -9950,6 +9950,7 @@ export interface operations {
                 search?: string;
                 category?: "mobile" | "tablet" | "desktop" | "printer" | "camera" | "network" | "media" | "voice" | "identity_only";
                 capability?: string;
+                random_mac?: boolean;
                 limit?: number;
                 /** @description Opaque cursor bound to all filters and the last observed device. Numeric offset pagination is not supported. */
                 cursor?: string;
@@ -9995,6 +9996,7 @@ export interface operations {
                 search?: string;
                 category?: "mobile" | "tablet" | "desktop" | "printer" | "camera" | "network" | "media" | "voice" | "identity_only";
                 capability?: string;
+                random_mac?: boolean;
             };
             header?: never;
             path?: never;
