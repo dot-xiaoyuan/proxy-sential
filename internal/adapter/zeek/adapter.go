@@ -652,6 +652,7 @@ func dhcpPayload(fields map[string]string) map[string]any {
 	copyPayload(payload, fields, "client_software", "vendor_class")
 	copyPayload(payload, fields, "vendor_class", "vendor_class")
 	copyPayload(payload, fields, "requested_options", "requested_options")
+	copyPayload(payload, fields, "option_order", "dhcp_options")
 	copyPayload(payload, fields, "client_id_hwtype", "client_id_hwtype")
 	if clientIDMAC := normalizeMAC(first(fields, "client_id_hwaddr")); clientIDMAC != "" {
 		payload["client_id_hwaddr"] = clientIDMAC

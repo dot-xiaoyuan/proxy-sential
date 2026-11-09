@@ -9,6 +9,7 @@ export {
         capture_vlan: string &log &optional;
         discovery_scope_conflict: bool &log &default=F;
         requested_options: string &log &optional;
+        option_order: string &log &optional;
         vendor_class: string &log &optional;
         lease_observed_at: time &log &optional;
     };
@@ -226,6 +227,16 @@ event DHCP::aggregate_msgs(ts: time, id: conn_id, uid: string, is_orig: bool, ms
         for ( i in options$param_list )
             values = fmt("%s%s%d", values, values == "" ? "" : ",", options$param_list[i]);
         log_info$requested_options = values;
+        }
+    # The first client message keeps the wire option order: it is the
+    # request-side fingerprint, while a later REQUEST in the same transaction
+    # would replace it with a different option list.
+    if ( is_client && options?$options && ! log_info?$option_order )
+        {
+        local order = "";
+        for ( i in options$options )
+            order = fmt("%s%s%d", order, order == "" ? "" : ",", options$options[i]);
+        log_info$option_order = order;
         }
     if ( is_client && options?$vendor_class )
         log_info$vendor_class = options$vendor_class;

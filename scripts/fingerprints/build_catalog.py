@@ -318,6 +318,7 @@ def satori(b):
                 ok = f.stem in ["dhcp", "ssh", "sip", "web", "webuseragent"]
                 mapping = {
                     "dhcpoption55": "dhcp_requested_options",
+                    "dhcpoptions": "dhcp_options",
                     "dhcpvendorcode": "dhcp_vendor_class",
                     "ssh": "ssh_banner",
                     "sipserver": "sip_server",
