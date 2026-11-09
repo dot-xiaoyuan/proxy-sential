@@ -306,5 +306,6 @@ it('shows fingerprint matches for linked discovery devices', async () => {
   fireEvent.click(await screen.findByRole('button', { name: '192.0.2.10' }))
   await waitFor(() => expect(screen.getByText('指纹库命中（端点识别）')).toBeInTheDocument())
   expect(screen.getByText('Hikvision DHCP options')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '查看终端画像' })).toBeInTheDocument()
 })
 
