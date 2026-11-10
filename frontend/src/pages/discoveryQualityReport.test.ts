@@ -14,6 +14,7 @@ it('exports the quality report with coverage, tops, and trend', () => {
     untyped_reasons: [{ reason: 'Apple 系统线索', count: 2 }],
   } as never, { days: [{ date: '2026-11-10', new: 2, typed: 1 }] } as never, { camera: '摄像机' })
   expect(csv).toContain('识别质量报告')
+  expect(csv).toContain('全局识别画像，不随列表筛选变化')
   expect(csv).toContain('类型覆盖,4,10,40%')
   expect(csv).toContain('摄像机 · Hikvision,2')
   expect(csv).toContain('HP · LaserJet Pro MFP,1')

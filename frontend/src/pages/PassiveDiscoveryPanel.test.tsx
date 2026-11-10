@@ -269,6 +269,7 @@ it('shows identification quality when the status section opens', async () => {
   expect(screen.getByText('Apple OS 2')).toBeInTheDocument()
   expect(screen.getByText('未识别原因')).toBeInTheDocument()
   expect(screen.getByText('Apple 系统线索 2')).toBeInTheDocument()
+  expect(screen.getByText('全局识别画像 · 不随列表筛选变化')).toBeInTheDocument()
   expect(await screen.findByText('近 7 天新增')).toBeInTheDocument()
   expect(screen.getByText('6 台 · 今天 4')).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: '华为 3' }))

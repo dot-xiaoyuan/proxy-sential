@@ -350,6 +350,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
     </section>}
     <details className="terminal-diagnostics" open={qualityOpen}><summary onClick={event=>{event.preventDefault();setQualityOpen(value=>!value)}}>采集与识别状态</summary>    <section className="surface center-list-toolbar">
       {qualityOpen&&<div className="recognition-quality-strip" aria-label="识别质量">
+        <Typography.Text type="secondary" className="recognition-quality-scope">全局识别画像 · 不随列表筛选变化</Typography.Text>
         {quality.isError&&<AppErrorAlert title="识别质量读取失败" message={quality.error.message} />}
         {quality.data&&<>
           {qualityItem('类型覆盖',quality.data.coverage.device_type,quality.data.total_endpoints)}

@@ -12,6 +12,7 @@ export function qualityReportCSV(summary: Summary, trends: Trends | undefined, t
   const rows: string[][] = []
   rows.push(['识别质量报告'])
   rows.push(['生成时间', new Date().toISOString()])
+  rows.push(['说明', '全局识别画像，不随列表筛选变化'])
   rows.push([])
   rows.push(['指标', '已知', '总数', '覆盖率'])
   rows.push(['类型覆盖', String(summary.coverage?.device_type?.known ?? ''), String(summary.total_endpoints ?? ''), percent(summary.coverage?.device_type?.rate)])
