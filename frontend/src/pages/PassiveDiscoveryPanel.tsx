@@ -144,8 +144,9 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
     message.success('视图已保存')
   }
   const [qualityOpen,setQualityOpen] = useState(false)
+  const [trendDays,setTrendDays]=useState(7)
   const quality=useQuery({queryKey:['device-recognition-summary'],queryFn:({signal})=>request<components['schemas']['DeviceRecognitionSummary']>('/device-recognition/summary',{signal}),enabled:qualityOpen,staleTime:60_000})
-  const trends=useQuery({queryKey:['discovery-trends'],queryFn:({signal})=>request<components['schemas']['DiscoveryTrends']>('/discovery/trends?days=7',{signal}),enabled:qualityOpen,staleTime:60_000})
+  const trends=useQuery({queryKey:['discovery-trends',trendDays],queryFn:({signal})=>request<components['schemas']['DiscoveryTrends']>(`/discovery/trends?days=${trendDays}`,{signal}),enabled:qualityOpen,staleTime:60_000})
   const [pageSize,setPageSize] = useState(20)
   const filterKey = [view,search,pageSize,...['category','type','protocol','state','domain','vlan','window','capability'].map(k=>params.get(`discovery_${k}`)||'')].join('|')
   const [paging,setPaging] = useState({key:filterKey,page:0})
@@ -343,7 +344,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
           {quality.data.top_models?.length?<span className="recognition-quality-brands"><Typography.Text type="secondary">型号 Top</Typography.Text>{quality.data.top_models.map(item=><Button key={`${item.brand}:${item.model}`} type="text" size="small" className="recognition-quality-link" onClick={()=>setParams(current=>{const next=new URLSearchParams(current);next.set('discovery_search',item.model);next.delete('discovery_type');next.delete('discovery_category');return next},{replace:true})}>{item.brand?`${item.brand} · `:''}{item.model} {item.count}</Button>)}</span>:null}
           {quality.data.untyped_reasons?.length?<span className="recognition-quality-brands"><Typography.Text type="secondary">未识别原因</Typography.Text>{quality.data.untyped_reasons.map(item=><Tag key={item.reason}>{item.reason} {item.count}</Tag>)}</span>:null}
           <div className="recognition-quality-actions"><Button size="small" icon={<DownloadOutlined aria-hidden="true"/>} onClick={exportQualityReport} disabled={!quality.data}>导出质量报告</Button></div>
-          {trends.data?.days?.length?<span className="discovery-trend" aria-label="近 7 天新增设备"><Typography.Text type="secondary">近 7 天新增</Typography.Text><span className="discovery-trend-bars">{trends.data.days.map(day=><span key={day.date} className={`discovery-trend-bar is-${trendBucket(day.new,Math.max(...trends.data.days.map(item=>item.new),1))}`} title={`${day.date} 新增 ${day.new}，明确类型 ${day.typed}`}/>)}</span><Typography.Text type="secondary">{trends.data.days.reduce((sum,day)=>sum+day.new,0)} 台 · 今天 {trends.data.days[trends.data.days.length-1]?.new??0}</Typography.Text></span>:null}
+          {trends.data?.days?.length?<span className="discovery-trend" aria-label={`近 ${trendDays} 天新增设备`}><Typography.Text type="secondary">近 {trendDays} 天新增</Typography.Text><span className={`discovery-trend-bars${trendDays>7?' is-wide':''}`}>{trends.data.days.map(day=><span key={day.date} className={`discovery-trend-bar is-${trendBucket(day.new,Math.max(...trends.data.days.map(item=>item.new),1))}`} title={`${day.date} 新增 ${day.new}，明确类型 ${day.typed}`}/>)}</span><Typography.Text type="secondary">{trends.data.days.reduce((sum,day)=>sum+day.new,0)} 台 · 今天 {trends.data.days[trends.data.days.length-1]?.new??0}</Typography.Text><Select size="small" aria-label="趋势范围" value={String(trendDays)} options={[{value:'7',label:'近 7 天'},{value:'30',label:'近 30 天'}]} onChange={value=>setTrendDays(Number(value))}/></span>:null}
         </>}
         {quality.isLoading&&<Typography.Text type="secondary">识别质量读取中</Typography.Text>}
       </div>}

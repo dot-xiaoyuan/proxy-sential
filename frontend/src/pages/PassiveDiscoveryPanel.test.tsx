@@ -407,3 +407,15 @@ it('exports the identification quality report', async () => {
   }
 })
 
+
+it('switches the trend window to 30 days', async () => {
+  mockReads()
+  renderPanel()
+  fireEvent.click(screen.getByText('采集与识别状态'))
+  await screen.findByText('近 7 天新增')
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: '趋势范围' }))
+  fireEvent.click(screen.getByText('近 30 天'))
+  await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).startsWith('/discovery/trends?days=30'))).toBe(true))
+  expect(await screen.findByText(/近 30 天新增/)).toBeInTheDocument()
+})
+
