@@ -75,9 +75,9 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
   const showProfile = visibleColumns.includes('recognition') || visibleColumns.includes('os')
   const showContext = visibleColumns.includes('context')
   const deviceColumns: ColumnsType<DeviceInventoryListItem> = [
-    { title: '终端 / MAC', key: 'identity', width: 260, render: (_, row) => <TerminalInventoryIdentity device={row} href={detailURL(row)} showName={!devices.data?.device_names_disabled} /> },
-    { title: '地址 / 接入', key: 'address', width: 225, render: (_, row) => <div className="terminal-inventory-network">
-      {row.current_ip && <div className="terminal-inventory-address"><Link className="mono" to={detailURL(row)}>{row.current_ip}</Link><Typography.Text className="device-copy-control" copyable={{ text: row.current_ip }} /></div>}
+    { title: 'IPv4 / 终端', key: 'identity', width: 260, render: (_, row) => <TerminalInventoryIdentity device={row} href={detailURL(row)} showName={!devices.data?.device_names_disabled} /> },
+    { title: 'IPv6 / 接入', key: 'address', width: 225, render: (_, row) => <div className="terminal-inventory-network">
+      {(() => { const ipv6 = row.current_ipv6 || (row.current_ip && row.current_ip.includes(':') ? row.current_ip : undefined); return ipv6 ? <div className="terminal-inventory-address"><Link className="mono" to={detailURL(row)}>{ipv6}</Link><Typography.Text className="device-copy-control" copyable={{ text: ipv6 }} /></div> : null })()}
       {row.ip_match && <span className="device-match-caption" title={`${row.ip_match.ip} · ${row.ip_match.matched_at}`}>{row.ip_match.is_recent_ip ? '最近 IP 命中' : '历史 IP 命中'}</span>}
       {showContext && row.current_access_conflict && <Tag color="orange">接入位置冲突</Tag>}
       {showContext && row.current_access_id && <Typography.Text type="secondary" title={row.current_access_id}>{accessLocationLabel(row.current_access_id)}</Typography.Text>}

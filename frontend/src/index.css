@@ -3856,6 +3856,8 @@ pre.wrap-code {
 .terminal-inventory-identity { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
 .terminal-inventory-identity-content { display: grid; gap: 5px; min-width: 0; }
 .terminal-inventory-primary { color: #0f172a; font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
+.terminal-inventory-ipv4 { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.terminal-inventory-name { color: #475569; font-size: 13px; overflow-wrap: anywhere; }
 .terminal-inventory-identity .device-mac-link { color: #64748b; }
 .terminal-inventory-primary-mac .device-mac-link { color: #0f172a; font-size: 13px; font-weight: 650; }
 .terminal-inventory-network, .terminal-inventory-profile { display: grid; gap: 6px; min-width: 0; }

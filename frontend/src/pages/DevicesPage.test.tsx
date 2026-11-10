@@ -81,26 +81,26 @@ it('treats a legacy null items response as an empty list',()=>{
  setup('/devices?view=recent&window=24h')
  expect(screen.getAllByText('没有匹配的终端').length).toBeGreaterThan(0)
 })
-it('keeps names and MACs together while retaining IPv4 and IPv6 in the address column',()=>{
+it('leads the identity column with IPv4 and keeps IPv6 in the address column',()=>{
  fixture.items=[
   {endpoint_id:'named',current_ip:'192.0.2.10',primary_mac:'00:11:22:33:44:10',device_name:{value:'DESKTOP-01',source:'dhcp',confidence:1}},
   {endpoint_id:'mac-only',primary_mac:'00:11:22:33:44:11'},
   {endpoint_id:'ipv6-only',current_ip:'2001:db8::12',primary_mac:'00:11:22:33:44:12'},
+  {endpoint_id:'dual',current_ip:'2001:db8::99',current_ipv4:'192.0.2.99',current_ipv6:'2001:db8::99',primary_mac:'00:11:22:33:44:13',device_name:{value:'DUAL-01',source:'dhcp',confidence:1}},
  ]
  const {container}=render(<MemoryRouter initialEntries={['/devices?view=recent&window=24h']}><DevicesPage /></MemoryRouter>)
  const rows=[...container.querySelectorAll('.ant-table-tbody tr.ant-table-row')]
- expect(rows).toHaveLength(3)
- expect(rows[0]).toHaveTextContent('192.0.2.10')
- expect(rows[0]).toHaveTextContent('DESKTOP-01')
- expect(rows[0]).toHaveTextContent('00:11:22:33:44:10')
+ expect(rows).toHaveLength(4)
+ expect(rows[0].querySelector('td[data-label="IPv4 / 终端"]')).toHaveTextContent('192.0.2.10')
+ expect(rows[0].querySelector('td[data-label="IPv4 / 终端"]')).toHaveTextContent('DESKTOP-01')
+ expect(rows[0].querySelector('td[data-label="IPv4 / 终端"]')).toHaveTextContent('00:11:22:33:44:10')
  expect(rows[1]).not.toHaveTextContent('192.0.2.')
- expect(rows[1]).toHaveTextContent('00:11:22:33:44:11')
- expect(rows[2]).not.toHaveTextContent('192.0.2.')
- expect(rows[2]).toHaveTextContent('00:11:22:33:44:12')
- expect(rows[2]).toHaveTextContent('2001:db8::12')
- expect(rows[0].querySelector('td[data-label="终端 / MAC"]')).toHaveTextContent('DESKTOP-01')
- expect(rows[0].querySelector('td[data-label="终端 / MAC"]')).toHaveTextContent('00:11:22:33:44:10')
- expect(rows[2].querySelector('td[data-label="地址 / 接入"]')).toHaveTextContent('2001:db8::12')
+ expect(rows[1].querySelector('td[data-label="IPv4 / 终端"]')).toHaveTextContent('00:11:22:33:44:11')
+ expect(rows[2].querySelector('td[data-label="IPv4 / 终端"]')).toHaveTextContent('00:11:22:33:44:12')
+ expect(rows[2].querySelector('td[data-label="IPv6 / 接入"]')).toHaveTextContent('2001:db8::12')
+ expect(rows[3].querySelector('td[data-label="IPv4 / 终端"]')).toHaveTextContent('192.0.2.99')
+ expect(rows[3].querySelector('td[data-label="IPv4 / 终端"]')).toHaveTextContent('DUAL-01')
+ expect(rows[3].querySelector('td[data-label="IPv6 / 接入"]')).toHaveTextContent('2001:db8::99')
 })
 
 it('retains independent identity counts and access conflicts with the unified visual layout',()=>{

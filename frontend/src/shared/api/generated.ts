@@ -7787,6 +7787,8 @@ export interface components {
             current_account_observed_at?: string;
             current_access_conflict?: boolean;
             current_ip?: string;
+            current_ipv4?: string;
+            current_ipv6?: string;
             current_access_id?: string;
             /** Format: date-time */
             last_seen?: string;
@@ -8308,8 +8310,12 @@ export interface components {
             /** @enum {string} */
             merge_status: "active" | "merged" | "split";
             current_account?: string;
-            /** @description 最近观测 IP，不保证当前在线。字段名保留以兼容现有客户端。 */
+            /** @description 最近观测 IP（任意协议族），不保证当前在线。字段名保留以兼容现有客户端。 */
             current_ip?: string;
+            /** @description 最近观测 IPv4，策略、风险与 4K 身份使用的运维主地址。 */
+            current_ipv4?: string;
+            /** @description 最近观测 IPv6，SLAAC 证据，不替代 IPv4。 */
+            current_ipv6?: string;
             current_access_id?: string;
             accounts: string[];
             ips: string[];

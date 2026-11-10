@@ -490,7 +490,9 @@ func buildEndpointState(in endpointStateInput, now time.Time) (endpointStateRow,
 			seen = sql.NullTime{Time: at, Valid: true}
 		}
 	}
-	row := endpointStateRow{ID: in.ID, Name: in.Name, CurrentIP: item.CurrentIP, Accounts: append([]string{}, item.CurrentAccountCandidates...)}
+	// The lookup column backs IP filtering; prefer the operational IPv4 while
+	// the list item keeps both families for display.
+	row := endpointStateRow{ID: in.ID, Name: in.Name, CurrentIP: firstNonEmpty(item.CurrentIPv4, item.CurrentIP), Accounts: append([]string{}, item.CurrentAccountCandidates...)}
 	item.LastSeen = ""
 	if seen.Valid {
 		// Minute precision keeps a busy endpoint from rewriting its row on every event batch.

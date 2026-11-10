@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"proxy-sentinel/internal/discovery"
 	"sort"
 	"strconv"
@@ -410,6 +411,8 @@ func buildEndpointDeviceInventoryMeasured(profile EndpointIdentityProfile, obser
 		MergeStatus:        endpoint.MergeStatus,
 		CurrentAccount:     "",
 		CurrentIP:          recentEndpointIP(profile.IPHistory),
+		CurrentIPv4:        recentEndpointIPFamily(profile.IPHistory, 4),
+		CurrentIPv6:        recentEndpointIPFamily(profile.IPHistory, 6),
 		CurrentAccessID:    "",
 		Accounts:           append([]string{}, profile.Accounts...),
 		IPs:                ips,
@@ -965,11 +968,25 @@ func identitySummary(label, id string, primaryCount int, ips []string, accessIDs
 
 // recentEndpointIP reports an observation, not an active lease or online status.
 func recentEndpointIP(history []IdentityIPMACHistory) string {
+	return recentEndpointIPFamily(history, 0)
+}
+
+// recentEndpointIPFamily reports the most recent observed address of one IP
+// family. Terminal operations key policies, risk and 4K identity on IPv4, while
+// IPv6 is usually only SLAAC evidence; the two families are therefore selected
+// independently instead of letting the latest address of either family win.
+func recentEndpointIPFamily(history []IdentityIPMACHistory, family int) string {
 	var selected IdentityIPMACHistory
 	var latest, first time.Time
 	for _, item := range history {
 		if item.IP == "" {
 			continue
+		}
+		if family != 0 {
+			parsed := net.ParseIP(item.IP)
+			if parsed == nil || (family == 4 && parsed.To4() == nil) || (family == 6 && parsed.To4() != nil) {
+				continue
+			}
 		}
 		lastAt, _ := time.Parse(time.RFC3339Nano, item.LastSeen)
 		firstAt, _ := time.Parse(time.RFC3339Nano, item.FirstSeen)

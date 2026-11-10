@@ -124,16 +124,26 @@ export function DeviceLedgerIdentity({device,href,showName=true}:{device:DeviceD
  </div>
 }
 
+function ipv4AddressOf(value?: string) { return value && !value.includes(':') ? value : undefined }
+
 export function TerminalInventoryIdentity({ device, href, showName = true }: { device: DeviceDisplayItem; href: string; showName?: boolean }) {
   const name = showName ? device.device_name?.value : ''
+  // IPv4 is the operational key for policy, risk and 4K identity, so it leads
+  // the identity column; IPv6 stays in the address column as SLAAC evidence.
+  const ipv4 = device.current_ipv4 || ipv4AddressOf(device.current_ip)
   const type = !recognitionDimensionConflict(device, 'device_type') && (device.device_type_confidence ?? 0) >= .8 && !isEmptyRecognition(device.device_type) ? device.device_type : undefined
   return <div className="terminal-inventory-identity">
     <DiscoveryDeviceIcon type={type} />
     <div className="terminal-inventory-identity-content">
-      {name ? <Link className="terminal-inventory-primary" to={href} title={device.device_name?.status === 'historical' ? '历史观测名称' : name}>{name}</Link>
-        : device.primary_mac ? <div className="terminal-inventory-primary-mac"><DeviceMAC device={device} href={href} /></div>
-          : device.current_ip ? <Link className="terminal-inventory-primary mono" to={href}>{device.current_ip}</Link> : null}
-      {name && device.primary_mac && <DeviceMAC device={device} href={href} />}
+      {ipv4 ? <div className="terminal-inventory-ipv4">
+          <Link className="terminal-inventory-primary mono" to={href} title={`IPv4 ${ipv4}`}>{ipv4}</Link>
+          <Typography.Text className="device-copy-control" copyable={{ text: ipv4 }} />
+        </div>
+        : name ? <Link className="terminal-inventory-primary" to={href} title={device.device_name?.status === 'historical' ? '历史观测名称' : name}>{name}</Link>
+          : device.primary_mac ? <div className="terminal-inventory-primary-mac"><DeviceMAC device={device} href={href} /></div>
+            : device.current_ip ? <Link className="terminal-inventory-primary mono" to={href}>{device.current_ip}</Link> : null}
+      {ipv4 && name && <Link className="terminal-inventory-name" to={href} title={device.device_name?.status === 'historical' ? '历史观测名称' : name}>{name}</Link>}
+      {(ipv4 || name) && device.primary_mac && <DeviceMAC device={device} href={href} />}
       {name && device.device_name?.status === 'historical' && <span className="device-name-caption">历史名称</span>}
     </div>
   </div>

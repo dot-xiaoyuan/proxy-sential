@@ -105,6 +105,8 @@ type DeviceInventoryListItem struct {
 	CurrentAccountObservedAt string                       `json:"current_account_observed_at,omitempty"`
 	CurrentAccessConflict    bool                         `json:"current_access_conflict"`
 	CurrentIP                string                       `json:"current_ip,omitempty"`
+	CurrentIPv4              string                       `json:"current_ipv4,omitempty"`
+	CurrentIPv6              string                       `json:"current_ipv6,omitempty"`
 	CurrentAccessID          string                       `json:"current_access_id,omitempty"`
 	LastSeen                 string                       `json:"last_seen,omitempty"`
 	Vendor                   string                       `json:"vendor,omitempty"`
@@ -144,6 +146,7 @@ func ProjectDeviceInventoryListItem(item EndpointDeviceInventory) DeviceInventor
 		DeviceName: item.DeviceName, BrandReference: item.BrandReference,
 		EndpointID: item.EndpointID, PrimaryMAC: item.PrimaryMAC, OwnerAccount: item.OwnerAccount,
 		OwnerName: item.OwnerName, CurrentAccount: item.CurrentAccount, CurrentIP: item.CurrentIP,
+		CurrentIPv4: item.CurrentIPv4, CurrentIPv6: item.CurrentIPv6,
 		CurrentAccountCandidates: append([]string{}, item.CurrentAccountCandidates...), CurrentAccountConflict: item.CurrentAccountConflict,
 		CurrentAccountObservedAt: item.CurrentAccountObservedAt, CurrentAccessConflict: item.CurrentAccessConflict,
 		CurrentAccessID: item.CurrentAccessID, LastSeen: item.LastSeen, Vendor: item.Vendor,
@@ -704,6 +707,8 @@ type EndpointDeviceInventory struct {
 	MergeStatus             string                          `json:"merge_status"`
 	CurrentAccount          string                          `json:"current_account,omitempty"`
 	CurrentIP               string                          `json:"current_ip,omitempty"` // Most recently observed address; does not imply online status.
+	CurrentIPv4             string                          `json:"current_ipv4,omitempty"` // Most recently observed IPv4 address; operational key for policies and risk.
+	CurrentIPv6             string                          `json:"current_ipv6,omitempty"` // Most recently observed IPv6 address; SLAAC evidence, never substitutes for IPv4.
 	CurrentAccessID         string                          `json:"current_access_id,omitempty"`
 	Accounts                []string                        `json:"accounts"`
 	IPs                     []string                        `json:"ips"`

@@ -8191,6 +8191,8 @@ components:
         current_account_observed_at: { type: string, format: date-time }
         current_access_conflict: { type: boolean }
         current_ip: { type: string }
+        current_ipv4: { type: string }
+        current_ipv6: { type: string }
         current_access_id: { type: string }
         last_seen: { type: string, format: date-time }
         vendor: { type: string }
@@ -8745,7 +8747,13 @@ components:
           type: string
         current_ip:
           type: string
-          description: 最近观测 IP，不保证当前在线。字段名保留以兼容现有客户端。
+          description: 最近观测 IP（任意协议族），不保证当前在线。字段名保留以兼容现有客户端。
+        current_ipv4:
+          type: string
+          description: 最近观测 IPv4，策略、风险与 4K 身份使用的运维主地址。
+        current_ipv6:
+          type: string
+          description: 最近观测 IPv6，SLAAC 证据，不替代 IPv4。
         current_access_id:
           type: string
         accounts:
