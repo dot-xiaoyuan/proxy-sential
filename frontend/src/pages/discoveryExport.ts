@@ -33,7 +33,7 @@ function deviceType(item: ExportableDevice, types: Record<string, string>): stri
 }
 
 export function discoveryCSV(items: ExportableDevice[], types: Record<string, string>): string {
-  const rows: string[][] = [['标识', '名称', 'MAC', '当前地址', '设备类型', '品牌', '型号', '操作系统', '网络域', 'VLAN', '采集传感器', '证据状态', '识别置信度', '识别规则', '首次观测', '最近观测', '证据数']]
+  const rows: string[][] = [['标识', '名称', 'MAC', '当前地址', '设备类型', '品牌', '型号', '操作系统', '网络域', 'VLAN', '采集传感器', '证据状态', '识别置信度', '识别规则', '窗口内首次观测', '最近观测', '证据数']]
   for (const item of items) {
     rows.push([
       item.id ?? '',
