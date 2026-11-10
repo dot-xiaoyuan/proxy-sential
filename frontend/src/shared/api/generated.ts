@@ -7962,6 +7962,10 @@ export interface components {
                 new: number;
                 typed: number;
             }[];
+            top_types?: {
+                device_type: string;
+                count: number;
+            }[];
             /** Format: date-time */
             as_of: string;
             window_days: number;

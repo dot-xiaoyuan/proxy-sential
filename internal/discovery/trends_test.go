@@ -19,6 +19,10 @@ func TestDiscoveryTrendsFillsMissingDays(t *testing.T) {
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"day", "new", "typed"}).
 			AddRow(today, 4, 3))
+	mock.ExpectQuery(`SELECT coalesce\(role,''\)`).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"device_type", "count"}).
+			AddRow("mobile", 3).AddRow("camera", 1))
 	result, err := (Repository{DB: db}).DiscoveryTrends(context.Background(), 7)
 	if err != nil {
 		t.Fatal(err)
@@ -31,6 +35,9 @@ func TestDiscoveryTrendsFillsMissingDays(t *testing.T) {
 	}
 	if result.Days[0].New != 0 {
 		t.Fatalf("zero day=%+v", result.Days[0])
+	}
+	if len(result.TopTypes) != 2 || result.TopTypes[0].DeviceType != "mobile" || result.TopTypes[0].Count != 3 {
+		t.Fatalf("top types=%+v", result.TopTypes)
 	}
 	if err = mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

@@ -8392,6 +8392,14 @@ components:
               date: { type: string }
               new: { type: integer }
               typed: { type: integer }
+        top_types:
+          type: array
+          items:
+            type: object
+            required: [device_type, count]
+            properties:
+              device_type: { type: string }
+              count: { type: integer }
         as_of: { type: string, format: date-time }
         window_days: { type: integer }
     DiscoveryCoverage:

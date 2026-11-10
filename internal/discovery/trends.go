@@ -12,10 +12,16 @@ type DiscoveryTrendDay struct {
 	Typed int    `json:"typed"`
 }
 
+type DiscoveryTrendType struct {
+	DeviceType string `json:"device_type"`
+	Count      int    `json:"count"`
+}
+
 type DiscoveryTrends struct {
-	Days       []DiscoveryTrendDay `json:"days"`
-	AsOf       time.Time           `json:"as_of"`
-	WindowDays int                 `json:"window_days"`
+	Days       []DiscoveryTrendDay  `json:"days"`
+	TopTypes   []DiscoveryTrendType `json:"top_types,omitempty"`
+	AsOf       time.Time            `json:"as_of"`
+	WindowDays int                  `json:"window_days"`
 }
 
 // DiscoveryTrends counts newly seen endpoint profiles per UTC day. It reads
@@ -45,7 +51,24 @@ func (r Repository) DiscoveryTrends(ctx context.Context, days int) (DiscoveryTre
 	if err = rows.Err(); err != nil {
 		return DiscoveryTrends{}, err
 	}
+	typeRows, err := r.DB.QueryContext(ctx, `SELECT coalesce(role,''), count(*) FROM endpoint_recognition_summary WHERE first_seen>=$1 AND first_seen<=now() AND coalesce(role,'')<>'' GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 8`, start)
+	if err != nil {
+		return DiscoveryTrends{}, err
+	}
 	result := DiscoveryTrends{Days: make([]DiscoveryTrendDay, 0, days), AsOf: now, WindowDays: days}
+	for typeRows.Next() {
+		var item DiscoveryTrendType
+		if err = typeRows.Scan(&item.DeviceType, &item.Count); err != nil {
+			typeRows.Close()
+			return DiscoveryTrends{}, err
+		}
+		result.TopTypes = append(result.TopTypes, item)
+	}
+	if err = typeRows.Err(); err != nil {
+		typeRows.Close()
+		return DiscoveryTrends{}, err
+	}
+	typeRows.Close()
 	for i := 0; i < days; i++ {
 		date := start.AddDate(0, 0, i).Format("2006-01-02")
 		day, ok := counts[date]

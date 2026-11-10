@@ -384,6 +384,7 @@ export const handlers = [
         day.setUTCDate(base.getUTCDate() - (days - 1 - index))
         return { date: day.toISOString().slice(0, 10), new: (index % 5) + 1, typed: (index % 3) + 1 }
       }),
+      top_types: [{ device_type: 'mobile', count: 3 }, { device_type: 'camera', count: 1 }],
       as_of: '2026-11-10T02:00:00Z',
       window_days: days,
     })
