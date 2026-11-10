@@ -419,3 +419,15 @@ it('switches the trend window to 30 days', async () => {
   expect(await screen.findByText(/近 30 天新增/)).toBeInTheDocument()
 })
 
+
+it('toggles automatic refresh and remembers it', async () => {
+  localStorage.clear()
+  mockReads()
+  renderPanel()
+  const toggle = await screen.findByRole('switch', { name: '自动刷新' })
+  expect(toggle.getAttribute('aria-checked')).toBe('false')
+  fireEvent.click(toggle)
+  await waitFor(() => expect(toggle.getAttribute('aria-checked')).toBe('true'))
+  expect(localStorage.getItem('proxy-sentinel.discovery.auto-refresh')).toBe('true')
+})
+

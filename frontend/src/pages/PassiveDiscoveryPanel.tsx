@@ -13,6 +13,7 @@ import { Button,
   Modal,
   Select,
   Space,
+  Switch,
   Tag,
   Typography,
   message,
@@ -145,6 +146,13 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   }
   const [qualityOpen,setQualityOpen] = useState(false)
   const [trendDays,setTrendDays]=useState(7)
+  const [autoRefresh,setAutoRefresh]=useState(()=>{
+    try{return globalThis.localStorage.getItem('proxy-sentinel.discovery.auto-refresh')==='true'}catch{return false}
+  })
+  const toggleAutoRefresh=(value:boolean)=>{
+    setAutoRefresh(value)
+    try{globalThis.localStorage.setItem('proxy-sentinel.discovery.auto-refresh',String(value))}catch{}
+  }
   const quality=useQuery({queryKey:['device-recognition-summary'],queryFn:({signal})=>request<components['schemas']['DeviceRecognitionSummary']>('/device-recognition/summary',{signal}),enabled:qualityOpen,staleTime:60_000})
   const trends=useQuery({queryKey:['discovery-trends',trendDays],queryFn:({signal})=>request<components['schemas']['DiscoveryTrends']>(`/discovery/trends?days=${trendDays}`,{signal}),enabled:qualityOpen,staleTime:60_000})
   const [pageSize,setPageSize] = useState(20)
@@ -167,12 +175,12 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   for(const key of ['category','type','protocol','state','domain','vlan','window','capability','random_mac','os']){const value=params.get(`discovery_${key}`);if(value)query.set(key,value)}
   const position=useCursorPagePosition({path:'/discovery/devices/position',query,page:page+1,pageSize})
   if(position.cursor)query.set('cursor',position.cursor)
-  const devices = useQuery({queryKey:['discovery-center',query.toString()],queryFn:({signal})=>request<Page>(`/discovery/devices?${query}`,{signal}),enabled:position.ready})
+  const devices = useQuery({queryKey:['discovery-center',query.toString()],queryFn:({signal})=>request<Page>(`/discovery/devices?${query}`,{signal}),enabled:position.ready,refetchInterval:autoRefresh?60_000:false})
   const catalogue=useQuery({queryKey:['discovery-types'],queryFn:({signal})=>request<Catalogue>('/discovery/types',{signal})})
   const coverage=useQuery({queryKey:['discovery-coverage'],queryFn:({signal})=>request<Coverage>('/discovery/coverage',{signal})})
   const statistics=useQuery({queryKey:['discovery-statistics'],queryFn:({signal})=>request<Statistics>('/discovery/statistics',{signal}),enabled:coverage.data?.enabled===true})
   const metadataQuery=new URLSearchParams(query);metadataQuery.delete('cursor');metadataQuery.delete('limit')
-  const discoveryMetadata=useQuery({queryKey:['discovery-metadata',metadataQuery.toString()],queryFn:({signal})=>request<components['schemas']['DiscoveryDeviceMetadata']>(`/discovery/devices/metadata?${metadataQuery}`,{signal})})
+  const discoveryMetadata=useQuery({queryKey:['discovery-metadata',metadataQuery.toString()],queryFn:({signal})=>request<components['schemas']['DiscoveryDeviceMetadata']>(`/discovery/devices/metadata?${metadataQuery}`,{signal}),refetchInterval:autoRefresh?60_000:false})
   const metadataValue=(value?:number)=>value??(discoveryMetadata.isError?'统计读取失败':'统计中')
   // keepPreviousData 会保留上一次结果，只看 isPending 会让搜索看起来没有反应。
   // 输入尚未落到 URL、列表或统计仍在请求时都算“更新中”，给用户持续反馈。
@@ -294,7 +302,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
           <Select aria-label="证据状态" value={params.get('discovery_state')||''} options={[{value:'',label:'全部证据状态'},...Object.entries(states).filter(([k])=>view!=='iot'||k!=='candidate').map(([value,label])=>({value,label}))]} onChange={v=>change('state',v)}/>
           <Button size="small" type="text" onClick={()=>setMoreOpen(value=>!value)}>{moreOpen?'收起筛选':'更多筛选'}{['category','type','protocol','window','domain','vlan','random_mac','os'].filter(key=>params.get(`discovery_${key}`)).length?`（${['category','type','protocol','window','domain','vlan','random_mac','os'].filter(key=>params.get(`discovery_${key}`)).length}）`:''}</Button>
         </>}
-        extra={<div className="discovery-list-actions">{searching&&<span className="discovery-search-status" role="status" aria-live="polite"><LoadingOutlined aria-hidden="true" spin /> {draft.trim()||search?'正在搜索…':'正在加载…'}</span>}<span className="terminal-page-summary" aria-label="发现设备摘要"><span>当前页 <strong>{items.length}</strong> 个设备</span><span>本页明确类型 <strong>{typedPageCount}</strong></span><span>本页近15分钟观测 <strong>{recentPageCount}</strong></span></span><Button size="small" icon={<DownloadOutlined aria-hidden="true"/>} loading={exporting} onClick={()=>void exportDevices()}>导出</Button><Button type="link" size="small" onClick={()=>setParams(current=>{const next=new URLSearchParams(current);for(const key of [...next.keys()])if(key.startsWith("discovery_")&&key!=="discovery_view")next.delete(key);return next})}>清除筛选</Button></div>}
+        extra={<div className="discovery-list-actions"><span className="discovery-auto-refresh"><Switch size="small" aria-label="自动刷新" checked={autoRefresh} onChange={toggleAutoRefresh}/><Typography.Text type="secondary">自动刷新</Typography.Text></span>{searching&&<span className="discovery-search-status" role="status" aria-live="polite"><LoadingOutlined aria-hidden="true" spin /> {draft.trim()||search?'正在搜索…':'正在加载…'}</span>}<span className="terminal-page-summary" aria-label="发现设备摘要"><span>当前页 <strong>{items.length}</strong> 个设备</span><span>本页明确类型 <strong>{typedPageCount}</strong></span><span>本页近15分钟观测 <strong>{recentPageCount}</strong></span></span><Button size="small" icon={<DownloadOutlined aria-hidden="true"/>} loading={exporting} onClick={()=>void exportDevices()}>导出</Button><Button type="link" size="small" onClick={()=>setParams(current=>{const next=new URLSearchParams(current);for(const key of [...next.keys()])if(key.startsWith("discovery_")&&key!=="discovery_view")next.delete(key);return next})}>清除筛选</Button></div>}
       panel={moreOpen?<div className="app-filter-panel">
           <Select aria-label="设备分类" value={params.get('discovery_category')||''} options={[{value:'',label:'全部设备分类'},...Object.entries(categories).map(([value,label])=>({value,label}))]} onChange={v=>setParams(current=>{const next=new URLSearchParams(current);next.delete('discovery_type');if(v)next.set('discovery_category',v);else next.delete('discovery_category');return next},{replace:true})}/>
           <Select aria-label="发现协议" value={params.get('discovery_protocol')||''} options={[{value:'',label:'全部协议'},...Object.entries(protocols).map(([value,label])=>({value,label}))]} onChange={v=>change('protocol',v)}/>
