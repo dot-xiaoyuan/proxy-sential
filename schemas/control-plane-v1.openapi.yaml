@@ -7153,6 +7153,15 @@ components:
             properties:
               reason: { type: string }
               count: { type: integer }
+        top_models:
+          type: array
+          items:
+            type: object
+            required: [model, count]
+            properties:
+              model: { type: string }
+              brand: { type: string }
+              count: { type: integer }
         observability:
           type: array
           items: { $ref: "#/components/schemas/SourceObservability" }

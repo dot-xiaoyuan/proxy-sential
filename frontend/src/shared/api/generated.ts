@@ -6970,6 +6970,11 @@ export interface components {
                 reason: string;
                 count: number;
             }[];
+            top_models?: {
+                model: string;
+                brand?: string;
+                count: number;
+            }[];
             observability?: components["schemas"]["SourceObservability"][];
             ecosystem_matched: number;
             ecosystem_attributed: number;

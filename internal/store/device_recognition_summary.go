@@ -39,6 +39,12 @@ type RecognitionUntypedReason struct {
 	Count  int    `json:"count"`
 }
 
+type RecognitionModelCount struct {
+	Model string `json:"model"`
+	Brand string `json:"brand,omitempty"`
+	Count int    `json:"count"`
+}
+
 type DeviceRecognitionSummary struct {
 	BrandInferenceConflicts int                            `json:"brand_inference_conflicts"`
 	BrandInferenceEnabled   bool                           `json:"brand_inference_enabled"`
@@ -55,6 +61,7 @@ type DeviceRecognitionSummary struct {
 	TopBrands               []RecognitionBrandCount        `json:"top_brands,omitempty"`
 	TopTypeBrands           []RecognitionTypeBrandCount    `json:"top_type_brands,omitempty"`
 	UntypedReasons          []RecognitionUntypedReason     `json:"untyped_reasons,omitempty"`
+	TopModels               []RecognitionModelCount        `json:"top_models,omitempty"`
 	EcosystemMatched        int                            `json:"ecosystem_matched"`
 	EcosystemAttributed     int                            `json:"ecosystem_attributed"`
 	EcosystemUnattributed   int                            `json:"ecosystem_unattributed"`
@@ -157,6 +164,7 @@ func (s *DBStore) GetDeviceRecognitionSummary(ctx context.Context, version strin
 		}
 		return result.UntypedReasons[i].Count > result.UntypedReasons[j].Count
 	})
+	result.TopModels = topModels(items)
 	typeBrandCounts := map[[2]string]int{}
 	typeTotals := map[string]int{}
 	for _, item := range items {
@@ -284,3 +292,41 @@ func (s *DBStore) GetDeviceRecognitionSummary(ctx context.Context, version strin
 	}
 	return result, nil
 }
+
+func topModels(items []EndpointDeviceInventory) []RecognitionModelCount {
+	counts := map[string]int{}
+	brands := map[string]string{}
+	for _, item := range items {
+		model := strings.TrimSpace(item.Model)
+		if model == "" || model == "unknown" || deviceDimensionConflict(item, "model") || item.ModelConfidence < .8 {
+			continue
+		}
+		counts[model]++
+		if brands[model] == "" && item.Brand != "" && item.Brand != "unknown" {
+			brands[model] = item.Brand
+		}
+	}
+	type entry struct {
+		model, brand string
+		count        int
+	}
+	list := make([]entry, 0, len(counts))
+	for model, count := range counts {
+		list = append(list, entry{model: model, brand: brands[model], count: count})
+	}
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].count == list[j].count {
+			return list[i].model < list[j].model
+		}
+		return list[i].count > list[j].count
+	})
+	if len(list) > 8 {
+		list = list[:8]
+	}
+	result := make([]RecognitionModelCount, 0, len(list))
+	for _, item := range list {
+		result = append(result, RecognitionModelCount{Model: item.model, Brand: item.brand, Count: item.count})
+	}
+	return result
+}
+
