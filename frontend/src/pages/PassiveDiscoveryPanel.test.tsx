@@ -480,3 +480,12 @@ it('filters multiple VLANs from one input', async () => {
   await waitFor(() => expect(request.mock.calls.some(([path]) => new URL(String(path), 'http://x').searchParams.get('vlan') === '32,33')).toBe(true))
 })
 
+
+it('filters to current evidence without expired', async () => {
+  mockReads()
+  renderPanel()
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: '证据状态' }))
+  fireEvent.click(screen.getByText('当前有效（不含过期）'))
+  await waitFor(() => expect(request.mock.calls.some(([path]) => new URL(String(path), 'http://x').searchParams.get('state') === 'identified,candidate,conflict')).toBe(true))
+})
+

@@ -101,13 +101,15 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 		having = append(having, fmt.Sprintf("bool_or(origin=$%d)", len(args)))
 	}
 	if query.State != "" {
-		switch query.State {
-		case "identified", "candidate", "expired", "conflict":
-		default:
-			return indexedDeviceSelection{}, fmt.Errorf("invalid discovery state")
+		for _, state := range strings.Split(query.State, ",") {
+			switch strings.TrimSpace(state) {
+			case "identified", "candidate", "expired", "conflict":
+			default:
+				return indexedDeviceSelection{}, fmt.Errorf("invalid discovery state")
+			}
 		}
 		args = append(args, query.State)
-		classifiedWhere = append(classifiedWhere, "classification_status=$"+fmt.Sprint(len(args)))
+		classifiedWhere = append(classifiedWhere, "classification_status = ANY(string_to_array($"+fmt.Sprint(len(args))+", ','))")
 	}
 	if query.Capability != "" {
 		if query.Capability == "dumb" {
