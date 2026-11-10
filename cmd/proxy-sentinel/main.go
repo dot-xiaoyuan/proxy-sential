@@ -1333,7 +1333,10 @@ func runRiskMaterialize(args []string) error {
 		runCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer cancel()
 		if *incremental {
-			boundedCtx, stopBatch := context.WithTimeout(runCtx, 4*time.Second)
+			// The batch covers the ClickHouse feature read plus the risk
+			// apply transaction; on a loaded host the commit alone can need
+			// more than four seconds, and each timeout redoes the whole batch.
+			boundedCtx, stopBatch := context.WithTimeout(runCtx, 10*time.Second)
 			defer stopBatch()
 			result, err := materialize.RunIncrementalOnce(boundedCtx, backend, materialize.IncrementalOptions{SensorID: *sensorID, Window: *window, ClaimLimit: *claimLimit, FeatureLimit: *featureLimit, SkipExpiry: !*once})
 			if err != nil {
