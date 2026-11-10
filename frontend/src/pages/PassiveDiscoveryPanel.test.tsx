@@ -338,3 +338,21 @@ it('shows detail navigation across the current page', async () => {
   expect(screen.getByRole('button', { name: '下一台' })).toBeDisabled()
 })
 
+
+it('saves and applies discovery views', async () => {
+  localStorage.clear()
+  mockReads()
+  renderPanel(['/devices?tab=discovery&discovery_type=printer'])
+  fireEvent.click(await screen.findByRole('button', { name: /更多筛选/ }))
+  fireEvent.click(screen.getByRole('button', { name: '保存视图' }))
+  fireEvent.change(screen.getByRole('textbox', { name: '视图名称' }), { target: { value: '打印机视图' } })
+  fireEvent.click(screen.getByRole('button', { name: '保 存' }))
+  await waitFor(() => expect(localStorage.getItem('proxy-sentinel.discovery.views.v1')).toContain('打印机视图'))
+  expect(localStorage.getItem('proxy-sentinel.discovery.views.v1')).toContain('discovery_type=printer')
+  fireEvent.click(screen.getByRole('button', { name: '清除筛选' }))
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: '保存的视图' }))
+  fireEvent.click(screen.getByText('打印机视图'))
+  await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).includes('type=printer'))).toBe(true))
+  expect(screen.getByRole('button', { name: '删除视图' })).toBeInTheDocument()
+})
+
