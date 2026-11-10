@@ -115,6 +115,18 @@ func proveReusedFileCursor(cursor streamlog.SourceCursor, cutoverAt time.Time) b
 	return hex.EncodeToString(sum[:]) == cursor.TailSHA256
 }
 
+// sameSourceFilePath reports whether two configured paths resolve to the same
+// file, so a symlinked or retained alias does not masquerade as a second DHCP
+// source that still needs retirement.
+func sameSourceFilePath(a, b string) bool {
+	if a == b {
+		return true
+	}
+	resolvedA, errA := filepath.EvalSymlinks(a)
+	resolvedB, errB := filepath.EvalSymlinks(b)
+	return errA == nil && errB == nil && resolvedA == resolvedB
+}
+
 func runIngestStream(args []string) error {
 	fs := flag.NewFlagSet("ingest stream-run", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -193,14 +205,27 @@ func runIngestStream(args []string) error {
 	}
 	defer leaseStore.Close()
 	if *messagePath != "" {
-		var otherActive int
-		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM stream_source_cutovers
-WHERE state='active' AND sensor_id=$1
-  AND (source_kind='zeek-dhcp' OR source_kind='zeek-dhcp-binding' AND source_path<>$2)`, *sensor, *messagePath).Scan(&otherActive); err != nil {
+		rows, err := db.QueryContext(ctx, `SELECT source_kind, source_path FROM stream_source_cutovers
+WHERE state='active' AND sensor_id=$1 AND (source_kind='zeek-dhcp' OR source_kind='zeek-dhcp-binding')`, *sensor)
+		if err != nil {
 			return fmt.Errorf("check retired DHCP file sources: %w", err)
 		}
-		if otherActive > 0 {
-			return errors.New("retire old DHCP aggregate and binding sources before starting the per-message source")
+		defer rows.Close()
+		for rows.Next() {
+			var kind, sourcePath string
+			if err = rows.Scan(&kind, &sourcePath); err != nil {
+				return fmt.Errorf("check retired DHCP file sources: %w", err)
+			}
+			// A fresh per-message stream may coexist with stale cutovers that
+			// point at the same file through a different path (for example a
+			// retained directory or symlink); only a genuinely different DHCP
+			// file still needs its legacy reader retired.
+			if kind == "zeek-dhcp" || !sameSourceFilePath(sourcePath, *messagePath) {
+				return errors.New("retire old DHCP aggregate and binding sources before starting the per-message source")
+			}
+		}
+		if err = rows.Err(); err != nil {
+			return fmt.Errorf("check retired DHCP file sources: %w", err)
 		}
 	}
 	sources := make([]realtime.Source, 0, 5)
