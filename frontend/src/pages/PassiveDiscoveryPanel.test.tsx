@@ -263,6 +263,10 @@ it('shows identification quality when the status section opens', async () => {
   expect(screen.getByText('Apple 系统线索 2')).toBeInTheDocument()
   expect(await screen.findByText('近 7 天新增')).toBeInTheDocument()
   expect(screen.getByText('6 台 · 今天 4')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '华为 3' }))
+  await waitFor(() => expect(request.mock.calls.some(([path]) => decodeURIComponent(String(path)).includes('search=华为'))).toBe(true))
+  fireEvent.click(screen.getByRole('button', { name: '摄像头 · Hikvision 2' }))
+  await waitFor(() => expect(request.mock.calls.some(([path]) => decodeURIComponent(String(path)).includes('type=camera') && decodeURIComponent(String(path)).includes('search=Hikvision'))).toBe(true))
 })
 
 
