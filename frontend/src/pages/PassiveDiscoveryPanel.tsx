@@ -309,7 +309,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
         onSearchChange={setDraft}
         onSearch={value=>change('search', value.trim())}
         filters={<>
-          <Select aria-label="设备类型" showSearch optionFilterProp="label" value={params.get('discovery_type')||''} options={[{value:'',label:'全部设备类型'},...(catalogue.data?.items??[]).map(t=>({value:t.id,label:t.label}))]} onChange={v=>change('type',v)}/>
+          <Select aria-label="设备类型" mode="multiple" allowClear placeholder="全部设备类型" showSearch optionFilterProp="label" value={(params.get('discovery_type')||'').split(',').filter(Boolean)} options={(catalogue.data?.items??[]).map(t=>({value:t.id,label:t.label}))} onChange={values=>setParams(current=>{const next=new URLSearchParams(current);if(values.length)next.set('discovery_type',values.join(','));else next.delete('discovery_type');next.delete('discovery_category');return next},{replace:true})}/>
           <Select aria-label="证据状态" value={params.get('discovery_state')||''} options={[{value:'',label:'全部证据状态'},...Object.entries(states).filter(([k])=>view!=='iot'||k!=='candidate').map(([value,label])=>({value,label}))]} onChange={v=>change('state',v)}/>
           <Button size="small" type="text" onClick={()=>setMoreOpen(value=>!value)}>{moreOpen?'收起筛选':'更多筛选'}{['category','type','protocol','window','domain','vlan','random_mac','os'].filter(key=>params.get(`discovery_${key}`)).length?`（${['category','type','protocol','window','domain','vlan','random_mac','os'].filter(key=>params.get(`discovery_${key}`)).length}）`:''}</Button>
         </>}

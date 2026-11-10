@@ -39,6 +39,7 @@ function mockReads(observedPortResult: unknown = {
     if (path.startsWith('/discovery/devices?')) return Promise.resolve({ items: [deviceRow], ...(includeListTotal?{total:1}:{}), has_more: false, freshness: { status: 'ready', lag_seconds: 125, result_version: 1 } })
     if (path.startsWith('/discovery/devices/metadata?')) return Promise.resolve(path.includes('type=access_point')?{total:1,identified:1,candidate:0,conflict:0,expired:0,types:[{device_type:'access_point',count:1}],as_of:'2026-11-05T14:00:00Z',count_unit:'trusted_discovery_identity'}:{total:84,identified:42,candidate:35,conflict:4,expired:3,types:[{device_type:'router',count:30},{device_type:'access_point',count:12}],as_of:'2026-11-05T14:00:00Z',count_unit:'trusted_discovery_identity'})
     if (path.startsWith('/discovery/trends')) return Promise.resolve({ days: [{ date: '2026-11-06', new: 2, typed: 1 }, { date: '2026-11-07', new: 4, typed: 3 }], as_of: '2026-11-07T00:00:00Z', window_days: 7 })
+    if (path === '/discovery/types') return Promise.resolve({ version: 'test', items: [{ id: 'printer', label: '打印机', category: 'printer' }, { id: 'camera', label: '摄像头', category: 'camera' }] })
     if (path === '/device-recognition/summary') return Promise.resolve({ total_endpoints: 121, coverage: { device_type: { known: 15, rate: 15 / 121 }, brand: { known: 1, rate: 1 / 121 }, model: { known: 1, rate: 1 / 121 }, os_family: { known: 15, rate: 15 / 121 } }, mac_attribution_rate: 0.5, event_attribution_rate: 0, top_brands: [{ brand: '华为', count: 3 }], top_type_brands: [{ device_type: 'camera', brand: 'Hikvision', count: 2 }], untyped_reasons: [{ reason: 'Apple 系统线索', count: 2 }], top_models: [{ model: 'LaserJet Pro MFP', brand: 'HP', count: 1 }], top_os: [{ os: 'Apple OS', count: 2 }, { os: 'Windows', count: 1 }] })
     if (path.startsWith('/device-inventory/')) return Promise.resolve({ profile: { recognition: { source_matches: [{ source_id: 'satori', rule_id: 'fixture-dhcp-options', version: 'fixture', name: 'Hikvision DHCP options', strength: 'self_report', fields: ['dhcp_options'], observed: { dhcp_options: '53,61,12,81' } }] } } })
     if (path === '/discovery/coverage') return Promise.resolve(coverage)
@@ -454,5 +455,19 @@ it('debounces the operating system input', async () => {
   await waitFor(() => expect(request.mock.calls.some(([path]) => new URL(String(path), 'http://x').searchParams.get('os') === 'Apple OS')).toBe(true))
   const listOsValues = request.mock.calls.filter(([path]) => String(path).startsWith('/discovery/devices?')).map(([path]) => new URL(String(path), 'http://x').searchParams.get('os')).filter(Boolean)
   expect(listOsValues).toEqual(['Apple OS'])
+})
+
+
+it('filters multiple device types', async () => {
+  mockReads()
+  renderPanel()
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: '设备类型' }))
+  await waitFor(() => expect(document.querySelectorAll('.ant-select-item-option').length).toBeGreaterThan(0))
+  const typeOptions = Array.from(document.querySelectorAll<HTMLElement>('.ant-select-item-option'))
+  fireEvent.click(typeOptions.find(option => option.textContent === '打印机')!)
+  await waitFor(() => expect(Array.from(document.querySelectorAll<HTMLElement>('.ant-select-item-option')).some(option => option.textContent === '摄像头')).toBe(true))
+  const nextTypeOptions = Array.from(document.querySelectorAll<HTMLElement>('.ant-select-item-option'))
+  fireEvent.click(nextTypeOptions.find(option => option.textContent === '摄像头')!)
+  await waitFor(() => expect(request.mock.calls.some(([path]) => new URL(String(path), 'http://x').searchParams.get('type') === 'printer,camera')).toBe(true))
 })
 

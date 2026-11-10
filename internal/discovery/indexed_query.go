@@ -90,8 +90,11 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 	}
 	classifiedWhere := []string{}
 	if query.DeviceType != "" {
+		// Comma-separated types stay parameterized; the indexed path matches any
+		// of them against the identified/expired/candidate type columns.
 		args = append(args, query.DeviceType)
-		classifiedWhere = append(classifiedWhere, fmt.Sprintf("((classification_status='identified' AND effective_types[1]=$%[1]d) OR (classification_status='expired' AND historical_type=$%[1]d) OR (classification_status='candidate' AND candidate_role=$%[1]d))", len(args)))
+		match := "= ANY(string_to_array($" + fmt.Sprint(len(args)) + ", ','))"
+		classifiedWhere = append(classifiedWhere, "((classification_status='identified' AND effective_types[1]"+match+") OR (classification_status='expired' AND historical_type"+match+") OR (classification_status='candidate' AND candidate_role"+match+"))")
 	}
 	if query.Protocol != "" {
 		args = append(args, query.Protocol)
