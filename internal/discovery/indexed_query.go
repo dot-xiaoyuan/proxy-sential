@@ -98,7 +98,7 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 	}
 	if query.Protocol != "" {
 		args = append(args, query.Protocol)
-		having = append(having, fmt.Sprintf("bool_or(origin=$%d)", len(args)))
+		having = append(having, fmt.Sprintf("bool_or(origin = ANY(string_to_array($%d, ',')))", len(args)))
 	}
 	if query.State != "" {
 		for _, state := range strings.Split(query.State, ",") {

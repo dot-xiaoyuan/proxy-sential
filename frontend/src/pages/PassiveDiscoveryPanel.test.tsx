@@ -489,3 +489,18 @@ it('filters to current evidence without expired', async () => {
   await waitFor(() => expect(request.mock.calls.some(([path]) => new URL(String(path), 'http://x').searchParams.get('state') === 'identified,candidate,conflict')).toBe(true))
 })
 
+
+it('filters multiple protocols', async () => {
+  mockReads()
+  renderPanel()
+  fireEvent.click(screen.getByRole('button', { name: /更多筛选/ }))
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: '发现协议' }))
+  await waitFor(() => expect(document.querySelectorAll('.ant-select-item-option').length).toBeGreaterThan(0))
+  const protocolOptions = Array.from(document.querySelectorAll<HTMLElement>('.ant-select-item-option'))
+  fireEvent.click(protocolOptions.find(option => option.textContent === 'DHCP')!)
+  await waitFor(() => expect(Array.from(document.querySelectorAll<HTMLElement>('.ant-select-item-option')).some(option => option.textContent === 'DNS-SD')).toBe(true))
+  const nextProtocolOptions = Array.from(document.querySelectorAll<HTMLElement>('.ant-select-item-option'))
+  fireEvent.click(nextProtocolOptions.find(option => option.textContent === 'DNS-SD')!)
+  await waitFor(() => expect(request.mock.calls.some(([path]) => new URL(String(path), 'http://x').searchParams.get('protocol') === 'dhcp,dns_sd')).toBe(true))
+})
+
