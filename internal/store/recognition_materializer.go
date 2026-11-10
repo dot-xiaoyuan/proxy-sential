@@ -290,7 +290,12 @@ func (s *DBStore) runRecognitionMaterializerWorker(ctx context.Context, worker s
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "recognition materialize failed for %s: %v\n", job.EndpointID, err)
 			}
-			finishCtx, finishCancel := context.WithTimeout(ctx, 5*time.Second)
+			// Finishing a recognition job writes the fingerprint summary and
+			// discovery classification fields. On the loaded 184 host that
+			// write regularly exceeded five seconds; the completion then failed
+			// and the device stayed untyped. Keep the write bounded by the
+			// service context but allow it to settle.
+			finishCtx, finishCancel := context.WithTimeout(ctx, 20*time.Second)
 			if finishErr := s.finishRecognitionJob(finishCtx, job, err); finishErr != nil {
 				fmt.Fprintf(os.Stderr, "recognition completion failed for %s: %v\n", job.EndpointID, finishErr)
 				err = finishErr
