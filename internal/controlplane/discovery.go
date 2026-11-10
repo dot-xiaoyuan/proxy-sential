@@ -126,6 +126,22 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 			return
 		}
 		writeJSON(w, 200, result)
+	case path == "/discovery/trends" && r.Method == "GET":
+		days := 7
+		if v := r.URL.Query().Get("days"); v != "" {
+			n, e := strconv.Atoi(v)
+			if e != nil || n < 1 || n > 30 {
+				writeError(w, 400, "bad_window", "趋势天数无效")
+				return
+			}
+			days = n
+		}
+		result, e := repo.DiscoveryTrends(ctx, days)
+		if e != nil {
+			writeError(w, 500, "trends_read", "读取发现趋势失败")
+			return
+		}
+		writeJSON(w, 200, result)
 	case path == "/discovery/coverage" && r.Method == "GET":
 		s.handleDiscoveryCoverage(w, r, repo)
 	case (path == "/discovery/history" || path == "/discovery/history/metadata" || path == "/discovery/history/position") && r.Method == "GET":

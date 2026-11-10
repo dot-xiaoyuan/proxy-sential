@@ -375,6 +375,19 @@ export const handlers = [
       },
     )
   }),
+  http.get('/api/v1/discovery/trends', () => HttpResponse.json({
+    days: [
+      { date: '2026-11-04', new: 3, typed: 2 },
+      { date: '2026-11-05', new: 5, typed: 3 },
+      { date: '2026-11-06', new: 2, typed: 1 },
+      { date: '2026-11-07', new: 6, typed: 4 },
+      { date: '2026-11-08', new: 4, typed: 2 },
+      { date: '2026-11-09', new: 8, typed: 5 },
+      { date: '2026-11-10', new: 4, typed: 3 },
+    ],
+    as_of: '2026-11-10T02:00:00Z',
+    window_days: 7,
+  })),
   http.get('/api/v1/device-inventory/:endpointId', () => HttpResponse.json({
     profile: { recognition: { source_matches: [
       { source_id: 'satori', rule_id: 'fixture-dhcp-options', version: 'fixture', name: 'Hikvision DHCP options', strength: 'self_report', fields: ['dhcp_options'], observed: { dhcp_options: '53,61,12,81' }, direction: 'client' },

@@ -174,6 +174,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/discovery/trends": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Newly seen endpoint profiles per UTC day; requires identity:read. */
+        get: operations["getDiscoveryTrends"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/discovery/passive-signals": {
         parameters: {
             query?: never;
@@ -7930,6 +7947,16 @@ export interface components {
                 category: string;
             }[];
         };
+        DiscoveryTrends: {
+            days: {
+                date: string;
+                new: number;
+                typed: number;
+            }[];
+            /** Format: date-time */
+            as_of: string;
+            window_days: number;
+        };
         DiscoveryCoverage: {
             enabled: boolean;
             scope?: string;
@@ -9555,6 +9582,42 @@ export interface operations {
                 };
             };
             /** @description Read failed; never replaced by an empty result */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getDiscoveryTrends: {
+        parameters: {
+            query?: {
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Discovery trend */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryTrends"];
+                };
+            };
+            /** @description Invalid window */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Read failed */
             500: {
                 headers: {
                     [name: string]: unknown;

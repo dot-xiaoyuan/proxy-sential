@@ -108,6 +108,12 @@ function dhcpHintLabel(hint:string) {
   return hint
 }
 
+function trendBucket(value:number,max:number) {
+  if(value<=0)return 0
+  if(max<=0)return 1
+  return Math.min(5,Math.max(1,Math.ceil(value/max*5)))
+}
+
 function secondaryTypeClue(item:Device, types:Record<string,string>, signal?:PassiveSignal) {
   if(dumbTerminal(item))return `服务能力线索 · ${dumbTerminal(item)}`
   if(signal?.device_hint)return `${dhcpHintLabel(signal.device_hint)} · DHCP ${signal.dhcp_historical?'历史线索':'线索'}`
@@ -138,6 +144,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   }
   const [qualityOpen,setQualityOpen] = useState(false)
   const quality=useQuery({queryKey:['device-recognition-summary'],queryFn:({signal})=>request<components['schemas']['DeviceRecognitionSummary']>('/device-recognition/summary',{signal}),enabled:qualityOpen,staleTime:60_000})
+  const trends=useQuery({queryKey:['discovery-trends'],queryFn:({signal})=>request<components['schemas']['DiscoveryTrends']>('/discovery/trends?days=7',{signal}),enabled:qualityOpen,staleTime:60_000})
   const [pageSize,setPageSize] = useState(20)
   const filterKey = [view,search,pageSize,...['category','type','protocol','state','domain','vlan','window','capability'].map(k=>params.get(`discovery_${k}`)||'')].join('|')
   const [paging,setPaging] = useState({key:filterKey,page:0})
@@ -321,6 +328,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
           {quality.data.top_brands?.length?<span className="recognition-quality-brands"><Typography.Text type="secondary">厂商 Top</Typography.Text>{quality.data.top_brands.map(item=><Tag key={item.brand}>{item.brand} {item.count}</Tag>)}</span>:null}
           {quality.data.top_type_brands?.length?<span className="recognition-quality-brands"><Typography.Text type="secondary">类型厂商</Typography.Text>{quality.data.top_type_brands.map(item=><Tag key={`${item.device_type}:${item.brand}`}>{types[item.device_type]??deviceTypeLabel(item.device_type)} · {item.brand} {item.count}</Tag>)}</span>:null}
           {quality.data.untyped_reasons?.length?<span className="recognition-quality-brands"><Typography.Text type="secondary">未识别原因</Typography.Text>{quality.data.untyped_reasons.map(item=><Tag key={item.reason}>{item.reason} {item.count}</Tag>)}</span>:null}
+          {trends.data?.days?.length?<span className="discovery-trend" aria-label="近 7 天新增设备"><Typography.Text type="secondary">近 7 天新增</Typography.Text><span className="discovery-trend-bars">{trends.data.days.map(day=><span key={day.date} className={`discovery-trend-bar is-${trendBucket(day.new,Math.max(...trends.data.days.map(item=>item.new),1))}`} title={`${day.date} 新增 ${day.new}，明确类型 ${day.typed}`}/>)}</span><Typography.Text type="secondary">{trends.data.days.reduce((sum,day)=>sum+day.new,0)} 台 · 今天 {trends.data.days[trends.data.days.length-1]?.new??0}</Typography.Text></span>:null}
         </>}
         {quality.isLoading&&<Typography.Text type="secondary">识别质量读取中</Typography.Text>}
       </div>}

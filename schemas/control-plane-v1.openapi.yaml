@@ -101,6 +101,20 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/DiscoveryCoverage' }
         '500': { description: Read failed; never replaced by an empty result }
+  /discovery/trends:
+    get:
+      operationId: getDiscoveryTrends
+      description: Newly seen endpoint profiles per UTC day; requires identity:read.
+      parameters:
+        - { name: days, in: query, schema: { type: integer, minimum: 1, maximum: 30, default: 7 } }
+      responses:
+        '200':
+          description: Discovery trend
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DiscoveryTrends' }
+        '400': { description: Invalid window }
+        '500': { description: Read failed }
   /discovery/passive-signals:
     get:
       operationId: getDiscoveryPassiveSignals
@@ -8346,6 +8360,21 @@ components:
               id: { type: string }
               label: { type: string }
               category: { type: string }
+    DiscoveryTrends:
+      type: object
+      required: [days, as_of, window_days]
+      properties:
+        days:
+          type: array
+          items:
+            type: object
+            required: [date, new, typed]
+            properties:
+              date: { type: string }
+              new: { type: integer }
+              typed: { type: integer }
+        as_of: { type: string, format: date-time }
+        window_days: { type: integer }
     DiscoveryCoverage:
       type: object
       required: [enabled, items]
