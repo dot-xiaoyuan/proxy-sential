@@ -52,8 +52,11 @@ func (s *DBStore) StartStreamRouterFreshCutover(ctx context.Context, sensor, can
 		point := "parseDateTime64BestEffort(" + chQuote(cursor.Time.UTC().Format(time.RFC3339Nano)) + ",6)"
 		lower += "(indexed_at>" + point + " OR (indexed_at=" + point + " AND event_key>" + chQuote(cursorKey) + ")) AND "
 	}
+	// The cutoff audit must scan the sensor's whole router index; on the 184
+	// host that is tens of millions of rows, so a 10s cap times out before the
+	// audited counts are produced. Keep one thread but allow a settled scan.
 	query := fmt.Sprintf(`SELECT countIf(%sindexed_at<%s),countIf(indexed_at>=%s) FROM stream_router_signal_index
-	 WHERE sensor_id=%s SETTINGS max_threads=1,max_execution_time=10 FORMAT TSV`, lower, stamp, stamp, chQuote(sensor))
+	 WHERE sensor_id=%s SETTINGS max_threads=1,max_execution_time=90 FORMAT TSV`, lower, stamp, stamp, chQuote(sensor))
 	raw, err := s.ch.query(ctx, query)
 	if err != nil {
 		return 0, err
