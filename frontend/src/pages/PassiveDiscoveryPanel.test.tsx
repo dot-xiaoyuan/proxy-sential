@@ -36,7 +36,7 @@ function mockReads(observedPortResult: unknown = {
     if (path.startsWith('/discovery/observed-ports?')) {
       return observedPortResult instanceof Error ? Promise.reject(observedPortResult) : Promise.resolve(observedPortResult)
     }
-    if (path.startsWith('/discovery/devices?')) return Promise.resolve({ items: [deviceRow], ...(includeListTotal?{total:1}:{}), has_more: false })
+    if (path.startsWith('/discovery/devices?')) return Promise.resolve({ items: [deviceRow], ...(includeListTotal?{total:1}:{}), has_more: false, freshness: { status: 'ready', lag_seconds: 125, result_version: 1 } })
     if (path.startsWith('/discovery/devices/metadata?')) return Promise.resolve(path.includes('type=access_point')?{total:1,identified:1,candidate:0,conflict:0,expired:0,types:[{device_type:'access_point',count:1}],as_of:'2026-11-05T14:00:00Z',count_unit:'trusted_discovery_identity'}:{total:84,identified:42,candidate:35,conflict:4,expired:3,types:[{device_type:'router',count:30},{device_type:'access_point',count:12}],as_of:'2026-11-05T14:00:00Z',count_unit:'trusted_discovery_identity'})
     if (path.startsWith('/discovery/trends')) return Promise.resolve({ days: [{ date: '2026-11-06', new: 2, typed: 1 }, { date: '2026-11-07', new: 4, typed: 3 }], as_of: '2026-11-07T00:00:00Z', window_days: 7 })
     if (path === '/device-recognition/summary') return Promise.resolve({ total_endpoints: 121, coverage: { device_type: { known: 15, rate: 15 / 121 }, brand: { known: 1, rate: 1 / 121 }, model: { known: 1, rate: 1 / 121 }, os_family: { known: 15, rate: 15 / 121 } }, mac_attribution_rate: 0.5, event_attribution_rate: 0, top_brands: [{ brand: '华为', count: 3 }], top_type_brands: [{ device_type: 'camera', brand: 'Hikvision', count: 2 }], untyped_reasons: [{ reason: 'Apple 系统线索', count: 2 }], top_models: [{ model: 'LaserJet Pro MFP', brand: 'HP', count: 1 }], top_os: [{ os: 'Apple OS', count: 2 }, { os: 'Windows', count: 1 }] })
@@ -100,6 +100,7 @@ it('shows complete discovery and confirmed type counts using the same metadata s
   expect(overview).toHaveTextContent('待核实 35')
   expect(overview).toHaveTextContent('类型冲突 4')
   expect(overview).toHaveTextContent('证据过期 3')
+  expect(overview).toHaveTextContent('数据延迟 2 分钟')
   expect(overview).toHaveTextContent('路由器 30')
   expect(overview).toHaveTextContent('无线接入点 12')
   const routerTypeButton = screen.getAllByRole('button').find(button => button.textContent === '路由器 30')
