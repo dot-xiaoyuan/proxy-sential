@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"strings"
 )
@@ -64,6 +65,17 @@ func Load(path string) (Config, error) {
 			return Config{}, fmt.Errorf("duplicate or ambiguous shared source %s/%s", s.SensorID, s.Source)
 		}
 		seen[key] = s
+	}
+	// Legacy observation configs may request a capture bypass and a one-device
+	// threshold. Neither is sufficient to call router sharing a violation:
+	// production readers must retain verified coverage and two distinct devices.
+	if cfg.SkipCaptureVerification {
+		log.Print("shared access configuration: capture verification bypass disabled")
+		cfg.SkipCaptureVerification = false
+	}
+	if cfg.MinDeviceBound == 1 {
+		log.Print("shared access configuration: min_device_bound raised to 2")
+		cfg.MinDeviceBound = 2
 	}
 	return cfg, nil
 }

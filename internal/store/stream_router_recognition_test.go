@@ -118,6 +118,27 @@ func TestStreamRouterCursorClaimsBySensorAndRejectsLostLease(t *testing.T) {
 	}
 }
 
+func TestStreamRouterFinishSurvivesWriteWait(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	store := &DBStore{pg: &PostgresStore{db: db}}
+	stamp := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
+	cursor := streamRouterCursor{IndexedAt: stamp, EventKey: "event-a", Owner: "owner-a"}
+	mock.ExpectExec(`UPDATE stream_router_recognition_state SET`).
+		WithArgs("sensor-a", "owner-a", stamp, true, "event-a", 100, "").
+		WillDelayFor(6 * time.Second).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	if err := store.finishStreamRouterRecognition(context.Background(), "sensor-a", cursor, 100, nil); err != nil {
+		t.Fatalf("a delayed cursor commit must finish within the recognition lease: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestStreamRouterCursorWaitsForAuditedCutover(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

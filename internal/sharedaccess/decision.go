@@ -37,8 +37,15 @@ type ObservationDecision struct {
 func NewObservationDecision(w Window, r Result, cfg Config, now time.Time) ObservationDecision {
 	p := ObservationPolicy()
 	state := "insufficient"
-	if r.State == "basis_present" {
+	// Keep the persisted policy decision safe even if an old caller passes a
+	// bypassed evaluation result. A record-only action is still a violation
+	// record and therefore needs independently verified sharing evidence.
+	if r.State == "basis_present" && r.AccountID != "" && w.Complete && w.CoverageVerified &&
+		w.StrongAnchor != "" && w.DeviceLowerBound >= max(2, cfg.DeviceBound()) && len(w.Conflicts) == 0 {
 		state = "matched"
+	} else if r.State == "basis_present" {
+		r.State = "insufficient"
+		r.Reasons = append(r.Reasons, "confirmed_shared_observation_required")
 	}
 	expires := w.LastObservedAt.Add(cfg.Freshness())
 	if w.LastObservedAt.IsZero() || !now.Before(expires) {

@@ -98,7 +98,10 @@ func (s *DBStore) claimStreamRouterRecognition(ctx context.Context, sensor, owne
 }
 
 func (s *DBStore) finishStreamRouterRecognition(ctx context.Context, sensor string, next streamRouterCursor, processed int, runErr error) error {
-	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	// The cursor write is a small transaction, but on 184 it can wait behind
+	// PostgreSQL WAL flushes for more than five seconds. Keep it bounded well
+	// inside the 90-second lease so a successful scoring batch is not replayed.
+	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer cancel()
 	var stamp any
 	if !next.IndexedAt.IsZero() {

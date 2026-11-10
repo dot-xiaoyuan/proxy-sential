@@ -145,4 +145,34 @@ func TestRouterSharingDecisionRecordOnly(t *testing.T) {
 	if got.Result != "insufficient" || got.ExecutionID != "" || got.Violated || got.Known {
 		t.Fatalf("insufficient should not become matched: %+v", got)
 	}
+	r.State = "basis_present"
+	w.StrongAnchor = ""
+	w.DeviceLowerBound = 1
+	w.CoverageVerified = false
+	got = NewObservationDecision(w, r, Config{FreshnessSeconds: 180, SkipCaptureVerification: true, MinDeviceBound: 1}, now)
+	if got.Result == "matched" || got.ExecutionID != "" || got.Violated {
+		t.Fatalf("legacy capture bypass turned weak evidence into a violation: %+v", got)
+	}
+}
+
+func TestRecordOnlyDecisionRejectsEachWeakProof(t *testing.T) {
+	now := time.Now().UTC()
+	base := Window{ID: "proof", LastObservedAt: now, Complete: true, CoverageVerified: true, StrongAnchor: "ieee1905_association", DeviceLowerBound: 2}
+	cfg := Config{FreshnessSeconds: 180, SkipCaptureVerification: true, MinDeviceBound: 1}
+	for name, weaken := range map[string]func(*Window){
+		"no_anchor":   func(w *Window) { w.StrongAnchor = "" },
+		"one_device":  func(w *Window) { w.DeviceLowerBound = 1 },
+		"no_coverage": func(w *Window) { w.CoverageVerified = false },
+		"incomplete":  func(w *Window) { w.Complete = false },
+		"conflict":    func(w *Window) { w.Conflicts = []string{"identity_conflict"} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := base
+			weaken(&w)
+			got := NewObservationDecision(w, Result{State: "basis_present", AccountID: "account"}, cfg, now)
+			if got.Result != "insufficient" || got.Violated || got.ExecutionID != "" || got.Attribution.State != "insufficient" {
+				t.Fatalf("weak proof created a record-only violation: %+v", got)
+			}
+		})
+	}
 }
