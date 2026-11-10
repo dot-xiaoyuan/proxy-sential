@@ -140,7 +140,7 @@ export function TerminalInventoryIdentity({ device, href, showName = true }: { d
           <Typography.Text className="device-copy-control" copyable={{ text: ipv4 }} />
         </div>
         : name ? <Link className="terminal-inventory-primary" to={href} title={device.device_name?.status === 'historical' ? '历史观测名称' : name}>{name}</Link>
-          : device.primary_mac ? <div className="terminal-inventory-primary-mac"><DeviceMAC device={device} href={href} /></div>
+          : device.primary_mac ? <div className="terminal-inventory-mac-secondary"><DeviceMAC device={device} href={href} /></div>
             : device.current_ip ? <Link className="terminal-inventory-primary mono" to={href}>{device.current_ip}</Link> : null}
       {ipv4 && name && <Link className="terminal-inventory-name" to={href} title={device.device_name?.status === 'historical' ? '历史观测名称' : name}>{name}</Link>}
       {(ipv4 || name) && device.primary_mac && <DeviceMAC device={device} href={href} />}

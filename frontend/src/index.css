@@ -3858,6 +3858,7 @@ pre.wrap-code {
 .terminal-inventory-primary { color: #0f172a; font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
 .terminal-inventory-ipv4 { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .terminal-inventory-name { color: #475569; font-size: 13px; overflow-wrap: anywhere; }
+.terminal-inventory-mac-secondary { color: #64748b; font-size: 12px; overflow-wrap: anywhere; }
 .terminal-inventory-identity .device-mac-link { color: #64748b; }
 .terminal-inventory-primary-mac .device-mac-link { color: #0f172a; font-size: 13px; font-weight: 650; }
 .terminal-inventory-network, .terminal-inventory-profile { display: grid; gap: 6px; min-width: 0; }
@@ -5105,6 +5106,8 @@ pre.wrap-code {
 .discovery-overview-line .discovery-overview-count:hover { color: #1d4ed8; }
 .discovery-overview-line .discovery-overview-count.is-active { color: #1d4ed8; font-weight: 600; }
 .discovery-detail-profile-link { margin-left: 10px; padding-inline: 0; }
+.discovery-view-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.discovery-view-bar .ant-select { min-width: 150px; }
 .discovery-detail-nav { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .discovery-detail-nav .ant-typography { margin-right: 4px; }
 .discovery-overview-caption { font-size: 12px; }
