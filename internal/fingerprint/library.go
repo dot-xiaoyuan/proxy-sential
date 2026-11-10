@@ -460,6 +460,7 @@ func (l *Library) identifySignalsMeasured(signals Signals, observe func(string, 
 		result.Evidence = append(result.Evidence, "虚拟化平台厂商: "+result.Vendor)
 		recordDimensionEvidence(&result, "hypervisor_oui", "vendor", result.Vendor, ruleValues{deviceType: "virtual_machine"}, .75)
 	}
+	applyNetworkDeviceAmbiguityPolicy(&result, signals)
 	return result
 }
 

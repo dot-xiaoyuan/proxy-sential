@@ -39,7 +39,12 @@ func TestCampusSelfReportedDeviceRules(t *testing.T) {
 		if got.DeviceType != tc.deviceType || got.Brand != tc.brand || got.Model != tc.model || got.OSFamily != tc.osFamily {
 			t.Errorf("%s: got type=%q brand=%q model=%q os=%q, want %q %q %q %q", tc.name, got.DeviceType, got.Brand, got.Model, got.OSFamily, tc.deviceType, tc.brand, tc.model, tc.osFamily)
 		}
-		if tc.deviceType != "" && got.DeviceTypeConfidence < .8 {
+		hostnameOnlyNetwork := networkDeviceRoles[tc.deviceType] && len(tc.signals.Hostnames) > 0 && !hasIndependentNetworkSignal(tc.signals, tc.model)
+		if tc.deviceType != "" && hostnameOnlyNetwork {
+			if got.DeviceTypeConfidence > hostnameNetworkClueConfidence {
+				t.Errorf("%s: hostname clue confidence %.2f is above the clue threshold", tc.name, got.DeviceTypeConfidence)
+			}
+		} else if tc.deviceType != "" && got.DeviceTypeConfidence < .8 {
 			t.Errorf("%s: device type confidence %.2f is below the UI display threshold", tc.name, got.DeviceTypeConfidence)
 		}
 	}

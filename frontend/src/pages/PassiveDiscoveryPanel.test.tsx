@@ -31,7 +31,7 @@ function mockReads(observedPortResult: unknown = {
       connection_outcome: 'syn_ack_observed', last_seen: '2026-11-01T12:00:00Z', evidence_id: 'flow-443',
     }],
   },
-}, deviceRow: typeof device & {mac?:string;name?:string;device_type?:string;endpoint_id?:string;recognition?:{device_type:string;confidence:number}} = device, coverage = { enabled: true, items: [] as Array<{protocol:string;enabled:boolean;message_source_epoch?:string}> }, includeListTotal = true) {
+}, deviceRow: typeof device & {mac?:string;name?:string;device_type?:string;endpoint_id?:string;recognition?:{device_type?:string;confidence?:number;os_family?:string;os_family_confidence?:number;rule_version?:string;source?:string;evidence?:string[];brand?:string;model?:string;brand_inference_status?:string;brand_inference_brand?:string;brand_inference_confidence?:number}} = device, coverage = { enabled: true, items: [] as Array<{protocol:string;enabled:boolean;message_source_epoch?:string}> }, includeListTotal = true) {
   request.mockImplementation((path: string) => {
     if (path.startsWith('/discovery/observed-ports?')) {
       return observedPortResult instanceof Error ? Promise.reject(observedPortResult) : Promise.resolve(observedPortResult)
@@ -126,7 +126,7 @@ it('keeps the type overview visible when the statistics request fails', async ()
 it('renders endpoint types that are outside the IoT type catalogue', async () => {
   mockReads({items:{}}, {...device,device_type:'router'})
   renderPanel()
-  expect(await screen.findByText('路由器')).toBeVisible()
+  await waitFor(()=>expect(screen.getByRole('table')).toHaveTextContent('路由器 · 类型线索'))
   expect(screen.queryByText('待分类')).not.toBeInTheDocument()
 })
 
@@ -139,6 +139,36 @@ it('keeps a computer hostname out of confirmed device type and OS fields', async
   fireEvent.click(screen.getByRole('button',{name:'查看详情'}))
   expect(await screen.findByText(/名称可自行设置，不能据此确认设备类型、操作系统或用途/)).toBeInTheDocument()
   expect(screen.getByText(/仅有地址活动证据/)).toBeInTheDocument()
+})
+
+it('shows a hostname-only network role as a clue and does not show a weak OS conclusion', async () => {
+  mockReads({items:{}}, {...device, mac:'18:f2:2c:1b:ad:8c', endpoint_id:'mac:18:f2:2c:1b:ad:8c', recognition:{
+    device_type:'router', confidence:.65, os_family:'', os_family_confidence:0,
+    rule_version:'offline-test',
+    evidence:['IEEE OUI: TP-LINK','设备规则: TP-Link 路由器型号','主机名线索: 网络设备类型缺少独立协议确认，按类型线索展示'],
+  }})
+  renderPanel()
+  fireEvent.click(await screen.findByRole('button',{name:'查看详情'}))
+  const dialog = await screen.findByRole('dialog')
+  expect(within(dialog).getByText('路由器 · 类型线索（65%）')).toBeInTheDocument()
+  expect(within(dialog).getByText('类型置信度')).toBeInTheDocument()
+  expect(within(dialog).queryByText('识别操作系统')).not.toBeInTheDocument()
+  expect(within(dialog).queryByText('系统置信度')).not.toBeInTheDocument()
+})
+
+it('shows OS confidence separately from type confidence', async () => {
+  mockReads({items:{}}, {...device, mac:'02:00:00:20:40:01', endpoint_id:'mac:02:00:00:20:40:01', recognition:{
+    device_type:'desktop', confidence:.9, os_family:'Windows', os_family_confidence:.51,
+    rule_version:'offline-test',
+    evidence:['Fingerbank DHCP: Windows OS'],
+  }})
+  renderPanel()
+  fireEvent.click(await screen.findByRole('button',{name:'查看详情'}))
+  const dialog = await screen.findByRole('dialog')
+  expect(within(dialog).getByText('Windows · 系统线索（51%）')).toBeInTheDocument()
+  expect(within(dialog).getByText('类型置信度')).toBeInTheDocument()
+  expect(within(dialog).getByText('系统置信度')).toBeInTheDocument()
+  expect(within(dialog).getByText('51%')).toBeInTheDocument()
 })
 
 it('does not label a Huawei AP hostname as Android or a mobile device', async () => {
