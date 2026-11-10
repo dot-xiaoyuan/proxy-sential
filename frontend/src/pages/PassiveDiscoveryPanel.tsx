@@ -306,7 +306,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
       panel={moreOpen?<div className="app-filter-panel">
           <Select aria-label="设备分类" value={params.get('discovery_category')||''} options={[{value:'',label:'全部设备分类'},...Object.entries(categories).map(([value,label])=>({value,label}))]} onChange={v=>setParams(current=>{const next=new URLSearchParams(current);next.delete('discovery_type');if(v)next.set('discovery_category',v);else next.delete('discovery_category');return next},{replace:true})}/>
           <Select aria-label="发现协议" value={params.get('discovery_protocol')||''} options={[{value:'',label:'全部协议'},...Object.entries(protocols).map(([value,label])=>({value,label}))]} onChange={v=>change('protocol',v)}/>
-          <Select aria-label="最近观测范围" value={params.get('discovery_window')==='all'?'720h':params.get('discovery_window')||''} options={[{value:'',label:'近 24 小时'},{value:'168h',label:'近 7 天'},{value:'720h',label:'近 30 天'}]} onChange={v=>change('window',v)}/>
+          <Select aria-label="最近观测范围" value={params.get('discovery_window')==='all'?'720h':params.get('discovery_window')||''} options={[{value:'',label:'近 24 小时'},{value:'15m',label:'近 15 分钟'},{value:'168h',label:'近 7 天'},{value:'720h',label:'近 30 天'}]} onChange={v=>change('window',v)}/>
           <Input aria-label="网络域" placeholder="网络域" allowClear value={params.get('discovery_domain')||''} onChange={e=>change('domain',e.target.value)}/>
           <Input aria-label="VLAN" placeholder="VLAN" allowClear value={params.get('discovery_vlan')||''} onChange={e=>change('vlan',e.target.value)}/>
           <Input aria-label="操作系统" placeholder="操作系统" allowClear value={params.get('discovery_os')||''} onChange={e=>change('os',e.target.value)}/>
@@ -320,7 +320,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
       />
         <nav className="terminal-type-shortcuts" aria-label="快捷设备类型">{[{value:'',label:'全部设备'},{value:'printer',label:'打印机'},{value:'camera',label:'摄像机'},{value:'access_point',label:'无线 AP'},{value:'router',label:'路由器'},{value:'switch',label:'交换机'},{value:'desktop',label:'电脑'},{value:'mobile',label:'手机'},{value:'voip_phone',label:'VoIP 话机'}].map(t=><Button key={t.value} type={(params.get('discovery_type')||'')===t.value&&!dumbFilter?'primary':'default'} onClick={()=>shortcut(t.value)}>{t.label}</Button>)}<Button type={dumbFilter?'primary':'default'} onClick={()=>shortcut('',dumbFilter?'':'dumb')}>哑终端线索</Button></nav>
       </div>
-      <div className="discovery-overview-strip" aria-label="发现设备总览" title={`${params.get('discovery_window')==='168h'?'近 7 天':params.get('discovery_window')==='720h'?'近 30 天':'近 24 小时'} · 按采集范围与可信身份去重${discoveryMetadata.data?.as_of?` · 统计于 ${observedTimeTitle(discoveryMetadata.data.as_of)}`:''}`}>
+      <div className="discovery-overview-strip" aria-label="发现设备总览" title={`${params.get('discovery_window')==='15m'?'近 15 分钟':params.get('discovery_window')==='168h'?'近 7 天':params.get('discovery_window')==='720h'?'近 30 天':'近 24 小时'} · 按采集范围与可信身份去重${discoveryMetadata.data?.as_of?` · 统计于 ${observedTimeTitle(discoveryMetadata.data.as_of)}`:''}`}>
         <div className="discovery-overview-line">
           <strong>共 {metadataValue(discoveryMetadata.data?.total)} 个设备</strong>
           <Button type="text" size="small" className={`discovery-overview-count${params.get('discovery_state')==='identified'?' is-active':''}`} onClick={()=>toggleState('identified')}>已识别类型 <strong>{metadataValue(discoveryMetadata.data?.identified)}</strong></Button>

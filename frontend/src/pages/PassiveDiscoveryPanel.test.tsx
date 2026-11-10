@@ -432,3 +432,13 @@ it('toggles automatic refresh and remembers it', async () => {
   expect(localStorage.getItem('proxy-sentinel.discovery.auto-refresh')).toBe('true')
 })
 
+
+it('filters the last 15 minutes from the window select', async () => {
+  mockReads()
+  renderPanel()
+  fireEvent.click(screen.getByRole('button', { name: /更多筛选/ }))
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: '最近观测范围' }))
+  fireEvent.click(screen.getByText('近 15 分钟'))
+  await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).startsWith('/discovery/devices?') && String(path).includes('window=15m'))).toBe(true))
+})
+
