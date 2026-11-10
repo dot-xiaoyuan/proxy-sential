@@ -365,3 +365,12 @@ it('saves and applies discovery views', async () => {
   expect(screen.getByRole('button', { name: '删除视图' })).toBeInTheDocument()
 })
 
+
+it('filters by operating system from advanced filters', async () => {
+  mockReads()
+  renderPanel()
+  fireEvent.click(screen.getByRole('button', { name: /更多筛选/ }))
+  fireEvent.change(screen.getByRole('textbox', { name: '操作系统' }), { target: { value: 'Apple OS' } })
+  await waitFor(() => expect(request.mock.calls.some(([path]) => new URL(String(path), 'http://x').searchParams.get('os') === 'Apple OS')).toBe(true))
+})
+

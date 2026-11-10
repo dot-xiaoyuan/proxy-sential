@@ -123,6 +123,10 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 		args = append(args, query.Category)
 		classifiedWhere = append(classifiedWhere, "category=$"+fmt.Sprint(len(args)))
 	}
+	if query.OSFamily != "" {
+		args = append(args, "%"+strings.ToLower(query.OSFamily)+"%")
+		classifiedWhere = append(classifiedWhere, "lower(profile_os) LIKE $"+fmt.Sprint(len(args)))
+	}
 	matchedWhere := ""
 	if len(classifiedWhere) > 0 {
 		matchedWhere = " WHERE " + strings.Join(classifiedWhere, " AND ")
@@ -130,6 +134,7 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 	statement := `WITH recognition AS MATERIALIZED (
  SELECT endpoint_id,
   coalesce(role,'') role,
+  coalesce(os_family,'') os_family,
   coalesce(NULLIF(summary->>'device_type_confidence','')::double precision,confidence,0) profile_confidence,
   CASE WHEN jsonb_array_length(coalesce(summary->'conflict_dimensions','[]'::jsonb))>0
    THEN summary->'conflict_dimensions' ? 'device_type'
@@ -138,7 +143,7 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 ), candidate_rows AS (
  SELECT l.id,l.device_key,l.observed_at,l.valid_until,lower(coalesce(l.data->>'ip','')) search_ip,lower(coalesce(l.data->>'mac','')) search_mac,lower(coalesce(l.data->>'name','')) search_name,lower(coalesce(l.data->>'device_type','')) search_device_type,lower(coalesce(l.data->>'manufacturer','')) search_manufacturer,lower(coalesce(l.data->>'model_name','')) search_model,` + indexedIdentitySQL + ` identity_key,` + indexedObservationCapabilitiesSQL + ` observation_capabilities,` + indexedObservationTypeSQL + ` observed_type,
  coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id,'') linked_endpoint,
- coalesce(rec.role,'') profile_role,coalesce(rec.profile_confidence,0) profile_confidence,
+ coalesce(rec.role,'') profile_role,coalesce(rec.profile_confidence,0) profile_confidence,coalesce(rec.os_family,'') profile_os,
  CASE WHEN coalesce(rec.profile_confidence,0)>=0.8 AND NOT (coalesce(rec.profile_conflict,false)) THEN coalesce(rec.role,'') ELSE '' END profile_type,
  (coalesce(rec.profile_conflict,false)) AND coalesce(rec.role,'')<>'' profile_conflict,
  CASE WHEN NOT (coalesce(rec.profile_conflict,false)) AND coalesce(rec.profile_confidence,0)>=0.4 AND coalesce(rec.profile_confidence,0)<0.8 THEN coalesce(rec.role,'') ELSE '' END profile_candidate_role
@@ -160,6 +165,7 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
  WHERE ` + strings.Join(baseWhere, " AND ") + `
 ), candidate_grouped AS (
  SELECT identity_key,min(device_key COLLATE "C") device_key,max(observed_at) last_seen,
+ max(profile_os) profile_os,
  bool_or(observation_capabilities ?| ARRAY['printing','scanning']) has_printing,
  bool_or(observation_capabilities ? 'network_video') has_video,
  bool_or(observation_capabilities ?| ARRAY['casting','media_rendering']) has_media,

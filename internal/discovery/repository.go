@@ -241,6 +241,7 @@ type DeviceQuery struct {
 	Category                      string
 	Capability                    string
 	RandomMAC                     bool
+	OSFamily                      string
 	Limit                         int
 	Offset                        int
 	Cursor                        string
