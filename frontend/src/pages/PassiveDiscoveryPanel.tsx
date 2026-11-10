@@ -28,6 +28,7 @@ import { resolveDeviceBrand } from '../entities/device/brandMatcher'
 import { isRandomizedMAC } from '../entities/device/mac'
 import { DiscoveryEvidenceSummary } from './DiscoveryEvidenceSummary'
 import { discoveryCSV } from './discoveryExport'
+import { qualityReportCSV } from './discoveryQualityReport'
 import { loadDiscoveryViews, removeDiscoveryView, saveDiscoveryView } from './discoveryViews'
 import { deviceTypeLabel } from '../entities/device/DeviceInventoryCells'
 import { observedTimeLabel, observedTimeTitle } from '../shared/ui/observedTime'
@@ -252,6 +253,16 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
       setExporting(false)
     }
   }
+  const exportQualityReport=()=>{
+    if(!quality.data)return
+    const blob=new Blob(['\ufeff'+qualityReportCSV(quality.data,trends.data,types)],{type:'text/csv;charset=utf-8'})
+    const url=URL.createObjectURL(blob)
+    const anchor=document.createElement('a')
+    anchor.href=url
+    anchor.download=`discovery-quality-${new Date().toISOString().slice(0,10)}.csv`
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
   const show=(item:Device)=>{setHistoryPage(1);setSelected(item)}
   const columns=[
     {title:'设备',key:'identity',width:250,render:(_:unknown,item:Device)=>identity(item)},
@@ -331,6 +342,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
           {quality.data.top_os?.length?<span className="recognition-quality-brands"><Typography.Text type="secondary">系统 Top</Typography.Text>{quality.data.top_os.map(item=><Button key={item.os} type="text" size="small" className="recognition-quality-link" onClick={()=>change('os',item.os)}>{item.os} {item.count}</Button>)}</span>:null}
           {quality.data.top_models?.length?<span className="recognition-quality-brands"><Typography.Text type="secondary">型号 Top</Typography.Text>{quality.data.top_models.map(item=><Button key={`${item.brand}:${item.model}`} type="text" size="small" className="recognition-quality-link" onClick={()=>setParams(current=>{const next=new URLSearchParams(current);next.set('discovery_search',item.model);next.delete('discovery_type');next.delete('discovery_category');return next},{replace:true})}>{item.brand?`${item.brand} · `:''}{item.model} {item.count}</Button>)}</span>:null}
           {quality.data.untyped_reasons?.length?<span className="recognition-quality-brands"><Typography.Text type="secondary">未识别原因</Typography.Text>{quality.data.untyped_reasons.map(item=><Tag key={item.reason}>{item.reason} {item.count}</Tag>)}</span>:null}
+          <div className="recognition-quality-actions"><Button size="small" icon={<DownloadOutlined aria-hidden="true"/>} onClick={exportQualityReport} disabled={!quality.data}>导出质量报告</Button></div>
           {trends.data?.days?.length?<span className="discovery-trend" aria-label="近 7 天新增设备"><Typography.Text type="secondary">近 7 天新增</Typography.Text><span className="discovery-trend-bars">{trends.data.days.map(day=><span key={day.date} className={`discovery-trend-bar is-${trendBucket(day.new,Math.max(...trends.data.days.map(item=>item.new),1))}`} title={`${day.date} 新增 ${day.new}，明确类型 ${day.typed}`}/>)}</span><Typography.Text type="secondary">{trends.data.days.reduce((sum,day)=>sum+day.new,0)} 台 · 今天 {trends.data.days[trends.data.days.length-1]?.new??0}</Typography.Text></span>:null}
         </>}
         {quality.isLoading&&<Typography.Text type="secondary">识别质量读取中</Typography.Text>}

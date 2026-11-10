@@ -382,3 +382,28 @@ it('filters by operating system from advanced filters', async () => {
   await waitFor(() => expect(request.mock.calls.some(([path]) => new URL(String(path), 'http://x').searchParams.get('os') === 'Apple OS')).toBe(true))
 })
 
+
+it('exports the identification quality report', async () => {
+  mockReads()
+  renderPanel()
+  fireEvent.click(screen.getByText('采集与识别状态'))
+  await screen.findByText('类型覆盖')
+  const blobs: Blob[] = []
+  const create = URL.createObjectURL
+  const revoke = URL.revokeObjectURL
+  URL.createObjectURL = (blob: Blob | MediaSource) => { blobs.push(blob as Blob); return "blob:test" }
+  URL.revokeObjectURL = () => {}
+  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {})
+  try {
+    fireEvent.click(screen.getByRole('button', { name: '导出质量报告' }))
+    await waitFor(() => expect(blobs.length).toBe(1))
+    const csv = await blobs[0].text()
+    expect(csv).toContain('识别质量报告')
+    expect(csv).toContain('类型覆盖')
+  } finally {
+    click.mockRestore()
+    URL.createObjectURL = create
+    URL.revokeObjectURL = revoke
+  }
+})
+
