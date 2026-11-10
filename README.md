@@ -1,5 +1,7 @@
 # Proxy Sentinel
 
+> 本目录是 **184 防代理工作线**（`codex/proxy-184`）：路由器共享上网识别、证据、风险、案件与仅记录处置。204 被动资产发现工作线位于同级目录 `proxy-sentinel-204`。两个目录是同一 Git 仓库的独立 worktree，可同时供不同 agent 使用；现场部署须另获授权。
+
 Proxy Sentinel 是下一代防代理/共享上网检测系统，目标是替代旧版 `dpi-analyze` 中以 gopacket、静态阈值和设备数量触发为主的实现。
 
 项目中文名：代理哨兵。
