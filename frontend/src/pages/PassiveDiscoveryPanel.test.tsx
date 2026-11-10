@@ -102,6 +102,10 @@ it('shows complete discovery and confirmed type counts using the same metadata s
   expect(overview).toHaveTextContent('证据过期 3')
   expect(overview).toHaveTextContent('路由器 30')
   expect(overview).toHaveTextContent('无线接入点 12')
+  const routerTypeButton = screen.getAllByRole('button').find(button => button.textContent === '路由器 30')
+  expect(routerTypeButton).toBeTruthy()
+  fireEvent.click(routerTypeButton!)
+  await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).includes('type=router'))).toBe(true))
 })
 
 it('keeps the type overview visible when the statistics request fails', async () => {
