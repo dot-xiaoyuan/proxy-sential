@@ -13,6 +13,8 @@ export function qualityReportCSV(summary: Summary, trends: Trends | undefined, t
   rows.push(['识别质量报告'])
   rows.push(['生成时间', new Date().toISOString()])
   rows.push(['说明', '全局识别画像，不随列表筛选变化'])
+  rows.push(['识别摘要时间', summary.as_of ?? ''])
+  if (trends?.window_days) rows.push(['趋势范围', `近 ${trends.window_days} 天`])
   rows.push([])
   rows.push(['指标', '已知', '总数', '覆盖率'])
   rows.push(['类型覆盖', String(summary.coverage?.device_type?.known ?? ''), String(summary.total_endpoints ?? ''), percent(summary.coverage?.device_type?.rate)])
@@ -36,6 +38,11 @@ export function qualityReportCSV(summary: Summary, trends: Trends | undefined, t
   rows.push([])
   rows.push(['未识别原因', '数量'])
   for (const item of summary.untyped_reasons ?? []) rows.push([item.reason, String(item.count)])
+  if (trends?.top_types?.length) {
+    rows.push([])
+    rows.push(['新增类型', '数量'])
+    for (const item of trends.top_types) rows.push([types[item.device_type] ?? item.device_type, String(item.count)])
+  }
   if (trends?.days?.length) {
     rows.push([])
     rows.push(['近 7 天新增', '明确类型'])
