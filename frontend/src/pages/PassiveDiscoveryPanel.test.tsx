@@ -442,3 +442,17 @@ it('filters the last 15 minutes from the window select', async () => {
   await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).startsWith('/discovery/devices?') && String(path).includes('window=15m'))).toBe(true))
 })
 
+
+it('debounces the operating system input', async () => {
+  mockReads()
+  renderPanel()
+  fireEvent.click(screen.getByRole('button', { name: /更多筛选/ }))
+  const input = screen.getByRole('textbox', { name: '操作系统' })
+  fireEvent.change(input, { target: { value: 'A' } })
+  fireEvent.change(input, { target: { value: 'Ap' } })
+  fireEvent.change(input, { target: { value: 'Apple OS' } })
+  await waitFor(() => expect(request.mock.calls.some(([path]) => new URL(String(path), 'http://x').searchParams.get('os') === 'Apple OS')).toBe(true))
+  const listOsValues = request.mock.calls.filter(([path]) => String(path).startsWith('/discovery/devices?')).map(([path]) => new URL(String(path), 'http://x').searchParams.get('os')).filter(Boolean)
+  expect(listOsValues).toEqual(['Apple OS'])
+})
+
