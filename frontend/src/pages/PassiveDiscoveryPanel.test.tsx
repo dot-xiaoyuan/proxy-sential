@@ -39,7 +39,7 @@ function mockReads(observedPortResult: unknown = {
     if (path.startsWith('/discovery/devices?')) return Promise.resolve({ items: [deviceRow], ...(includeListTotal?{total:1}:{}), has_more: false })
     if (path.startsWith('/discovery/devices/metadata?')) return Promise.resolve(path.includes('type=access_point')?{total:1,identified:1,candidate:0,conflict:0,expired:0,types:[{device_type:'access_point',count:1}],as_of:'2026-11-05T14:00:00Z',count_unit:'trusted_discovery_identity'}:{total:84,identified:42,candidate:35,conflict:4,expired:3,types:[{device_type:'router',count:30},{device_type:'access_point',count:12}],as_of:'2026-11-05T14:00:00Z',count_unit:'trusted_discovery_identity'})
     if (path.startsWith('/discovery/trends')) return Promise.resolve({ days: [{ date: '2026-11-06', new: 2, typed: 1 }, { date: '2026-11-07', new: 4, typed: 3 }], as_of: '2026-11-07T00:00:00Z', window_days: 7 })
-    if (path === '/device-recognition/summary') return Promise.resolve({ total_endpoints: 121, coverage: { device_type: { known: 15, rate: 15 / 121 }, brand: { known: 1, rate: 1 / 121 }, model: { known: 1, rate: 1 / 121 }, os_family: { known: 15, rate: 15 / 121 } }, mac_attribution_rate: 0.5, event_attribution_rate: 0, top_brands: [{ brand: '华为', count: 3 }], top_type_brands: [{ device_type: 'camera', brand: 'Hikvision', count: 2 }], untyped_reasons: [{ reason: 'Apple 系统线索', count: 2 }], top_models: [{ model: 'LaserJet Pro MFP', brand: 'HP', count: 1 }] })
+    if (path === '/device-recognition/summary') return Promise.resolve({ total_endpoints: 121, coverage: { device_type: { known: 15, rate: 15 / 121 }, brand: { known: 1, rate: 1 / 121 }, model: { known: 1, rate: 1 / 121 }, os_family: { known: 15, rate: 15 / 121 } }, mac_attribution_rate: 0.5, event_attribution_rate: 0, top_brands: [{ brand: '华为', count: 3 }], top_type_brands: [{ device_type: 'camera', brand: 'Hikvision', count: 2 }], untyped_reasons: [{ reason: 'Apple 系统线索', count: 2 }], top_models: [{ model: 'LaserJet Pro MFP', brand: 'HP', count: 1 }], top_os: [{ os: 'Apple OS', count: 2 }, { os: 'Windows', count: 1 }] })
     if (path.startsWith('/device-inventory/')) return Promise.resolve({ profile: { recognition: { source_matches: [{ source_id: 'satori', rule_id: 'fixture-dhcp-options', version: 'fixture', name: 'Hikvision DHCP options', strength: 'self_report', fields: ['dhcp_options'], observed: { dhcp_options: '53,61,12,81' } }] } } })
     if (path === '/discovery/coverage') return Promise.resolve(coverage)
     if (path === '/discovery/statistics') return Promise.resolve({ items: [], pending_updates: 0 })
@@ -259,6 +259,8 @@ it('shows identification quality when the status section opens', async () => {
   expect(screen.getByText('摄像头 · Hikvision 2')).toBeInTheDocument()
   expect(screen.getByText('型号 Top')).toBeInTheDocument()
   expect(screen.getByText('HP · LaserJet Pro MFP 1')).toBeInTheDocument()
+  expect(screen.getByText('系统 Top')).toBeInTheDocument()
+  expect(screen.getByText('Apple OS 2')).toBeInTheDocument()
   expect(screen.getByText('未识别原因')).toBeInTheDocument()
   expect(screen.getByText('Apple 系统线索 2')).toBeInTheDocument()
   expect(await screen.findByText('近 7 天新增')).toBeInTheDocument()
@@ -267,6 +269,8 @@ it('shows identification quality when the status section opens', async () => {
   await waitFor(() => expect(request.mock.calls.some(([path]) => decodeURIComponent(String(path)).includes('search=华为'))).toBe(true))
   fireEvent.click(screen.getByRole('button', { name: '摄像头 · Hikvision 2' }))
   await waitFor(() => expect(request.mock.calls.some(([path]) => decodeURIComponent(String(path)).includes('type=camera') && decodeURIComponent(String(path)).includes('search=Hikvision'))).toBe(true))
+  fireEvent.click(screen.getByRole('button', { name: 'Apple OS 2' }))
+  await waitFor(() => expect(request.mock.calls.some(([path]) => new URL(String(path), 'http://x').searchParams.get('os') === 'Apple OS')).toBe(true))
 })
 
 

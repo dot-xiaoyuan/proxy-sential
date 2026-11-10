@@ -45,6 +45,11 @@ type RecognitionModelCount struct {
 	Count int    `json:"count"`
 }
 
+type RecognitionOSCount struct {
+	OS    string `json:"os"`
+	Count int    `json:"count"`
+}
+
 type DeviceRecognitionSummary struct {
 	BrandInferenceConflicts int                            `json:"brand_inference_conflicts"`
 	BrandInferenceEnabled   bool                           `json:"brand_inference_enabled"`
@@ -62,6 +67,7 @@ type DeviceRecognitionSummary struct {
 	TopTypeBrands           []RecognitionTypeBrandCount    `json:"top_type_brands,omitempty"`
 	UntypedReasons          []RecognitionUntypedReason     `json:"untyped_reasons,omitempty"`
 	TopModels               []RecognitionModelCount        `json:"top_models,omitempty"`
+	TopOS                   []RecognitionOSCount           `json:"top_os,omitempty"`
 	EcosystemMatched        int                            `json:"ecosystem_matched"`
 	EcosystemAttributed     int                            `json:"ecosystem_attributed"`
 	EcosystemUnattributed   int                            `json:"ecosystem_unattributed"`
@@ -165,6 +171,7 @@ func (s *DBStore) GetDeviceRecognitionSummary(ctx context.Context, version strin
 		return result.UntypedReasons[i].Count > result.UntypedReasons[j].Count
 	})
 	result.TopModels = topModels(items)
+	result.TopOS = topOSFamilies(items)
 	typeBrandCounts := map[[2]string]int{}
 	typeTotals := map[string]int{}
 	for _, item := range items {
@@ -326,6 +333,32 @@ func topModels(items []EndpointDeviceInventory) []RecognitionModelCount {
 	result := make([]RecognitionModelCount, 0, len(list))
 	for _, item := range list {
 		result = append(result, RecognitionModelCount{Model: item.model, Brand: item.brand, Count: item.count})
+	}
+	return result
+}
+
+
+func topOSFamilies(items []EndpointDeviceInventory) []RecognitionOSCount {
+	counts := map[string]int{}
+	for _, item := range items {
+		family := strings.TrimSpace(item.OSFamily)
+		if family == "" || family == "unknown" || deviceDimensionConflict(item, "os_family") || item.OSFamilyConfidence < .8 {
+			continue
+		}
+		counts[family]++
+	}
+	result := make([]RecognitionOSCount, 0, len(counts))
+	for family, count := range counts {
+		result = append(result, RecognitionOSCount{OS: family, Count: count})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Count == result[j].Count {
+			return result[i].OS < result[j].OS
+		}
+		return result[i].Count > result[j].Count
+	})
+	if len(result) > 8 {
+		result = result[:8]
 	}
 	return result
 }

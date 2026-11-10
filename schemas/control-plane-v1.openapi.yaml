@@ -7164,6 +7164,14 @@ components:
               model: { type: string }
               brand: { type: string }
               count: { type: integer }
+        top_os:
+          type: array
+          items:
+            type: object
+            required: [os, count]
+            properties:
+              os: { type: string }
+              count: { type: integer }
         observability:
           type: array
           items: { $ref: "#/components/schemas/SourceObservability" }

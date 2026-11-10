@@ -499,6 +499,7 @@ export const handlers = [
     top_type_brands: [{ device_type: 'camera', brand: 'Hikvision', count: 2 }, { device_type: 'access_point', brand: 'H3C', count: 1 }],
     untyped_reasons: [{ reason: 'Apple 系统线索', count: 2 }, { reason: '缺少系统与品牌线索', count: 1 }],
     top_models: [{ model: 'LaserJet Pro MFP', brand: 'HP', count: 1 }],
+    top_os: [{ os: 'Apple OS', count: 2 }, { os: 'Windows', count: 1 }],
     observability: [
       { source_event_type: 'mdns', event_count: 1_402_118, mac_attributed_count: 0 },
       { source_event_type: 'dns', event_count: 964_230, mac_attributed_count: 0 },

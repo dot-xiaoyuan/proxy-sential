@@ -6975,6 +6975,10 @@ export interface components {
                 brand?: string;
                 count: number;
             }[];
+            top_os?: {
+                os: string;
+                count: number;
+            }[];
             observability?: components["schemas"]["SourceObservability"][];
             ecosystem_matched: number;
             ecosystem_attributed: number;
