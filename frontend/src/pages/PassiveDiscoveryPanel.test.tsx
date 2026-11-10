@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, expect, it, vi } from 'vitest'
 import { PassiveDiscoveryPanel } from './PassiveDiscoveryPanel'
@@ -505,5 +505,28 @@ it('filters multiple protocols', async () => {
   const nextProtocolOptions = Array.from(document.querySelectorAll<HTMLElement>('.ant-select-item-option'))
   fireEvent.click(nextProtocolOptions.find(option => option.textContent === 'DNS-SD')!)
   await waitFor(() => expect(request.mock.calls.some(([path]) => new URL(String(path), 'http://x').searchParams.get('protocol') === 'dhcp,dns_sd')).toBe(true))
+})
+
+
+it('manages saved discovery views', async () => {
+  localStorage.clear()
+  mockReads()
+  renderPanel()
+  fireEvent.click(await screen.findByRole('button', { name: /更多筛选/ }))
+  const saveView = async (name: string) => {
+    fireEvent.click(screen.getByRole('button', { name: '保存视图' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '视图名称' }), { target: { value: name } })
+    fireEvent.click(screen.getByRole('button', { name: '保 存' }))
+    await waitFor(() => expect(localStorage.getItem('proxy-sentinel.discovery.views.v1')).toContain(name))
+  }
+  await saveView('视图A')
+  await saveView('视图B')
+  fireEvent.click(screen.getByRole('button', { name: '管理' }))
+  await screen.findByText('管理视图')
+  const rowA = screen.getByText('视图A').closest('.discovery-view-manage-row')
+  expect(rowA).toBeTruthy()
+  fireEvent.click(within(rowA as HTMLElement).getByRole('button', { name: '删除' }))
+  await waitFor(() => expect(localStorage.getItem('proxy-sentinel.discovery.views.v1')).not.toContain('视图A'))
+  expect(localStorage.getItem('proxy-sentinel.discovery.views.v1')).toContain('视图B')
 })
 
