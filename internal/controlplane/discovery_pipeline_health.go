@@ -11,7 +11,10 @@ import (
 )
 
 func (s *Server) discoveryPipelineStatus(ctx context.Context) (discovery.PipelineStatus, error) {
-	ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+	// The runtime rows are small, but the shared PostgreSQL is often busy on
+	// 184 and a 250ms budget reports a loaded-but-usable pipeline as
+	// unavailable. Stay inside the readyz 5s envelope with a realistic budget.
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	return (discovery.Repository{DB: s.operations.db}).PipelineStatus(ctx)
 }
