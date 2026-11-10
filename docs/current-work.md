@@ -2,6 +2,12 @@
 
 本页只记录当前版本和未完成事项。现场数值以每次只读检查为准；旧发布、验收和方案演进记录留在 Git 历史中。
 
+## 2026-11-10 184 路由器与 AI 中转站页面空白排查（17:14–17:29，北京时间）
+
+- **路由器页面**：当前页面默认调用 `/discovery/devices?mode=passive&type=router&window=24h`，控制面启用了事件总线当前态读取。其 `discovery_device_current_shadow` 约 31,603 行，但没有任何一行带 `device_type=router`，因此该筛选必然为空；当前态合并服务 `proxy-sentinel-eventbus-current-shadow.service` 为 disabled/inactive，状态水位 `discovery_device_current_shadow_state.last_updated_at` 停在 10 月 31 日。另一路 `router_assessments` 仍有未过期的 `router/likely` 5 条、`router/candidate` 291 条，最近更新到本次检查时间，说明路由角色评估并非完全停止。路由识别游标仍落后实时输入约 90 分钟且积压增长；PostgreSQL 写等待及磁盘压力仍是实时性约束。流式状态表估计约 54 万行，不能直接启用合并服务；须先限制回填量、核验字段契约及写入成本。
+- **AI 中转站页面**：页面只读 `ai_relay_domain_matches_v1`，该表现场 0 行；近 7 天候选表约 3.9 万行、近 24 小时约 9,254 行，均为 Suricata DNS。用当前 64 个域名指标在这些 DNS 候选中按完整域名标签复核，命中 0 条，故不能把空页面直接判为漏报。与此同时，新的握手信号持续进入 `stream_event_search` 并在原文中有 SNI/Host，但 AI 候选物化视图仍只挂在旧 `normalized_events`，未覆盖该流式握手输入；因此当前结果不能证明握手侧没有真实中转域名。需在保持原文和指标语义的前提下接通新流输入、做有界回放与去重，再以真实持续输入验收。
+- **检查边界**：本节均为只读现场观察；没有启停服务、移动游标、执行迁移或更新现场。为避免加重当时 PostgreSQL I/O，已取消超时的全表排查语句，后续改用索引约束与短超时读取。
+
 ## 2026-11-10 184 安全修复已发布，全链路新起点未切换（16:53–17:08，北京时间）
 
 - **授权与发布**：用户单独授权发布及通过逐段审计后的全链路切换。应用更新脚本以 `2026.11.10-d7e91c11`（源码 `d7e91c1139237a5370360b43635bbf0acc47e514`）完成无迁移切换；包 SHA256 为 `4f18712edc79b59aad47defb33f1010304b4280c3954bc90817e280ca49161d2`。234 条 PostgreSQL、70 条 ClickHouse 候选迁移均已应用且校验一致，现场包及根目录 `proxy-sentinel-current.tar.gz` 校验通过。脚本覆盖的 22 个活动服务完成运行版本核验；另 5 个既有旧版进程（EVE ingest、eventbus 消费、身份 event 消费和转发、分钟影子）逐个重启后，**27 个活动应用进程全部执行新发布目录的程序**。`/readyz=ready`，本机 NCU `18082/readyz` 返回 `ready=true`，但状态为 `degraded`，17:06 处理队列 4、来源队列 40、事件连续失败 2；不能将其写成身份链路验收。`current` 为新版本、`previous` 暂留 `2026.11.10-6c0fb486` 供未完成验收期间回退。`proxy-sentinel-upgrade-r52a` 仍是既有失败单元。
