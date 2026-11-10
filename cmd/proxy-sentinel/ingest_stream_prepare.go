@@ -262,7 +262,7 @@ func closeStaleFileCutover(ctx context.Context, db *sql.DB, kind, path, oldEpoch
 	if state != "active" {
 		return fmt.Errorf("stale cutover state is %q, want active", state)
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE stream_source_cutovers SET state='closed_cancelled_unprocessed' WHERE epoch=$1 AND source_kind=$2 AND source_path=$3 AND state='active'`, oldEpoch, kind, path); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE stream_source_cutovers SET state='closed' WHERE epoch=$1 AND source_kind=$2 AND source_path=$3 AND state='active'`, oldEpoch, kind, path); err != nil {
 		return err
 	}
 	if err = tx.Commit(); err != nil {

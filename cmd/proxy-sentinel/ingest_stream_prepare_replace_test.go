@@ -17,7 +17,7 @@ func TestCloseStaleFileCutoverClosesActiveEpoch(t *testing.T) {
 	mock.ExpectQuery("SELECT state FROM stream_source_cutovers").
 		WithArgs("old-epoch", "device-signals", "/signals/flow-syn.jsonl").
 		WillReturnRows(sqlmock.NewRows([]string{"state"}).AddRow("active"))
-	mock.ExpectExec("UPDATE stream_source_cutovers SET state='closed_cancelled_unprocessed'").
+	mock.ExpectExec("UPDATE stream_source_cutovers SET state='closed'").
 		WithArgs("old-epoch", "device-signals", "/signals/flow-syn.jsonl").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
