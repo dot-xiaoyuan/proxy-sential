@@ -18,7 +18,7 @@ import { Button,
   message,
 } from 'antd'
 import { useUrlState } from '../shared/ui/useUrlState'
-import { request } from '../shared/api/client'
+import { isDiscoveryReadPathUnsupported, request } from '../shared/api/client'
 import { RouterObservationsPanel } from './RouterObservationsPanel'
 import { routerRoleLabels } from './routerLabels'
 import type { ColumnsType } from 'antd/es/table'
@@ -97,8 +97,10 @@ export function DiscoveryPage({configuration=false,embedded=false}:{configuratio
  {key:'devices',label:'发现记录',children:<>
         <AppListHeader title="发现记录" count={`${devices.data?.items.length ?? 0} 条`} />
         <AppTable rowKey="id" columns={cols} dataSource={devices.data?.items??[]} pagination={false} locale={{emptyText:'暂无发现记录'}} scroll={{x:1150}}/>
-        {devicePosition.isError&&<AppErrorAlert title="页码定位失败" message={devicePosition.error.message}/>}
-        <AppServerPagination disabled={devices.isFetching||devicePosition.isLocating} page={devicePage} pageSize={devicePageSize} total={deviceMetadata.data?.total} totalText={deviceMetadata.isError?'数量读取失败':undefined} onChange={(next,size)=>{setDevicePage(next);setDevicePageSize(size)}}/>
+        {devicePosition.isError && (isDiscoveryReadPathUnsupported(devicePosition.error)
+          ? <Typography.Text type="secondary">当前发现读取路径不提供页码定位，列表从首页开始展示。</Typography.Text>
+          : <AppErrorAlert title="页码定位失败" message={devicePosition.error.message} />)}
+        <AppServerPagination disabled={devices.isFetching||devicePosition.isLocating} page={devicePage} pageSize={devicePageSize} total={deviceMetadata.data?.total} totalText={deviceMetadata.isError ? (isDiscoveryReadPathUnsupported(deviceMetadata.error) ? '当前读取路径不提供总数' : '数量读取失败') : undefined} onChange={(next,size)=>{setDevicePage(next);setDevicePageSize(size)}}/>
       </>},
  {key:'sources',label:'基础设施接入',children:<>
         <AppListHeader title="基础设施接入" count={`${sources.data?.items.length ?? 0} 条`} actions={<Button disabled={!manage} onClick={()=>edit(null)}>新增接入源</Button>} />

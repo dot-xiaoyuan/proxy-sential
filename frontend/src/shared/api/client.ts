@@ -86,6 +86,13 @@ export class ApiError extends Error {
   constructor(status: number, message: string) { super(message); this.status=status }
 }
 
+// The stream/event-bus discovery read path deliberately omits the legacy
+// indexed count and page-position endpoints. Callers can render a neutral
+// capability note instead of a failure alert for this specific 409.
+export function isDiscoveryReadPathUnsupported(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 409 && /"(metadata|position)_read_path"/.test(error.message)
+}
+
 let csrfToken = ''
 
 const sessionEndpoints = new Set(['/session', '/auth/login', '/auth/logout'])

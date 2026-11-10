@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Empty, Modal, Segmented, Select, Space, Tag, Tooltip, Typography } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { Link, useSearchParams } from 'react-router-dom'
-import { request } from '../shared/api/client'
+import { isDiscoveryReadPathUnsupported, request } from '../shared/api/client'
 import type { components } from '../shared/api/generated'
 import { AppErrorAlert, AppListHeader, AppServerPagination, AppTable, AppTableBar, useCursorPagePosition } from '../shared/ui'
 import { DeviceAddress } from '../entities/device/DeviceAddress'
@@ -136,8 +136,12 @@ export function RouterAssetsPanel() {
         {filtered && <Button type="text" onClick={reset}>清空筛选</Button>}
       </>}
     />
-    {position.isError && <AppErrorAlert title="页码定位失败" message={position.error.message} action={<Button onClick={() => void position.refetch()}>重试定位</Button>} />}
-    {metadata.isError && <AppErrorAlert title="读取设备数量失败" message={metadata.error.message} action={<Button onClick={() => void metadata.refetch()}>重试统计</Button>} />}
+    {position.isError && (isDiscoveryReadPathUnsupported(position.error)
+      ? <Typography.Text type="secondary">当前发现读取路径不提供页码定位，列表从首页开始展示。</Typography.Text>
+      : <AppErrorAlert title="页码定位失败" message={position.error.message} action={<Button onClick={() => void position.refetch()}>重试定位</Button>} />)}
+    {metadata.isError && (isDiscoveryReadPathUnsupported(metadata.error)
+      ? <Typography.Text type="secondary">当前发现读取路径不提供设备数量统计，不影响设备列表查看。</Typography.Text>
+      : <AppErrorAlert title="读取设备数量失败" message={metadata.error.message} action={<Button onClick={() => void metadata.refetch()}>重试统计</Button>} />)}
     <section className="surface center-list-surface">
       <AppListHeader
         title={`${label}设备`}
@@ -149,7 +153,7 @@ export function RouterAssetsPanel() {
         <AppTable className="passive-ledger-table" rowKey={rowKey} columns={columns} dataSource={items} loading={devices.isPending||position.isLocating} tableLayout="fixed" scroll={{ x: 900 }} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`当前观测范围内暂无匹配的${label}设备`}>{filtered && <Button onClick={reset}>清空筛选</Button>}</Empty> }} />
         {(items.length > 0 || page > 0) && <AppServerPagination page={page + 1} pageSize={pageSize} disabled={devices.isFetching || position.isLocating}
           total={metadata.data?.total}
-          totalText={metadata.data ? `共 ${metadata.data.total} 条` : metadata.isError ? '数量读取失败' : '正在读取总数'}
+          totalText={metadata.data ? `共 ${metadata.data.total} 条` : metadata.isError ? (isDiscoveryReadPathUnsupported(metadata.error) ? '当前读取路径不提供总数' : '数量读取失败') : '正在读取总数'}
           onChange={(nextPage, nextSize) => {
             if (nextSize !== pageSize) { setPageSize(nextSize); return }
             setPaging({ key: filterKey, page: nextPage - 1 })
