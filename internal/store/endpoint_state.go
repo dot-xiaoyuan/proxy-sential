@@ -480,6 +480,10 @@ func buildEndpointState(in endpointStateInput, now time.Time) (endpointStateRow,
 		profile.IPHistory = append(profile.IPHistory, IdentityIPMACHistory{IP: in.LeaseIP, LastSeen: in.LeaseAt.Time.UTC().Format(time.RFC3339Nano)})
 	}
 	applyLatestInventoryAssociations(&item, profile, now)
+	// The state sweep re-derives every endpoint, so it is also the durable
+	// backfill path for the per-family address fields the list displays.
+	item.CurrentIPv4 = recentEndpointIPFamily(profile.IPHistory, 4)
+	item.CurrentIPv6 = recentEndpointIPFamily(profile.IPHistory, 6)
 	latest := latestInventoryAssociations(profile, now)
 	seen := in.Seen
 	if seen.Valid && seen.Time.After(now) {
