@@ -471,3 +471,12 @@ it('filters multiple device types', async () => {
   await waitFor(() => expect(request.mock.calls.some(([path]) => new URL(String(path), 'http://x').searchParams.get('type') === 'printer,camera')).toBe(true))
 })
 
+
+it('filters multiple VLANs from one input', async () => {
+  mockReads()
+  renderPanel()
+  fireEvent.click(screen.getByRole('button', { name: /更多筛选/ }))
+  fireEvent.change(screen.getByRole('textbox', { name: 'VLAN' }), { target: { value: '32,33' } })
+  await waitFor(() => expect(request.mock.calls.some(([path]) => new URL(String(path), 'http://x').searchParams.get('vlan') === '32,33')).toBe(true))
+})
+

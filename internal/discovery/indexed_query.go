@@ -43,7 +43,7 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 	for _, filter := range []struct{ key, value string }{{"domain", query.Domain}, {"vlan", query.VLAN}} {
 		if filter.value != "" {
 			args = append(args, filter.value)
-			baseWhere = append(baseWhere, fmt.Sprintf("coalesce(data->>'%s','')=$%d", filter.key, len(args)))
+			baseWhere = append(baseWhere, fmt.Sprintf("coalesce(data->>'%s','') = ANY(string_to_array($%d, ','))", filter.key, len(args)))
 		}
 	}
 	if query.RandomMAC {

@@ -318,8 +318,8 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
           <Select aria-label="设备分类" value={params.get('discovery_category')||''} options={[{value:'',label:'全部设备分类'},...Object.entries(categories).map(([value,label])=>({value,label}))]} onChange={v=>setParams(current=>{const next=new URLSearchParams(current);next.delete('discovery_type');if(v)next.set('discovery_category',v);else next.delete('discovery_category');return next},{replace:true})}/>
           <Select aria-label="发现协议" value={params.get('discovery_protocol')||''} options={[{value:'',label:'全部协议'},...Object.entries(protocols).map(([value,label])=>({value,label}))]} onChange={v=>change('protocol',v)}/>
           <Select aria-label="最近观测范围" value={params.get('discovery_window')==='all'?'720h':params.get('discovery_window')||''} options={[{value:'',label:'近 24 小时'},{value:'15m',label:'近 15 分钟'},{value:'168h',label:'近 7 天'},{value:'720h',label:'近 30 天'}]} onChange={v=>change('window',v)}/>
-          <DebouncedInput label="网络域" placeholder="网络域" value={params.get('discovery_domain')||''} onChange={value=>change('domain',value)}/>
-          <DebouncedInput label="VLAN" placeholder="VLAN" value={params.get('discovery_vlan')||''} onChange={value=>change('vlan',value)}/>
+          <DebouncedInput label="网络域" placeholder="网络域（逗号分隔）" value={params.get('discovery_domain')||''} onChange={value=>change('domain',value)}/>
+          <DebouncedInput label="VLAN" placeholder="VLAN（逗号分隔）" value={params.get('discovery_vlan')||''} onChange={value=>change('vlan',value)}/>
           <DebouncedInput label="操作系统" placeholder="操作系统" value={params.get('discovery_os')||''} onChange={value=>change('os',value)}/>
           <Checkbox checked={params.get('discovery_random_mac')==='true'} onChange={e=>change('random_mac',e.target.checked?'true':'')}>随机 MAC</Checkbox>
           <div className="discovery-view-bar">
