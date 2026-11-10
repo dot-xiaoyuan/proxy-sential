@@ -123,3 +123,25 @@ func TestPrepareStreamSharedJobsKeepsPacketOwnerWithPassiveContext(t *testing.T)
 		t.Fatalf("packet owner or gateway wake lost: %+v %v", got, err)
 	}
 }
+
+func TestStreamSharedJobsSkipWithoutActiveGeneration(t *testing.T) {
+	at := time.Date(2026, 11, 10, 3, 0, 0, 0, time.UTC)
+	segment := streamlog.Segment{Epoch: "fresh", Source: "device-signals", SourcePath: "/signals/handshake.jsonl", Events: []normalized.Event{
+		{SchemaVersion: "v1", EventID: "one", Source: "handshake-sidecar", SourceEventType: "handshake", Type: "device", Timestamp: at.Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": "sensor", "capture_scope_id": "scope", "collector_instance_id": "collector"}, Subject: map[string]any{"campus_id": "campus", "ip": "10.0.0.2"}, Payload: map[string]any{"access_domain": "bond0"}},
+	}}
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	queue := StreamSharedJobQueue{DB: db}
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT sensor_id,scope_id,cancel_id FROM stream_shared_source_cutovers").WillReturnRows(sqlmock.NewRows([]string{"sensor_id", "scope_id", "cancel_id"}))
+	mock.ExpectRollback()
+	if err = queue.MarkStreamSharedJobs(context.Background(), "seg", segment); err != nil {
+		t.Fatalf("segment without an active shared generation must finalize: %v", err)
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

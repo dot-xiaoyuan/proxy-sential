@@ -188,6 +188,13 @@ func (q StreamSharedJobQueue) MarkStreamSharedJobs(ctx context.Context, id strin
 	defer tx.Rollback()
 	var registered, registeredScope, generation string
 	if err := tx.QueryRowContext(ctx, `SELECT sensor_id,scope_id,cancel_id FROM stream_shared_source_cutovers WHERE epoch=$1 AND source_path=$2 AND source_owner=$3 AND state='active'`, segment.Epoch, segment.SourcePath, p.Owner).Scan(&registered, &registeredScope, &generation); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// The shared generation is optional per source: without an active
+			// one there are no shared jobs to enqueue for this epoch, so the
+			// segment must still finalize. A present but mismatched generation
+			// remains a conflict.
+			return nil
+		}
 		return err
 	}
 	if registered != p.Sensor || registeredScope != p.ScopeID || generation == "" {
