@@ -242,6 +242,36 @@ func prepareControlledFileStreamAfterClosed(ctx context.Context, db *sql.DB, jou
 	return prepareControlledFileStreamAfterClosedWithRotation(ctx, db, journal, kind, sensor, path, epoch, cancelID, previousRelease, scopeHash, cutoff, priorEpoch, priorManifest, "")
 }
 
+// closeStaleFileCutover retires a stopped epoch that still holds the source
+// path, so a fresh epoch can be prepared on the real file. The old journal and
+// raw data are retained; only the cutover state changes and the replacement is
+// logged for the audit trail.
+func closeStaleFileCutover(ctx context.Context, db *sql.DB, kind, path, oldEpoch, newEpoch string) error {
+	if db == nil || kind == "" || path == "" || oldEpoch == "" || oldEpoch == newEpoch {
+		return errors.New("invalid stale cutover replacement")
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var state string
+	if err = tx.QueryRowContext(ctx, `SELECT state FROM stream_source_cutovers WHERE epoch=$1 AND source_kind=$2 AND source_path=$3 FOR UPDATE`, oldEpoch, kind, path).Scan(&state); err != nil {
+		return fmt.Errorf("stale cutover lookup: %w", err)
+	}
+	if state != "active" {
+		return fmt.Errorf("stale cutover state is %q, want active", state)
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE stream_source_cutovers SET state='closed_cancelled_unprocessed' WHERE epoch=$1 AND source_kind=$2 AND source_path=$3 AND state='active'`, oldEpoch, kind, path); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "stale file cutover closed epoch=%s kind=%s path=%s replaced_by=%s\n", oldEpoch, kind, path, newEpoch)
+	return nil
+}
+
 func prepareControlledFileStreamAfterClosedWithRotation(ctx context.Context, db *sql.DB, journal *streamlog.Journal, kind, sensor, path, epoch, cancelID, previousRelease, scopeHash string, cutoff time.Time, priorEpoch, priorManifest, rotationArchive string) (zeekCutoverBytes, string, error) {
 	parser := streamParserForSourcePath(kind, path)
 	if parser == "" || db == nil || journal == nil || sensor == "" || path == "" || epoch == "" || len(epoch) > 128 || cancelID == "" || previousRelease == "" || len(scopeHash) != 64 || cutoff.IsZero() || cutoff.After(time.Now()) || (priorEpoch == "") != (priorManifest == "") || (priorEpoch != "" && (kind != "zeek-dhcp-binding" && kind != "device-signals" || priorEpoch == epoch || len(priorManifest) != 64)) || (rotationArchive != "" && (priorEpoch == "" || kind != "zeek-dhcp-binding" && kind != "device-signals")) {
@@ -487,6 +517,7 @@ func runIngestStreamPrepare(args []string) error {
 	priorEpoch := fs.String("resume-closed-epoch", "", "prior closed stream on this exact file")
 	priorManifest := fs.String("prior-retirement-sha256", "", "verified immutable retirement manifest")
 	rotationArchive := fs.String("rotation-archive", "", "verified retained file across rotation (Zeek gzip or device .1)")
+	replaceEpoch := fs.String("replace-closed-epoch", "", "stale active epoch on the same file to close before the fresh start")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -548,6 +579,11 @@ func runIngestStreamPrepare(args []string) error {
 		return err
 	}
 	defer releaseLegacy()
+	if *replaceEpoch != "" {
+		if err := closeStaleFileCutover(ctx, db, kind, sourcePath, *replaceEpoch, *epoch); err != nil {
+			return err
+		}
+	}
 	scan, manifest, err := prepareControlledFileStreamAfterClosedWithRotation(ctx, db, journal, kind, *sensor, sourcePath, *epoch, *cancelID, *previousRelease, scopeHash, cutoff, *priorEpoch, *priorManifest, *rotationArchive)
 	if err != nil {
 		return err
