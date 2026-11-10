@@ -14,7 +14,7 @@ type ExportableDevice = {
   first_seen?: string
   last_seen?: string
   evidence_count?: number
-  recognition?: { device_type?: string; brand?: string; os_family?: string; confidence?: number }
+  recognition?: { device_type?: string; brand?: string; os_family?: string; confidence?: number; rule_version?: string }
 }
 
 const statusLabels: Record<string, string> = { identified: '证据有效', candidate: '发现线索', conflict: '类型证据冲突', expired: '证据已过期' }
@@ -33,7 +33,7 @@ function deviceType(item: ExportableDevice, types: Record<string, string>): stri
 }
 
 export function discoveryCSV(items: ExportableDevice[], types: Record<string, string>): string {
-  const rows: string[][] = [['标识', '名称', 'MAC', '当前地址', '设备类型', '品牌', '型号', '操作系统', '网络域', 'VLAN', '采集传感器', '证据状态', '首次观测', '最近观测', '证据数']]
+  const rows: string[][] = [['标识', '名称', 'MAC', '当前地址', '设备类型', '品牌', '型号', '操作系统', '网络域', 'VLAN', '采集传感器', '证据状态', '识别置信度', '识别规则', '首次观测', '最近观测', '证据数']]
   for (const item of items) {
     rows.push([
       item.id ?? '',
@@ -48,6 +48,8 @@ export function discoveryCSV(items: ExportableDevice[], types: Record<string, st
       item.vlan ?? '',
       item.sensor_id ?? '',
       statusLabels[item.classification_status ?? ''] ?? item.classification_status ?? '',
+      item.recognition?.confidence === undefined ? '' : `${Math.round(item.recognition.confidence * 100)}%`,
+      item.recognition?.rule_version ?? '',
       item.first_seen ?? '',
       item.last_seen ?? '',
       item.evidence_count === undefined ? '' : String(item.evidence_count),
