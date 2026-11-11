@@ -245,6 +245,10 @@ type DeviceQuery struct {
 	Limit                         int
 	Offset                        int
 	Cursor                        string
+	// Export freezes the window boundary and permits larger internal pages.
+	// It is never accepted from the ordinary list request.
+	Export     bool
+	SnapshotAt time.Time
 }
 
 type AddressDetail struct {

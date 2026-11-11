@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -64,6 +65,20 @@ func encodeIndexedDeviceCursor(q DeviceQuery, item DeviceView) (string, error) {
 // the candidate set in SQL before decoding evidence, so a search cannot load
 // the full historical device set into Go.
 func (r Repository) DevicesIndexed(ctx context.Context, query DeviceQuery) (map[string]any, error) {
+	return r.devicesIndexed(ctx, r.DB, query, true)
+}
+
+// DevicesIndexedSnapshot reads one export page from a caller-owned read-only
+// transaction, keeping all pages on the same database snapshot.
+func (r Repository) DevicesIndexedSnapshot(ctx context.Context, tx *sql.Tx, query DeviceQuery) (map[string]any, error) {
+	return r.devicesIndexed(ctx, tx, query, false)
+}
+
+type indexedQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func (r Repository) devicesIndexed(ctx context.Context, db indexedQueryer, query DeviceQuery, includeFreshness bool) (map[string]any, error) {
 	selection, err := buildIndexedDeviceSelection(query)
 	if err != nil {
 		return nil, err
@@ -95,7 +110,7 @@ SELECT c.identity_key,c.device_key,l.data,
 FROM candidate_rows l JOIN candidates c USING(identity_key)
 LEFT JOIN discovery_identity_links page_link ON page_link.observation_id=l.id AND coalesce(l.data->>'mac','')<>''
 ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
-	rows, err := r.DB.QueryContext(ctx, statement, args...)
+	rows, err := db.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +133,11 @@ ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}
-	items, err := aggregateIndexedDeviceRows(deviceRows, time.Now().UTC())
+	now := query.SnapshotAt
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	items, err := aggregateIndexedDeviceRows(deviceRows, now)
 	if err != nil {
 		return nil, err
 	}
@@ -152,8 +171,10 @@ ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
 		}
 	}
 	page := map[string]any{"items": items, "next_cursor": nextCursor, "has_more": hasMore, "facets": deviceFacets(items), "service_devices": services, "linked_endpoints": linked, "limit": query.Limit, "window": indexedWindowLabel(query.Window), "count_unit": "trusted_discovery_identity"}
-	if fresh := r.PassiveDiscoveryFreshness(ctx); fresh != nil {
-		page["freshness"] = fresh
+	if includeFreshness {
+		if fresh := r.PassiveDiscoveryFreshness(ctx); fresh != nil {
+			page["freshness"] = fresh
+		}
 	}
 	return page, nil
 }

@@ -28,7 +28,7 @@ import { BrandLogo } from '../entities/device/BrandLogo'
 import { resolveDeviceBrand } from '../entities/device/brandMatcher'
 import { isRandomizedMAC } from '../entities/device/mac'
 import { DiscoveryEvidenceSummary } from './DiscoveryEvidenceSummary'
-import { discoveryCSV } from './discoveryExport'
+import { discoveryCSV, fetchDiscoveryExport } from './discoveryExport'
 import { qualityReportCSV } from './discoveryQualityReport'
 import { loadDiscoveryViews, removeDiscoveryView, saveDiscoveryView } from './discoveryViews'
 import { deviceTypeLabel } from '../entities/device/DeviceInventoryCells'
@@ -273,22 +273,12 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const refreshWorkspace=()=>refreshDiscovery()
   const selectedPosition=selected?items.findIndex(item=>item.id===selected.id):-1
   const [exporting,setExporting]=useState(false)
+  const [exportProgress,setExportProgress]=useState({count:0,total:0})
   const exportDevices=async()=>{
     setExporting(true)
+    setExportProgress({count:0,total:0})
     try{
-      const exportQuery=new URLSearchParams(query)
-      exportQuery.delete('cursor')
-      exportQuery.set('limit','200')
-      const rows:Device[]=[]
-      let cursor=''
-      while(rows.length<2000){
-        if(cursor)exportQuery.set('cursor',cursor);else exportQuery.delete('cursor')
-        const page=await request<Page>(`/discovery/devices?${exportQuery.toString()}`)
-        rows.push(...(page.items??[]))
-        if(!page.has_more||!page.next_cursor)break
-        cursor=page.next_cursor
-      }
-      const devices=rows.slice(0,2000)
+      const {items:devices,snapshotAt}=await fetchDiscoveryExport<Device>(query,(count,total)=>setExportProgress({count,total}),discoveryTableRowKey)
       const blob=new Blob(['\ufeff'+discoveryCSV(devices,types)],{type:'text/csv;charset=utf-8'})
       const url=URL.createObjectURL(blob)
       const anchor=document.createElement('a')
@@ -296,11 +286,12 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
       anchor.download=`discovery-${new Date().toISOString().slice(0,10)}.csv`
       anchor.click()
       URL.revokeObjectURL(url)
-      message.success(devices.length>=2000?'已导出前 2000 台设备，请缩小筛选范围':`已导出 ${devices.length} 台设备`)
+      message.success(`已导出当前筛选的全部 ${devices.length} 台设备${snapshotAt?` · 快照 ${observedTimeTitle(snapshotAt)}`:''}`)
     }catch(error){
-      message.error(`导出失败：${String(error)}`)
+      message.error(`导出失败：${error instanceof Error?error.message:String(error)}`)
     }finally{
       setExporting(false)
+      setExportProgress({count:0,total:0})
     }
   }
   const exportQualityReport=()=>{
@@ -344,7 +335,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
           <Select aria-label="证据状态" value={params.get('discovery_state')||''} options={[{value:'',label:'全部证据状态'},{value:'identified,candidate,conflict',label:'当前有效（不含过期）'},...Object.entries(states).filter(([k])=>view!=='iot'||k!=='candidate').map(([value,label])=>({value,label}))]} onChange={v=>change('state',v)}/>
           <Button size="small" type="text" onClick={()=>setMoreOpen(value=>!value)}>{moreOpen?'收起筛选':'更多筛选'}{['category','type','protocol','window','domain','vlan','random_mac','os'].filter(key=>params.get(`discovery_${key}`)).length?`（${['category','type','protocol','window','domain','vlan','random_mac','os'].filter(key=>params.get(`discovery_${key}`)).length}）`:''}</Button>
         </>}
-        extra={<div className="discovery-list-actions"><span className="discovery-auto-refresh"><Switch size="small" aria-label="自动刷新" checked={autoRefresh} onChange={toggleAutoRefresh}/><Typography.Text type="secondary">自动刷新</Typography.Text></span>{searching&&<span className="discovery-search-status" role="status" aria-live="polite"><LoadingOutlined aria-hidden="true" spin /> {draft.trim()||search?'正在搜索…':'正在加载…'}</span>}<span className="terminal-page-summary" aria-label="发现设备摘要"><span>当前页 <strong>{items.length}</strong> 个设备</span><span>本页明确类型 <strong>{typedPageCount}</strong></span><span>本页近15分钟观测 <strong>{recentPageCount}</strong></span></span><Button size="small" icon={<DownloadOutlined aria-hidden="true"/>} loading={exporting} onClick={()=>void exportDevices()}>导出</Button><Button type="link" size="small" onClick={()=>setParams(current=>{const next=new URLSearchParams(current);for(const key of [...next.keys()])if(key.startsWith("discovery_")&&key!=="discovery_view")next.delete(key);return next})}>清除筛选</Button></div>}
+        extra={<div className="discovery-list-actions"><span className="discovery-auto-refresh"><Switch size="small" aria-label="自动刷新" checked={autoRefresh} onChange={toggleAutoRefresh}/><Typography.Text type="secondary">自动刷新</Typography.Text></span>{searching&&<span className="discovery-search-status" role="status" aria-live="polite"><LoadingOutlined aria-hidden="true" spin /> {draft.trim()||search?'正在搜索…':'正在加载…'}</span>}<span className="terminal-page-summary" aria-label="发现设备摘要"><span>当前页 <strong>{items.length}</strong> 个设备</span><span>本页明确类型 <strong>{typedPageCount}</strong></span><span>本页近15分钟观测 <strong>{recentPageCount}</strong></span></span><Button size="small" icon={<DownloadOutlined aria-hidden="true"/>} loading={exporting} onClick={()=>void exportDevices()}>{exporting?`导出中 ${exportProgress.count}/${exportProgress.total||'…'}`:'导出全部筛选结果'}</Button><Button type="link" size="small" onClick={()=>setParams(current=>{const next=new URLSearchParams(current);for(const key of [...next.keys()])if(key.startsWith("discovery_")&&key!=="discovery_view")next.delete(key);return next})}>清除筛选</Button></div>}
       panel={moreOpen?<div className="app-filter-panel">
           <Select aria-label="设备分类" value={params.get('discovery_category')||''} options={[{value:'',label:'全部设备分类'},...Object.entries(categories).map(([value,label])=>({value,label}))]} onChange={v=>setParams(current=>{const next=new URLSearchParams(current);next.delete('discovery_type');if(v)next.set('discovery_category',v);else next.delete('discovery_category');return next},{replace:true})}/>
           <Select aria-label="发现协议" mode="multiple" allowClear placeholder="全部协议" value={(params.get('discovery_protocol')||'').split(',').filter(Boolean)} options={Object.entries(protocols).map(([value,label])=>({value,label}))} onChange={values=>setParams(current=>{const next=new URLSearchParams(current);if(values.length)next.set('discovery_protocol',values.join(','));else next.delete('discovery_protocol');return next},{replace:true})}/>

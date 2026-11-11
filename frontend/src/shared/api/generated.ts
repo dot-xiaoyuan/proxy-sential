@@ -481,6 +481,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/discovery/devices/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Complete filtered discovery export from one read-only repeatable-read snapshot. NDJSON starts with a manifest and ends with a complete count record; clients must reject a missing end record or an error record. At most 200000 devices. Requires identity:read. */
+        get: operations["streamDiscoveryDevicesExport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/router-observations": {
         parameters: {
             query?: never;
@@ -10113,6 +10130,68 @@ export interface operations {
                 content?: never;
             };
             /** @description Count could not be read; never reported as an empty result */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    streamDiscoveryDevicesExport: {
+        parameters: {
+            query?: {
+                type?: string;
+                protocol?: string;
+                state?: string;
+                domain?: string;
+                vlan?: string;
+                view?: "iot";
+                mode?: "passive" | "infrastructure" | "active" | "all";
+                window?: string;
+                search?: string;
+                category?: string;
+                capability?: string;
+                random_mac?: boolean;
+                os?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description NDJSON manifest, device records, and mandatory complete end record. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-ndjson": string;
+                };
+            };
+            /** @description Invalid filters or pagination position */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Indexed discovery read path unavailable */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Result exceeds the explicit 200000-device export limit */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Snapshot or first page could not be read */
             500: {
                 headers: {
                     [name: string]: unknown;

@@ -21,7 +21,11 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 	} else if query.Window < 0 || query.Window > 30*24*time.Hour {
 		query.Window = 30 * 24 * time.Hour
 	}
-	if query.Limit <= 0 || query.Limit > 200 {
+	maxLimit := 200
+	if query.Export {
+		maxLimit = 1000
+	}
+	if query.Limit <= 0 || query.Limit > maxLimit {
 		query.Limit = 50
 	}
 	if query.Offset != 0 {
@@ -37,7 +41,11 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 	args := []any{}
 	baseWhere := []string{"l.observed_at<=now()", "NOT l.withdrawn"}
 	if query.Window > 0 {
-		args = append(args, time.Now().UTC().Add(-query.Window))
+		at := query.SnapshotAt
+		if at.IsZero() {
+			at = time.Now().UTC()
+		}
+		args = append(args, at.Add(-query.Window))
 		baseWhere = append(baseWhere, "l.observed_at>=$1")
 	}
 	for _, filter := range []struct{ key, value string }{{"domain", query.Domain}, {"vlan", query.VLAN}} {

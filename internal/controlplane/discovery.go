@@ -70,7 +70,13 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 		writeError(w, 403, "read_only", "只读模式不允许配置发现任务")
 		return
 	}
-	ctx, cancel := contextWithRequestTimeout(r.Context())
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if path == "/discovery/devices/export" {
+		ctx, cancel = context.WithTimeout(r.Context(), 2*time.Minute)
+	} else {
+		ctx, cancel = contextWithRequestTimeout(r.Context())
+	}
 	defer cancel()
 	repo := discovery.Repository{DB: s.operations.db, DeviceCache: s.discoveryDevices, PipelineV2: os.Getenv("PROXY_SENTINEL_DISCOVERY_V2") == "true", ActiveStreamOnly: discoveryStreamCurrentReadEnabled()}
 	limit, offset := 50, 0
@@ -475,7 +481,7 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 		// A missing exact key remains an explicit gap. The check time lets an
 		// external audit pair it with the immutable journal acceptance time.
 		writeJSON(w, 200, map[string]any{"items": items, "missing_keys": missing, "checked_at": time.Now().UTC()})
-	case (path == "/discovery/devices" || path == "/discovery/devices/metadata" || path == "/discovery/devices/position") && r.Method == "GET":
+	case (path == "/discovery/devices" || path == "/discovery/devices/metadata" || path == "/discovery/devices/position" || path == "/discovery/devices/export") && r.Method == "GET":
 		if r.URL.Query().Get("offset") != "" && path == "/discovery/devices" {
 			writeError(w, 400, "bad_cursor", "发现记录已改用游标分页，请删除 offset 参数")
 			return
@@ -498,6 +504,18 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 		}
 		query := discovery.DeviceQuery{View: r.URL.Query().Get("view"), Mode: r.URL.Query().Get("mode"), Window: window, Search: r.URL.Query().Get("search"), DeviceType: r.URL.Query().Get("type"), Category: r.URL.Query().Get("category"), Capability: r.URL.Query().Get("capability"), RandomMAC: r.URL.Query().Get("random_mac") == "true", OSFamily: r.URL.Query().Get("os"), Limit: limit, Offset: offset, Cursor: r.URL.Query().Get("cursor"), Protocol: r.URL.Query().Get("protocol"), State: r.URL.Query().Get("state"), Domain: r.URL.Query().Get("domain"), VLAN: r.URL.Query().Get("vlan")}
 		readStarted := time.Now()
+		if path == "/discovery/devices/export" {
+			if repo.ActiveStreamOnly || repo.PipelineV2 || os.Getenv("PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ") == "true" {
+				writeError(w, 409, "export_read_path", "当前发现读取路径不支持完整导出")
+				return
+			}
+			if query.Cursor != "" || query.Offset != 0 {
+				writeError(w, 400, "bad_export_query", "完整导出不接受分页位置")
+				return
+			}
+			s.streamDiscoveryDevices(w, ctx, repo, query)
+			return
+		}
 
 		if path == "/discovery/devices/position" {
 			if repo.ActiveStreamOnly || repo.PipelineV2 || os.Getenv("PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ") == "true" {

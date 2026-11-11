@@ -1,3 +1,5 @@
+import { getApiBase } from '../shared/api/client'
+
 type ExportableDevice = {
   id?: string
   name?: string
@@ -15,6 +17,80 @@ type ExportableDevice = {
   last_seen?: string
   evidence_count?: number
   recognition?: { device_type?: string; brand?: string; os_family?: string; confidence?: number; rule_version?: string }
+}
+
+export type DiscoveryExportResult<T> = { items: T[]; total: number; snapshotAt: string }
+
+// A download is valid only after the server's end record confirms the entire
+// read-only snapshot. Network interruption or a server error yields no CSV.
+export async function readDiscoveryExport<T>(response: Response, onProgress?: (count: number, total: number) => void, rowKey?: (item: T) => string): Promise<DiscoveryExportResult<T>> {
+  if (!response.ok) throw new Error(`完整导出请求失败（HTTP ${response.status}）`)
+  if (!response.body) throw new Error('浏览器无法读取导出数据流')
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  const items: T[] = []
+  const seen = new Set<string>()
+  let buffer = ''
+  let total = -1
+  let snapshotAt = ''
+  let ended = false
+  const consume = (line: string) => {
+    if (!line.trim()) return
+    const record = JSON.parse(line) as {record?:string;total?:number;snapshot_at?:string;item?:T;count?:number;complete?:boolean;message?:string}
+    if (ended) throw new Error('导出结束后仍收到设备记录')
+    if (record.record === 'manifest' && total < 0 && Number.isSafeInteger(record.total) && record.total! >= 0 && record.total! <= 200_000) {
+      total = record.total!
+      snapshotAt = record.snapshot_at ?? ''
+      return
+    }
+    if (total < 0) throw new Error('导出缺少快照清单')
+    if (record.record === 'error') throw new Error(record.message || '导出过程中断')
+    if (record.record === 'item' && record.item) {
+      if (rowKey) {
+        const key = rowKey(record.item)
+        if (seen.has(key)) throw new Error('导出存在重复设备，请重试')
+        seen.add(key)
+      }
+      items.push(record.item)
+      if (items.length > total) throw new Error('导出数量超过快照统计')
+      if (items.length % 200 === 0) onProgress?.(items.length, total)
+      return
+    }
+    if (record.record === 'end' && record.complete === true && record.count === items.length && items.length === total) {
+      ended = true
+      onProgress?.(items.length, total)
+      return
+    }
+    throw new Error('导出数据流校验失败')
+  }
+  try {
+    for (;;) {
+      const {value, done} = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, {stream:true})
+      for (;;) {
+        const newline = buffer.indexOf('\n')
+        if (newline < 0) break
+        consume(buffer.slice(0,newline))
+        buffer = buffer.slice(newline+1)
+      }
+    }
+    buffer += decoder.decode()
+    if (buffer.trim()) consume(buffer)
+    if (!ended) throw new Error('导出未收到完成校验，未生成文件')
+    return {items,total,snapshotAt}
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+export async function fetchDiscoveryExport<T>(query: URLSearchParams, onProgress?: (count: number, total: number) => void, rowKey?: (item: T) => string): Promise<DiscoveryExportResult<T>> {
+  const scope = new URLSearchParams(query)
+  scope.delete('cursor')
+  scope.delete('limit')
+  scope.delete('offset')
+  const response = await fetch(`${getApiBase()}/discovery/devices/export?${scope.toString()}`, {credentials:'include',headers:{Accept:'application/x-ndjson'}})
+  return readDiscoveryExport(response,onProgress,rowKey)
 }
 
 const statusLabels: Record<string, string> = { identified: '证据有效', candidate: '发现线索', conflict: '类型证据冲突', expired: '证据已过期' }

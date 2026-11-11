@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"database/sql"
 	"time"
 )
 
@@ -26,6 +27,14 @@ type IndexedDeviceTypeCount struct {
 // DevicesIndexed, independently of cursor/limit. Only the count is returned to
 // Go; errors remain errors and are never reported as an empty inventory.
 func (r Repository) DevicesIndexedMetadata(ctx context.Context, q DeviceQuery) (IndexedDeviceMetadata, error) {
+	return r.devicesIndexedMetadata(ctx, r.DB, q, true)
+}
+
+func (r Repository) DevicesIndexedMetadataSnapshot(ctx context.Context, tx *sql.Tx, q DeviceQuery) (IndexedDeviceMetadata, error) {
+	return r.devicesIndexedMetadata(ctx, tx, q, false)
+}
+
+func (r Repository) devicesIndexedMetadata(ctx context.Context, db indexedQueryer, q DeviceQuery, includeFreshness bool) (IndexedDeviceMetadata, error) {
 	q.Cursor = ""
 	q.Offset = 0
 	q.Limit = 50
@@ -34,7 +43,7 @@ func (r Repository) DevicesIndexedMetadata(ctx context.Context, q DeviceQuery) (
 		return IndexedDeviceMetadata{}, err
 	}
 	result := IndexedDeviceMetadata{CountUnit: "trusted_discovery_identity", Window: indexedWindowLabel(selection.Query.Window), Types: []IndexedDeviceTypeCount{}, AsOf: time.Now().UTC()}
-	rows, err := r.DB.QueryContext(ctx, selection.CTE+` SELECT classification_status,
+	rows, err := db.QueryContext(ctx, selection.CTE+` SELECT classification_status,
  CASE WHEN classification_status='identified' THEN effective_types[1]
   WHEN classification_status='candidate' AND cardinality(effective_types)=0 THEN candidate_role
   ELSE '' END device_type,
@@ -70,9 +79,11 @@ func (r Repository) DevicesIndexedMetadata(ctx context.Context, q DeviceQuery) (
 	// Report the data cutoff rather than the query time: the page prints this as
 	// the statistics timestamp, and the discovery projection intentionally runs
 	// one holdback behind the newest mirrored event.
-	if fresh := r.PassiveDiscoveryFreshness(ctx); fresh != nil {
-		if at, ok := fresh["cursor_at"].(time.Time); ok && !at.IsZero() {
-			result.AsOf = at
+	if includeFreshness {
+		if fresh := r.PassiveDiscoveryFreshness(ctx); fresh != nil {
+			if at, ok := fresh["cursor_at"].(time.Time); ok && !at.IsZero() {
+				result.AsOf = at
+			}
 		}
 	}
 	return result, nil

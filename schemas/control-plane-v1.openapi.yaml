@@ -359,6 +359,34 @@ paths:
         '400': { description: Invalid filter or time window }
         '409': { description: Current discovery read path does not support this indexed metadata contract }
         '500': { description: Count could not be read; never reported as an empty result }
+  /discovery/devices/export:
+    get:
+      operationId: streamDiscoveryDevicesExport
+      description: Complete filtered discovery export from one read-only repeatable-read snapshot. NDJSON starts with a manifest and ends with a complete count record; clients must reject a missing end record or an error record. At most 200000 devices. Requires identity:read.
+      parameters:
+        - { name: type, in: query, schema: { type: string } }
+        - { name: protocol, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string } }
+        - { name: domain, in: query, schema: { type: string } }
+        - { name: vlan, in: query, schema: { type: string } }
+        - { name: view, in: query, schema: { type: string, enum: [iot] } }
+        - { name: mode, in: query, schema: { type: string, enum: [passive, infrastructure, active, all], default: all } }
+        - { name: window, in: query, schema: { type: string, default: 24h } }
+        - { name: search, in: query, schema: { type: string } }
+        - { name: category, in: query, schema: { type: string } }
+        - { name: capability, in: query, schema: { type: string } }
+        - { name: random_mac, in: query, schema: { type: boolean } }
+        - { name: os, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: NDJSON manifest, device records, and mandatory complete end record.
+          content:
+            application/x-ndjson:
+              schema: { type: string }
+        '400': { description: Invalid filters or pagination position }
+        '409': { description: Indexed discovery read path unavailable }
+        '413': { description: Result exceeds the explicit 200000-device export limit }
+        '500': { description: Snapshot or first page could not be read }
   /router-observations:
     get:
       operationId: listRouterObservations

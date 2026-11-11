@@ -37,8 +37,21 @@ type discoveryRecognition struct {
 // current discovery page by MAC. The read is bounded by the page size, creates
 // no rows and leaves devices without a MAC or without a summary untouched.
 func enrichDiscoveryRecognition(ctx context.Context, db *sql.DB, page map[string]any) {
+	if db == nil {
+		return
+	}
+	enrichDiscoveryRecognitionQueryer(ctx, db, page)
+}
+
+func enrichDiscoveryRecognitionSnapshot(ctx context.Context, tx *sql.Tx, page map[string]any) {
+	enrichDiscoveryRecognitionQueryer(ctx, tx, page)
+}
+
+func enrichDiscoveryRecognitionQueryer(ctx context.Context, db interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, page map[string]any) {
 	items, ok := discoveryPageItems(page)
-	if !ok || len(items) == 0 || db == nil {
+	if !ok || len(items) == 0 {
 		return
 	}
 	macs, positions := discoveryPageMACs(items)

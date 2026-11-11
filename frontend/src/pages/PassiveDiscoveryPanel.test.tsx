@@ -346,6 +346,12 @@ it('filters VoIP phones from the quick types', async () => {
 
 it('exports the filtered discovery rows as CSV', async () => {
   mockReads()
+  const oldFetch=globalThis.fetch
+  globalThis.fetch=vi.fn().mockResolvedValue(new Response([
+    JSON.stringify({record:'manifest',total:1,snapshot_at:'2026-11-11T03:00:00Z'}),
+    JSON.stringify({record:'item',item:device}),
+    JSON.stringify({record:'end',count:1,complete:true}),
+  ].join('\n')+'\n'))
   const blobs: Blob[] = []
   const create = URL.createObjectURL
   const revoke = URL.revokeObjectURL
@@ -354,7 +360,7 @@ it('exports the filtered discovery rows as CSV', async () => {
   const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {})
   try {
     renderPanel()
-    fireEvent.click(screen.getByRole("button", { name: /导出/ }))
+    fireEvent.click(screen.getByRole("button", { name: '导出全部筛选结果' }))
     await waitFor(() => expect(blobs.length).toBe(1))
     const csv = await blobs[0].text()
     expect(csv).toContain("标识,名称,MAC")
@@ -364,6 +370,7 @@ it('exports the filtered discovery rows as CSV', async () => {
     click.mockRestore()
     URL.createObjectURL = create
     URL.revokeObjectURL = revoke
+    globalThis.fetch=oldFetch
   }
 })
 
