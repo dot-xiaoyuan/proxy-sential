@@ -103,27 +103,116 @@ func (s *PostgresStore) WriteRouterObservations(ctx context.Context, result evid
 		if item.AssessmentID != "" {
 			touched[item.AssessmentID] = true
 		}
-		data, _ := json.Marshal(item)
-		_, err = tx.ExecContext(ctx, `INSERT INTO router_evidence_facts(evidence_id,assessment_id,endpoint_id,ip,mac,vlan,source,source_family,kind,rule_id,rule_version,score,conflict,exclusion,first_seen,last_seen,expires_at,data)
-VALUES($1,$2,$3,NULLIF($4,'')::inet,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::timestamptz,$16::timestamptz,$17::timestamptz,$18)
-ON CONFLICT(evidence_id) DO UPDATE SET endpoint_id=EXCLUDED.endpoint_id,ip=EXCLUDED.ip,mac=EXCLUDED.mac,vlan=EXCLUDED.vlan,source=EXCLUDED.source,source_family=EXCLUDED.source_family,kind=EXCLUDED.kind,rule_id=EXCLUDED.rule_id,rule_version=EXCLUDED.rule_version,score=EXCLUDED.score,conflict=EXCLUDED.conflict,exclusion=EXCLUDED.exclusion,first_seen=LEAST(router_evidence_facts.first_seen,EXCLUDED.first_seen),last_seen=EXCLUDED.last_seen,expires_at=CASE WHEN EXCLUDED.source_family='shared_gateway_behavior' THEN EXCLUDED.expires_at ELSE GREATEST(router_evidence_facts.expires_at,EXCLUDED.expires_at) END,data=EXCLUDED.data
-WHERE EXCLUDED.last_seen>=router_evidence_facts.last_seen`, item.EvidenceID, item.AssessmentID, item.EndpointID, item.IP, item.MAC, item.VLAN, item.Source, item.SourceFamily, item.Kind, item.RuleID, item.RuleVersion, item.Score, item.Conflict, item.Exclusion, item.FirstSeen, item.LastSeen, item.ExpiresAt, data)
-		if err != nil {
+	}
+	batch, repeated, err := prepareRouterEvidenceBatch(result.Evidence)
+	if err != nil {
+		return err
+	}
+	if repeated {
+		// PostgreSQL cannot upsert the same key twice in one statement. Retain
+		// the original ordered writes for this unusual case, including the
+		// expiry calculation against an existing persisted row.
+		for _, item := range result.Evidence {
+			data, marshalErr := json.Marshal(item)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			if _, err = tx.ExecContext(ctx, insertRouterEvidenceSingleSQL, item.EvidenceID, item.AssessmentID, item.EndpointID, item.IP, item.MAC, item.VLAN, item.Source, item.SourceFamily, item.Kind, item.RuleID, item.RuleVersion, item.Score, item.Conflict, item.Exclusion, item.FirstSeen, item.LastSeen, item.ExpiresAt, data); err != nil {
+				return err
+			}
+		}
+	}
+	for start := 0; !repeated && start < len(batch); {
+		end := min(start+128, len(batch))
+		var raw []byte
+		for {
+			raw, err = json.Marshal(batch[start:end])
+			if err != nil {
+				return err
+			}
+			if len(raw) <= 2<<20 {
+				break
+			}
+			if end-start == 1 {
+				return fmt.Errorf("router evidence row exceeds 2 MiB")
+			}
+			end = start + (end-start)/2
+		}
+		if _, err = tx.ExecContext(ctx, insertRouterEvidenceBatchSQL, raw); err != nil {
 			return err
 		}
+		start = end
 	}
 	for _, item := range result.Assessments {
 		if item.AssessmentID != "" {
 			touched[item.AssessmentID] = true
 		}
 	}
-	for assessmentID := range touched {
+	ids := make([]string, 0, len(touched))
+	for id := range touched {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, assessmentID := range ids {
 		if err = rebuildRouterAssessment(ctx, tx, assessmentID, time.Now().UTC()); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
 }
+
+type routerEvidenceBatchRow struct {
+	EvidenceID   string          `json:"evidence_id"`
+	AssessmentID string          `json:"assessment_id"`
+	EndpointID   string          `json:"endpoint_id"`
+	IP           string          `json:"ip"`
+	MAC          string          `json:"mac"`
+	VLAN         string          `json:"vlan"`
+	Source       string          `json:"source"`
+	SourceFamily string          `json:"source_family"`
+	Kind         string          `json:"kind"`
+	RuleID       string          `json:"rule_id"`
+	RuleVersion  string          `json:"rule_version"`
+	Score        int             `json:"score"`
+	Conflict     bool            `json:"conflict"`
+	Exclusion    bool            `json:"exclusion"`
+	FirstSeen    string          `json:"first_seen"`
+	LastSeen     string          `json:"last_seen"`
+	ExpiresAt    string          `json:"expires_at"`
+	Data         json.RawMessage `json:"data"`
+}
+
+// A multi-row upsert needs unique keys. Repeated keys use the old sequential
+// path because expiry rules can depend on a row that predates this batch.
+func prepareRouterEvidenceBatch(items []evidence.RouterEvidence) ([]routerEvidenceBatchRow, bool, error) {
+	seen := make(map[string]bool, len(items))
+	rows := make([]routerEvidenceBatchRow, 0, len(items))
+	for _, item := range items {
+		if seen[item.EvidenceID] {
+			return nil, true, nil
+		}
+		seen[item.EvidenceID] = true
+		data, err := json.Marshal(item)
+		if err != nil {
+			return nil, false, err
+		}
+		rows = append(rows, routerEvidenceBatchRow{item.EvidenceID, item.AssessmentID, item.EndpointID, item.IP, item.MAC, item.VLAN, item.Source, item.SourceFamily, item.Kind, item.RuleID, item.RuleVersion, item.Score, item.Conflict, item.Exclusion, item.FirstSeen, item.LastSeen, item.ExpiresAt, data})
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].EvidenceID < rows[j].EvidenceID })
+	return rows, false, nil
+}
+
+const insertRouterEvidenceSingleSQL = `INSERT INTO router_evidence_facts(evidence_id,assessment_id,endpoint_id,ip,mac,vlan,source,source_family,kind,rule_id,rule_version,score,conflict,exclusion,first_seen,last_seen,expires_at,data)
+VALUES($1,$2,$3,NULLIF($4,'')::inet,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::timestamptz,$16::timestamptz,$17::timestamptz,$18)
+ON CONFLICT(evidence_id) DO UPDATE SET endpoint_id=EXCLUDED.endpoint_id,ip=EXCLUDED.ip,mac=EXCLUDED.mac,vlan=EXCLUDED.vlan,source=EXCLUDED.source,source_family=EXCLUDED.source_family,kind=EXCLUDED.kind,rule_id=EXCLUDED.rule_id,rule_version=EXCLUDED.rule_version,score=EXCLUDED.score,conflict=EXCLUDED.conflict,exclusion=EXCLUDED.exclusion,first_seen=LEAST(router_evidence_facts.first_seen,EXCLUDED.first_seen),last_seen=EXCLUDED.last_seen,expires_at=CASE WHEN EXCLUDED.source_family='shared_gateway_behavior' THEN EXCLUDED.expires_at ELSE GREATEST(router_evidence_facts.expires_at,EXCLUDED.expires_at) END,data=EXCLUDED.data
+WHERE EXCLUDED.last_seen>=router_evidence_facts.last_seen`
+
+const insertRouterEvidenceBatchSQL = `INSERT INTO router_evidence_facts(evidence_id,assessment_id,endpoint_id,ip,mac,vlan,source,source_family,kind,rule_id,rule_version,score,conflict,exclusion,first_seen,last_seen,expires_at,data)
+SELECT evidence_id,assessment_id,endpoint_id,NULLIF(ip,'')::inet,mac,vlan,source,source_family,kind,rule_id,rule_version,score,conflict,exclusion,first_seen,last_seen,expires_at,data
+FROM jsonb_to_recordset($1::jsonb) AS v(evidence_id text,assessment_id text,endpoint_id text,ip text,mac text,vlan text,source text,source_family text,kind text,rule_id text,rule_version text,score integer,conflict boolean,exclusion boolean,first_seen timestamptz,last_seen timestamptz,expires_at timestamptz,data jsonb)
+ORDER BY evidence_id
+ON CONFLICT(evidence_id) DO UPDATE SET endpoint_id=EXCLUDED.endpoint_id,ip=EXCLUDED.ip,mac=EXCLUDED.mac,vlan=EXCLUDED.vlan,source=EXCLUDED.source,source_family=EXCLUDED.source_family,kind=EXCLUDED.kind,rule_id=EXCLUDED.rule_id,rule_version=EXCLUDED.rule_version,score=EXCLUDED.score,conflict=EXCLUDED.conflict,exclusion=EXCLUDED.exclusion,first_seen=LEAST(router_evidence_facts.first_seen,EXCLUDED.first_seen),last_seen=EXCLUDED.last_seen,expires_at=CASE WHEN EXCLUDED.source_family='shared_gateway_behavior' THEN EXCLUDED.expires_at ELSE GREATEST(router_evidence_facts.expires_at,EXCLUDED.expires_at) END,data=EXCLUDED.data
+WHERE EXCLUDED.last_seen>=router_evidence_facts.last_seen`
 
 // rebuildRouterAssessment is shared by new facts and complete-window retirement.
 // Both paths update the durable current projection and its audit in one transaction.
