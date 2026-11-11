@@ -6,7 +6,7 @@ import { Button, Input, Select, Tag } from 'antd'
 import { request } from '../shared/api/client'
 import { useSession } from '../shared/api/queries'
 import { can } from '../shared/auth/permissions'
-import { AppEmptyState, AppErrorAlert, AppListHeader, AppLoadingState, AppServerPagination, AppTable, AppTableBar, useCursorPagePosition, usePaginationMetadata } from '../shared/ui'
+import { AppEmptyState, AppErrorAlert, AppListHeader, AppLoadingState, AppTable, AppTableBar } from '../shared/ui'
 import type { ColumnsType } from 'antd/es/table'
 import { formatDateTime } from '../shared/ui/format'
 import { statusColor } from '../shared/ui/status'
@@ -97,8 +97,8 @@ export function SharedPolicyRecords() {
  const [params, setParams] = useSearchParams()
  const [processingOpen,setProcessingOpen]=useState(false)
  const [moreOpen,setMoreOpen]=useState(false)
- const [page, setPage] = useState(1)
  const [pageSize, setPageSize] = useState(20)
+ const [paging, setPaging] = useState({scope:'',page:1,cursors:[''],snapshot:''})
  const requestedResult = params.get('decision_result') ?? 'matched'
  const result = ['matched', 'insufficient', 'expired', 'all'].includes(requestedResult) ? requestedResult : 'matched'
  const account = params.get('decision_account') ?? ''
@@ -106,7 +106,7 @@ export function SharedPolicyRecords() {
  const from = params.get('decision_from') ?? ''
  const to = params.get('decision_to') ?? ''
  const observation = params.get('observation_id') ?? ''
- const update = (key: string, value: string) => { setPage(1); setParams(current => { const next = new URLSearchParams(current); value ? next.set(key, value) : next.delete(key); return next }) }
+ const update = (key: string, value: string) => { setPaging({scope:'',page:1,cursors:[''],snapshot:''}); setParams(current => { const next = new URLSearchParams(current); value ? next.set(key, value) : next.delete(key); return next }) }
  const queryParams = new URLSearchParams({ trigger: 'shared_access', result, limit: String(pageSize) })
  if (processingOpen) queryParams.set('include_processing','true')
  if (result === 'all') queryParams.delete('result')
@@ -118,13 +118,17 @@ export function SharedPolicyRecords() {
  const invalidRange = (fromTime !== undefined && !Number.isFinite(fromTime)) || (toTime !== undefined && !Number.isFinite(toTime)) || (fromTime !== undefined && toTime !== undefined && fromTime >= toTime)
  if (fromTime !== undefined && Number.isFinite(fromTime)) queryParams.set('from', new Date(fromTime).toISOString())
  if (toTime !== undefined && Number.isFinite(toTime)) queryParams.set('to', new Date(toTime).toISOString())
- const metadata=usePaginationMetadata('/policy-decisions/metadata',queryParams,!invalidRange)
- if(metadata.data?.snapshot)queryParams.set('snapshot',metadata.data.snapshot)
- const position=useCursorPagePosition({path:'/policy-decisions/position',query:queryParams,page,pageSize,enabled:!invalidRange&&Boolean(metadata.data)})
- if(position.cursor)queryParams.set('cursor',position.cursor)
- const query = useQuery({ queryKey: ['shared-policy-records', queryParams.toString()], queryFn: () => request<{ items: SharedPolicyDecision[]; next_cursor: string; processing?: {ip:string;state:string;first_received_at:string}[]; processing_has_more?:boolean }>(`/policy-decisions?${queryParams}`), enabled: !invalidRange && position.ready })
- const items = position.ready ? query.data?.items ?? [] : []
- const changePage=(next:number,size:number)=>{setPage(next);setPageSize(size)}
+ const scopeKey=queryParams.toString()
+ const currentPaging=paging.scope===scopeKey?paging:{scope:scopeKey,page:1,cursors:[''],snapshot:''}
+ const page=currentPaging.page
+ if(currentPaging.snapshot)queryParams.set('snapshot',currentPaging.snapshot)
+ const cursor=currentPaging.cursors[page-1]
+ if(cursor)queryParams.set('cursor',cursor)
+ const query = useQuery({ queryKey: ['shared-policy-records', queryParams.toString()], queryFn: () => request<{ items: SharedPolicyDecision[]; next_cursor: string; snapshot?: string; processing?: {ip:string;state:string;first_received_at:string}[]; processing_has_more?:boolean }>(`/policy-decisions?${queryParams}`), enabled: !invalidRange })
+ const items = query.data?.items ?? []
+ const changePageSize=(size:number)=>{setPageSize(size);setPaging({scope:'',page:1,cursors:[''],snapshot:''})}
+ const nextPage=()=>{if(query.data?.next_cursor)setPaging({scope:scopeKey,page:page+1,cursors:[...currentPaging.cursors.slice(0,page),query.data.next_cursor],snapshot:query.data.snapshot??currentPaging.snapshot})}
+ const previousPage=()=>{if(page>1)setPaging({...currentPaging,page:page-1})}
  const moreCount = [ip, from, to].filter(Boolean).length
  const columns: ColumnsType<SharedPolicyDecision> = [
   { title: '用户与位置', key: 'subject', width: 220, render: (_, item) => <div className="shared-record-subject"><strong>{item.account_id || item.ip}</strong><span className="shared-access-muted">{item.account_id ? `IP ${item.ip}` : ''}</span><span className="shared-access-muted">{[item.campus_id, item.access_domain].filter(Boolean).join(' / ')}</span></div> },
@@ -153,7 +157,7 @@ export function SharedPolicyRecords() {
     <AppListHeader title="共享行为与策略命中" count={`${items.length} 条`} />
     <div className="shared-record-intro"><Tag>仅记录，未执行</Tag><span>命中后不会下线或发送请求</span>{can(session.data,'actions:read')&&<Link to="/actions?tab=actions">查看处置记录</Link>}{can(session.data,'behavior-reports:read')&&<Link to="/actions?tab=reports">查看上报记录</Link>}<details><summary>判定与执行说明</summary><p>路由器身份、下游共享关系及事件时账号归责均核验通过后记录策略命中。命中时同步写入处置动作记录，并按已启用的通道写入上报记录；两类记录均为仅记录状态，不向外部系统发送请求。</p></details></div>
     {observation && <p className="shared-record-id">当前观察：{observation} <Button type="link" onClick={() => update('observation_id', '')}>清除关联筛选</Button></p>}
-    {invalidRange ? <Alert type="warning" title="请填写有效时间，且结束时间晚于开始时间" /> : (query.isError||metadata.isError||position.isError) ? <AppErrorAlert title="策略记录读取失败" /> : (query.isLoading||metadata.isPending||position.isLocating) ? <AppLoadingState rows={3} /> : !items.length ? <div className="shared-record-empty"><AppEmptyState description={result==='matched'?'当前筛选下暂无策略命中记录':'当前筛选下暂无评估记录'} />{result==='matched'&&<><p className="shared-access-muted">已识别的路由器仍需核验共享关系，采集待办不属于策略命中。</p><Button onClick={()=>update('decision_result','insufficient')}>查看未通过评估</Button></>}</div> : <AppTable
+    {invalidRange ? <Alert type="warning" title="请填写有效时间，且结束时间晚于开始时间" /> : query.isError ? <AppErrorAlert title="策略记录读取失败" /> : query.isLoading ? <AppLoadingState rows={3} /> : !items.length ? <div className="shared-record-empty"><AppEmptyState description={result==='matched'?'当前筛选下暂无策略命中记录':'当前筛选下暂无评估记录'} />{result==='matched'&&<><p className="shared-access-muted">已识别的路由器仍需核验共享关系，采集待办不属于策略命中。</p><Button onClick={()=>update('decision_result','insufficient')}>查看未通过评估</Button></>}</div> : <AppTable
       rowKey="decision_id"
       columns={columns}
       dataSource={items}
@@ -165,8 +169,7 @@ export function SharedPolicyRecords() {
         {!!item.evidence.records?.length && <div className="shared-record-detail-scroll">{item.evidence.records.map(ref => <p className="shared-record-id" key={`${ref.source}/${ref.event_id}`}>{[ref.source, ref.collector_instance_id, ref.event_id].filter(Boolean).join(' / ')}</p>)}</div>}
       </div> }}
     />}
-    {position.isError&&<AppErrorAlert title="页码定位失败" message={position.error.message}/>}
-    <AppServerPagination disabled={query.isFetching||position.isLocating} page={page} pageSize={pageSize} total={metadata.data?.total} totalText={metadata.isError?'数量读取失败':undefined} onChange={changePage} />
+    <div className="shared-policy-cursor-pagination"><span>第 {page} 页 · 本页 {items.length} 条</span><Select aria-label="每页条数" value={pageSize} options={[{value:20,label:'每页 20 条'},{value:50,label:'每页 50 条'}]} onChange={changePageSize}/><Button disabled={page===1||query.isFetching} onClick={previousPage}>上一页</Button><Button disabled={!query.data?.next_cursor||query.isFetching} onClick={nextPage}>下一页</Button></div>
     <details className="shared-record-processing" onToggle={e=>setProcessingOpen(e.currentTarget.open)}><summary>查看采集处理进度（不属于策略命中）</summary>
      {processingOpen&&(query.isFetching?<p>正在读取处理进度</p>:query.isError?<p>处理进度读取失败</p>:query.data?.processing?.length?<><p>本次返回 {query.data.processing.length} 项待办{query.data.processing_has_more?'，还有其他待办':''}。账号筛选只作用于已生成的记录。</p><ul>{query.data.processing.slice(0,5).map(item=><li key={item.ip}><span className="shared-record-id">{item.ip}</span><Tag>{item.state==='failed'?'失败待重试':'处理中'}</Tag></li>)}</ul>{query.data.processing.length>5&&<p className="shared-access-muted">仅展开前 5 项，其他待办仍继续处理。</p>}</>:<p>当前范围没有返回待办。此状态不代表已确认或排除共享。</p>)}
     </details>

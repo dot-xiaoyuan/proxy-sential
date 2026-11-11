@@ -1,4 +1,4 @@
-import { render, screen, waitFor, cleanup } from '@testing-library/react'
+import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -41,5 +41,21 @@ describe('共享策略仅记录', () => {
   expect(await screen.findByText(/当前筛选下暂无评估记录/)).toBeInTheDocument()
   await waitFor(()=>expect(vi.mocked(request).mock.calls.some(([path])=>String(path).startsWith('/policy-decisions?')&&String(path).includes('observation_id=raw-proof'))).toBe(true))
   expect(sharedReason('capture_interval_incomplete:handshake-sidecar')).toContain('采集时间段覆盖不足')
+ })
+ it('大表计数不可用时仍按记录游标翻页', async () => {
+  vi.mocked(request).mockImplementation(async path => {
+   const url = String(path)
+   if (!url.startsWith('/policy-decisions?')) throw new Error('不应请求全量计数或页码定位')
+   if (url.includes('cursor=next-record')) return {items:[{...sharedDecisionFixture,decision_id:'second-decision',account_id:'second-account'}],next_cursor:'',snapshot:'2026-11-11T09:00:00Z'}
+   return {items:[sharedDecisionFixture],next_cursor:'next-record',snapshot:'2026-11-11T09:00:00Z'}
+  })
+  setup()
+  expect(await screen.findByText('campus-student-001')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button',{name:'下一页'}))
+  expect(await screen.findByText('second-account')).toBeInTheDocument()
+  expect(vi.mocked(request).mock.calls.some(([path])=>String(path).includes('cursor=next-record'))).toBe(true)
+  fireEvent.click(screen.getByRole('button',{name:'上一页'}))
+  expect(await screen.findByText('campus-student-001')).toBeInTheDocument()
+  expect(vi.mocked(request).mock.calls.some(([path])=>String(path).includes('snapshot=2026-11-11T09%3A00%3A00Z'))).toBe(true)
  })
 })

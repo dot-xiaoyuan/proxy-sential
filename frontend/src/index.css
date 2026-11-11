@@ -5242,6 +5242,8 @@ pre.wrap-code {
 .shared-record-filters .ant-select { width: 100%; }
 .shared-records .ant-btn, .shared-records summary { white-space: nowrap; flex-shrink: 0; }
 .shared-record-panel { margin-top: 12px; }
+.shared-policy-cursor-pagination { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.shared-policy-cursor-pagination > span, .shared-policy-cursor-pagination .ant-btn, .shared-policy-cursor-pagination .ant-select { white-space: nowrap; flex-shrink: 0; }
 .shared-record-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
 .shared-record-facts dt { color: #475569; font-size: 12px; margin-bottom: 4px; }
 .shared-record-facts dd { margin: 0; overflow-wrap: anywhere; }
