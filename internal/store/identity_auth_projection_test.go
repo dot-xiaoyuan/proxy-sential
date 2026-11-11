@@ -92,9 +92,15 @@ func TestAuthenticationArchiveKeepsImmutableBoundary(t *testing.T) {
 	if !strings.Contains(query, "b.accepted_at >= $2") || len(args) != 2 || args[1] != after {
 		t.Fatal("fresh archive can claim abandoned history")
 	}
+	if !strings.Contains(query, "ORDER BY b.accepted_at DESC") {
+		t.Fatal("fresh archive must prioritize current input ahead of older unconfirmed fragments")
+	}
 	query, args = identityExportCandidateQuery("legacy", time.Time{})
 	if strings.Contains(query, "b.accepted_at >= $2") || len(args) != 1 {
 		t.Fatal("unmigrated sources must keep their existing archive contract")
+	}
+	if !strings.Contains(query, "ORDER BY b.accepted_at,f.batch_id,f.first_ordinal") {
+		t.Fatal("legacy archive must retain ordered export")
 	}
 }
 
