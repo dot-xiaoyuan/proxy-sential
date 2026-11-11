@@ -300,6 +300,7 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 		return nil
 	}
 	var archivePendingSince time.Time
+	var sourceGapSince time.Time
 	var smallZeekBatchSince time.Time
 	for {
 		select {
@@ -382,7 +383,21 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 			} else {
 				archivePendingSince = time.Time{}
 			}
-			if streamPermanentError(err) {
+			if errors.Is(err, ErrStreamSourceGap) {
+				// A logrotate rename can briefly expose the replacement before
+				// the old file is visible under its archive name. Keep the
+				// durable cursor fixed while rechecking that exact predecessor.
+				// A persistent or altered source still fails closed.
+				if sourceGapSince.IsZero() {
+					sourceGapSince = time.Now()
+				}
+				if time.Since(sourceGapSince) >= 60*time.Second {
+					return err
+				}
+			} else {
+				sourceGapSince = time.Time{}
+			}
+			if !errors.Is(err, ErrStreamSourceGap) && streamPermanentError(err) {
 				return err
 			}
 			reportTransient(fmt.Errorf("retry stream capture: %w", err))
@@ -392,6 +407,7 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 			continue
 		}
 		archivePendingSince = time.Time{}
+		sourceGapSince = time.Time{}
 		if captured {
 			smallZeekBatchSince = time.Time{}
 			if staged {
