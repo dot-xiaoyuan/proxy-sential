@@ -98,6 +98,10 @@ for unit in "${units[@]}"; do
   # The deferred discovery check below also permits the protected previous
   # executable while it drains accepted memory batches.
   if [[ "$defer_discovery_restart" == true && "$unit" == proxy-sentinel-discovery.service ]]; then continue; fi
+  # A failed, enabled reader has no MainPID to verify against the old release.
+  # It stays in units and must start and pass full runtime verification after
+  # the pointer switch; skipping it here is necessary to repair that reader.
+  if systemctl is-failed --quiet "$unit" && systemctl is-enabled --quiet "$unit"; then continue; fi
   preflight_units+=("$unit")
 done
 if (( ${#preflight_units[@]} > 0 )); then
