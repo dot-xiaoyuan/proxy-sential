@@ -37,6 +37,16 @@ var embeddedProductRules []byte
 // consumer product family is a data change, not a release.
 var campusProductRules = mustLoadProductRules(embeddedProductRules)
 
+var campusProductRulesVersion = func() string {
+	var table productRuleTable
+	if err := json.Unmarshal(embeddedProductRules, &table); err != nil {
+		panic(err)
+	}
+	return table.Version
+}()
+
+func ProductRulesVersion() string { return campusProductRulesVersion }
+
 func mustLoadProductRules(data []byte) []productRule {
 	rules, err := parseProductRules(data)
 	if err != nil {
@@ -108,6 +118,9 @@ func DNSSDModelFromTXT(text string) string {
 func applyProductRules(o *Observation) {
 	p := o.Evidence.Payload
 	if p == nil {
+		return
+	}
+	if o.Origin == "sadp" && o.ModelName == "" {
 		return
 	}
 	fields := []string{o.ModelName, str(p, "product_model"), str(p, "printer_make_and_model")}
