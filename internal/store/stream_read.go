@@ -112,13 +112,13 @@ func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []Stre
 	if s == nil || len(refs) == 0 || len(refs) > 100 {
 		return nil, errors.New("stream batch body read needs one to 100 references")
 	}
-	type groupKey struct{ class, month, layout string }
+	type groupKey struct{ class, month, layout, scope string }
 	groups := make(map[groupKey]map[string]StreamBodyRef)
 	for _, ref := range refs {
 		if err := ref.Validate(); err != nil {
 			return nil, err
 		}
-		group := groupKey{ref.Class, ref.Month, ref.BodyLayout}
+		group := groupKey{ref.Class, ref.Month, ref.BodyLayout, ref.Scope}
 		if groups[group] == nil {
 			groups[group] = make(map[string]StreamBodyRef)
 		}
@@ -139,14 +139,17 @@ func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []Stre
 		if order[i].class != order[j].class {
 			return order[i].class < order[j].class
 		}
-		return order[i].layout < order[j].layout
+		if order[i].layout != order[j].layout {
+			return order[i].layout < order[j].layout
+		}
+		return order[i].scope < order[j].scope
 	})
 	result := make(map[StreamBodyRef]StreamEvidence, len(refs))
 	for _, group := range order {
 		expected := groups[group]
 		keys := make([]string, 0, len(expected))
 		for _, ref := range expected {
-			keys = append(keys, "("+chQuote(ref.Scope)+","+chQuote(ref.Key)+")")
+			keys = append(keys, chQuote(ref.Key))
 		}
 		sort.Strings(keys)
 		limit := 101 * len(expected)
@@ -155,7 +158,7 @@ func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []Stre
 		// contained repeated physical rows. The first pass also preserves the
 		// conflict check for a key that has more than one content hash.
 		metadataQuery := "SELECT scope_id,event_key,content_sha256 FROM " + streamBodyTable(group.class, group.layout) +
-			" PREWHERE archive_month=" + group.month + " AND (scope_id,event_key) IN (" + strings.Join(keys, ",") + ")" +
+			" PREWHERE archive_month=" + group.month + " AND scope_id=" + chQuote(group.scope) + " AND event_key IN (" + strings.Join(keys, ",") + ")" +
 			fmt.Sprintf(" LIMIT %d SETTINGS max_threads=1,max_memory_usage=268435456,max_execution_time=10 FORMAT JSONEachRow", limit)
 		data, err := s.query(ctx, metadataQuery)
 		if err != nil {
@@ -203,7 +206,7 @@ func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []Stre
 					continue
 				}
 			}
-			bodyKeys = append(bodyKeys, "("+chQuote(ref.Scope)+","+chQuote(ref.Key)+","+chQuote(ref.SHA256)+")")
+			bodyKeys = append(bodyKeys, "("+chQuote(ref.Key)+","+chQuote(ref.SHA256)+")")
 		}
 		if len(bodyKeys) == 0 {
 			continue
@@ -212,7 +215,7 @@ func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []Stre
 		// Fetch one body for each uncached triple. LIMIT BY keeps a duplicate
 		// physical copy from forcing the wide body column through the response.
 		bodyQuery := "SELECT scope_id,event_key,content_sha256,body FROM " + streamBodyTable(group.class, group.layout) +
-			" PREWHERE archive_month=" + group.month + " AND (scope_id,event_key,content_sha256) IN (" + strings.Join(bodyKeys, ",") + ")" +
+			" PREWHERE archive_month=" + group.month + " AND scope_id=" + chQuote(group.scope) + " AND (event_key,content_sha256) IN (" + strings.Join(bodyKeys, ",") + ")" +
 			" LIMIT 1 BY scope_id,event_key,content_sha256" +
 			" SETTINGS max_threads=1,max_memory_usage=268435456,max_execution_time=10 FORMAT JSONEachRow"
 		bodyData, err := s.query(ctx, bodyQuery)

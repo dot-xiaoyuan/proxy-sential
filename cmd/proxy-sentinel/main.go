@@ -370,15 +370,14 @@ func runRouterFreshCutover(args []string) error {
 	if err != nil {
 		return fmt.Errorf("parse router indexed-after: %w", err)
 	}
-	// The audited cutoff scans the sensor's whole router index (tens of
-	// millions of rows on 184), so allow the one-off query to settle instead of
-	// timing out at the interactive request budget.
-	backend, err := store.NewDBStore(store.Options{Mode: store.ModeDB, SensorID: *sensorID, PostgresDSN: *postgresDSN, ClickHouseDSN: *clickhouseDSN, RequestTimeout: 90 * time.Second})
+	// A one-off cutoff audit can still span millions of indexed rows on 184.
+	// Give the range-pruned counts time to finish outside the API budget.
+	backend, err := store.NewDBStore(store.Options{Mode: store.ModeDB, SensorID: *sensorID, PostgresDSN: *postgresDSN, ClickHouseDSN: *clickhouseDSN, RequestTimeout: 250 * time.Second})
 	if err != nil {
 		return err
 	}
 	defer backend.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	oldRows, err := backend.StartStreamRouterFreshCutover(ctx, *sensorID, *cancelID, cutoff)
 	if err != nil {

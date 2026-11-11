@@ -35,7 +35,7 @@ it('shows discovered routers without requiring a risk or router-assessment recor
   expect(await screen.findByText('宿舍路由设备')).toBeVisible()
   expect(await screen.findByText('共 63 条设备记录')).toBeVisible()
   expect(screen.getByText('设备类型用于资产管理；违规与共享行为需另行核验。')).toBeVisible()
-  expect(observations).not.toHaveBeenCalled()
+  await waitFor(() => expect(observations).toHaveBeenCalledWith(expect.objectContaining({ role: 'router', include_candidates: false })))
   const list = request.mock.calls.find(([path]) => String(path).startsWith('/discovery/devices?'))!
   const query = new URL(String(list[0]), 'http://localhost').searchParams
   expect(query.get('mode')).toBe('passive')
@@ -63,11 +63,9 @@ it('maps the access-point view to the discovery access_point type', async () => 
   expect(calls.every(url => url.searchParams.get('type') === 'access_point')).toBe(true)
 })
 
-it('loads the stricter role evidence only when the operator expands it', async () => {
+it('loads route role evidence before passive asset classification', async () => {
   setup()
   await screen.findByText('宿舍路由设备')
-  expect(observations).not.toHaveBeenCalled()
-  fireEvent.click(screen.getByText('路由角色证据核查'))
   await waitFor(() => expect(observations).toHaveBeenCalledWith(expect.objectContaining({ role: 'router', include_candidates: false })))
   expect(screen.getByText('共 63 条设备记录')).toBeVisible()
 })
@@ -105,8 +103,9 @@ it('uses opaque discovery cursors and resets the cursor when the asset search ch
     return Promise.resolve({ items: Array.from({ length: 20 }, (_, index) => ({ ...row, id: `${query.get('cursor') || 'first'}-${index}` })), limit: 20, has_more: !query.has('cursor'), next_cursor: query.has('cursor') ? '' : 'opaque-router-cursor' })
   })
   fireEvent.click(screen.getByRole('button', { name: '刷新设备' }))
-  await waitFor(() => expect(document.querySelector('.ant-pagination-next')).not.toHaveClass('ant-pagination-disabled'))
-  fireEvent.click(document.querySelector('.ant-pagination-next')!)
+  const next = document.querySelector('.router-detail-page > section.router-observations-panel .ant-pagination-next')!
+  await waitFor(() => expect(next).not.toHaveClass('ant-pagination-disabled'))
+  fireEvent.click(next)
   await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).includes('cursor=opaque-router-cursor'))).toBe(true))
   fireEvent.change(screen.getByPlaceholderText('搜索设备名称、IP 或 MAC'), { target: { value: '192.0.2.10' } })
   fireEvent.keyDown(screen.getByPlaceholderText('搜索设备名称、IP 或 MAC'), { key: 'Enter', code: 'Enter' })

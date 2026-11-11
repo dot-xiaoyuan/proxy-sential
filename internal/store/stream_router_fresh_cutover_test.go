@@ -41,7 +41,8 @@ func TestStreamRouterFreshCutoverKeepsIndexedNewRows(t *testing.T) {
 	if canceled, err := store.StartStreamRouterFreshCutover(context.Background(), "sensor-a", "cancel-1", cutoff); err != nil || canceled != 5 {
 		t.Fatalf("cutover did not retain new input: canceled=%d err=%v", canceled, err)
 	}
-	if !strings.Contains(query, "stream_router_signal_index") || !strings.Contains(query, "countIf(indexed_at>=") {
+	if strings.Count(query, "FROM stream_router_signal_index WHERE sensor_id='sensor-a'") != 2 ||
+		!strings.Contains(query, "AND indexed_at>=") || !strings.Contains(query, "AND indexed_at<") {
 		t.Fatalf("router index cutover count omitted boundary: %s", query)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

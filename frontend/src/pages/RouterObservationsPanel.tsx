@@ -9,7 +9,6 @@ import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Button,
   Checkbox,
-  Collapse,
   Form,
   Input,
   InputNumber,
@@ -50,8 +49,8 @@ export function routerObservationQueryFromParams(params: URLSearchParams): Route
 
 export function RouterObservationsPanel() {
   return <div className="router-detail-page">
+    <RouterRoleObservationsPanel />
     <RouterAssetsPanel />
-    <Collapse items={[{ key: 'role-evidence', label: '路由角色证据核查', children: <RouterRoleObservationsPanel /> }]} />
   </div>
 }
 

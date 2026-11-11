@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -14,6 +15,27 @@ import (
 	"proxy-sentinel/internal/realtime"
 	"proxy-sentinel/internal/streamlog"
 )
+
+func TestPreparedDeviceStreamCursorSealsAuditedTail(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ttl.jsonl")
+	original := bytes.Repeat([]byte("record\n"), 1000)
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	cursor, err := preparedStreamCursor(file, "fresh", "device-signals", path, "birth-aware-id", "device-v1", int64(len(original)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(original[len(original)-streamlog.SourceTailProofBytes:])
+	if cursor.TailBytes != streamlog.SourceTailProofBytes || cursor.TailSHA256 != hex.EncodeToString(sum[:]) {
+		t.Fatalf("prepared device cursor lacks original tail proof: %+v", cursor)
+	}
+}
 
 func TestZeekStreamRunRequiresMatchingActiveCutover(t *testing.T) {
 	cursor := streamlog.SourceCursor{Epoch: "fresh-dhcp", Source: "zeek-dhcp", Path: "/zeek/dhcp.log", FileID: "file-1", DiscardedBeforeOffset: 120, Offset: 120, ParserVersion: "zeek-v1"}

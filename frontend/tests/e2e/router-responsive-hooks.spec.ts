@@ -6,11 +6,27 @@ test('路由器列表跨断点缩放时保持渲染且不报 Hook 错误', async
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/devices?tab=network')
-  await expect(page.locator('.router-observations-panel')).toBeVisible()
+  const rolePanel = page.locator('.router-detail-page > div.router-observations-panel')
+  await expect(rolePanel).toBeVisible()
   for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }, { width: 1440, height: 900 }]) {
     await page.setViewportSize(viewport)
-    await expect(page.locator('.router-observations-panel')).toBeVisible()
-    await expect(page.locator('.router-observations-panel .ant-table-row').first()).toBeVisible()
+    await expect(rolePanel).toBeVisible()
+    await expect(rolePanel.locator('.ant-table-row').first()).toBeVisible()
+    const probe = await page.evaluate(() => {
+      const role = document.querySelector('.router-detail-page > .router-observations-panel')
+      const list = role?.querySelector('.ant-table-container')
+      const action = role?.querySelector('.ant-btn')
+      return {
+        viewport: innerWidth,
+        documentWidth: document.documentElement.scrollWidth,
+        roleVisible: Boolean(role && getComputedStyle(role).display !== 'none'),
+        tableOverflow: list ? getComputedStyle(list).overflowX : '',
+        actionWhiteSpace: action ? getComputedStyle(action).whiteSpace : '',
+      }
+    })
+    expect(probe.documentWidth).toBeLessThanOrEqual(probe.viewport + 1)
+    expect(probe.roleVisible).toBe(true)
+    console.log('router viewport style probe', probe)
     await page.screenshot({ path: `/tmp/proxy-sentinel-router-responsive-${viewport.width}.png` })
   }
   expect(errors).toEqual([])

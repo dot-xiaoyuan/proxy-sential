@@ -150,7 +150,7 @@ func TestReadStreamSharedCaseEvidenceBatchesProtectedOriginals(t *testing.T) {
 	queries := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		query, _ := io.ReadAll(r.Body)
-		if !strings.Contains(string(query), "(scope_id,event_key) IN") && !strings.Contains(string(query), "(scope_id,event_key,content_sha256) IN") {
+		if !strings.Contains(string(query), "scope_id='scope-a' AND event_key IN") && !strings.Contains(string(query), "scope_id='scope-a' AND (event_key,content_sha256) IN") {
 			t.Errorf("case body lookup was not bounded to exact keys: %s", query)
 		}
 		queries++

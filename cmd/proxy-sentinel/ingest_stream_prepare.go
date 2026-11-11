@@ -452,21 +452,9 @@ func prepareControlledFileStreamAfterClosedWithRotation(ctx context.Context, db 
 	if err := tx.Commit(); err != nil {
 		return zeekCutoverBytes{}, "", err
 	}
-	cursor := streamlog.SourceCursor{Epoch: epoch, Source: kind, Path: path, FileID: fileID, Offset: scan.Offset, ParserVersion: parser}
-	if kind == "zeek-dhcp-binding" && (parser == zeekDHCPBindingStreamParser || parser == zeekDHCPMessageStreamParser) {
-		cursor.KeyScheme, cursor.Generation = "generation-v2", 1
-	}
-	if kind == "zeek-dhcp-binding" && scan.Offset > 0 {
-		tailBytes := int(scan.Offset)
-		if tailBytes > streamlog.SourceTailProofBytes {
-			tailBytes = streamlog.SourceTailProofBytes
-		}
-		tail := make([]byte, tailBytes)
-		if _, err := file.ReadAt(tail, scan.Offset-int64(tailBytes)); err != nil {
-			return zeekCutoverBytes{}, "", err
-		}
-		sum := sha256.Sum256(tail)
-		cursor.TailBytes, cursor.TailSHA256 = tailBytes, hex.EncodeToString(sum[:])
+	cursor, err := preparedStreamCursor(file, epoch, kind, path, fileID, parser, scan.Offset)
+	if err != nil {
+		return zeekCutoverBytes{}, "", err
 	}
 	old, loadErr := journal.LoadSource(cursor.Source, cursor.Path)
 	if errors.Is(loadErr, os.ErrNotExist) {
@@ -494,6 +482,26 @@ func prepareControlledFileStreamAfterClosedWithRotation(ctx context.Context, db 
 		scan.Bytes += entry.UnprocessedBytes
 	}
 	return scan, manifest, nil
+}
+
+func preparedStreamCursor(file *os.File, epoch, kind, path, fileID, parser string, offset int64) (streamlog.SourceCursor, error) {
+	cursor := streamlog.SourceCursor{Epoch: epoch, Source: kind, Path: path, FileID: fileID, Offset: offset, ParserVersion: parser}
+	if kind == "zeek-dhcp-binding" && (parser == zeekDHCPBindingStreamParser || parser == zeekDHCPMessageStreamParser) {
+		cursor.KeyScheme, cursor.Generation = "generation-v2", 1
+	}
+	if (kind == "zeek-dhcp-binding" || kind == "device-signals") && offset > 0 {
+		tailBytes := int(offset)
+		if tailBytes > streamlog.SourceTailProofBytes {
+			tailBytes = streamlog.SourceTailProofBytes
+		}
+		tail := make([]byte, tailBytes)
+		if _, err := file.ReadAt(tail, offset-int64(tailBytes)); err != nil {
+			return streamlog.SourceCursor{}, err
+		}
+		sum := sha256.Sum256(tail)
+		cursor.TailBytes, cursor.TailSHA256 = tailBytes, hex.EncodeToString(sum[:])
+	}
+	return cursor, nil
 }
 
 func runIngestStreamPrepare(args []string) error {
