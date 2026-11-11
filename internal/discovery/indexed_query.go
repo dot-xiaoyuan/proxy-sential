@@ -168,7 +168,7 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
  JOIN (SELECT DISTINCT coalesce(linked_endpoint,'mac:'||lower(coalesce(data->>'mac',''))) endpoint_id
        FROM candidate_links) active ON active.endpoint_id=rec.endpoint_id
 ), candidate_rows AS (
- SELECT l.id,l.device_key,l.origin,l.observed_at,l.valid_until,lower(coalesce(l.data->>'ip','')) search_ip,lower(coalesce(l.data->>'mac','')) search_mac,lower(coalesce(l.data->>'name','')) search_name,lower(coalesce(l.data->>'device_type','')) search_device_type,lower(coalesce(l.data->>'manufacturer','')) search_manufacturer,lower(coalesce(l.data->>'model_name','')) search_model,` + indexedIdentitySQL + ` identity_key,` + indexedObservationCapabilitiesSQL + ` observation_capabilities,` + indexedObservationTypeSQL + ` observed_type,
+ SELECT l.id,l.device_key,l.origin,l.observed_at,l.valid_until,l.data,lower(coalesce(l.data->>'ip','')) search_ip,lower(coalesce(l.data->>'mac','')) search_mac,lower(coalesce(l.data->>'name','')) search_name,lower(coalesce(l.data->>'device_type','')) search_device_type,lower(coalesce(l.data->>'manufacturer','')) search_manufacturer,lower(coalesce(l.data->>'model_name','')) search_model,` + indexedIdentitySQL + ` identity_key,` + indexedObservationCapabilitiesSQL + ` observation_capabilities,` + indexedObservationTypeSQL + ` observed_type,
  coalesce(l.linked_endpoint,'') linked_endpoint,
  coalesce(rec.role,'') profile_role,coalesce(rec.profile_confidence,0) profile_confidence,coalesce(rec.os_family,'') profile_os,
  CASE WHEN coalesce(rec.profile_confidence,0)>=0.8 AND NOT (coalesce(rec.profile_conflict,false)) THEN coalesce(rec.role,'') ELSE '' END profile_type,
