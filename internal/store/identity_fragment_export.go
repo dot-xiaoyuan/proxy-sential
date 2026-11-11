@@ -85,7 +85,19 @@ func (s *PostgresStore) claimIdentityExportFragment(ctx context.Context) (fragme
 	}
 	defer tx.Rollback()
 	query, args := identityExportCandidateQuery(s.sensorID, s.identityDerivedAfter)
-	err = tx.QueryRowContext(ctx, query, args...).Scan(&fragment.BatchID, &fragment.Scope, &fragment.Source, &fragment.Epoch, &fragment.Month, &fragment.Hash, &fragment.KeyScheme, &fragment.First, &fragment.Count, &fragment.Accepted, &fragment.Payload, &fragment.BodyState, &fragment.SearchState)
+	claim := func(candidate string) error {
+		return tx.QueryRowContext(ctx, candidate, args...).Scan(&fragment.BatchID, &fragment.Scope, &fragment.Source, &fragment.Epoch, &fragment.Month, &fragment.Hash, &fragment.KeyScheme, &fragment.First, &fragment.Count, &fragment.Accepted, &fragment.Payload, &fragment.BodyState, &fragment.SearchState)
+	}
+	if !s.identityDerivedAfter.IsZero() {
+		// Completing the second archive receipt frees durable inbox capacity.
+		// The recent window keeps the extra indexed probe bounded even when no
+		// in-flight search fragment exists; older work remains in the fallback.
+		search := strings.Replace(query, "AND (f.body_state<>'completed' OR f.search_state<>'completed')", "AND f.body_state='completed' AND f.search_state<>'completed' AND b.accepted_at>=now()-interval '15 minutes'", 1)
+		err = claim(search)
+	}
+	if s.identityDerivedAfter.IsZero() || errors.Is(err, sql.ErrNoRows) {
+		err = claim(query)
+	}
 	if err != nil {
 		return fragment, err
 	}
