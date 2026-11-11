@@ -107,3 +107,12 @@ func TestDiscoveryRecognitionDoesNotOverrideConflictOrExpiry(t *testing.T) {
 		}
 	}
 }
+
+func TestDiscoveryRecognitionKeepsVerifiedProductAboveVendorClue(t *testing.T) {
+	items := []map[string]any{{"mac": "08:54:11:13:c1:84", "classification_status": "identified", "device_type": "access_control"}}
+	applyDiscoveryRecognition(items, map[string][]int{"08:54:11:13:c1:84": {0}}, map[string]discoveryRecognition{"08:54:11:13:c1:84": {DeviceType: "camera", Brand: "Hikvision", Confidence: .7, Source: "ieee_oui"}})
+	got := items[0]["recognition"].(discoveryRecognition)
+	if got.DeviceType != "" || got.Brand != "Hikvision" || items[0]["device_type"] != "access_control" {
+		t.Fatalf("OUI camera clue contradicted verified access terminal: %+v", items[0])
+	}
+}

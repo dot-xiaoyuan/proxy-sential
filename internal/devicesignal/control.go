@@ -1,11 +1,14 @@
 package devicesignal
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"os"
@@ -133,6 +136,12 @@ func parseControlFrames(frame []byte) []controlSignal {
 	}
 	if sourcePort == 3702 || destinationPort == 3702 {
 		if signal, found := parseWSDiscovery(ethernet, source, destination, udpPayload); found {
+			return []controlSignal{signal}
+		}
+		return nil
+	}
+	if sourcePort == 37020 {
+		if signal, found := parseSADP(ethernet, source, destination, udpPayload); found {
 			return []controlSignal{signal}
 		}
 		return nil
@@ -584,6 +593,17 @@ func writeControlBucket(path, sensorID, interfaceName, instance string, scope *n
 			flow["dst_ip"] = signal.Destination
 		}
 		event := normalized.Event{SchemaVersion: "v1", EventID: "control-" + hex.EncodeToString(sum[:16]), Source: "packet-sidecar", SourceEventType: signal.Kind, Type: "device", Timestamp: bucket.UTC().Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": sensorID, "interface": interfaceName}, Subject: subject, Flow: flow, Payload: signal.Payload, Confidence: 0.95}
+		if signal.Kind == "sadp" {
+			subject["entity_role"] = "endpoint"
+			flow["proto"] = "udp"
+			flow["src_port"] = 37020
+			if digest, ok := signal.Payload["payload_sha256"].(string); ok {
+				event.RawRef = map[string]any{"payload_sha256": digest}
+			}
+			if signal.Payload["identity_status"] != "direct_l2" {
+				event.Confidence = 0.5
+			}
+		}
 		if !signal.ObservedAt.IsZero() {
 			event.Timestamp = signal.ObservedAt.UTC().Format(time.RFC3339Nano)
 		}
@@ -691,6 +711,100 @@ func parseWSDiscovery(ethernet ethernetFrame, source, destination string, payloa
 		if end >= 0 {
 			signal.Payload[field.key] = strings.TrimSpace(text[start : start+end])
 		}
+	}
+	return signal, true
+}
+
+// SADP advertises product information on UDP 37020. Parse only a single
+// device response; probes, serial numbers and password-reset fields never
+// leave the capture process. The digest ties the bounded facts to the packet
+// without adding another full-payload copy to the discovery projection.
+func parseSADP(ethernet ethernetFrame, source, destination string, payload []byte) (controlSignal, bool) {
+	if len(payload) == 0 || len(payload) > 8192 {
+		return controlSignal{}, false
+	}
+	decoder := xml.NewDecoder(bytes.NewReader(payload))
+	fields := map[string]string{}
+	depth, matchDepth, matches := 0, 0, 0
+	current := ""
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return controlSignal{}, false
+		}
+		switch value := token.(type) {
+		case xml.Directive:
+			return controlSignal{}, false
+		case xml.StartElement:
+			depth++
+			if depth > 16 {
+				return controlSignal{}, false
+			}
+			if value.Name.Local == "ProbeMatch" {
+				matches++
+				if matches > 1 {
+					return controlSignal{}, false
+				}
+				matchDepth = depth
+			}
+			if matchDepth > 0 && depth == matchDepth+1 {
+				switch value.Name.Local {
+				case "MAC", "IPv4Address", "DeviceDescription":
+					current = value.Name.Local
+				}
+			}
+		case xml.CharData:
+			if current != "" {
+				fields[current] += string(value)
+				if len(fields[current]) > 128 {
+					return controlSignal{}, false
+				}
+			}
+		case xml.EndElement:
+			if depth == matchDepth+1 {
+				current = ""
+			}
+			if depth == matchDepth {
+				matchDepth = 0
+			}
+			depth--
+		}
+	}
+	model := strings.TrimSpace(fields["DeviceDescription"])
+	claimedIP := strings.TrimSpace(fields["IPv4Address"])
+	claimedMAC, err := net.ParseMAC(strings.ReplaceAll(strings.TrimSpace(fields["MAC"]), "-", ":"))
+	parsedIP, ipErr := netip.ParseAddr(claimedIP)
+	if matches != 1 || model == "" || strings.ContainsAny(model, "\x00\r\n<>") || len(model) > 128 ||
+		ipErr != nil || !parsedIP.Is4() || !parsedIP.IsGlobalUnicast() || err != nil || len(claimedMAC) != 6 || claimedMAC[0]&1 != 0 || claimedMAC.String() == "00:00:00:00:00:00" {
+		return controlSignal{}, false
+	}
+	frameMAC := net.HardwareAddr(ethernet.source[:]).String()
+	claimed := strings.ToLower(claimedMAC.String())
+	status := "direct_l2"
+	if claimedIP != source {
+		status = "ip_mismatch"
+	} else if frameMAC != claimed {
+		status = "l2_mismatch"
+	}
+	signal := baseControlSignal("sadp", ethernet, source, destination)
+	if status != "direct_l2" {
+		signal.MAC = ""
+	}
+	digest := sha256.Sum256(payload)
+	signal.Payload["product_model"] = model
+	signal.Payload["claimed_ip"] = claimedIP
+	signal.Payload["claimed_mac"] = claimed
+	signal.Payload["l2_source_mac"] = frameMAC
+	signal.Payload["identity_status"] = status
+	signal.Payload["message_type"] = "probe_match"
+	signal.Payload["is_response"] = true
+	signal.Payload["payload_sha256"] = hex.EncodeToString(digest[:])
+	signal.Payload["ttl"] = 1800
+	if signal.VLAN > 0 {
+		signal.Payload["vlan"] = signal.VLAN
 	}
 	return signal, true
 }

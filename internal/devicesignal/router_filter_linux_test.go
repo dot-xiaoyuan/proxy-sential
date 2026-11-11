@@ -57,6 +57,13 @@ func TestRouterProtocolFilterRetainsDeviceDiscoveryProtocols(t *testing.T) {
 		if got := runRouterProtocolFilter(t, ws); got == 0 {
 			t.Fatalf("WS-Discovery with %d tags was rejected", tags)
 		}
+		sadp, offset := discoveryFrame(tags, 0x0800)
+		sadp[offset], sadp[offset+9] = 0x45, 17
+		binary.BigEndian.PutUint16(sadp[offset+20:], 37020)
+		binary.BigEndian.PutUint16(sadp[offset+22:], 37020)
+		if got := runRouterProtocolFilter(t, sadp); got == 0 {
+			t.Fatalf("SADP with %d tags was rejected", tags)
+		}
 		mdns, offset := discoveryFrame(tags, 0x0800)
 		mdns[offset], mdns[offset+9] = 0x45, 17
 		binary.BigEndian.PutUint16(mdns[offset+22:], 5353)

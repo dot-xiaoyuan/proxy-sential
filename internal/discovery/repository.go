@@ -742,7 +742,7 @@ func (r Repository) DevicesFiltered(ctx context.Context, query DeviceQuery) (map
 	origins := []string{}
 	switch query.Mode {
 	case "passive":
-		origins = []string{"dhcp", "arp", "ndp", "dns_sd", "ssdp", "ws_discovery", "ieee1905_client"}
+		origins = []string{"dhcp", "arp", "ndp", "dns_sd", "ssdp", "ws_discovery", "sadp", "ieee1905_client"}
 	case "infrastructure":
 		origins = []string{"fdb", "neighbor", "lldp", "cdp"}
 	case "active":

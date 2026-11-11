@@ -47,6 +47,18 @@ var campusProductRulesVersion = func() string {
 
 func ProductRulesVersion() string { return campusProductRulesVersion }
 
+// ProductModelType matches a product-bearing self-report against the reviewed
+// catalogue. Callers must establish protocol attribution before using its
+// result as an effective device type.
+func ProductModelType(value string) (kind, manufacturer, model string) {
+	for _, rule := range campusProductRules {
+		if matched := rule.pattern.FindString(value); matched != "" {
+			return rule.kind, rule.manufacturer, matched
+		}
+	}
+	return "", "", ""
+}
+
 func mustLoadProductRules(data []byte) []productRule {
 	rules, err := parseProductRules(data)
 	if err != nil {
@@ -144,25 +156,23 @@ func applyProductRules(o *Observation) {
 		}
 	}
 	for _, value := range fields {
-		for _, rule := range campusProductRules {
-			if model := rule.pattern.FindString(value); model != "" {
-				// Inferred attributes belong to the observation. Never mutate the
-				// input shared with archival, retries and the durable receipt hash.
-				derived := make(map[string]any, len(p)+3)
-				for key, value := range p {
-					derived[key] = value
-				}
-				p = derived
-				o.Evidence.Payload = derived
-				p["product_verified"] = true
-				p["product_type"] = rule.kind
-				p["product_model"] = model
-				o.ModelName = model
-				if o.Manufacturer == "" {
-					o.Manufacturer = rule.manufacturer
-				}
-				return
+		if kind, manufacturer, model := ProductModelType(value); model != "" {
+			// Inferred attributes belong to the observation. Never mutate the
+			// input shared with archival, retries and the durable receipt hash.
+			derived := make(map[string]any, len(p)+3)
+			for key, value := range p {
+				derived[key] = value
 			}
+			p = derived
+			o.Evidence.Payload = derived
+			p["product_verified"] = true
+			p["product_type"] = kind
+			p["product_model"] = model
+			o.ModelName = model
+			if o.Manufacturer == "" {
+				o.Manufacturer = manufacturer
+			}
+			return
 		}
 	}
 }

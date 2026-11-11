@@ -158,6 +158,11 @@ func applyDiscoveryRecognition(items []map[string]any, positions map[string][]in
 			// or expired evidence. A summary decoration must not override that state.
 			if state, _ := items[index]["classification_status"].(string); state == "conflict" || state == "expired" {
 				decoration.DeviceType = ""
+			} else if state == "identified" {
+				currentType, _ := items[index]["device_type"].(string)
+				if currentType != "" && decoration.DeviceType != currentType && (decoration.Source == "ieee_oui" || decoration.Confidence < .8) {
+					decoration.DeviceType = ""
+				}
 			}
 			items[index]["recognition"] = decoration
 		}

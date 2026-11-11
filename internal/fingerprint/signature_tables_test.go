@@ -109,8 +109,12 @@ func TestProtocolModelFieldsReachModelCatalog(t *testing.T) {
 
 func TestVendorPriorIsFallbackOnly(t *testing.T) {
 	deviceType, confidence, ok := LookupVendorPrior("Hangzhou Hikvision Digital Technology Co., Ltd")
+	if ok || deviceType != "" || confidence != 0 {
+		t.Fatalf("multi-product Hikvision vendor became a camera type: %q %v %v", deviceType, confidence, ok)
+	}
+	deviceType, confidence, ok = LookupVendorPrior("Dahua Technology")
 	if !ok || deviceType != "camera" || confidence > .80 {
-		t.Fatalf("unexpected vendor prior: %q %v %v", deviceType, confidence, ok)
+		t.Fatalf("unrelated vendor prior changed: %q %v %v", deviceType, confidence, ok)
 	}
 	// A rule-derived type must never be replaced by the weaker prior.
 	library := Default()

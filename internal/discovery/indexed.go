@@ -210,7 +210,7 @@ func indexedOrigins(mode string) ([]string, error) {
 		// access-point and switch evidence on office segments. Keep the switch
 		// forwarding tables (fdb/neighbor) in the infrastructure mode; routers
 		// otherwise only surface when a fingerprint rule happens to match.
-		return []string{"dhcp", "arp", "ndp", "dns_sd", "ssdp", "ws_discovery", "ieee1905_client", "lldp", "cdp"}, nil
+		return []string{"dhcp", "arp", "ndp", "dns_sd", "ssdp", "ws_discovery", "sadp", "ieee1905_client", "lldp", "cdp"}, nil
 	case "infrastructure":
 		return []string{"fdb", "neighbor", "lldp", "cdp"}, nil
 	case "active":
