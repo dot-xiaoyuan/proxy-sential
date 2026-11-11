@@ -591,9 +591,34 @@ func zeekHeader(file *os.File) ([]byte, error) {
 
 func fileIdentity(path string, info os.FileInfo) string {
 	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		if os.Getenv("PROXY_SENTINEL_STREAM_FILE_BIRTH_ID") == "true" {
+			return FileIdentityBirth(path, info)
+		}
 		return fmt.Sprintf("%s:%d:%d", filepath.Clean(path), uint64(stat.Dev), uint64(stat.Ino))
 	}
+	if os.Getenv("PROXY_SENTINEL_STREAM_FILE_BIRTH_ID") == "true" {
+		return ""
+	}
 	return fmt.Sprintf("%s:%d", filepath.Clean(path), info.ModTime().UnixNano())
+}
+
+func formatFileIdentity(path string, device, inode uint64, birth string) string {
+	if birth == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d:%d:birth:%s", filepath.Clean(path), device, inode, birth)
+}
+
+// FileIdentityBirth is the durable identity for a newly audited source. It is
+// empty when the filesystem cannot prove a creation time or the file changed
+// between stat calls. Existing cursors retain their legacy identity until an
+// explicit audited cutover.
+func FileIdentityBirth(path string, info os.FileInfo) string {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return ""
+	}
+	return formatFileIdentity(path, uint64(stat.Dev), uint64(stat.Ino), fileBirthMarker(path, info))
 }
 
 // FileIdentity is shared by the legacy checkpoint and the audited fresh file
