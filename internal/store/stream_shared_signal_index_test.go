@@ -57,3 +57,45 @@ func TestStreamSharedIndexRejectsChangedBodyLocator(t *testing.T) {
 		t.Fatalf("same-key versions would be hidden at a page boundary: %s", query)
 	}
 }
+
+func TestStreamSharedSubjectIndexCutoverKeepsUncoveredWindowOnOldReader(t *testing.T) {
+	var query string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		query = string(data)
+	}))
+	defer server.Close()
+	ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PROXY_SENTINEL_SHARED_SUBJECT_INDEX_AFTER", "2026-11-11T02:00:00Z")
+	scope := SharedObservationScope{SensorID: "sensor-a", CampusID: "campus-a", AccessDomain: "bond0", IP: "10.2.3.4"}
+	from := time.Date(2026, 11, 11, 2, 0, 1, 0, time.UTC)
+	to := from.Add(2 * time.Minute)
+	if _, err := ch.ListStreamSharedSignalRefs(context.Background(), scope, "scope-a", "handshake-sidecar", "fresh", scope.IP, from, to, time.Time{}, "", "", 100); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(query, "FROM stream_shared_signal_subject_index PREWHERE") || !strings.Contains(query, "subject_key IN ('','10.2.3.4')") {
+		t.Fatalf("covered handshake window did not use keyed index: %s", query)
+	}
+	if _, err := ch.ListStreamSharedSignalRefs(context.Background(), scope, "scope-a", "packet-sidecar", "fresh", "02:00:00:00:00:01", from, to, time.Time{}, "", "", 100); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(query, "subject_key IN ('','02:00:00:00:00:01')") || !strings.Contains(query, "source='packet-sidecar'") {
+		t.Fatalf("covered packet window used the wrong subject key: %s", query)
+	}
+	if _, err := ch.ListStreamSharedSignalRefs(context.Background(), scope, "scope-a", "handshake-sidecar", "fresh", scope.IP, from.Add(-2*time.Second), to, time.Time{}, "", "", 100); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(query, "FROM stream_event_search PREWHERE") {
+		t.Fatalf("window straddling the index start lost old search coverage: %s", query)
+	}
+	t.Setenv("PROXY_SENTINEL_SHARED_SUBJECT_INDEX_AFTER", "invalid")
+	if _, err := ch.ListStreamSharedSignalRefs(context.Background(), scope, "scope-a", "handshake-sidecar", "fresh", scope.IP, from, to, time.Time{}, "", "", 100); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(query, "FROM stream_event_search PREWHERE") {
+		t.Fatalf("invalid cutover enabled an unverified index: %s", query)
+	}
+}

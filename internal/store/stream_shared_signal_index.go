@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -73,12 +74,25 @@ func (s *ClickHouseStore) listStreamSharedSignalRefs(ctx context.Context, scope 
 	if source == "packet-sidecar" {
 		field = "subject_mac"
 	}
+	table := "stream_event_search"
+	if raw := os.Getenv("PROXY_SENTINEL_SHARED_SUBJECT_INDEX_AFTER"); raw != "" {
+		// The deployment sets this to a verified time after the materialized
+		// view starts receiving inserts. A window crossing that time must keep
+		// reading the original index so no older event disappears.
+		if start, parseErr := time.Parse(time.RFC3339Nano, raw); parseErr == nil && !from.Before(start.UTC()) {
+			table = "stream_shared_signal_subject_index"
+			field = "subject_key"
+		}
+	}
 	// Keep the subject and primary-key filters in PREWHERE so the remaining
 	// scope and event-key columns are read only for matching rows.
 	prewhere := "scope_id=" + chQuote(scopeID) +
 		" AND observed_at>=parseDateTime64BestEffort(" + chQuote(from.UTC().Format(time.RFC3339Nano)) + ",6)" +
 		" AND observed_at<=parseDateTime64BestEffort(" + chQuote(to.UTC().Format(time.RFC3339Nano)) + ",6)" +
 		" AND " + field + " IN (''," + chQuote(subject) + ")"
+	if table == "stream_shared_signal_subject_index" {
+		prewhere += " AND source=" + chQuote(source)
+	}
 	where := "sensor_id=" + chQuote(scope.SensorID) + " AND campus_id=" + chQuote(scope.CampusID) +
 		" AND access_domain=" + chQuote(scope.AccessDomain) + " AND source=" + chQuote(source) +
 		" AND startsWith(event_key," + chQuote(epoch+":") + ")"
@@ -99,8 +113,8 @@ func (s *ClickHouseStore) listStreamSharedSignalRefs(ctx context.Context, scope 
 		where += " AND (observed_at>" + stamp + " OR (observed_at=" + stamp + " AND (event_key>" + chQuote(afterKey) + " OR (event_key=" + chQuote(afterKey) + " AND content_sha256>" + chQuote(afterHash) + "))))"
 	}
 	query := fmt.Sprintf(`SELECT observed_at,indexed_at,event_key,source,protocol,sensor_id,campus_id,access_domain,subject_ip,subject_mac,collector_instance_id,scope_id,content_sha256,archive_month,retention_class,body_ref
-FROM stream_event_search PREWHERE %s WHERE %s ORDER BY observed_at,event_key,content_sha256 LIMIT %d
-SETTINGS move_all_conditions_to_prewhere=0,max_threads=1,max_memory_usage=134217728,max_execution_time=5 FORMAT JSONEachRow`, prewhere, where, limit)
+FROM %s PREWHERE %s WHERE %s ORDER BY observed_at,event_key,content_sha256 LIMIT %d
+SETTINGS move_all_conditions_to_prewhere=0,max_threads=1,max_memory_usage=134217728,max_execution_time=5 FORMAT JSONEachRow`, table, prewhere, where, limit)
 	data, err := s.query(ctx, query)
 	if err != nil {
 		return nil, err
