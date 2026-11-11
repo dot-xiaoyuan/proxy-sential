@@ -1,6 +1,8 @@
 package streamlog
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -48,11 +50,15 @@ func (j *Journal) SnapshotCancellation(source, path string, cutoff time.Time) (S
 		if s.Source != source || s.SourcePath != path || s.Epoch != cursor.Epoch || s.AcceptedAt.IsZero() || s.AcceptedAt.After(cutoff) || !state.Committed || s.Quarantined {
 			return SourceCursor{}, nil, fmt.Errorf("segment %s is outside the stopped cancellation scope: %w", id, ErrContentConflict)
 		}
-		// This command cancels unfinished processing, never the only original.
-		// Requiring a confirmed archive avoids losing source-backed recovery
-		// when a producer later rotates its files.
+		// An unarchived source-backed segment can lose its only original
+		// when a producer rotates its files. An inline segment carries its
+		// own immutable original in the retained journal; verify its hash
+		// before recording archive as cancelled and unprocessed.
 		if state.Acks[Archive] != Acked && state.Acks[Archive] != NotApplicable {
-			return SourceCursor{}, nil, fmt.Errorf("segment %s archive must be confirmed before cancellation: %w", id, ErrUnconfirmed)
+			sum := sha256.Sum256(s.Raw)
+			if s.SourceBackedRaw || len(s.Raw) == 0 || s.RawSHA256 == "" || hex.EncodeToString(sum[:]) != s.RawSHA256 {
+				return SourceCursor{}, nil, fmt.Errorf("segment %s archive must be confirmed or inline original verified before cancellation: %w", id, ErrUnconfirmed)
+			}
 		}
 		for _, lane := range requiredLanes(s) {
 			status := state.Acks[lane]

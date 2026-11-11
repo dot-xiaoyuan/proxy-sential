@@ -1,11 +1,33 @@
 package streamlog
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"reflect"
 	"testing"
 	"time"
 )
+
+func TestCancellationAllowsUnarchivedInlineOriginalWithVerifiedHash(t *testing.T) {
+	j, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := testSegment()
+	s.AcceptedAt = time.Now().UTC().Add(-time.Minute)
+	s.Raw = []byte("original source bytes")
+	sum := sha256.Sum256(s.Raw)
+	s.RawSHA256 = hex.EncodeToString(sum[:])
+	id := appendCommitted(t, j, s)
+	if err := j.BeginAttempt(id, Archive); err != nil {
+		t.Fatal(err)
+	}
+	_, items, err := j.SnapshotCancellation(s.Source, s.SourcePath, time.Now().UTC())
+	if err != nil || len(items) != 1 || items[0].Acks[Archive] != Attempted {
+		t.Fatalf("verified inline original: %+v %v", items, err)
+	}
+}
 
 func TestCancellationSnapshotPreservesPendingWorkAndUsesAckLog(t *testing.T) {
 	j, err := Open(t.TempDir())
