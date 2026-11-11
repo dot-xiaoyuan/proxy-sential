@@ -27,7 +27,7 @@ const streamReadLimit = 1 << 20
 const streamLineLimit = streamlog.MaxSegmentEvents
 const discoveryStreamLineLimit = 50
 const dhcpBindingStreamLineLimit = 100
-const deviceSignalProjectionLineLimit = 500
+const deviceSignalProjectionLineLimit = streamlog.MaxSegmentEvents
 
 // CaptureStreamOnce only advances a pre-established fresh source cursor after
 // its exact raw bytes and normalized events are fsynced in an immutable segment.
@@ -126,7 +126,8 @@ func captureStreamOnceWithReady(ctx context.Context, journal *streamlog.Journal,
 		if source.Kind == "device-signals" {
 			// Selected packet-sidecar discovery records need a PostgreSQL
 			// projection, but 50 records per segment cannot keep pace with the
-			// verified source. Keep a separate event bound and the byte ceiling.
+			// verified source. Keep the global event and byte ceilings while
+			// amortizing the durable journal barriers over a larger batch.
 			projectionLimit = deviceSignalProjectionLineLimit
 		} else if source.Kind == "zeek-dhcp-binding" {
 			projectionLimit = dhcpBindingStreamLineLimit
