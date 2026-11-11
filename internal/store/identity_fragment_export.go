@@ -104,6 +104,10 @@ func identityExportCandidateQuery(sensor string, after time.Time) (string, []any
 	args := []any{sensor}
 	if !after.IsZero() {
 		query = strings.Replace(query, "b.sensor_id=$1", "b.sensor_id=$1 AND b.accepted_at >= $2", 1)
+		// A settled but unconfirmed older fragment must not stop archival of
+		// fresh, durably accepted identity input. The existing (sensor, time)
+		// export index supports this reverse walk without a table scan.
+		query = strings.Replace(query, "ORDER BY b.accepted_at,f.batch_id,f.first_ordinal", "ORDER BY b.accepted_at DESC,f.batch_id DESC,f.first_ordinal", 1)
 		args = append(args, after)
 	}
 	return query, args
