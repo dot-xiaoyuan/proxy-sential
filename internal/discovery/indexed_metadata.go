@@ -58,9 +58,6 @@ func (r Repository) DevicesIndexedMetadata(ctx context.Context, q DeviceQuery) (
 			result.Types = append(result.Types, IndexedDeviceTypeCount{DeviceType: kind, Count: count})
 		case "candidate":
 			result.Candidate += count
-			if kind != "" {
-				result.Types = append(result.Types, IndexedDeviceTypeCount{DeviceType: kind, Count: count})
-			}
 		case "conflict":
 			result.Conflict += count
 		case "expired":

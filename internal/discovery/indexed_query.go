@@ -136,38 +136,46 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 	if len(classifiedWhere) > 0 {
 		matchedWhere = " WHERE " + strings.Join(classifiedWhere, " AND ")
 	}
-	statement := `WITH recognition AS MATERIALIZED (
- SELECT endpoint_id,
-  coalesce(role,'') role,
-  coalesce(os_family,'') os_family,
-  coalesce(NULLIF(summary->>'device_type_confidence','')::double precision,confidence,0) profile_confidence,
-  CASE WHEN jsonb_array_length(coalesce(summary->'conflict_dimensions','[]'::jsonb))>0
-   THEN summary->'conflict_dimensions' ? 'device_type'
-   ELSE coalesce(conflict,false) END profile_conflict
- FROM endpoint_recognition_summary
-), candidate_rows AS (
- SELECT l.id,l.device_key,l.observed_at,l.valid_until,lower(coalesce(l.data->>'ip','')) search_ip,lower(coalesce(l.data->>'mac','')) search_mac,lower(coalesce(l.data->>'name','')) search_name,lower(coalesce(l.data->>'device_type','')) search_device_type,lower(coalesce(l.data->>'manufacturer','')) search_manufacturer,lower(coalesce(l.data->>'model_name','')) search_model,` + indexedIdentitySQL + ` identity_key,` + indexedObservationCapabilitiesSQL + ` observation_capabilities,` + indexedObservationTypeSQL + ` observed_type,
- coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id,'') linked_endpoint,
- coalesce(rec.role,'') profile_role,coalesce(rec.profile_confidence,0) profile_confidence,coalesce(rec.os_family,'') profile_os,
- CASE WHEN coalesce(rec.profile_confidence,0)>=0.8 AND NOT (coalesce(rec.profile_conflict,false)) THEN coalesce(rec.role,'') ELSE '' END profile_type,
- (coalesce(rec.profile_conflict,false)) AND coalesce(rec.role,'')<>'' profile_conflict,
- CASE WHEN NOT (coalesce(rec.profile_conflict,false)) AND coalesce(rec.profile_confidence,0)>=0.4 AND coalesce(rec.profile_confidence,0)<0.8 THEN coalesce(rec.role,'') ELSE '' END profile_candidate_role
+	statement := `WITH link_exceptions AS MATERIALIZED (
+ SELECT observation_id,endpoint_id FROM discovery_identity_links
+ WHERE coalesce(basis->>'mac','')='' OR lower(endpoint_id)<>'mac:'||lower(basis->>'mac')
+), candidate_links AS MATERIALIZED (
+ SELECT l.id,l.device_key,l.origin,l.observed_at,l.valid_until,l.data,
+ coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id) linked_endpoint
  FROM discovery_observation_latest l
- -- MAC-matching links add no identity information. Their historical table is
- -- large; inspect it only for observations without a MAC or link exceptions.
+ -- Most MAC links repeat the observed MAC. Only look up missing-MAC links
+ -- and explicit identity exceptions in the large historical link table.
  LEFT JOIN LATERAL (
   SELECT endpoint_id FROM discovery_identity_links
   WHERE observation_id=l.id AND coalesce(l.data->>'mac','')=''
   LIMIT 1
  ) i ON true
- LEFT JOIN discovery_identity_links ix ON ix.observation_id=l.id
- AND (coalesce(ix.basis->>'mac','')='' OR lower(ix.endpoint_id)<>'mac:'||lower(ix.basis->>'mac'))
+ LEFT JOIN link_exceptions ix ON ix.observation_id=l.id
  LEFT JOIN device_address_leases dl ON dl.event_id=l.id AND dl.action='ack'
  AND dl.sensor_id=coalesce(l.data->>'node','') AND host(dl.ip)=coalesce(l.data->>'ip','')
  AND dl.campus_id=coalesce(l.data->'evidence'->'subject'->>'campus_id','')
  AND dl.endpoint_id='mac:'||lower(coalesce(l.data->>'mac',''))
- LEFT JOIN recognition rec ON rec.endpoint_id=coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id,'mac:'||lower(coalesce(l.data->>'mac','')))
  WHERE ` + strings.Join(baseWhere, " AND ") + `
+), recognition AS MATERIALIZED (
+ SELECT rec.endpoint_id,
+  coalesce(rec.role,'') role,
+  coalesce(rec.os_family,'') os_family,
+  coalesce(NULLIF(rec.summary->>'device_type_confidence','')::double precision,rec.confidence,0) profile_confidence,
+  CASE WHEN jsonb_array_length(coalesce(rec.summary->'conflict_dimensions','[]'::jsonb))>0
+   THEN rec.summary->'conflict_dimensions' ? 'device_type'
+   ELSE coalesce(rec.conflict,false) END profile_conflict
+ FROM endpoint_recognition_summary rec
+ JOIN (SELECT DISTINCT coalesce(linked_endpoint,'mac:'||lower(coalesce(data->>'mac',''))) endpoint_id
+       FROM candidate_links) active ON active.endpoint_id=rec.endpoint_id
+), candidate_rows AS (
+ SELECT l.id,l.device_key,l.origin,l.observed_at,l.valid_until,lower(coalesce(l.data->>'ip','')) search_ip,lower(coalesce(l.data->>'mac','')) search_mac,lower(coalesce(l.data->>'name','')) search_name,lower(coalesce(l.data->>'device_type','')) search_device_type,lower(coalesce(l.data->>'manufacturer','')) search_manufacturer,lower(coalesce(l.data->>'model_name','')) search_model,` + indexedIdentitySQL + ` identity_key,` + indexedObservationCapabilitiesSQL + ` observation_capabilities,` + indexedObservationTypeSQL + ` observed_type,
+ coalesce(l.linked_endpoint,'') linked_endpoint,
+ coalesce(rec.role,'') profile_role,coalesce(rec.profile_confidence,0) profile_confidence,coalesce(rec.os_family,'') profile_os,
+ CASE WHEN coalesce(rec.profile_confidence,0)>=0.8 AND NOT (coalesce(rec.profile_conflict,false)) THEN coalesce(rec.role,'') ELSE '' END profile_type,
+ (coalesce(rec.profile_conflict,false)) AND coalesce(rec.role,'')<>'' profile_conflict,
+ CASE WHEN NOT (coalesce(rec.profile_conflict,false)) AND coalesce(rec.profile_confidence,0)>=0.4 AND coalesce(rec.profile_confidence,0)<0.8 THEN coalesce(rec.role,'') ELSE '' END profile_candidate_role
+ FROM candidate_links l
+ LEFT JOIN recognition rec ON rec.endpoint_id=coalesce(l.linked_endpoint,'mac:'||lower(coalesce(l.data->>'mac','')))
 ), candidate_grouped AS (
  SELECT identity_key,min(device_key COLLATE "C") device_key,max(observed_at) last_seen,
  max(profile_os) profile_os,

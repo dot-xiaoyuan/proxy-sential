@@ -97,7 +97,7 @@ it('shows complete discovery and confirmed type counts using the same metadata s
   const overview=await screen.findByLabelText('发现设备总览')
   await waitFor(()=>expect(overview).toHaveTextContent('已识别类型 42'))
   expect(overview).toHaveTextContent('共 84 个设备')
-  expect(overview).toHaveTextContent('具体类型（合计 42）')
+  expect(overview).toHaveTextContent('已识别类型（合计 42）')
   expect(overview).toHaveTextContent('待核实 35')
   expect(overview).toHaveTextContent('类型冲突 4')
   expect(overview).toHaveTextContent('证据过期 3')
@@ -107,7 +107,7 @@ it('shows complete discovery and confirmed type counts using the same metadata s
   const routerTypeButton = screen.getAllByRole('button').find(button => button.textContent === '路由器 30')
   expect(routerTypeButton).toBeTruthy()
   fireEvent.click(routerTypeButton!)
-  await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).includes('type=router'))).toBe(true))
+  await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).includes('type=router') && String(path).includes('state=identified'))).toBe(true))
 })
 
 it('keeps the type overview visible when the statistics request fails', async () => {
@@ -121,6 +121,22 @@ it('keeps the type overview visible when the statistics request fails', async ()
   await waitFor(() => expect(overview).toHaveTextContent('统计读取失败'))
   expect(overview).toHaveTextContent('共 ')
   expect(overview).toHaveTextContent('已识别类型')
+})
+
+it('keeps the last successful list and offers a retry when refresh fails', async () => {
+  mockReads()
+  const normalRead = request.getMockImplementation()!
+  let listReads = 0
+  request.mockImplementation((path: string) => path.startsWith('/discovery/devices?') && ++listReads > 1
+    ? Promise.reject(new Error('读取发现结果失败'))
+    : normalRead(path))
+  renderPanel()
+  await screen.findByRole('table')
+  fireEvent.click(screen.getByRole('button',{name:'刷新数据'}))
+  await waitFor(() => expect(screen.getByText('读取发现设备失败')).toBeInTheDocument())
+  expect(screen.getByText(/当前展示上次成功读取的结果/)).toBeInTheDocument()
+  expect(screen.getByRole('button',{name:'重试列表'})).toBeInTheDocument()
+  expect(screen.getByRole('table')).toBeInTheDocument()
 })
 
 it('renders endpoint types that are outside the IoT type catalogue', async () => {

@@ -208,7 +208,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const change = (key:string,value:string) => {
     setParams(current=>{const next=new URLSearchParams(current);if(value)next.set(`discovery_${key}`,value);else next.delete(`discovery_${key}`);if(key==='type')next.delete('discovery_category');return next},{replace:true})
   }
-  const shortcut=(type:string,capability='')=>setParams(current=>{const next=new URLSearchParams(current);for(const key of ['type','category','capability'])next.delete(`discovery_${key}`);if(type)next.set('discovery_type',type);if(capability)next.set('discovery_capability',capability);return next},{replace:true})
+  const shortcut=(type:string,capability='',state?:string)=>setParams(current=>{const next=new URLSearchParams(current);for(const key of ['type','category','capability'])next.delete(`discovery_${key}`);if(type)next.set('discovery_type',type);if(capability)next.set('discovery_capability',capability);if(state!==undefined){if(state)next.set('discovery_state',state);else next.delete('discovery_state')}return next},{replace:true})
   const toggleState=(value:string)=>change('state',params.get('discovery_state')===value?'':value)
   const query = new URLSearchParams({mode:'passive',limit:String(pageSize)})
   if(view==='iot')query.set('view','iot')
@@ -216,12 +216,12 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   for(const key of ['category','type','protocol','state','domain','vlan','window','capability','random_mac','os']){const value=params.get(`discovery_${key}`);if(value)query.set(key,value)}
   const position=useCursorPagePosition({path:'/discovery/devices/position',query,page:page+1,pageSize})
   if(position.cursor)query.set('cursor',position.cursor)
-  const devices = useQuery({queryKey:['discovery-center',query.toString()],queryFn:({signal})=>request<Page>(`/discovery/devices?${query}`,{signal}),enabled:position.ready,refetchInterval:autoRefresh?60_000:false})
+  const devices = useQuery({queryKey:['discovery-center',query.toString()],queryFn:({signal})=>request<Page>(`/discovery/devices?${query}`,{signal}),enabled:position.ready,refetchInterval:autoRefresh?60_000:false,refetchOnWindowFocus:autoRefresh})
   const catalogue=useQuery({queryKey:['discovery-types'],queryFn:({signal})=>request<Catalogue>('/discovery/types',{signal})})
   const coverage=useQuery({queryKey:['discovery-coverage'],queryFn:({signal})=>request<Coverage>('/discovery/coverage',{signal})})
   const statistics=useQuery({queryKey:['discovery-statistics'],queryFn:({signal})=>request<Statistics>('/discovery/statistics',{signal}),enabled:coverage.data?.enabled===true})
   const metadataQuery=new URLSearchParams(query);metadataQuery.delete('cursor');metadataQuery.delete('limit')
-  const discoveryMetadata=useQuery({queryKey:['discovery-metadata',metadataQuery.toString()],queryFn:({signal})=>request<components['schemas']['DiscoveryDeviceMetadata']>(`/discovery/devices/metadata?${metadataQuery}`,{signal}),refetchInterval:autoRefresh?60_000:false})
+  const discoveryMetadata=useQuery({queryKey:['discovery-metadata',metadataQuery.toString()],queryFn:({signal})=>request<components['schemas']['DiscoveryDeviceMetadata']>(`/discovery/devices/metadata?${metadataQuery}`,{signal}),refetchInterval:autoRefresh?60_000:false,refetchOnWindowFocus:autoRefresh})
   const metadataValue=(value?:number)=>value??(discoveryMetadata.isError?'统计读取失败':'统计中')
   // keepPreviousData 会保留上一次结果，只看 isPending 会让搜索看起来没有反应。
   // 输入尚未落到 URL、列表或统计仍在请求时都算“更新中”，给用户持续反馈。
@@ -330,7 +330,8 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
     </div>
     {discoveryMetadata.isError&&<AppErrorAlert title="读取发现数量失败" message={discoveryMetadata.error.message} action={<Button onClick={()=>void discoveryMetadata.refetch()}>重试统计</Button>}/>}
     {position.isError&&<AppErrorAlert title="页码定位失败" message={position.error.message} action={<Button onClick={()=>void position.refetch()}>重试定位</Button>}/>}
-    {devices.isError?<AppErrorAlert title="读取发现设备失败" message={devices.error.message} />:<section aria-busy={searching} className={searching?'surface center-list-surface is-updating':'surface center-list-surface'}>
+    {devices.isError&&<AppErrorAlert title="读取发现设备失败" message={devices.data?'当前展示上次成功读取的结果；请重试。':devices.error.message} action={<Button onClick={()=>void devices.refetch()}>重试列表</Button>}/>}
+    {(!devices.isError||devices.data)&&<section aria-busy={searching} className={searching?'surface center-list-surface is-updating':'surface center-list-surface'}>
       <div className="list-surface-head">
       <AppTableBar
         searchPlaceholder="搜索 IP、MAC、名称或型号"
@@ -371,7 +372,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
           <Button type="text" size="small" className={`discovery-overview-count${params.get('discovery_state')==='expired'?' is-active':''}`} onClick={()=>toggleState('expired')}>证据过期 <strong>{metadataValue(discoveryMetadata.data?.expired)}</strong></Button>{fresh?.status==='ready'&&<Typography.Text type="secondary" className="discovery-freshness">{fresh.lag_seconds<60?'数据实时':`数据延迟 ${Math.round(fresh.lag_seconds/60)} 分钟`}</Typography.Text>}
           <Typography.Text className="discovery-overview-caption" type="secondary">{params.get('discovery_window')==='168h'?'近 7 天':params.get('discovery_window')==='720h'?'近 30 天':'近 24 小时'} · 按采集范围与可信身份去重{discoveryMetadata.data?.as_of?` · 统计于 ${observedTimeTitle(discoveryMetadata.data.as_of)}`:''}{discoveryMetadata.isFetching?' · 统计更新中':''}</Typography.Text>
         </div>
-        <div className="discovery-overview-types"><Typography.Text type="secondary">具体类型{discoveryMetadata.data?`（合计 ${discoveryMetadata.data.types.reduce((sum,item)=>sum+item.count,0)}）`:''}</Typography.Text>{discoveryMetadata.data?.types.length?[...discoveryMetadata.data.types].sort((a,b)=>b.count-a.count||a.device_type.localeCompare(b.device_type)).map(item=><Button key={item.device_type} type="text" size="small" className="discovery-overview-type" onClick={()=>shortcut(item.device_type)}>{types[item.device_type]??deviceTypeLabel(item.device_type)} <strong>{item.count}</strong></Button>):<Typography.Text type="secondary">{discoveryMetadata.data?'当前筛选下暂无明确类型':discoveryMetadata.isError?'统计读取失败':'统计中'}</Typography.Text>}</div>
+        <div className="discovery-overview-types"><Typography.Text type="secondary">已识别类型{discoveryMetadata.data?`（合计 ${discoveryMetadata.data.types.reduce((sum,item)=>sum+item.count,0)}）`:''}</Typography.Text>{discoveryMetadata.data?.types.length?[...discoveryMetadata.data.types].sort((a,b)=>b.count-a.count||a.device_type.localeCompare(b.device_type)).map(item=><Button key={item.device_type} type="text" size="small" className="discovery-overview-type" onClick={()=>shortcut(item.device_type,'','identified')}>{types[item.device_type]??deviceTypeLabel(item.device_type)} <strong>{item.count}</strong></Button>):<Typography.Text type="secondary">{discoveryMetadata.data?'当前筛选下暂无已识别类型':discoveryMetadata.isError?'统计读取失败':'统计中'}</Typography.Text>}</div>
       </div>
       <AppTable className="passive-ledger-table" rowKey={discoveryTableRowKey} columns={columns} dataSource={items} tableLayout="fixed" loading={{spinning:listUpdating,delay:150}} scroll={{x:1125}} locale={{emptyText:listUpdating?'正在加载设备…':'当前筛选下暂无符合条件的设备'}}/>
       <AppServerPagination disabled={devices.isFetching||position.isLocating} page={page+1} pageSize={pageSize} total={discoveryMetadata.data?.total} onChange={(nextPage,nextSize)=>{

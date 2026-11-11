@@ -8278,6 +8278,7 @@ export interface components {
             conflict: number;
             /** Format: int64 */
             expired: number;
+            /** @description Counts by current identified device type only; candidate clues are included in candidate, not in this array. */
             types: {
                 device_type: string;
                 /** Format: int64 */
