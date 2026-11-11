@@ -165,6 +165,14 @@ func TestCancellationSavedBoundaryIsImmutableAcrossPreviewAndRetry(t *testing.T)
 	if e != nil {
 		t.Fatal(e)
 	}
+	if first.BirthFileID == "" || first.BirthFileID == first.FileID {
+		t.Fatalf("cancellation lost the next generation's file identity: %+v", first)
+	}
+	wrongBirth := *first
+	wrongBirth.BirthFileID += "-reused"
+	if e = validateCancellationBoundary(cursor, &wrongBirth); e == nil {
+		t.Fatal("reused inode accepted as the retained source")
+	}
 	f, e := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
 	if e != nil {
 		t.Fatal(e)

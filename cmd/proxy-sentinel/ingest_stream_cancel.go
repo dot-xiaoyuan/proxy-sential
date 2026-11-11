@@ -166,6 +166,9 @@ func auditPendingStreamCancellation(ctx context.Context, db *sql.DB, sensor, can
 	retiredFile, retiredOffset := cursor.FileID, cursor.Offset
 	if fileAudit != nil {
 		retiredFile, retiredOffset = fileAudit.FileID, fileAudit.Offset
+		if cursor.Source == "device-signals" {
+			retiredFile = fileAudit.BirthFileID
+		}
 	}
 	entries := []zeekDiscardEntry{
 		{LegacyKind: "stream_retirement_cursor", LegacyReference: fmt.Sprint(retiredOffset), LegacyStatus: "closed_audited", ContentSHA256: manifest},
