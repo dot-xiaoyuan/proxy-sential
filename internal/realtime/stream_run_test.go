@@ -68,6 +68,72 @@ func TestRunStreamReportsTransientSinkFailure(t *testing.T) {
 	}
 }
 
+func TestRunStreamWaitsForRotatedArchiveWithoutAdvancingCursor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "eve.json")
+	if err := os.WriteFile(path, []byte(streamSuricataLine), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	j := startStreamFixture(t, path, int64(len(streamSuricataLine)))
+	missing := filepath.Join(filepath.Dir(path), "rotation-in-progress")
+	if err := os.Rename(path, missing); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(streamSuricataLine), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w := &streamRunWriter{completed: make(chan string, 1)}
+	gapSeen := make(chan struct{}, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- RunStream(ctx, j, w, StreamRunOptions{
+			Capture: Options{SensorID: "sensor-a", Sources: []Source{{Kind: "suricata", Path: path}}, PollInterval: 10 * time.Millisecond, StoreTimeout: time.Second},
+			OnSourceError: func(_ Source, err error) {
+				if errors.Is(err, ErrStreamSourceGap) {
+					select {
+					case gapSeen <- struct{}{}:
+					default:
+					}
+				}
+			},
+		})
+	}()
+	select {
+	case <-gapSeen:
+	case err := <-done:
+		t.Fatalf("reader stopped during an unconfirmed rotation: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("rotation gap was not reported")
+	}
+	before, err := j.LoadSource("suricata", path)
+	if err != nil || before.Offset != int64(len(streamSuricataLine)) {
+		t.Fatalf("unconfirmed rotation moved the cursor: %+v %v", before, err)
+	}
+	if err := os.Rename(missing, path+".1"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-w.completed:
+	case err := <-done:
+		t.Fatalf("reader stopped after archive appeared: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("reader did not resume after archive appeared")
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := j.LoadSource("suricata", path)
+	if err != nil || after.FileID != fileIdentity(path, info) || after.Offset != int64(len(streamSuricataLine)) {
+		t.Fatalf("replacement file was not consumed from zero: %+v %v", after, err)
+	}
+}
+
 func TestRunStreamDrainOnlyFinalizesSegmentWithoutSinkLanes(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "source.jsonl")
 	if err := os.WriteFile(path, []byte("# header\n"), 0o600); err != nil {
