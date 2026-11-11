@@ -262,6 +262,18 @@ func FromEvent(e normalized.Event) (Observation, error) {
 			o.Capabilities = []string{"routing"}
 			o.DeviceType = "gateway"
 		}
+	case "sadp":
+		o.RuleVersion = RuleVersion + "/" + ProductRulesVersion()
+		if e.Payload["is_response"] != true || str(e.Payload, "message_type") != "probe_match" {
+			return o, errors.New("SADP query is not device evidence")
+		}
+		o.Explanation = "SADP 自报产品型号；设备归属待核实"
+		identityStatus := str(e.Payload, "identity_status")
+		if (identityStatus == "direct_l2" && o.MAC == str(e.Payload, "l2_source_mac") || identityStatus == "arp_binding") &&
+			o.MAC != "" && o.MAC == str(e.Payload, "claimed_mac") && o.IP == str(e.Payload, "claimed_ip") {
+			o.ModelName = str(e.Payload, "product_model")
+			o.Explanation = "SADP 自报产品型号与设备身份一致"
+		}
 	case "ws_discovery", "snmp", "bacnet", "coap", "mqtt", "ipp", "onvif", "http", "tls", "rtsp", "ssh", "sip":
 		if e.Payload["is_response"] != true {
 			return o, errors.New("protocol query is not device evidence")
@@ -282,6 +294,9 @@ func FromEvent(e normalized.Event) (Observation, error) {
 		return o, fmt.Errorf("unsupported discovery origin %q", o.Origin)
 	}
 	applyProductRules(&o)
+	if o.Origin == "sadp" && o.Evidence.Payload["product_verified"] == true {
+		o.DeviceType = str(o.Evidence.Payload, "product_type")
+	}
 	return o, nil
 }
 
