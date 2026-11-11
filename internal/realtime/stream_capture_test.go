@@ -779,7 +779,7 @@ func TestControlledDeviceSignalRequiresOriginalMatchingScope(t *testing.T) {
 	}
 }
 
-func TestControlledDeviceSignalCaptureBoundsProjectionSegmentAtFiveHundred(t *testing.T) {
+func TestControlledDeviceSignalCaptureKeepsThousandEventBoundAcrossRestart(t *testing.T) {
 	t.Setenv("PROXY_SENTINEL_DEVICE_SIGNAL_BODY_LAYOUT_V2", "false")
 	path := filepath.Join(t.TempDir(), "signals.jsonl")
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
@@ -798,7 +798,7 @@ func TestControlledDeviceSignalCaptureBoundsProjectionSegmentAtFiveHundred(t *te
 	}
 	scope := &normalized.CaptureScope{SchemaVersion: "capture-scope/v1", SensorID: "sensor-a", CollectorInstanceID: "signal-owner", CampusID: "campus-a", AccessDomain: "bond0", InterfaceName: "bond0", ValidFrom: time.Now().Add(-time.Hour), ValidUntil: time.Now().Add(time.Hour)}
 	var input bytes.Buffer
-	for i := 0; i < 525; i++ {
+	for i := 0; i < 1025; i++ {
 		event := normalized.Event{SchemaVersion: "v1", EventID: "signal-" + strconv.Itoa(i), Source: "device-signals", SourceEventType: "ssdp", Type: "device", Timestamp: time.Now().UTC().Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": "sensor-a", "collector_instance_id": "signal-owner", "interface": "bond0"}, Subject: map[string]any{"ip": "192.0.2.8"}, Payload: map[string]any{"origin": "ssdp"}}
 		if err := json.NewEncoder(&input).Encode(scope.Apply(event)); err != nil {
 			t.Fatal(err)
@@ -808,7 +808,13 @@ func TestControlledDeviceSignalCaptureBoundsProjectionSegmentAtFiveHundred(t *te
 		t.Fatal(err)
 	}
 	source := Source{Kind: "device-signals", Path: path, CaptureScope: scope, ControlledInterface: "bond0"}
-	for _, want := range []int{500, 25} {
+	for index, want := range []int{1000, 25} {
+		if index == 1 {
+			journal, err = streamlog.Open(journal.Directory())
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
 		id, captured, err := CaptureStreamOnce(context.Background(), journal, Options{SensorID: "sensor-a"}, source)
 		if err != nil || !captured {
 			t.Fatalf("capture signal segment: id=%s captured=%t err=%v", id, captured, err)
@@ -817,6 +823,10 @@ func TestControlledDeviceSignalCaptureBoundsProjectionSegmentAtFiveHundred(t *te
 		if err != nil || len(state.Segment.Events) != want || !state.Segment.RawIsStandardEvents || state.Segment.BodyLayout != "" {
 			t.Fatalf("segment events=%d, standard-source=%t, want %d: %v", len(state.Segment.Events), state.Segment.RawIsStandardEvents, want, err)
 		}
+	}
+	cursor, err := journal.LoadSource(source.Kind, source.Path)
+	if err != nil || cursor.Offset != int64(input.Len()) {
+		t.Fatalf("source cursor offset=%d, want %d: %v", cursor.Offset, input.Len(), err)
 	}
 }
 
