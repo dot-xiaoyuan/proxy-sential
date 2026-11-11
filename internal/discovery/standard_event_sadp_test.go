@@ -34,4 +34,10 @@ func TestAdaptSADPStandardEventPreservesProductEvidence(t *testing.T) {
 	if err != nil || observation.DeviceType != "" || observation.Evidence.Payload["product_verified"] == true {
 		t.Fatalf("unverified SADP model became a type: observation=%+v err=%v", observation, err)
 	}
+	adapted.Subject["mac"] = "08:54:11:13:c1:84"
+	adapted.Payload["identity_status"] = "arp_binding"
+	observation, err = FromEvent(adapted)
+	if err != nil || observation.DeviceType != "" {
+		t.Fatalf("unverified raw SADP binding became a type: observation=%+v err=%v", observation, err)
+	}
 }
