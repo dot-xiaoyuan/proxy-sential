@@ -64,6 +64,11 @@ func TestRouterProtocolFilterRetainsDeviceDiscoveryProtocols(t *testing.T) {
 		if got := runRouterProtocolFilter(t, sadp); got == 0 {
 			t.Fatalf("SADP with %d tags was rejected", tags)
 		}
+		continuation := append([]byte(nil), sadp...)
+		binary.BigEndian.PutUint16(continuation[offset+6:], 1480/8)
+		if got := runRouterProtocolFilter(t, continuation); got == 0 {
+			t.Fatalf("SADP continuation with %d tags was rejected", tags)
+		}
 		mdns, offset := discoveryFrame(tags, 0x0800)
 		mdns[offset], mdns[offset+9] = 0x45, 17
 		binary.BigEndian.PutUint16(mdns[offset+22:], 5353)
