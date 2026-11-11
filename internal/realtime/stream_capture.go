@@ -443,7 +443,7 @@ func validateStreamRead(path, oldFileID string, oldOffset int64, read sourceChun
 		if err != nil {
 			continue
 		}
-		if fileIdentity(path, info) == oldFileID {
+		if fileIdentityAt(path, candidate, info) == oldFileID {
 			if info.Size() == oldOffset {
 				return nil
 			}
@@ -470,7 +470,7 @@ func verifyDeviceSignalCursorTail(path string, cursor streamlog.SourceCursor) er
 		}
 		info, err := file.Stat()
 		if err != nil || !info.Mode().IsRegular() ||
-			fileIdentity(path, info) != cursor.FileID || info.Size() < cursor.Offset {
+			fileIdentityAt(path, candidate, info) != cursor.FileID || info.Size() < cursor.Offset {
 			file.Close()
 			continue
 		}
