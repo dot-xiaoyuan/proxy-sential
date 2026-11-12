@@ -412,42 +412,37 @@ func (j *Journal) RecoverSource(source, path string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	all, err := j.PendingSegments()
+	all, err := j.pendingSegments()
 	if err != nil {
 		return nil, err
 	}
 	pending := make([]string, 0)
-	for _, id := range all {
-		state, err := j.load(id)
-		if err != nil {
-			return nil, err
-		}
-		segment := state.Segment
-		if segment.Source != source || segment.SourcePath != path {
+	for _, item := range all {
+		if item.source != source || item.sourcePath != path {
 			continue
 		}
-		if segment.Quarantined {
+		if item.quarantined {
 			return nil, fmt.Errorf("source %s at %s is quarantined: %w", source, path, ErrQuarantined)
 		}
-		if segment.Epoch != cursor.Epoch || segment.ParserVersion != cursor.ParserVersion || segment.KeyScheme != cursor.KeyScheme {
+		if item.epoch != cursor.Epoch || item.parserVersion != cursor.ParserVersion || item.keyScheme != cursor.KeyScheme {
 			return nil, ErrContentConflict
 		}
-		if cursor.LastSegmentID == id && state.ProcessingReady && !state.Committed {
-			if err := j.CommitSource(source, path, id); err != nil {
+		if cursor.LastSegmentID == item.id && item.processingReady && !item.committed {
+			if err := j.CommitSource(source, path, item.id); err != nil {
 				return nil, err
 			}
-		} else if segment.PreviousFileID == cursor.FileID && segment.PreviousOffset == cursor.Offset {
-			if err := j.CommitSource(source, path, id); err != nil {
+		} else if item.previousFileID == cursor.FileID && item.previousOffset == cursor.Offset {
+			if err := j.CommitSource(source, path, item.id); err != nil {
 				return nil, err
 			}
 			cursor, err = j.LoadSource(source, path)
 			if err != nil {
 				return nil, err
 			}
-		} else if !state.Committed {
+		} else if !item.committed {
 			return nil, fmt.Errorf("uncommitted stream segment has no matching source cursor: %w", ErrContentConflict)
 		}
-		pending = append(pending, id)
+		pending = append(pending, item.id)
 	}
 	return pending, nil
 }

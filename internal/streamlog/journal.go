@@ -433,9 +433,29 @@ func (j *Journal) load(id string) (State, error) {
 	return state, nil
 }
 
-// PendingSegments is an on-startup recovery scan. It includes a complete body
+// pendingSegmentRecord retains only the fields needed after the one complete
+// body verification. Keeping the event body here would make startup memory
+// grow with the entire durable backlog.
+type pendingSegmentRecord struct {
+	id              string
+	acceptedAt      time.Time
+	source          string
+	sourcePath      string
+	epoch           string
+	parserVersion   string
+	keyScheme       string
+	previousFileID  string
+	previousOffset  int64
+	quarantined     bool
+	processingReady bool
+	committed       bool
+}
+
+// pendingSegments is an on-startup recovery scan. It includes a complete body
 // whose state rename was interrupted, so no acknowledged source bytes vanish.
-func (j *Journal) PendingSegments() ([]string, error) {
+// Each retained body is read and verified here, before the compact metadata is
+// passed to source recovery.
+func (j *Journal) pendingSegments() ([]pendingSegmentRecord, error) {
 	entries, err := os.ReadDir(j.dir)
 	if err != nil {
 		return nil, err
@@ -452,11 +472,7 @@ func (j *Journal) PendingSegments() ([]string, error) {
 			}
 		}
 	}
-	type pending struct {
-		id         string
-		acceptedAt time.Time
-	}
-	items := make([]pending, 0, len(ids))
+	items := make([]pendingSegmentRecord, 0, len(ids))
 	for id := range ids {
 		state, err := j.load(id)
 		if err != nil {
@@ -468,7 +484,15 @@ func (j *Journal) PendingSegments() ([]string, error) {
 			}
 			continue
 		}
-		items = append(items, pending{id: id, acceptedAt: state.Segment.AcceptedAt})
+		segment := state.Segment
+		items = append(items, pendingSegmentRecord{
+			id: id, acceptedAt: segment.AcceptedAt,
+			source: segment.Source, sourcePath: segment.SourcePath,
+			epoch: segment.Epoch, parserVersion: segment.ParserVersion,
+			keyScheme: segment.KeyScheme, previousFileID: segment.PreviousFileID,
+			previousOffset: segment.PreviousOffset, quarantined: segment.Quarantined,
+			processingReady: state.ProcessingReady, committed: state.Committed,
+		})
 	}
 	sort.Slice(items, func(i, k int) bool {
 		if items[i].acceptedAt.Equal(items[k].acceptedAt) {
@@ -476,6 +500,15 @@ func (j *Journal) PendingSegments() ([]string, error) {
 		}
 		return items[i].acceptedAt.Before(items[k].acceptedAt)
 	})
+	return items, nil
+}
+
+// PendingSegments returns verified, unfinished segment IDs in acceptance order.
+func (j *Journal) PendingSegments() ([]string, error) {
+	items, err := j.pendingSegments()
+	if err != nil {
+		return nil, err
+	}
 	result := make([]string, 0, len(items))
 	for _, item := range items {
 		result = append(result, item.id)

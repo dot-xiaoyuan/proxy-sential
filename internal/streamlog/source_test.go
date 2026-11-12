@@ -3,9 +3,11 @@ package streamlog
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"testing"
+	"time"
 )
 
 func TestFreshSourceCursorCannotAdvanceWithoutDurableSegment(t *testing.T) {
@@ -189,6 +191,60 @@ func TestRecoverSourceCommitsFsyncedSegmentBeforeConsumption(t *testing.T) {
 	state, err := j.Load(id)
 	if err != nil || !state.Committed {
 		t.Fatalf("recovered segment cannot be consumed: %+v %v", state, err)
+	}
+}
+
+func TestRecoverSourceRejectsCorruptBodyBeforeAdvancingLaterCursor(t *testing.T) {
+	j, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := testSegment()
+	first.AcceptedAt = time.Unix(1, 0).UTC()
+	firstID := appendCommitted(t, j, first)
+	second := first
+	second.AcceptedAt = first.AcceptedAt.Add(time.Second)
+	second.PreviousOffset = first.EndOffset
+	second.StartOffset = first.EndOffset
+	second.EndOffset = first.EndOffset + 30
+	secondID, err := j.Append(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := j.path(firstID, ".segment")
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var changed Segment
+	if err := json.Unmarshal(original, &changed); err != nil {
+		t.Fatal(err)
+	}
+	changed.Events[0].Subject["ip"] = "198.51.100.1"
+	corrupt, err := json.Marshal(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, corrupt, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := j.RecoverSource(first.Source, first.SourcePath); !errors.Is(err, ErrContentConflict) {
+		t.Fatalf("recovery accepted a changed durable body: %v", err)
+	}
+	cursor, err := j.LoadSource(first.Source, first.SourcePath)
+	if err != nil || cursor.LastSegmentID != firstID || cursor.Offset != first.EndOffset {
+		t.Fatalf("recovery advanced past the corrupt body: %+v %v", cursor, err)
+	}
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := j.RecoverSource(first.Source, first.SourcePath)
+	if err != nil || len(ids) != 2 || ids[0] != firstID || ids[1] != secondID {
+		t.Fatalf("verified bodies did not recover in source order: %v %v", ids, err)
+	}
+	cursor, err = j.LoadSource(first.Source, first.SourcePath)
+	if err != nil || cursor.LastSegmentID != secondID || cursor.Offset != second.EndOffset {
+		t.Fatalf("verified successor did not advance the cursor: %+v %v", cursor, err)
 	}
 }
 
