@@ -19,3 +19,7 @@ PG 242 补充声明级撤销及规则版本索引；PG 243 记录固定起点的
 回填游标使用 latest 表真实主键五元组 `(device_key,source_id,origin,service_type,port)`，不是可重复的事件 ID。PG 244 记录固定起点后被更新的行；`backfill_complete` 仅表示当前投影遍历完成，`coverage=retained_latest_only` 明确其不等于完整 30 天历史。实时输入和独立规则重算继续分别处理，不把回填遍历结束描述为全校覆盖完成。
 
 哑终端冲突记录按重点词表内字典序最小的冲突类型进入一个代表分组，避免同身份重复计数；该分组不表示已确认类型。发现清单的确定硬件类型保持空，状态为 conflict，详情返回完整 `hardware_conflicting_types`。统计中的 conflict 与 identified 分列，不能把冲突分组加入已识别数量。
+
+PG 246 为可信地址来源增加 `(node,ip,valid_until DESC,observed_at DESC,id DESC)` 部分索引，仅覆盖有 MAC 且未撤销的 ARP/NDP/DHCP 记录。设备响应的二层归属仍按事件时间匹配完整有效区间，不以未经证明的历史 TTL 上限裁剪；校区、接入域、VLAN/VRF、MAC、协议和撤销时间条件保持不变。PG 096 原索引继续支撑撤销反查，反查显式保留其来源与非空 MAC 谓词。184 可应用该纯索引迁移，既有风险规则、事件和设备类型语义不变。
+
+每条符合条件的事实增加一个索引项；撤销会退出该部分索引，历史按既有归档生命周期清理。现有大表先在事务外使用与 246 完全相同的定义执行 `CREATE INDEX CONCURRENTLY discovery_observation_binding_validity ...`；当前迁移执行器逐文件开启事务，不能直接执行 `CONCURRENTLY`。并发构建完成后确认索引 ready/valid，再走正常迁移执行器：246 严格核对同名索引的表、方法、列、排序和谓词，成功后由执行器记录原文件校验值。失败的并发构建可能留下 INVALID 索引，须检查并按发布修复流程处理后重试，不能跳过检查或手工写迁移账本。空白安装允许 246 在事务内创建索引，锁等待上限为 5 秒。
