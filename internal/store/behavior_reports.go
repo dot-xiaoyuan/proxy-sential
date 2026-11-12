@@ -200,7 +200,7 @@ func (s *PostgresStore) EnqueueBehaviorReport(ctx context.Context, row BehaviorR
 	return err
 }
 
-const behaviorReportOutboxColumns = `report_id,idempotency_key,channel_id,event_type,subject_type,subject_id,account_id,ip,target,target_type,to_char(occurred_at,'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),status,attempts,coalesce(to_char(next_attempt_at,'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),''),last_error,http_status,remote_id,coalesce(to_char(sent_at,'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),''),to_char(created_at,'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),to_char(updated_at,'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),coalesce(payload->>'policy_decision_id',''),coalesce(payload->>'observation_id',''),coalesce(payload->>'evidence_version','')`
+const behaviorReportOutboxColumns = `report_id,idempotency_key,channel_id,event_type,subject_type,subject_id,account_id,ip,target,target_type,to_char(occurred_at,'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),status,attempts,coalesce(to_char(next_attempt_at,'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),''),last_error,http_status,remote_id,coalesce(to_char(sent_at,'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),''),to_char(created_at,'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),to_char(updated_at,'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),coalesce(payload->>'policy_decision_id',''),coalesce(payload->>'observation_id',''),coalesce(payload->>'evidence_version','')`
 
 func scanBehaviorReportOutbox(scanner interface{ Scan(...any) error }) (BehaviorReportOutboxRow, error) {
 	var row BehaviorReportOutboxRow
@@ -284,6 +284,34 @@ func (s *PostgresStore) ListBehaviorReportOutbox(ctx context.Context, status str
 		items = append(items, row)
 	}
 	return items, total, rows.Err()
+}
+
+func (s *PostgresStore) ListBehaviorReportOutboxSeek(ctx context.Context, status string, snapshot, at time.Time, id string, limit int) ([]BehaviorReportOutboxRow, error) {
+	args := []any{snapshot}
+	where := ` WHERE created_at<=$1`
+	if status != "" {
+		args = append(args, status)
+		where += fmt.Sprintf(` AND status=$%d`, len(args))
+	}
+	if id != "" {
+		args = append(args, at, id)
+		where += fmt.Sprintf(` AND (occurred_at,report_id)<($%d,$%d)`, len(args)-1, len(args))
+	}
+	args = append(args, limit+1)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+behaviorReportOutboxColumns+` FROM behavior_report_outbox`+where+fmt.Sprintf(` ORDER BY occurred_at DESC,report_id DESC LIMIT $%d`, len(args)), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []BehaviorReportOutboxRow{}
+	for rows.Next() {
+		row, err := scanBehaviorReportOutbox(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, row)
+	}
+	return items, rows.Err()
 }
 
 func (s *PostgresStore) GetBehaviorReportOutbox(ctx context.Context, id string) (BehaviorReportOutboxRow, []BehaviorReportAttempt, error) {

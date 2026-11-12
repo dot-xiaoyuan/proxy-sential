@@ -24,7 +24,8 @@ import type { ColumnsType } from 'antd/es/table'
 import { request } from '../shared/api/client'
 import { useSession } from '../shared/api/queries'
 import { can } from '../shared/auth/permissions'
-import { AppErrorAlert, AppFactBar, AppListHeader, AppListSection, AppLoadingState, AppPageHeader, AppServerPagination, AppTable, formatDateTime, useServerPagination } from '../shared/ui'
+import { AppErrorAlert, AppFactBar, AppListHeader, AppListSection, AppLoadingState, AppPageHeader, AppTable, formatDateTime } from '../shared/ui'
+import { RecordCursorPagination, useRecordCursorPagination } from '../shared/ui/RecordCursorPagination'
 import { statusText, statusColor } from '../shared/ui/status'
 import { useUrlState } from '../shared/ui/useUrlState'
 import type { components } from '../shared/api/generated'
@@ -32,7 +33,6 @@ import type { components } from '../shared/api/generated'
 type Channel = components['schemas']['BehaviorReportChannel']
 type ChannelPage = components['schemas']['BehaviorReportChannelPage']
 type OutboxRow = components['schemas']['BehaviorReportOutboxRow']
-type OutboxPage = components['schemas']['BehaviorReportOutboxPage']
 type OutboxDetail = components['schemas']['BehaviorReportOutboxDetail']
 
 const authTypes: Record<string, string> = { none: '无鉴权', bearer: 'Bearer 令牌', oauth2_client_credentials: 'OAuth2 客户端凭据' }
@@ -170,13 +170,14 @@ function ChannelsPanel({ channels, writable, invalidate }: { channels: UseQueryR
 }
 
 export function BehaviorReportRecords({ writable = false, recordOnly = false }: { writable?: boolean; recordOnly?: boolean }) {
-  const pagination = useServerPagination('behavior_report_outbox_')
   const [status, setStatus] = useUrlState('status', '', statusFilters, ['behavior_report_outbox_page'])
+  const pagination = useRecordCursorPagination(recordOnly ? 'recorded' : status)
   const [detail, setDetail] = useState<string>()
-  const query = new URLSearchParams({ limit: String(pagination.pageSize), cursor: pagination.cursor })
+  const query = new URLSearchParams({ seek: '1', limit: String(pagination.pageSize) })
+  if (pagination.cursor) query.set('cursor', pagination.cursor)
   if (recordOnly) query.set('status', 'recorded')
   else if (status) query.set('status', status)
-  const outbox = useQuery({ queryKey: ['behavior-reports', 'outbox', query.toString()], queryFn: () => request<OutboxPage>(`/behavior-reports/outbox?${query}`), refetchInterval: 15000 })
+  const outbox = useQuery({ queryKey: ['behavior-reports', 'outbox', query.toString()], queryFn: () => request<{items:OutboxRow[];next_cursor:string}>(`/behavior-reports/outbox?${query}`), refetchInterval: 15000 })
   const detailQuery = useQuery({ queryKey: ['behavior-reports', 'outbox', 'detail', detail], queryFn: () => request<OutboxDetail>(`/behavior-reports/outbox/${encodeURIComponent(detail!)}`), enabled: !!detail })
   const operate = useMutation({
     mutationFn: ({ id, op }: { id: string; op: 'retry' | 'cancel' }) => request(`/behavior-reports/outbox/${encodeURIComponent(id)}/${op}`, { method: 'POST' }),
@@ -205,12 +206,12 @@ export function BehaviorReportRecords({ writable = false, recordOnly = false }: 
   ]
   return (
     <>
-      <AppListHeader title="上报记录" count={`${outbox.data?.page.total ?? 0} 条`} />
+      <AppListHeader title="上报记录" count={`${outbox.data?.items.length ?? 0} 条`} />
       <div className="notifications-toolbar">
         {!recordOnly && <Select aria-label="上报状态筛选" allowClear placeholder="全部状态" value={status || undefined} onChange={(value) => setStatus(value ?? '')} options={statusFilters.map((value) => ({ value, label: statusText(value) }))} />}
       </div>
       {<AppListSection isError={outbox.isError} errorTitle="上报队列读取失败" errorMessage={String(outbox.error)} isLoading={outbox.isLoading} loadingRows={4} isEmpty={!outbox.data?.items.length} emptyText="暂无上报记录">{<AppTable rowKey="report_id" className="compact-list-table" columns={columns} dataSource={outbox.data?.items ?? []} pagination={false} scroll={{ x: 1200 }} />}</AppListSection>}
-      <AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={outbox.data?.page.total} onChange={pagination.update} />
+      <RecordCursorPagination page={pagination.page} pageSize={pagination.pageSize} count={outbox.data?.items.length ?? 0} nextCursor={outbox.data?.next_cursor ?? ''} fetching={outbox.isFetching} onNext={()=>pagination.next(outbox.data?.next_cursor ?? '')} onPrevious={pagination.previous} onPageSizeChange={pagination.changePageSize}/>
       <Modal width={720} footer={null} title="上报详情" open={!!detail} onCancel={() => setDetail(undefined)}>
         {detailQuery.isLoading ? <AppLoadingState rows={3} /> : detailQuery.data ? (
           <>

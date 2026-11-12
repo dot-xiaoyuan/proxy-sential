@@ -342,6 +342,41 @@ func (s *Server) handleBehaviorReportOutbox(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "bad_page", "分页参数不正确")
 		return
 	}
+	if r.URL.Query().Get("seek") == "1" {
+		cursor, err := decodeRecordCursor(r.URL.Query().Get("cursor"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_page", err.Error())
+			return
+		}
+		if cursor.Snapshot.IsZero() {
+			cursor.Snapshot = time.Now().UTC()
+		}
+		seekStore, ok := storage.(interface {
+			ListBehaviorReportOutboxSeek(context.Context, string, time.Time, time.Time, string, int) ([]store.BehaviorReportOutboxRow, error)
+		})
+		if !ok {
+			writeError(w, http.StatusServiceUnavailable, "behavior_reports_unavailable", "上报记录读取不可用")
+			return
+		}
+		items, err := seekStore.ListBehaviorReportOutboxSeek(ctx, strings.TrimSpace(r.URL.Query().Get("status")), cursor.Snapshot, cursor.At, cursor.ID, limit)
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "behavior_reports_unavailable", "上报记录读取失败")
+			return
+		}
+		next := ""
+		if len(items) > limit {
+			items = items[:limit]
+			last := items[len(items)-1]
+			at, err := time.Parse(time.RFC3339Nano, last.OccurredAt)
+			if err != nil {
+				writeError(w, http.StatusServiceUnavailable, "behavior_reports_unavailable", "上报记录时间无效")
+				return
+			}
+			next = encodeRecordCursor(recordCursor{Snapshot: cursor.Snapshot, At: at, ID: last.ReportID})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": next})
+		return
+	}
 	cursor, err := cursorOffset(r.URL.Query().Get("cursor"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_page", "分页参数不正确")

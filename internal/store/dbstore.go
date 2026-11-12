@@ -833,6 +833,10 @@ func (s *DBStore) ListBehaviorReportOutbox(ctx context.Context, status string, l
 	return s.pg.ListBehaviorReportOutbox(ctx, status, limit, offset)
 }
 
+func (s *DBStore) ListBehaviorReportOutboxSeek(ctx context.Context, status string, snapshot, at time.Time, id string, limit int) ([]BehaviorReportOutboxRow, error) {
+	return s.pg.ListBehaviorReportOutboxSeek(ctx, status, snapshot, at, id, limit)
+}
+
 func (s *DBStore) GetBehaviorReportOutbox(ctx context.Context, id string) (BehaviorReportOutboxRow, []BehaviorReportAttempt, error) {
 	return s.pg.GetBehaviorReportOutbox(ctx, id)
 }

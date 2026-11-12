@@ -2,8 +2,10 @@ package controlplane
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync"
 	"testing"
 	"time"
@@ -25,6 +27,7 @@ type behaviorReportFakeStore struct {
 	failed     []string
 	retried    []string
 	lastBatch  []behaviorreport.Event
+	seekRows   []store.BehaviorReportOutboxRow
 }
 
 func (f *behaviorReportFakeStore) ListBehaviorReportChannels(context.Context) ([]store.BehaviorReportChannel, error) {
@@ -93,6 +96,61 @@ func (f *behaviorReportFakeStore) MarkBehaviorReportRetry(_ context.Context, row
 
 func (f *behaviorReportFakeStore) ListBehaviorReportOutbox(context.Context, string, int, int) ([]store.BehaviorReportOutboxRow, int, error) {
 	return nil, 0, nil
+}
+
+func (f *behaviorReportFakeStore) ListBehaviorReportOutboxSeek(_ context.Context, status string, _ time.Time, at time.Time, id string, limit int) ([]store.BehaviorReportOutboxRow, error) {
+	items := []store.BehaviorReportOutboxRow{}
+	for _, row := range f.seekRows {
+		rowAt, _ := time.Parse(time.RFC3339Nano, row.OccurredAt)
+		if status != "" && row.Status != status {
+			continue
+		}
+		if id != "" && !(rowAt.Before(at) || rowAt.Equal(at) && row.ReportID < id) {
+			continue
+		}
+		items = append(items, row)
+		if len(items) == limit+1 {
+			break
+		}
+	}
+	return items, nil
+}
+
+func TestBehaviorReportSeekPagination(t *testing.T) {
+	at := time.Date(2026, 11, 12, 1, 0, 0, 123456000, time.UTC).Format(time.RFC3339Nano)
+	fake := &behaviorReportFakeStore{seekRows: []store.BehaviorReportOutboxRow{
+		{ReportID: "c", Status: "recorded", OccurredAt: at},
+		{ReportID: "b", Status: "recorded", OccurredAt: at},
+		{ReportID: "a", Status: "recorded", OccurredAt: at},
+	}}
+	s := &Server{}
+	seen := []string{}
+	cursor := ""
+	for page := 0; page < 2; page++ {
+		path := "/api/v1/behavior-reports/outbox?seek=1&status=recorded&limit=2"
+		if cursor != "" {
+			path += "&cursor=" + url.QueryEscape(cursor)
+		}
+		w := httptest.NewRecorder()
+		s.handleBehaviorReportOutbox(w, httptest.NewRequest("GET", path, nil), fake)
+		if w.Code != http.StatusOK {
+			t.Fatalf("page %d: %d %s", page, w.Code, w.Body.String())
+		}
+		var body struct {
+			Items      []store.BehaviorReportOutboxRow `json:"items"`
+			NextCursor string                          `json:"next_cursor"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		for _, row := range body.Items {
+			seen = append(seen, row.ReportID)
+		}
+		cursor = body.NextCursor
+	}
+	if len(seen) != 3 || seen[0] != "c" || seen[1] != "b" || seen[2] != "a" || cursor != "" {
+		t.Fatalf("unexpected pages: %v next=%q", seen, cursor)
+	}
 }
 
 func (f *behaviorReportFakeStore) GetBehaviorReportOutbox(context.Context, string) (store.BehaviorReportOutboxRow, []store.BehaviorReportAttempt, error) {

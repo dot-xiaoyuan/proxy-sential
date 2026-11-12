@@ -9,19 +9,25 @@ import { App as AntApp,
   Tag,
 } from 'antd'
 import { api } from '../shared/api/client'
-import { useActions, useSession } from '../shared/api/queries'
+import { request } from '../shared/api/client'
+import { useQuery } from '@tanstack/react-query'
+import { useSession } from '../shared/api/queries'
+import type { EnforcementAction } from '../shared/api/types'
 import { can } from '../shared/auth/permissions'
 import { NativeObservations } from '../entities/evidence/NativeObservations'
-import { AppErrorAlert, AppListHeader, AppLoadingState, AppServerPagination, AppTable, formatDateTime, useServerPagination } from '../shared/ui'
+import { AppErrorAlert, AppListHeader, AppLoadingState, AppTable, formatDateTime } from '../shared/ui'
+import { RecordCursorPagination, useRecordCursorPagination } from '../shared/ui/RecordCursorPagination'
 export function ActionHistory(){
-  const pagination=useServerPagination('actions_')
-  const actions=useActions({limit:pagination.pageSize,cursor:pagination.cursor})
+  const pagination=useRecordCursorPagination('actions')
+  const params = new URLSearchParams({ seek: '1', limit: String(pagination.pageSize) })
+  if (pagination.cursor) params.set('cursor', pagination.cursor)
+  const actions=useQuery({queryKey:['actions','seek',params.toString()],queryFn:()=>request<{items:EnforcementAction[];next_cursor:string}>(`/actions?${params}`)})
   const session=useSession();const {message}=AntApp.useApp()
   const [selectedAction,setSelectedAction]=useState<string>()
   if(actions.isLoading)return <AppLoadingState rows={6}/>
   if(actions.isError||!actions.data)return <AppErrorAlert title="处置动作读取失败"/>
   return <>
-        <AppListHeader title="处置动作记录" count={`${actions.data.page.total} 条`} />
+        <AppListHeader title="处置动作记录" count={`${actions.data.items.length} 条`} />
           <AppTable
               dataSource={actions.data.items}
               rowKey="action_id"
@@ -85,12 +91,7 @@ export function ActionHistory(){
                 },
               ]}
           />
-          <AppServerPagination
-            page={pagination.page}
-            pageSize={pagination.pageSize}
-            total={actions.data.page.total}
-            onChange={pagination.update}
-          />
+          <RecordCursorPagination page={pagination.page} pageSize={pagination.pageSize} count={actions.data.items.length} nextCursor={actions.data.next_cursor} fetching={actions.isFetching} onNext={()=>pagination.next(actions.data.next_cursor)} onPrevious={pagination.previous} onPageSizeChange={pagination.changePageSize}/>
       <Modal title="原生执行记录" open={Boolean(selectedAction)} footer={null} onCancel={() => setSelectedAction(undefined)} destroyOnHidden>
         {selectedAction && <NativeObservations key={selectedAction} actionId={selectedAction} />}
       </Modal>

@@ -29,6 +29,46 @@ func (s *Server) actionReadPostgres(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, "bad_page", err.Error())
 			return
 		}
+		if r.URL.Query().Get("seek") == "1" {
+			cursor, err := decodeRecordCursor(r.URL.Query().Get("cursor"))
+			if err != nil {
+				writeError(w, 400, "bad_page", err.Error())
+				return
+			}
+			if cursor.Snapshot.IsZero() {
+				cursor.Snapshot = time.Now().UTC()
+			}
+			suffix := ` WHERE created_at<=$1 ORDER BY created_at DESC,action_id DESC LIMIT $2`
+			args := []any{cursor.Snapshot, limit + 1}
+			if cursor.ID != "" {
+				suffix = ` WHERE created_at<=$1 AND (created_at,action_id)<($2,$3) ORDER BY created_at DESC,action_id DESC LIMIT $4`
+				args = []any{cursor.Snapshot, cursor.At, cursor.ID, limit + 1}
+			}
+			if err = loadActionsScoped(ctx, tx, &doc, suffix, args); err != nil {
+				fail(err)
+				return
+			}
+			items := mapValues(doc.Actions)
+			sort.Slice(items, func(i, j int) bool {
+				if items[i].CreatedAt == items[j].CreatedAt {
+					return items[i].ActionID > items[j].ActionID
+				}
+				return items[i].CreatedAt > items[j].CreatedAt
+			})
+			next := ""
+			if len(items) > limit {
+				items = items[:limit]
+				last := items[len(items)-1]
+				at, err := time.Parse(time.RFC3339Nano, last.CreatedAt)
+				if err != nil {
+					fail(err)
+					return
+				}
+				next = encodeRecordCursor(recordCursor{Snapshot: cursor.Snapshot, At: at, ID: last.ActionID})
+			}
+			writeJSON(w, 200, map[string]any{"items": items, "next_cursor": next})
+			return
+		}
 		offset, err := cursorOffset(r.URL.Query().Get("cursor"))
 		if err != nil {
 			writeError(w, 400, "bad_page", err.Error())

@@ -1750,7 +1750,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Requires behavior-reports:read. */
+        /** @description Requires behavior-reports:read. seek=1 uses a stable keyset cursor and omits the full count. */
         get: operations["listBehaviorReportOutbox"];
         put?: never;
         post?: never;
@@ -6500,6 +6500,14 @@ export interface components {
             items: components["schemas"]["BehaviorReportOutboxRow"][];
             total: number;
             page: components["schemas"]["Page"];
+        };
+        BehaviorReportOutboxSeekPage: {
+            items: components["schemas"]["BehaviorReportOutboxRow"][];
+            next_cursor: string;
+        };
+        ActionSeekPage: {
+            items: components["schemas"]["EnforcementAction"][];
+            next_cursor: string;
         };
         BehaviorReportOutboxDetail: {
             report: components["schemas"]["BehaviorReportOutboxRow"];
@@ -12236,7 +12244,8 @@ export interface operations {
             query?: {
                 status?: "recorded" | "queued" | "sending" | "sent" | "failed" | "cancelled";
                 limit?: number;
-                cursor?: number;
+                cursor?: string;
+                seek?: "1";
             };
             header?: never;
             path?: never;
@@ -12250,7 +12259,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BehaviorReportOutboxPage"];
+                    "application/json": components["schemas"]["BehaviorReportOutboxPage"] | components["schemas"]["BehaviorReportOutboxSeekPage"];
                 };
             };
             /** @description Reporting storage unavailable */
@@ -12892,6 +12901,7 @@ export interface operations {
             query?: {
                 limit?: number;
                 cursor?: string;
+                seek?: "1";
             };
             header?: never;
             path?: never;
@@ -12908,7 +12918,7 @@ export interface operations {
                     "application/json": {
                         items: components["schemas"]["EnforcementAction"][];
                         page: components["schemas"]["Page"];
-                    };
+                    } | components["schemas"]["ActionSeekPage"];
                 };
             };
         };

@@ -1473,13 +1473,14 @@ paths:
   /behavior-reports/outbox:
     get:
       operationId: listBehaviorReportOutbox
-      description: Requires behavior-reports:read.
+      description: Requires behavior-reports:read. seek=1 uses a stable keyset cursor and omits the full count.
       parameters:
         - {name: status, in: query, schema: {type: string, enum: [recorded, queued, sending, sent, failed, cancelled]}}
         - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
-        - {name: cursor, in: query, schema: {type: integer, minimum: 0}}
+        - {name: cursor, in: query, schema: {type: string}}
+        - {name: seek, in: query, schema: {type: string, enum: ['1']}}
       responses:
-        "200": {description: "Reporting queue page", content: {application/json: {schema: {$ref: "#/components/schemas/BehaviorReportOutboxPage"}}}}
+        "200": {description: "Reporting queue page", content: {application/json: {schema: {oneOf: [{$ref: "#/components/schemas/BehaviorReportOutboxPage"}, {$ref: "#/components/schemas/BehaviorReportOutboxSeekPage"}]}}}}
         "503": {description: "Reporting storage unavailable"}
   /behavior-reports/outbox/{report_id}:
     get:
@@ -1792,17 +1793,20 @@ paths:
       parameters:
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
         - { name: cursor, in: query, schema: { type: string } }
+        - { name: seek, in: query, schema: { type: string, enum: ['1'] } }
       responses:
         "200":
           description: Paginated enforcement actions.
           content:
             application/json:
               schema:
-                type: object
-                required: [items, page]
-                properties:
-                  items: { type: array, items: { $ref: "#/components/schemas/EnforcementAction" } }
-                  page: { $ref: "#/components/schemas/Page" }
+                oneOf:
+                  - type: object
+                    required: [items, page]
+                    properties:
+                      items: { type: array, items: { $ref: "#/components/schemas/EnforcementAction" } }
+                      page: { $ref: "#/components/schemas/Page" }
+                  - $ref: "#/components/schemas/ActionSeekPage"
   /actions/execute:
     post:
       operationId: executeAction
@@ -6576,6 +6580,22 @@ components:
           items: { $ref: '#/components/schemas/BehaviorReportOutboxRow' }
         total: { type: integer }
         page: { $ref: '#/components/schemas/Page' }
+    BehaviorReportOutboxSeekPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/BehaviorReportOutboxRow' }
+        next_cursor: { type: string }
+    ActionSeekPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/EnforcementAction' }
+        next_cursor: { type: string }
     BehaviorReportOutboxDetail:
       type: object
       required: [report, attempts]
