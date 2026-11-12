@@ -267,9 +267,13 @@ start_storage_direct() {
     fi
   done
   if [[ "$postgres_keep" != true ]]; then
+  local -a postgres_memory_args=(--memory "${POSTGRES_MEMORY:-3g}")
+  if [[ -n "${POSTGRES_MEMORY_SWAP:-}" ]]; then
+    postgres_memory_args+=(--memory-swap "$POSTGRES_MEMORY_SWAP")
+  fi
   docker run -d --name proxy-sentinel-postgres --restart unless-stopped \
     --log-driver json-file --log-opt max-size=20m --log-opt max-file=5 \
-    --cpus "${POSTGRES_CPUS:-2.0}" --memory "${POSTGRES_MEMORY:-3g}" \
+    --cpus "${POSTGRES_CPUS:-2.0}" "${postgres_memory_args[@]}" \
     -e POSTGRES_DB -e POSTGRES_USER -e POSTGRES_PASSWORD -e PGDATA=/var/lib/postgresql/data/pgdata \
     -p "127.0.0.1:${POSTGRES_HOST_PORT:-25432}:5432" \
     -v "${PROXY_SENTINEL_DATA_DIR:-$root/data/db}/postgres:/var/lib/postgresql" \

@@ -8,9 +8,10 @@ import (
 )
 
 type indexedDeviceSelection struct {
-	Query DeviceQuery
-	CTE   string
-	Args  []any
+	Query        DeviceQuery
+	CTE          string
+	Args         []any
+	PageProfiles bool
 }
 
 // The page and independent count share the same current-index identity groups
@@ -182,6 +183,9 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 	addressSourcesSQL := "false"
 	if query.ReviewReason == "address_only" {
 		addressSourcesSQL = "bool_and(origin IN ('arp','ndp'))"
+	}
+	if query.HardwareV2 {
+		return buildHardwareIndexedSelection(query, args, baseWhere, candidateHaving, matchedWhere), nil
 	}
 	statement := `WITH trusted_address AS MATERIALIZED (
  SELECT m.id observation_id,t.mac FROM discovery_observation_latest m

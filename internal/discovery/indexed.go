@@ -110,6 +110,9 @@ SELECT c.identity_key,c.device_key,l.data,
 FROM candidate_rows l JOIN candidates c USING(identity_key)
 LEFT JOIN discovery_identity_links page_link ON page_link.observation_id=l.id AND coalesce(l.data->>'mac','')<>''
 ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
+	if r.HardwareV2 {
+		statement = buildHardwareIndexedPage(selection, positionWhere, fmt.Sprint(len(args)))
+	}
 	rows, err := db.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return nil, err
@@ -145,6 +148,16 @@ ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
 	if r.HardwareV2 {
 		if err := attachHardwareCurrent(ctx, db, items, now); err != nil {
 			return nil, err
+		}
+	}
+	if selection.PageProfiles && query.View != "iot" {
+		// Category clues are resolved only for this bounded page when they
+		// were not a selection predicate. Keep the SQL grouping semantics.
+		candidateCategories := indexedPageCandidateCategories(deviceRows, now)
+		for _, item := range items {
+			if item.ClassificationStatus == "candidate" {
+				categories[item.indexedIdentityKey] = candidateCategories[item.indexedIdentityKey]
+			}
 		}
 	}
 	for i := range items {
@@ -246,4 +259,26 @@ func indexedOrigins(mode string) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("invalid discovery mode %q", mode)
 	}
+}
+
+func indexedPageCandidateCategories(rows []deviceObservationRow, now time.Time) map[string]string {
+	roles := map[string]map[string]bool{}
+	for _, row := range rows {
+		if roles[row.IndexedIdentityKey] == nil {
+			roles[row.IndexedIdentityKey] = map[string]bool{}
+		}
+		if row.Observation.ValidUntil.After(now) && !row.ProfileConflict && row.ProfileTypeConfidence >= .4 && row.ProfileTypeConfidence < .8 && row.ProfileDeviceType != "" {
+			roles[row.IndexedIdentityKey][row.ProfileDeviceType] = true
+		}
+	}
+	categories := map[string]string{}
+	for key, types := range roles {
+		categories[key] = "identity_only"
+		if len(types) == 1 {
+			for kind := range types {
+				categories[key] = deviceCategory(kind)
+			}
+		}
+	}
+	return categories
 }
