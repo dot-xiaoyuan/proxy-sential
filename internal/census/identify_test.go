@@ -1,6 +1,7 @@
 package census
 
 import (
+	"encoding/json"
 	"net/netip"
 	"testing"
 	"time"
@@ -135,5 +136,66 @@ func TestIdentifyVerifiedPacketSidecarResponderMAC(t *testing.T) {
 	ids, _ = Identify(event, testPrefixes(t))
 	if len(ids) != 2 || ids[1].Kind != "ip" {
 		t.Fatalf("advertised target inherited frame MAC: %+v", ids)
+	}
+}
+
+func TestIdentifyRejectsExplicitCaptureScopeFailure(t *testing.T) {
+	for _, reason := range []string{"capture_scope_collector_mismatch", "capture_scope_interface_mismatch", "capture_scope_outside_validity", "capture_scope_conflict"} {
+		event := testEvent("arp", "10.1.1.2", "00:11:22:33:44:55")
+		event.Observer["capture_scope_issue"] = reason
+		ids, bindings := Identify(event, testPrefixes(t))
+		if len(ids) != 0 || len(bindings) != 0 {
+			t.Errorf("%s produced scoped identity: %+v %+v", reason, ids, bindings)
+		}
+		if event.Observer["capture_scope_issue"] != reason {
+			t.Fatal("scope failure was removed from original evidence")
+		}
+	}
+	event := testEvent("arp", "10.1.1.2", "00:11:22:33:44:55")
+	ids, bindings := Identify(event, testPrefixes(t))
+	if len(ids) != 2 || len(bindings) != 1 {
+		t.Fatal("legacy event without explicit scope issue changed")
+	}
+}
+
+func TestIdentifyCanonicalVLANMatchesHardwareScope(t *testing.T) {
+	expected := ScopeKey("campus-204", "campus", "mirror", "201", "")
+	for _, v := range []any{"201", float64(201), int(201), uint16(201), json.Number("201")} {
+		event := testEvent("arp", "10.1.1.2", "00:11:22:33:44:55")
+		event.Payload["vlan"] = v
+		ids, bindings := Identify(event, testPrefixes(t))
+		if len(ids) != 2 || len(bindings) != 1 || ids[1].VLAN != "201" || ids[1].ScopeKey != expected || bindings[0].ScopeKey != expected {
+			t.Errorf("VLAN %T(%v) mismatched hardware scope: %+v %+v", v, v, ids, bindings)
+		}
+	}
+	event := testEvent("arp", "10.1.1.2", "00:11:22:33:44:55")
+	delete(event.Payload, "vlan")
+	event.Subject["vlan"] = float64(201)
+	ids, _ := Identify(event, testPrefixes(t))
+	if len(ids) != 2 || ids[1].ScopeKey != expected {
+		t.Fatalf("subject numeric VLAN lost: %+v", ids)
+	}
+	delete(event.Subject, "vlan")
+	ids, _ = Identify(event, testPrefixes(t))
+	if len(ids) != 2 || ids[1].VLAN != "" || ids[1].ScopeKey == expected {
+		t.Fatal("missing VLAN merged with VLAN201")
+	}
+}
+
+func TestIdentifyRejectsInvalidOrContradictoryVLAN(t *testing.T) {
+	for _, v := range []any{float64(201.5), -1, 4095, "invalid", "201/202", "0201", true, map[string]any{"id": 201}} {
+		event := testEvent("arp", "10.1.1.2", "00:11:22:33:44:55")
+		event.Payload["vlan"] = v
+		ids, bindings := Identify(event, testPrefixes(t))
+		if len(ids) != 0 || len(bindings) != 0 {
+			t.Errorf("invalid VLAN %T(%v) entered a scope: %+v %+v", v, v, ids, bindings)
+		}
+	}
+	event := testEvent("arp", "10.1.1.2", "00:11:22:33:44:55")
+	event.Payload["vlan"] = float64(201)
+	event.Subject["vlan"] = "202"
+	ids, bindings := Identify(event, testPrefixes(t))
+	if len(ids) != 0 || len(bindings) != 0 {
+		t.Fatal("contradictory subject/payload VLAN merged")
 	}
 }

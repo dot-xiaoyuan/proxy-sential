@@ -129,6 +129,11 @@ func hardwareDirectOwnership(o Observation) bool {
 // HardwareFactFromObservation never promotes legacy classifications: it adapts
 // the attributed original product fields and lets the unified catalog decide.
 func HardwareFactFromObservation(o Observation) (*HardwareFact, error) {
+	// Explicit scope failures must not become trusted hardware through a
+	// legacy display-site fallback. The source event remains unchanged.
+	if str(o.Evidence.Observer, "capture_scope_issue") != "" {
+		return nil, nil
+	}
 	mac, err := net.ParseMAC(o.MAC)
 	if err != nil || len(mac) != 6 || mac[0]&1 != 0 || mac.String() == "00:00:00:00:00:00" || o.Node == "" || o.Site == "" || o.Domain == "" || o.ObservedAt.IsZero() || !hardwareDirectOwnership(o) {
 		return nil, nil

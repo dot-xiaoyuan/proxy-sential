@@ -110,3 +110,20 @@ func TestHardwareReviewUsesFrozenSnapshotWithoutHistory(t *testing.T) {
 		}
 	}
 }
+
+func TestHardwareFactRejectsExplicitCaptureScopeFailure(t *testing.T) {
+	for _, reason := range []string{"capture_scope_collector_mismatch", "capture_scope_interface_mismatch", "capture_scope_outside_validity", "capture_scope_conflict"} {
+		o := hardwareTestObservation(time.Now().UTC())
+		o.Evidence.Observer = map[string]any{"capture_scope_issue": reason}
+		fact, err := HardwareFactFromObservation(o)
+		if err != nil || fact != nil {
+			t.Errorf("%s produced trusted hardware fact: %+v %v", reason, fact, err)
+		}
+		if o.Evidence.Observer["capture_scope_issue"] != reason {
+			t.Fatal("scope failure was removed from original evidence")
+		}
+	}
+	if fact, err := HardwareFactFromObservation(hardwareTestObservation(time.Now().UTC())); err != nil || fact == nil {
+		t.Fatal("legacy event without explicit scope issue changed")
+	}
+}

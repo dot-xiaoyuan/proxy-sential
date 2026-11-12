@@ -529,10 +529,7 @@ func runIngest(args []string) error {
 		{Kind: "shared-device-signals", Path: *sharedDeviceSignals},
 	} {
 		if source.Path != "" {
-			source.CaptureScope = captureScope
-			if strings.HasPrefix(source.Kind, "zeek-") {
-				source.CollectorInstanceID = *zeekInstanceID
-			}
+			source = bindIngestSource(source, captureScope, *zeekInstanceID)
 			sources = append(sources, source)
 		}
 	}
@@ -583,6 +580,19 @@ func runIngest(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return realtime.Run(ctx, backend, realtime.Options{SensorID: *sensorID, Sources: sources, PollInterval: *interval, MaxBatchBytes: *maxBatchBytes, StoreTimeout: *storeTimeout, AlertWebhook: *alertWebhook, Heartbeat: *heartbeat, AlertLagBytes: *alertLagBytes, AlertBadRate: *alertBadRate})
+}
+
+func bindIngestSource(source realtime.Source, scope *normalized.CaptureScope, zeekInstanceID string) realtime.Source {
+	source.CaptureScope = scope
+	if strings.HasPrefix(source.Kind, "zeek-") {
+		source.CollectorInstanceID = zeekInstanceID
+		if scope != nil {
+			// Zeek logs may omit the interface. Only the explicit file binding
+			// supplies it; the adapter still checks instance, time and conflicts.
+			source.ControlledInterface = scope.InterfaceName
+		}
+	}
+	return source
 }
 
 func runDeviceSignal(args []string) error {

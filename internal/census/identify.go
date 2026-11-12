@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/netip"
 	"sort"
@@ -56,6 +57,31 @@ func first(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// Numeric packet-sidecar tags and JSON numbers use the same decimal scope as
+// discovery's passiveString. Invalid tags never collapse into missing VLAN.
+func identifierVLAN(value any) (string, bool) {
+	if value == nil {
+		return "", true
+	}
+	var text string
+	switch v := value.(type) {
+	case string:
+		text = strings.TrimSpace(v)
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, json.Number:
+		text = fmt.Sprint(v)
+	default:
+		return "", false
+	}
+	if text == "" {
+		return "", true
+	}
+	tag, err := strconv.ParseUint(text, 10, 12)
+	if err != nil || tag > 4094 || strconv.FormatUint(tag, 10) != text {
+		return "", false
+	}
+	return text, true
 }
 
 func canonicalIP(value string, allow []netip.Prefix) (string, int) {
@@ -170,6 +196,11 @@ func dhcpAction(payload map[string]any) string {
 // Identify adapts one standard event without altering its evidence or identity.
 // The caller supplies the site's explicit CIDRs; an empty scope admits nothing.
 func Identify(event normalized.Event, allow []netip.Prefix) ([]Identifier, []Binding) {
+	// A configured collector binding that failed validation cannot establish
+	// any scoped identifier. Keep the original failure on the source event.
+	if field(event.Observer, "capture_scope_issue") != "" {
+		return nil, nil
+	}
 	at, err := time.Parse(time.RFC3339Nano, event.Timestamp)
 	if err != nil || event.EventID == "" || len(allow) == 0 {
 		return nil, nil
@@ -180,7 +211,12 @@ func Identify(event normalized.Event, allow []netip.Prefix) ([]Identifier, []Bin
 	}
 	campus := first(field(event.Subject, "campus_id"), field(event.Subject, "site"))
 	domain := first(field(event.Payload, "access_domain"), field(event.Subject, "domain"), field(event.Observer, "interface"))
-	vlan := first(field(event.Payload, "vlan"), field(event.Subject, "vlan"))
+	payloadVLAN, payloadVLANValid := identifierVLAN(event.Payload["vlan"])
+	subjectVLAN, subjectVLANValid := identifierVLAN(event.Subject["vlan"])
+	if !payloadVLANValid || !subjectVLANValid || payloadVLAN != "" && subjectVLAN != "" && payloadVLAN != subjectVLAN {
+		return nil, nil
+	}
+	vlan := first(payloadVLAN, subjectVLAN)
 	vrf := first(field(event.Payload, "vrf"), field(event.Subject, "vrf"))
 	scope := scopeKey(sensor, campus, domain, vlan, vrf)
 	kind := strings.ToLower(event.SourceEventType)
