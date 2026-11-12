@@ -45,6 +45,12 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 	if err != nil {
 		return indexedDeviceSelection{}, err
 	}
+	if query.HardwareV2 && query.Mode == "passive" {
+		// A response can keep a trusted hardware identity observable after its
+		// address advertisement expires. List, metadata and export share this
+		// admission; the 184/default reader retains its original source set.
+		origins = append(origins, "snmp", "bacnet", "modbus", "http_device", "rtsp", "sip", "tls_device", "ipp", "onvif")
+	}
 	args := []any{}
 	baseWhere := []string{"l.observed_at<=now()", "NOT l.withdrawn"}
 	if query.Window > 0 {
