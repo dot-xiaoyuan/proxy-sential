@@ -16,7 +16,11 @@ const DefaultDiscoveryTopic = "ps.discovery.events.v1"
 // from the future primary consumer configuration so that enabling a shadow
 // stream can never change the discovery read path.
 type Config struct {
-	Enabled        bool
+	Enabled       bool
+	ShadowEnabled bool
+	// ReliableSource is an explicit per-source canary. Empty preserves the
+	// existing best-effort shadow path and its non-blocking capture semantics.
+	ReliableSource string
 	Brokers        []string
 	ClientID       string
 	DiscoveryTopic string
@@ -49,6 +53,14 @@ func ConfigFromEnv(node, statsDir string) (Config, error) {
 			return cfg, fmt.Errorf("invalid PROXY_SENTINEL_EVENT_BUS_SHADOW: %w", err)
 		}
 		cfg.Enabled = enabled
+		cfg.ShadowEnabled = enabled
+	}
+	if raw := strings.TrimSpace(os.Getenv("PROXY_SENTINEL_EVENT_BUS_RELIABLE_SOURCE")); raw != "" {
+		if raw != "passive-discovery" {
+			return cfg, errors.New("PROXY_SENTINEL_EVENT_BUS_RELIABLE_SOURCE currently supports passive-discovery only")
+		}
+		cfg.ReliableSource = raw
+		cfg.Enabled = true
 	}
 	if raw := strings.TrimSpace(os.Getenv("PROXY_SENTINEL_EVENT_BUS_CLIENT_ID")); raw != "" {
 		cfg.ClientID = raw

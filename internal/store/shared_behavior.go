@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -21,12 +23,48 @@ type SharedBehaviorQuery struct {
 	CoverageState string
 	ConfidenceMin *int
 	Limit         int
-	Cursor        int
+	Cursor        string
 }
 
 type SharedBehaviorPage struct {
 	Items []sharedaccess.BehaviorAssessment `json:"items"`
-	Page  Page                              `json:"page"`
+	Page  SharedBehaviorCursorPage          `json:"page"`
+}
+
+type SharedBehaviorCursorPage struct {
+	Limit      int     `json:"limit"`
+	NextCursor *string `json:"next_cursor"`
+	HasMore    bool    `json:"has_more"`
+}
+
+type sharedBehaviorCursor struct {
+	At    time.Time `json:"at"`
+	ID    string    `json:"id"`
+	Scope string    `json:"scope"`
+}
+
+func sharedBehaviorCursorScope(query SharedBehaviorQuery) string {
+	copy := query
+	copy.Limit = 0
+	copy.Cursor = ""
+	raw, _ := json.Marshal(copy)
+	sum := sha256.Sum256(raw)
+	return base64.RawURLEncoding.EncodeToString(sum[:12])
+}
+
+func decodeSharedBehaviorCursor(value, scope string) (sharedBehaviorCursor, error) {
+	if len(value) > 2048 {
+		return sharedBehaviorCursor{}, fmt.Errorf("invalid shared behavior cursor")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return sharedBehaviorCursor{}, fmt.Errorf("invalid shared behavior cursor")
+	}
+	var cursor sharedBehaviorCursor
+	if err = json.Unmarshal(raw, &cursor); err != nil || cursor.At.IsZero() || cursor.ID == "" || cursor.Scope != scope {
+		return sharedBehaviorCursor{}, fmt.Errorf("invalid shared behavior cursor")
+	}
+	return cursor, nil
 }
 
 type SharedBehaviorHistory struct {
@@ -50,7 +88,7 @@ type SharedBehaviorReader interface {
 }
 
 func sharedBehaviorWhere(query SharedBehaviorQuery) (string, []any, error) {
-	clauses := []string{"current=true", "expires_at>now()", "window_end>now()-interval '20 minutes'", "window_end<=now()", "COALESCE(observation->'signal_groups','[]'::jsonb) ? 'ieee1905_association'"}
+	clauses := []string{"current=true", "rule_version='" + sharedaccess.BehaviorRuleVersion + "'", "expires_at>now()", "window_end>now()-interval '20 minutes'", "window_end<=now()", "COALESCE(observation->'signal_groups','[]'::jsonb) ? 'ieee1905_association'", "generation_id=COALESCE((SELECT min(cancel_id) FROM stream_shared_source_cutovers c WHERE c.sensor_id=shared_behavior_observations.sensor_id AND c.state='active'),'')"}
 	if query.View != "" && query.View != "current" && query.View != "history" {
 		return "", nil, fmt.Errorf("invalid shared behavior view")
 	}
@@ -113,36 +151,42 @@ func (s *PostgresStore) ListSharedBehavior(ctx context.Context, query SharedBeha
 	if query.Limit <= 0 {
 		query.Limit = 20
 	}
-	if query.Limit > 100 || query.Cursor < 0 {
+	if query.Limit > 100 {
 		return SharedBehaviorPage{}, fmt.Errorf("invalid shared behavior pagination")
 	}
 	where, args, err := sharedBehaviorWhere(query)
 	if err != nil {
 		return SharedBehaviorPage{}, err
 	}
-	args = append(args, query.Limit, query.Cursor)
-	// Observations are immutable ten-minute windows. The operational list is a
-	// gateway profile, so select the newest current window for each capture scope and IP
-	// before applying user filters. Raw windows remain queryable through the
-	// detail history and are never deleted by this view.
-	latest := `SELECT DISTINCT ON(sensor_id,campus_id,access_domain,ip) *
- FROM shared_behavior_observations o WHERE current=true AND rule_version='` + sharedaccess.BehaviorRuleVersion + `' AND expires_at>now()
- AND o.generation_id=COALESCE((SELECT min(cancel_id) FROM stream_shared_source_cutovers c WHERE c.sensor_id=o.sensor_id AND c.state='active'),'')
- ORDER BY sensor_id,campus_id,access_domain,ip,last_seen DESC,observation_id DESC`
-	if query.View == "history" {
-		latest = `SELECT DISTINCT ON(sensor_id,campus_id,access_domain,ip,endpoint_id) * FROM shared_behavior_observations ` + where + ` ORDER BY sensor_id,campus_id,access_domain,ip,endpoint_id,last_seen DESC,observation_id DESC`
+	if query.Cursor != "" {
+		cursor, cursorErr := decodeSharedBehaviorCursor(query.Cursor, sharedBehaviorCursorScope(query))
+		if cursorErr != nil {
+			return SharedBehaviorPage{}, cursorErr
+		}
+		args = append(args, cursor.At, cursor.ID)
+		where += fmt.Sprintf(" AND (last_seen,observation_id)<($%d,$%d)", len(args)-1, len(args))
 	}
-	rows, err := s.db.QueryContext(ctx, `WITH latest AS (`+latest+`)
-SELECT observation,count(*) OVER() FROM latest `+where+fmt.Sprintf(` ORDER BY confidence DESC,last_seen DESC,observation_id DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args)), args...)
+	args = append(args, query.Limit+1)
+	// current is maintained as one row per gateway. Historical observations
+	// retain their immutable windows; both views read a bounded index page.
+	rows, err := s.db.QueryContext(ctx, `SELECT observation,last_seen,observation_id FROM shared_behavior_observations `+where+fmt.Sprintf(` ORDER BY last_seen DESC,observation_id DESC LIMIT $%d`, len(args)), args...)
 	if err != nil {
 		return SharedBehaviorPage{}, err
 	}
 	defer rows.Close()
-	page := SharedBehaviorPage{Items: []sharedaccess.BehaviorAssessment{}, Page: Page{Limit: query.Limit}}
+	page := SharedBehaviorPage{Items: []sharedaccess.BehaviorAssessment{}, Page: SharedBehaviorCursorPage{Limit: query.Limit}}
+	var lastAt time.Time
+	var lastID string
 	for rows.Next() {
 		var raw []byte
-		if err = rows.Scan(&raw, &page.Page.Total); err != nil {
+		var at time.Time
+		var id string
+		if err = rows.Scan(&raw, &at, &id); err != nil {
 			return page, err
+		}
+		if len(page.Items) == query.Limit {
+			page.Page.HasMore = true
+			break
 		}
 		var item sharedaccess.BehaviorAssessment
 		if err = json.Unmarshal(raw, &item); err != nil {
@@ -150,12 +194,14 @@ SELECT observation,count(*) OVER() FROM latest `+where+fmt.Sprintf(` ORDER BY co
 		}
 		item.Current = query.View != "history"
 		page.Items = append(page.Items, item)
+		lastAt, lastID = at, id
 	}
 	if err = rows.Err(); err != nil {
 		return page, err
 	}
-	if query.Cursor+len(page.Items) < page.Page.Total {
-		next := fmt.Sprint(query.Cursor + len(page.Items))
+	if page.Page.HasMore {
+		raw, _ := json.Marshal(sharedBehaviorCursor{At: lastAt, ID: lastID, Scope: sharedBehaviorCursorScope(query)})
+		next := base64.RawURLEncoding.EncodeToString(raw)
 		page.Page.NextCursor = &next
 	}
 	return page, nil

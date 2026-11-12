@@ -29,6 +29,7 @@ type ObservationDecision struct {
 	Violated          bool             `json:"violated"`
 	EvaluatedAt       time.Time        `json:"evaluated_at"`
 	EvidenceExpiresAt time.Time        `json:"evidence_expires_at"`
+	CooldownSeconds   int              `json:"cooldown_seconds"`
 	Reasons           []string         `json:"reasons"`
 	Evidence          Window           `json:"evidence"`
 	Attribution       Result           `json:"attribution"`
@@ -66,5 +67,5 @@ func NewObservationDecision(w Window, r Result, cfg Config, now time.Time) Obser
 	if p.RecordOnly {
 		deliveryStatus = "record_only"
 	}
-	return ObservationDecision{DecisionID: id, ExecutionID: execution, PolicyID: p.ID, PolicyRevision: p.Revision, Trigger: "shared_access", ObservationID: w.ID, EvidenceVersion: version, AccountID: r.AccountID, IP: w.IP, CampusID: w.CampusID, AccessDomain: w.AccessDomain, SessionGeneration: r.SessionGeneration, Mode: p.Mode, PlannedAction: "disconnect", DeliveryStatus: deliveryStatus, Result: state, Known: state == "matched", Violated: state == "matched", EvaluatedAt: now, EvidenceExpiresAt: expires, Reasons: r.Reasons, Evidence: w, Attribution: r}
+	return ObservationDecision{DecisionID: id, ExecutionID: execution, PolicyID: p.ID, PolicyRevision: p.Revision, Trigger: "shared_access", ObservationID: w.ID, EvidenceVersion: version, AccountID: r.AccountID, IP: w.IP, CampusID: w.CampusID, AccessDomain: w.AccessDomain, SessionGeneration: r.SessionGeneration, Mode: p.Mode, PlannedAction: "disconnect", DeliveryStatus: deliveryStatus, Result: state, Known: state == "matched", Violated: state == "matched", EvaluatedAt: now, EvidenceExpiresAt: expires, CooldownSeconds: cfg.FreshnessSeconds, Reasons: r.Reasons, Evidence: w, Attribution: r}
 }

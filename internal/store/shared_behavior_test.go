@@ -19,15 +19,47 @@ func TestListSharedBehaviorReturnsLatestGatewayProfile(t *testing.T) {
 	store := &PostgresStore{db: db}
 	observed := time.Date(2026, 9, 28, 11, 0, 0, 0, time.UTC)
 	raw := `{"observation_id":"shared-behavior-latest","sensor_id":"sensor-a","ip":"192.0.2.1","status":"confirmed","confidence":95,"signal_groups":["tcp_stack","ttl_path","ua_os"],"reasons":[],"conflicts":[],"coverage_state":"verified","rule_version":"shared-behavior/v3","first_seen":"2026-09-28T10:50:00Z","last_seen":"2026-09-28T11:00:00Z","window_start":"2026-09-28T10:50:00Z","window_end":"2026-09-28T11:00:00Z","expires_at":"2026-10-28T11:00:00Z","router":{},"score_components":[],"feature_samples":{},"event_ids":[]}`
-	mock.ExpectQuery(regexp.QuoteMeta("WITH latest AS (")).
-		WithArgs(20, 0).
-		WillReturnRows(sqlmock.NewRows([]string{"observation", "count"}).AddRow([]byte(raw), 1))
+	mock.ExpectQuery(regexp.QuoteMeta("ORDER BY last_seen DESC,observation_id DESC LIMIT $1")).
+		WithArgs(21).
+		WillReturnRows(sqlmock.NewRows([]string{"observation", "last_seen", "observation_id"}).AddRow([]byte(raw), observed, "shared-behavior-latest"))
 	page, err := store.ListSharedBehavior(context.Background(), SharedBehaviorQuery{Limit: 20})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Items) != 1 || page.Page.Total != 1 || page.Items[0].LastSeen != observed {
+	if len(page.Items) != 1 || page.Page.HasMore || page.Page.NextCursor != nil || page.Items[0].LastSeen != observed {
 		t.Fatalf("unexpected latest gateway page: %+v", page)
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestListSharedBehaviorUsesBoundedScopedCursor(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	store := &PostgresStore{db: db}
+	at := time.Date(2026, 11, 12, 4, 0, 0, 0, time.UTC)
+	raw := []byte(`{"observation_id":"item","sensor_id":"sensor-a","ip":"192.0.2.1","status":"candidate","confidence":70,"signal_groups":[],"reasons":[],"conflicts":[],"coverage_state":"verified","rule_version":"shared-behavior/v13","first_seen":"2026-11-12T03:50:00Z","last_seen":"2026-11-12T04:00:00Z","window_start":"2026-11-12T03:50:00Z","window_end":"2026-11-12T04:00:00Z","expires_at":"2026-12-12T04:00:00Z","router":{},"score_components":[],"feature_samples":{},"event_ids":[]}`)
+	mock.ExpectQuery("SELECT observation,last_seen,observation_id FROM shared_behavior_observations").
+		WithArgs(3).
+		WillReturnRows(sqlmock.NewRows([]string{"observation", "last_seen", "observation_id"}).
+			AddRow(raw, at, "item-3").AddRow(raw, at.Add(-time.Minute), "item-2").AddRow(raw, at.Add(-2*time.Minute), "item-1"))
+	page, err := store.ListSharedBehavior(context.Background(), SharedBehaviorQuery{Limit: 2})
+	if err != nil || len(page.Items) != 2 || !page.Page.HasMore || page.Page.NextCursor == nil {
+		t.Fatalf("unbounded page or missing cursor: %+v %v", page, err)
+	}
+	mock.ExpectQuery(regexp.QuoteMeta("(last_seen,observation_id)<($1,$2)")).
+		WithArgs(at.Add(-time.Minute), "item-2", 3).
+		WillReturnRows(sqlmock.NewRows([]string{"observation", "last_seen", "observation_id"}).AddRow(raw, at.Add(-2*time.Minute), "item-1"))
+	second, err := store.ListSharedBehavior(context.Background(), SharedBehaviorQuery{Limit: 2, Cursor: *page.Page.NextCursor})
+	if err != nil || len(second.Items) != 1 || second.Page.HasMore {
+		t.Fatalf("invalid second page: %+v %v", second, err)
+	}
+	if _, err = store.ListSharedBehavior(context.Background(), SharedBehaviorQuery{Limit: 2, Status: "confirmed", Cursor: *page.Page.NextCursor}); err == nil {
+		t.Fatal("cursor from another filter was accepted")
 	}
 	if err = mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

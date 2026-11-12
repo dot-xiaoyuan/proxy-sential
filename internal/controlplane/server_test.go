@@ -776,8 +776,26 @@ func TestDeviceFingerprintLibraryStatusAndReadOnlyUpdate(t *testing.T) {
 
 func TestDeviceRecognitionSummaryIsAvailableInFileMode(t *testing.T) {
 	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "office-30", ReadOnly: true, FingerprintDir: t.TempDir()})
+	var pending ErrorResponse
+	getJSON(t, server, "/api/v1/device-recognition/summary", http.StatusServiceUnavailable, &pending)
+	if pending.Code != "recognition_statistics_not_ready" {
+		t.Fatalf("cold recognition summary did not expose processing state: %#v", pending)
+	}
 	var summary store.DeviceRecognitionSummary
-	getJSON(t, server, "/api/v1/device-recognition/summary", http.StatusOK, &summary)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/device-recognition/summary", nil)
+		recorder := httptest.NewRecorder()
+		server.Handler().ServeHTTP(recorder, request)
+		if recorder.Code == http.StatusOK {
+			decodeResponse(t, recorder, http.StatusOK, &summary)
+			break
+		}
+		if recorder.Code != http.StatusServiceUnavailable || time.Now().After(deadline) {
+			t.Fatalf("recognition summary did not finish prewarm: status=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if summary.Window != "24h" || summary.AsOf == "" || summary.Coverage == nil {
 		t.Fatalf("unexpected recognition summary fallback: %#v", summary)
 	}
@@ -1113,14 +1131,14 @@ func TestIngestAndEventEndpoints(t *testing.T) {
 	}
 
 	var eventsResponse struct {
-		Events []normalized.Event `json:"events"`
-		Page   Page               `json:"page"`
+		Events []normalized.Event    `json:"events"`
+		Page   store.EventCursorPage `json:"page"`
 	}
 	getJSON(t, server, "/api/v1/events?q=192.168.0.8&limit=2", http.StatusOK, &eventsResponse)
 	if len(eventsResponse.Events) != 2 {
 		t.Fatalf("expected two event samples for ip, got %#v", eventsResponse.Events)
 	}
-	if eventsResponse.Page.Total != 2 || eventsResponse.Page.Limit != 2 {
+	if eventsResponse.Page.HasMore || eventsResponse.Page.Limit != 2 {
 		t.Fatalf("unexpected events page: %#v", eventsResponse.Page)
 	}
 
@@ -1146,13 +1164,22 @@ func TestEventSearchFiltersAndPagination(t *testing.T) {
 
 	var response EventListResponse
 	getJSON(t, server, "/api/v1/events?domain=api.example.test&limit=1", http.StatusOK, &response)
-	if len(response.Events) != 1 || response.Page.Total != 2 || response.Page.NextCursor == nil {
+	if len(response.Events) != 1 || !response.Page.HasMore || response.Page.NextCursor == nil {
 		t.Fatalf("expected first domain page with next cursor, got %#v", response)
 	}
 	nextCursor := *response.Page.NextCursor
+	var cursorError ErrorResponse
+	getJSON(t, server, "/api/v1/events?domain=portal.example.test&limit=1&cursor="+nextCursor, http.StatusBadRequest, &cursorError)
+	if cursorError.Code != "bad_cursor" {
+		t.Fatalf("expected a filter-bound cursor, got %#v", cursorError)
+	}
+	getJSON(t, server, "/api/v1/events?cursor=20", http.StatusBadRequest, &cursorError)
+	if cursorError.Code != "bad_cursor" {
+		t.Fatalf("expected numeric offset to be rejected, got %#v", cursorError)
+	}
 	response = EventListResponse{}
 	getJSON(t, server, "/api/v1/events?domain=api.example.test&limit=1&cursor="+nextCursor, http.StatusOK, &response)
-	if len(response.Events) != 1 || response.Page.NextCursor != nil {
+	if len(response.Events) != 1 || response.Page.HasMore || response.Page.NextCursor != nil {
 		t.Fatalf("expected second domain page without next cursor, got %#v", response)
 	}
 
@@ -1178,8 +1205,13 @@ func TestEventSearchFiltersAndPagination(t *testing.T) {
 	}
 	response = EventListResponse{}
 	getJSON(t, server, "/api/v1/events?from=2026-07-27T10:10:03%2B08:00", http.StatusOK, &response)
-	if response.Page.Total != 2 {
+	if len(response.Events) != 2 || response.Page.HasMore {
 		t.Fatalf("unexpected time filter result: %#v", response)
+	}
+	var count EventCountResponse
+	getJSON(t, server, "/api/v1/events/count?domain=api.example.test", http.StatusOK, &count)
+	if count.Total != 2 || count.QueriedAt == "" {
+		t.Fatalf("unexpected explicit event count: %#v", count)
 	}
 
 	var errResponse ErrorResponse
@@ -1243,8 +1275,13 @@ func TestDPIEndpointsFromFileStore(t *testing.T) {
 
 	var flows store.DPIFlowPage
 	getJSON(t, server, "/api/v1/dpi/flows?sensor_id=test-sensor&domain=api.example.test&window=1h", http.StatusOK, &flows)
-	if flows.Page.Total != 2 || len(flows.Items) == 0 {
+	if len(flows.Items) != 2 || flows.Page.HasMore {
 		t.Fatalf("unexpected dpi flow page: %#v", flows)
+	}
+	var flowCount EventCountResponse
+	getJSON(t, server, "/api/v1/dpi/flows/count?sensor_id=test-sensor&domain=api.example.test&window=1h", http.StatusOK, &flowCount)
+	if flowCount.Total != 2 {
+		t.Fatalf("unexpected explicit dpi flow count: %#v", flowCount)
 	}
 	if flows.Items[0].PayloadSummary == "" || flows.Items[0].FlowID == "" {
 		t.Fatalf("expected standardized flow summary and id, got %#v", flows.Items[0])
@@ -1259,7 +1296,7 @@ func TestDPIEndpointsFromFileStore(t *testing.T) {
 	escaped := url.PathEscape("192.168.10.8")
 	flows = store.DPIFlowPage{}
 	getJSON(t, server, "/api/v1/dpi/ips/"+escaped+"/flows?window=1h", http.StatusOK, &flows)
-	if flows.Page.Total != 3 {
+	if len(flows.Items) != 3 || flows.Page.HasMore {
 		t.Fatalf("expected ip-scoped dpi flows, got %#v", flows)
 	}
 }

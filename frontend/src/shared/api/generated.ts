@@ -2743,6 +2743,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/dpi/flows/count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Exact count requested separately from the bounded flow list. */
+        get: operations["countDpiFlows"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/dpi/flows/{flow_id}": {
         parameters: {
             query?: never;
@@ -3275,6 +3292,23 @@ export interface paths {
             cookie?: never;
         };
         get: operations["listEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/events/count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Exact count requested separately from the bounded event list. */
+        get: operations["countEvents"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5821,7 +5855,7 @@ export interface components {
             page: {
                 limit: number;
                 next_cursor: string | null;
-                total: number;
+                has_more: boolean;
             };
         };
         SharedReviewHistoryPage: {
@@ -6173,6 +6207,11 @@ export interface components {
         IdentityBridgeRunPage: {
             items: components["schemas"]["IdentityBridgeRun"][];
             page: components["schemas"]["Page"];
+        };
+        IdentityBridgeRunSeekPage: {
+            items: components["schemas"]["IdentityBridgeRun"][];
+            next_cursor: string;
+            has_more: boolean;
         };
         IdentitySnapshotReceipt: {
             snapshot_id: string;
@@ -7203,6 +7242,9 @@ export interface components {
             status: "shadow" | "pending" | "running" | "succeeded" | "failed" | "revoked" | "expired" | "blocked" | "recorded";
             /** @enum {string} */
             mode: "shadow" | "active" | "record_only";
+            /** @enum {string} */
+            evidence_review_status?: "rule_verified" | "pending_review" | "insufficient_evidence" | "unverified";
+            evidence_review_reason?: string;
             policy_parameters?: {
                 execution_id?: string;
                 policy_id?: string;
@@ -7482,8 +7524,14 @@ export interface components {
             page: {
                 limit: number;
                 next_cursor: string | null;
-                total: number;
+                has_more: boolean;
             };
+        };
+        ListExactCount: {
+            /** Format: int64 */
+            total: number;
+            /** Format: date-time */
+            queried_at: string;
         };
         ProxyProtocolEvidence: {
             evidence_id: string;
@@ -7944,10 +7992,26 @@ export interface components {
         };
         DiscoveryFreshness: {
             /** @enum {string} */
-            status: "initializing" | "ready" | "processing" | "delayed" | "failed";
+            status: "initializing" | "ready" | "processing" | "unknown" | "delayed" | "failed";
             lag_seconds: number;
+            /** @description 已完成段从首次接收到投影完成的最大实测延迟 */
+            processing_lag_seconds?: number;
+            /**
+             * Format: date-time
+             * @description 已完成段的输入接收水位，不代表来源已追平
+             */
+            last_projected_input_at?: string;
             /** Format: int64 */
             result_version: number;
+            source?: string;
+            /** @enum {string} */
+            source_progress_status?: "unverified" | "verified";
+            /** @enum {string} */
+            archive_status?: "unverified" | "ready" | "delayed" | "failed";
+            /** Format: int64 */
+            active_epochs?: number;
+            /** Format: int64 */
+            projected_epochs?: number;
             /** Format: date-time */
             oldest_pending_at?: string;
             /** Format: date-time */
@@ -8920,7 +8984,7 @@ export interface components {
             page: {
                 limit: number;
                 next_cursor: string | null;
-                total: number;
+                has_more: boolean;
             };
         };
         DpiFlowDetail: {
@@ -10713,7 +10777,8 @@ export interface operations {
                 coverage_state?: "unknown" | "partial" | "verified";
                 confidence_min?: number;
                 limit?: number;
-                cursor?: number;
+                /** @description Opaque keyset cursor scoped to the current filters */
+                cursor?: string;
             };
             header?: never;
             path?: never;
@@ -13530,6 +13595,8 @@ export interface operations {
                 status?: "running" | "completed" | "failed";
                 limit?: number;
                 cursor?: string;
+                /** @description Set to 1 for a bounded keyset page without a request-time count. */
+                seek?: "1";
             };
             header?: never;
             path?: never;
@@ -13543,7 +13610,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdentityBridgeRunPage"];
+                    "application/json": components["schemas"]["IdentityBridgeRunPage"] | components["schemas"]["IdentityBridgeRunSeekPage"];
                 };
             };
         };
@@ -13553,6 +13620,8 @@ export interface operations {
             query?: {
                 limit?: number;
                 cursor?: string;
+                /** @description Set to 1 for a bounded keyset page without a request-time count. */
+                seek?: "1";
             };
             header?: never;
             path?: never;
@@ -13565,7 +13634,20 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        items: {
+                            [key: string]: unknown;
+                        }[];
+                        page: components["schemas"]["Page"];
+                    } | {
+                        items: {
+                            [key: string]: unknown;
+                        }[];
+                        next_cursor: string;
+                        has_more: boolean;
+                    };
+                };
             };
         };
     };
@@ -14064,6 +14146,9 @@ export interface operations {
                             delivery_status?: string;
                             /** @enum {string} */
                             result?: "matched" | "insufficient" | "expired";
+                            /** @enum {string} */
+                            evidence_review_status?: "rule_verified" | "pending_review" | "insufficient_evidence" | "unverified";
+                            evidence_review_reason?: string;
                             evidence?: {
                                 [key: string]: unknown;
                             };
@@ -14366,6 +14451,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DpiFlowListResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    countDpiFlows: {
+        parameters: {
+            query?: {
+                q?: components["parameters"]["EventFilterQuery"];
+                type?: components["parameters"]["EventTypeQuery"];
+                sensor_id?: components["parameters"]["SensorIdQuery"];
+                from?: components["parameters"]["FromQuery"];
+                to?: components["parameters"]["ToQuery"];
+                window?: components["parameters"]["WindowQuery"];
+                src_ip?: components["parameters"]["SrcIpQuery"];
+                dst_ip?: components["parameters"]["DstIpQuery"];
+                domain?: components["parameters"]["DomainQuery"];
+                user_agent?: components["parameters"]["UserAgentQuery"];
+                /** @description JA3/JA4 fingerprint value from normalized event payload. */
+                fingerprint?: components["parameters"]["FingerprintQuery"];
+                port?: components["parameters"]["PortQuery"];
+                proto?: components["parameters"]["ProtoQuery"];
+                app_protocol?: components["parameters"]["AppProtocolQuery"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Exact matching flow count and query time. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListExactCount"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -15440,6 +15563,49 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    countEvents: {
+        parameters: {
+            query?: {
+                q?: string;
+                type?: string;
+                sensor_id?: string;
+                campus_id?: components["parameters"]["CampusIdQuery"];
+                department?: components["parameters"]["DepartmentQuery"];
+                person_type?: components["parameters"]["PersonTypeQuery"];
+                ssid?: components["parameters"]["SSIDQuery"];
+                vlan?: components["parameters"]["VLANQuery"];
+                ap?: components["parameters"]["APQuery"];
+                nas_ip?: components["parameters"]["NASIPQuery"];
+                from?: string;
+                to?: string;
+                window?: "10m" | "1h" | "24h";
+                src_ip?: string;
+                dst_ip?: string;
+                domain?: string;
+                user_agent?: string;
+                fingerprint?: string;
+                port?: number;
+                proto?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Exact matching event count and query time. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListExactCount"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     listStreamEventIndex: {
         parameters: {
             query: {
@@ -15705,6 +15871,8 @@ export interface operations {
                 limit?: number;
                 cursor?: string;
                 q?: string;
+                /** @description Set to 1 for a bounded keyset page without a request-time count. */
+                seek?: "1";
             };
             header?: never;
             path?: never;
@@ -15721,6 +15889,12 @@ export interface operations {
                     "application/json": {
                         logs: components["schemas"]["AuditLog"][];
                         page: components["schemas"]["Page"];
+                    } | {
+                        logs: components["schemas"]["AuditLog"][];
+                        next_cursor: string;
+                        has_more: boolean;
+                        /** Format: date-time */
+                        snapshot: string;
                     };
                 };
             };

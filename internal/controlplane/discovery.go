@@ -496,6 +496,12 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 			}
 		}
 		query := discovery.DeviceQuery{View: r.URL.Query().Get("view"), Mode: r.URL.Query().Get("mode"), Window: window, Search: r.URL.Query().Get("search"), DeviceType: r.URL.Query().Get("type"), Category: r.URL.Query().Get("category"), Capability: r.URL.Query().Get("capability"), RandomMAC: r.URL.Query().Get("random_mac") == "true", OSFamily: r.URL.Query().Get("os"), Limit: limit, Offset: offset, Cursor: r.URL.Query().Get("cursor"), Protocol: r.URL.Query().Get("protocol"), State: r.URL.Query().Get("state"), Domain: r.URL.Query().Get("domain"), VLAN: r.URL.Query().Get("vlan")}
+		// Router and access-point assets switch to the maintained stream state
+		// after a per-epoch field and watermark comparison. Keep this independent
+		// of the broader discovery read cutover.
+		if routerAssetStreamRead(query) && os.Getenv("PROXY_SENTINEL_ROUTER_ASSET_CURRENT_SOURCE") == "stream" {
+			repo.ActiveStreamOnly = true
+		}
 
 		if path == "/discovery/devices/position" {
 			if repo.ActiveStreamOnly || repo.PipelineV2 || os.Getenv("PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ") == "true" {
@@ -667,4 +673,8 @@ func firstQueryValue(r *http.Request, key, fallback string) string {
 
 func discoveryStreamCurrentReadEnabled() bool {
 	return os.Getenv("PROXY_SENTINEL_DISCOVERY_CURRENT_SOURCE") == "stream"
+}
+
+func routerAssetStreamRead(q discovery.DeviceQuery) bool {
+	return q.Mode == "passive" && (q.DeviceType == "router" || q.DeviceType == "access_point")
 }

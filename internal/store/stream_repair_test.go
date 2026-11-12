@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -30,17 +31,20 @@ func TestRetryProvenUnsentV2SourceBackedArchiveRequiresRawAndBodyProof(t *testin
 	}
 	const id = "source-backed-segment"
 	rawToken := streamInsertSettings(id, "stream_source_raw")["insert_deduplication_token"]
-	var rawPresent, bodyPresent, rawTokenSeen, rawBusy bool
+	var rawPresent, bodyPresent, rawBusy, bodyInsertActive bool
 	var rawInserts, bodyInserts int
-	var bodyQueueProof, bodyLogProof bool
+	var bodyQueueProof, queryLogReads bool
+	var repairRawToken string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		data, _ := io.ReadAll(r.Body)
 		q := string(data)
 		if strings.Contains(q, "FROM system.asynchronous_inserts") && strings.Contains(q, "stream_event_body_evidence_v2") {
 			bodyQueueProof = true
 		}
-		if strings.Contains(q, "FROM system.query_log") && strings.Contains(q, "INSERT INTO stream_event_body_evidence_v2") {
-			bodyLogProof = true
+		if strings.Contains(q, "FROM system.query_log") {
+			queryLogReads = true
+			w.WriteHeader(http.StatusInternalServerError)
+			return
 		}
 		switch {
 		case strings.HasPrefix(q, "SELECT raw_sha256,raw_base64"):
@@ -59,16 +63,15 @@ func TestRetryProvenUnsentV2SourceBackedArchiveRequiresRawAndBodyProof(t *testin
 			} else {
 				_, _ = io.WriteString(w, "0\n")
 			}
-		case strings.Contains(q, "FROM system.query_log") && strings.Contains(q, "insert_deduplication_token"):
-			if rawTokenSeen && strings.Contains(q, rawToken) {
+		case strings.Contains(q, "FROM system.processes"):
+			if bodyInsertActive && strings.Contains(q, "stream_event_body_evidence_v2") {
 				_, _ = io.WriteString(w, "1\n")
 			} else {
 				_, _ = io.WriteString(w, "0\n")
 			}
-		case strings.Contains(q, "FROM system.query_log"):
-			_, _ = io.WriteString(w, "2\n")
 		case strings.HasPrefix(q, "INSERT INTO stream_source_raw"):
 			rawInserts++
+			repairRawToken = r.URL.Query().Get("insert_deduplication_token")
 			rawPresent = true
 		case strings.HasPrefix(q, "INSERT INTO stream_event_body_evidence_v2"):
 			bodyInserts++
@@ -85,21 +88,21 @@ func TestRetryProvenUnsentV2SourceBackedArchiveRequiresRawAndBodyProof(t *testin
 		t.Fatal("partial source archive was replayed")
 	}
 	rawPresent = false
-	rawTokenSeen = true
-	if err := ch.RetryProvenUnsentStreamLane(context.Background(), id, segment, streamlog.Archive); err == nil {
-		t.Fatal("original raw token was replayed")
-	}
-	rawTokenSeen = false
 	rawBusy = true
 	if err := ch.RetryProvenUnsentStreamLane(context.Background(), id, segment, streamlog.Archive); err == nil {
 		t.Fatal("queued raw source was replayed")
 	}
 	rawBusy = false
+	bodyInsertActive = true
+	if err := ch.RetryProvenUnsentStreamLane(context.Background(), id, segment, streamlog.Archive); err == nil {
+		t.Fatal("active body insert was replayed")
+	}
+	bodyInsertActive = false
 	if err := ch.RetryProvenUnsentStreamLane(context.Background(), id, segment, streamlog.Archive); err != nil {
 		t.Fatal(err)
 	}
-	if rawInserts != 1 || bodyInserts != 1 || !bodyQueueProof || !bodyLogProof {
-		t.Fatalf("v2 repair proof or write missing: raw=%d body=%d queue=%t log=%t", rawInserts, bodyInserts, bodyQueueProof, bodyLogProof)
+	if rawInserts != 1 || bodyInserts != 1 || !bodyQueueProof || queryLogReads || repairRawToken == "" || repairRawToken == rawToken {
+		t.Fatalf("v2 repair proof or write missing: raw=%d body=%d queue=%t query_log=%t repair_token=%q", rawInserts, bodyInserts, bodyQueueProof, queryLogReads, repairRawToken)
 	}
 }
 
@@ -125,6 +128,8 @@ func TestReconcileSettledStreamBodyRequiresQuietQueueAndWritesOnlyMissingBody(t 
 			} else {
 				_, _ = io.WriteString(w, "0\n")
 			}
+		case strings.Contains(q, "FROM system.processes"):
+			_, _ = io.WriteString(w, "0\n")
 		case strings.HasPrefix(q, "SELECT raw_sha256,raw_base64"):
 			row, _ := json.Marshal(map[string]string{"raw_sha256": segment.RawSHA256, "raw_base64": base64.StdEncoding.EncodeToString(segment.Raw)})
 			_, _ = w.Write(append(row, '\n'))
@@ -168,7 +173,7 @@ func TestRetryProvenUnsentSearchRequiresTerminalEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	var present bool
-	var tokenSeen bool
+	var queryLogReads bool
 	var queueBusy bool
 	var inserts int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -181,14 +186,11 @@ func TestRetryProvenUnsentSearchRequiresTerminalEvidence(t *testing.T) {
 			} else {
 				_, _ = io.WriteString(w, "0\n")
 			}
-		case strings.Contains(q, "FROM system.query_log") && strings.Contains(q, "insert_deduplication_token"):
-			if tokenSeen {
-				_, _ = io.WriteString(w, "1\n")
-			} else {
-				_, _ = io.WriteString(w, "0\n")
-			}
+		case strings.Contains(q, "FROM system.processes"):
+			_, _ = io.WriteString(w, "0\n")
 		case strings.Contains(q, "FROM system.query_log"):
-			_, _ = io.WriteString(w, "2\n")
+			queryLogReads = true
+			w.WriteHeader(http.StatusInternalServerError)
 		case strings.HasPrefix(q, "SELECT scope_id"):
 			if present {
 				row, _ := json.Marshal(map[string]any{"scope_id": prepared[0].scope, "event_key": prepared[0].key, "content_sha256": prepared[0].hash, "archive_month": 202610, "retention_class": "evidence"})
@@ -204,18 +206,13 @@ func TestRetryProvenUnsentSearchRequiresTerminalEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tokenSeen = true
-	if err := ch.RetryProvenUnsentStreamLane(context.Background(), "segment-one", segment, streamlog.Search); err == nil || inserts != 0 {
-		t.Fatalf("recorded attempt was replayed: inserts=%d err=%v", inserts, err)
-	}
-	tokenSeen = false
 	queueBusy = true
 	if err := ch.RetryProvenUnsentStreamLane(context.Background(), "segment-one", segment, streamlog.Search); err == nil || inserts != 0 {
 		t.Fatalf("queued attempt was replayed: inserts=%d err=%v", inserts, err)
 	}
 	queueBusy = false
-	if err := ch.RetryProvenUnsentStreamLane(context.Background(), "segment-one", segment, streamlog.Search); err != nil || inserts != 1 {
-		t.Fatalf("proven unsent segment was not restored once: inserts=%d err=%v", inserts, err)
+	if err := ch.RetryProvenUnsentStreamLane(context.Background(), "segment-one", segment, streamlog.Search); err != nil || inserts != 1 || queryLogReads {
+		t.Fatalf("scoped missing segment was not restored once: inserts=%d query_log=%t err=%v", inserts, queryLogReads, err)
 	}
 }
 
@@ -227,7 +224,7 @@ func TestRetryProvenUnsentRiskFeatureRequiresScopedProof(t *testing.T) {
 		t.Fatal(err)
 	}
 	feature := prepared[0]
-	var featurePresent, tokenSeen, queueBusy bool
+	var featurePresent, queryLogReads, queueBusy bool
 	var inserts int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -239,14 +236,11 @@ func TestRetryProvenUnsentRiskFeatureRequiresScopedProof(t *testing.T) {
 			} else {
 				_, _ = io.WriteString(w, "0\n")
 			}
-		case strings.Contains(q, "FROM system.query_log") && strings.Contains(q, "insert_deduplication_token"):
-			if tokenSeen {
-				_, _ = io.WriteString(w, "1\n")
-			} else {
-				_, _ = io.WriteString(w, "0\n")
-			}
+		case strings.Contains(q, "FROM system.processes"):
+			_, _ = io.WriteString(w, "0\n")
 		case strings.Contains(q, "FROM system.query_log"):
-			_, _ = io.WriteString(w, "2\n")
+			queryLogReads = true
+			w.WriteHeader(http.StatusInternalServerError)
 		case strings.Contains(q, "FROM stream_event_search"):
 			row, _ := json.Marshal(map[string]any{"scope_id": feature.item.scope, "event_key": feature.item.key, "content_sha256": feature.item.hash, "archive_month": 202610, "retention_class": feature.item.retention})
 			_, _ = w.Write(append(row, '\n'))
@@ -265,17 +259,35 @@ func TestRetryProvenUnsentRiskFeatureRequiresScopedProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tokenSeen = true
-	if err := ch.RetryProvenUnsentStreamRiskFeatures(context.Background(), "segment-one", segment); err == nil || inserts != 0 {
-		t.Fatalf("received feature insert was replayed: inserts=%d err=%v", inserts, err)
-	}
-	tokenSeen = false
 	queueBusy = true
 	if err := ch.RetryProvenUnsentStreamRiskFeatures(context.Background(), "segment-one", segment); err == nil || inserts != 0 {
 		t.Fatalf("queued feature insert was replayed: inserts=%d err=%v", inserts, err)
 	}
 	queueBusy = false
-	if err := ch.RetryProvenUnsentStreamRiskFeatures(context.Background(), "segment-one", segment); err != nil || inserts != 1 {
-		t.Fatalf("proven unsent feature was not restored once: inserts=%d err=%v", inserts, err)
+	if err := ch.RetryProvenUnsentStreamRiskFeatures(context.Background(), "segment-one", segment); err != nil || inserts != 1 || queryLogReads {
+		t.Fatalf("scoped missing feature was not restored once: inserts=%d query_log=%t err=%v", inserts, queryLogReads, err)
+	}
+}
+
+func TestStreamRepairRejectsInsertStartingDuringQuietInterval(t *testing.T) {
+	processChecks := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), "FROM system.processes") {
+			processChecks++
+			if processChecks == 2 {
+				_, _ = io.WriteString(w, "1\n")
+				return
+			}
+		}
+		_, _ = io.WriteString(w, "0\n")
+	}))
+	defer server.Close()
+	ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ch.requireQuietStreamRepair(context.Background(), []string{"stream_event_search"}); !errors.Is(err, streamlog.ErrUnconfirmed) || processChecks != 2 {
+		t.Fatalf("in-flight insert must stop repair: checks=%d err=%v", processChecks, err)
 	}
 }

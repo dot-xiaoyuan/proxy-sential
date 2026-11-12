@@ -5,149 +5,193 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
-func TestStatisticsCacheCoalescesColdReadersAndIsolatesScopes(t *testing.T) {
-	c := newStatisticsCache()
-	var calls atomic.Int32
-	loader := func(w http.ResponseWriter, r *http.Request, path string) {
-		calls.Add(1)
-		time.Sleep(20 * time.Millisecond)
-		writeJSON(w, 200, map[string]any{"count": 1})
+func TestRecognitionStatisticsCacheDoesNotServeExpiredBody(t *testing.T) {
+	value := statisticsResponse{body: []byte(`{"total_endpoints":42}`), contentType: "application/json", status: http.StatusOK,
+		asOf: time.Now().Add(-5*time.Minute - time.Second)}
+	response := httptest.NewRecorder()
+	statisticsWriteRoute(response, "/device-recognition/summary", value)
+	if response.Code != http.StatusServiceUnavailable || strings.Contains(response.Body.String(), "total_endpoints") ||
+		!strings.Contains(response.Body.String(), "recognition_statistics_not_ready") {
+		t.Fatalf("expired recognition body escaped: status=%d body=%s", response.Code, response.Body.String())
 	}
-	request := func(role, query string) *http.Request {
-		r := httptest.NewRequest("GET", "/api/v1/overview?"+query, nil)
-		return r.WithContext(context.WithValue(r.Context(), sessionContextKey{}, Session{Role: role, Permissions: []string{role + ":read"}}))
-	}
-	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			w := httptest.NewRecorder()
-			c.serve(w, request("viewer", "campus_id=a"), "/overview", loader)
-			if w.Code != 200 {
-				t.Errorf("cold read: %d", w.Code)
-			}
-		}()
-	}
-	wg.Wait()
-	if calls.Load() != 1 {
-		t.Fatalf("20 readers repeated expensive work %d times", calls.Load())
-	}
-	for _, v := range []struct{ role, query string }{{"admin", "campus_id=a"}, {"viewer", "campus_id=b"}} {
-		c.serve(httptest.NewRecorder(), request(v.role, v.query), "/overview", loader)
-	}
-	if calls.Load() != 3 {
-		t.Fatal("permissions/network scope not isolated")
-	}
-}
-func TestStatisticsCacheServesLastSuccessfulSnapshotAfterFailure(t *testing.T) {
-	c := newStatisticsCache()
-	r := httptest.NewRequest("GET", "/api/v1/overview", nil)
-	good := func(w http.ResponseWriter, r *http.Request, path string) {
-		writeJSON(w, 200, map[string]any{"count": 1})
-	}
-	c.serve(httptest.NewRecorder(), r, "/overview", good)
-	key := statisticsKey(r, "/overview")
-	c.mu.Lock()
-	c.entries[key].value.asOf = time.Now().Add(-301 * time.Second)
-	c.mu.Unlock()
-	w := httptest.NewRecorder()
-	c.serve(w, r, "/overview", func(w http.ResponseWriter, r *http.Request, path string) {
-		writeError(w, 503, "db_failed", "unavailable")
-	})
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"status":"delayed"`) {
-		t.Fatalf("failed refresh did not preserve delayed snapshot: %d %s", w.Code, w.Body.String())
-	}
-	w = httptest.NewRecorder()
-	c.serve(w, r, "/overview", func(w http.ResponseWriter, r *http.Request, path string) {
-		writeJSON(w, 200, map[string]any{"as_of": time.Now().Add(-301 * time.Second).Format(time.RFC3339Nano)})
-	})
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"status":"delayed"`) {
-		t.Fatalf("stale snapshot was not identified: %d %s", w.Code, w.Body.String())
+	value.asOf = time.Now()
+	response = httptest.NewRecorder()
+	statisticsWriteRoute(response, "/device-recognition/summary", value)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "total_endpoints") {
+		t.Fatalf("fresh recognition body unavailable: status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 
-func TestStatisticsCacheIsolatesUsersWithIdenticalPermissions(t *testing.T) {
-	c := newStatisticsCache()
-	var calls int
-	for _, id := range []string{"alice", "bob", "alice"} {
-		r := httptest.NewRequest("GET", "/api/v1/overview?campus_id=a", nil)
-		r = r.WithContext(context.WithValue(r.Context(), sessionContextKey{}, Session{User: User{ID: id}, Role: "viewer", Permissions: []string{"overview:read"}}))
-		w := httptest.NewRecorder()
-		c.serve(w, r, "/overview", func(w http.ResponseWriter, r *http.Request, _ string) {
-			calls++
-			writeJSON(w, 200, map[string]any{"actor": sessionFromContext(r.Context()).User.ID})
-		})
-		if w.Code != 200 || !strings.Contains(w.Body.String(), `"actor":"`+id+`"`) {
-			t.Fatalf("user %s received another actor's response: %s", id, w.Body.String())
-		}
-	}
-	if calls != 2 {
-		t.Fatalf("expected one fill per user, got %d", calls)
-	}
-}
-
-func TestStatisticsCacheFirstBrowserCancellationDoesNotAbortSharedFill(t *testing.T) {
-	c := newStatisticsCache()
-	ctx, cancel := context.WithCancel(context.Background())
-	r := httptest.NewRequest("GET", "/api/v1/overview", nil).WithContext(ctx)
-	entered, release := make(chan struct{}), make(chan struct{})
+func TestRecognitionStatisticsPrewarmRetrySurvivesCallerCancellation(t *testing.T) {
+	cache := newStatisticsCache()
+	caller, cancel := context.WithCancel(context.Background())
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/device-recognition/summary", nil).WithContext(caller)
 	var calls atomic.Int32
-	loader := func(w http.ResponseWriter, r *http.Request, _ string) {
-		calls.Add(1)
-		close(entered)
-		<-release
-		if err := r.Context().Err(); err != nil {
-			writeError(w, 503, "cancelled", err.Error())
+	dispatch := func(w http.ResponseWriter, _ *http.Request, _ string) {
+		if calls.Add(1) == 1 {
+			writeError(w, http.StatusInternalServerError, "read_device_recognition_summary_failed", "recognition statistics not prepared")
 			return
 		}
-		writeJSON(w, 200, map[string]any{"count": 1})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"total_endpoints":42}`))
 	}
-	first, second := httptest.NewRecorder(), httptest.NewRecorder()
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() { defer wg.Done(); c.serve(first, r, "/overview", loader) }()
-	<-entered
+	response := httptest.NewRecorder()
+	cache.serve(response, request, "/device-recognition/summary", dispatch)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("cold response = %d, want 503", response.Code)
+	}
 	cancel()
-	go func() {
-		defer wg.Done()
-		c.serve(second, httptest.NewRequest("GET", "/api/v1/overview", nil), "/overview", loader)
-	}()
-	close(release)
-	wg.Wait()
-	if first.Code != 200 || second.Code != 200 || calls.Load() != 1 {
-		t.Fatalf("shared fill was aborted or repeated: first=%d second=%d calls=%d", first.Code, second.Code, calls.Load())
+	cache.mu.Lock()
+	loaded := cache.entries[statisticsKey(request, "/device-recognition/summary")].loading
+	cache.mu.Unlock()
+	select {
+	case <-loaded:
+	case <-time.After(2*recognitionCatalogRetryDelay + 2*time.Second):
+		t.Fatal("catalog prewarm did not finish after caller cancellation")
+	}
+	response = httptest.NewRecorder()
+	cache.serve(response, request, "/device-recognition/summary", dispatch)
+	if response.Code != http.StatusOK || calls.Load() != 2 {
+		t.Fatalf("catalog retry result: status=%d calls=%d body=%s", response.Code, calls.Load(), response.Body.String())
 	}
 }
 
-func TestStatisticsCacheCoalescesFailureWithoutCallingItFreshStatistics(t *testing.T) {
-	c := newStatisticsCache()
+func TestRecognitionStatisticsDoesNotRetryClickHouseFailure(t *testing.T) {
+	cache := newStatisticsCache()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/device-recognition/summary", nil)
 	var calls atomic.Int32
-	loader := func(w http.ResponseWriter, r *http.Request, _ string) {
+	dispatch := func(w http.ResponseWriter, _ *http.Request, _ string) {
 		calls.Add(1)
-		time.Sleep(20 * time.Millisecond)
-		writeError(w, 503, "statistics_refresh_failed", "source unavailable")
+		writeError(w, http.StatusInternalServerError, "read_device_recognition_summary_failed", "query event attribution: ClickHouse unavailable")
 	}
-	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			w := httptest.NewRecorder()
-			c.serve(w, httptest.NewRequest("GET", "/api/v1/overview", nil), "/overview", loader)
-			if w.Code != 503 || w.Header().Get("X-Statistics-As-Of") != "" {
-				t.Errorf("failure masqueraded as fresh statistics: code=%d headers=%v", w.Code, w.Header())
-			}
-		}()
+	response := httptest.NewRecorder()
+	cache.serve(response, request, "/device-recognition/summary", dispatch)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("cold response = %d, want 503", response.Code)
 	}
-	wg.Wait()
+	cache.mu.Lock()
+	loaded := cache.entries[statisticsKey(request, "/device-recognition/summary")].loading
+	cache.mu.Unlock()
+	select {
+	case <-loaded:
+	case <-time.After(time.Second):
+		t.Fatal("failed ClickHouse scan did not finish")
+	}
 	if calls.Load() != 1 {
-		t.Fatalf("waiting readers serialized repeated failed refreshes: %d", calls.Load())
+		t.Fatalf("ClickHouse failure triggered %d scans, want one", calls.Load())
+	}
+}
+
+func TestRecognitionStatisticsBackgroundFillIsNonblockingAndSingleFlight(t *testing.T) {
+	cache := newStatisticsCache()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/device-recognition/summary", nil)
+	started, release := make(chan struct{}), make(chan struct{})
+	var scans atomic.Int32
+	dispatch := func(w http.ResponseWriter, _ *http.Request, _ string) {
+		if scans.Add(1) == 1 {
+			close(started)
+		}
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"total_endpoints":42}`))
+	}
+	response := httptest.NewRecorder()
+	returned := make(chan struct{})
+	go func() {
+		cache.serve(response, request, "/device-recognition/summary", dispatch)
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("first summary request waited for the ClickHouse scan")
+	}
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("cold summary response = %d, want 503", response.Code)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("background summary scan did not start")
+	}
+	for range 10 {
+		response = httptest.NewRecorder()
+		cache.serve(response, request, "/device-recognition/summary", dispatch)
+		if response.Code != http.StatusServiceUnavailable {
+			t.Fatalf("pending summary response = %d, want 503", response.Code)
+		}
+	}
+	if got := scans.Load(); got != 1 {
+		t.Fatalf("pending requests started %d scans, want one", got)
+	}
+	cache.mu.Lock()
+	loaded := cache.entries[statisticsKey(request, "/device-recognition/summary")].loading
+	cache.mu.Unlock()
+	close(release)
+	select {
+	case <-loaded:
+	case <-time.After(time.Second):
+		t.Fatal("background summary scan did not finish")
+	}
+	for range 10 {
+		response = httptest.NewRecorder()
+		cache.serve(response, request, "/device-recognition/summary", dispatch)
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "total_endpoints") {
+			t.Fatalf("prepared summary response = %d body=%s", response.Code, response.Body.String())
+		}
+	}
+	if got := scans.Load(); got != 1 {
+		t.Fatalf("fresh repeated requests started %d scans, want one", got)
+	}
+}
+
+func TestRecognitionStatisticsExpiredCacheStartsOneRebuildWithoutServingOldData(t *testing.T) {
+	cache := newStatisticsCache()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/device-recognition/summary", nil)
+	key := statisticsKey(request, "/device-recognition/summary")
+	cache.entries[key] = &statisticsEntry{
+		value: statisticsResponse{body: []byte(`{"total_endpoints":999}`), contentType: "application/json", status: http.StatusOK,
+			asOf: time.Now().Add(-recognitionStatisticsMaxAge - time.Second)},
+		lastLoad: time.Now().Add(-recognitionStatisticsRetryDelay - time.Second),
+	}
+	release := make(chan struct{})
+	var scans atomic.Int32
+	dispatch := func(w http.ResponseWriter, _ *http.Request, _ string) {
+		scans.Add(1)
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"total_endpoints":42}`))
+	}
+	for range 10 {
+		response := httptest.NewRecorder()
+		cache.serve(response, request, "/device-recognition/summary", dispatch)
+		if response.Code != http.StatusServiceUnavailable || strings.Contains(response.Body.String(), "999") {
+			t.Fatalf("expired data escaped: status=%d body=%s", response.Code, response.Body.String())
+		}
+	}
+	cache.mu.Lock()
+	loaded := cache.entries[key].loading
+	cache.mu.Unlock()
+	if loaded == nil {
+		t.Fatal("expired summary did not start a rebuild")
+	}
+	close(release)
+	select {
+	case <-loaded:
+	case <-time.After(time.Second):
+		t.Fatal("expired summary rebuild did not finish")
+	}
+	if got := scans.Load(); got != 1 {
+		t.Fatalf("expired requests started %d scans, want one", got)
+	}
+	response := httptest.NewRecorder()
+	cache.serve(response, request, "/device-recognition/summary", dispatch)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"total_endpoints":42`) {
+		t.Fatalf("rebuilt summary unavailable: status=%d body=%s", response.Code, response.Body.String())
 	}
 }

@@ -172,8 +172,13 @@ type DeviceInventoryMetadataResponse struct {
 }
 
 type EventListResponse struct {
-	Events []normalized.Event `json:"events"`
-	Page   Page               `json:"page"`
+	Events []normalized.Event    `json:"events"`
+	Page   store.EventCursorPage `json:"page"`
+}
+
+type EventCountResponse struct {
+	Total     int    `json:"total"`
+	QueriedAt string `json:"queried_at"`
 }
 
 type Page struct {
@@ -841,6 +846,8 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleDPIFingerprintConflicts(w, r)
 	case r.Method == http.MethodGet && path == "/dpi/flows":
 		s.handleDPIFlows(w, r)
+	case r.Method == http.MethodGet && path == "/dpi/flows/count":
+		s.handleEventCount(w, r, true)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/dpi/flows/"):
 		s.handleDPIFlow(w, r, strings.TrimPrefix(path, "/dpi/flows/"))
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/dpi/ips/"):
@@ -913,6 +920,8 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleIP(w, r, strings.TrimPrefix(path, "/ips/"))
 	case r.Method == http.MethodGet && path == "/events":
 		s.handleEvents(w, r)
+	case r.Method == http.MethodGet && path == "/events/count":
+		s.handleEventCount(w, r, false)
 	case r.Method == http.MethodGet && (path == "/events/stream-index/metadata" || path == "/events/stream-index/position"):
 		s.handleStreamEventIndexPagination(w, r)
 	case r.Method == http.MethodGet && path == "/events/stream-index":
@@ -2751,6 +2760,12 @@ func (s *Server) handleShadowRuns(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("seek") == "1" {
+		if reader, ok := s.reader.(auditSeekReader); ok {
+			s.handleAuditLogsSeek(w, r, reader)
+			return
+		}
+	}
 	limit, err := boundedInt(r.URL.Query().Get("limit"), 20, 1, 50)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_limit", err.Error())
@@ -2801,6 +2816,10 @@ func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAuditLog(w http.ResponseWriter, r *http.Request, rawAuditID string) {
+	if reader, ok := s.reader.(auditDetailReader); ok {
+		s.handleAuditLogDirect(w, r, rawAuditID, reader)
+		return
+	}
 	auditID, err := store.DecodePathIP(rawAuditID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_audit_id", err.Error())
@@ -2930,13 +2949,40 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	page, err := s.reader.ListEvents(r.Context(), query)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "bad_event_query", err.Error())
+		writeEventQueryError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, EventListResponse{
 		Events: page.Items,
-		Page:   Page{Limit: page.Page.Limit, NextCursor: page.Page.NextCursor, Total: page.Page.Total},
+		Page:   page.Page,
 	})
+}
+
+func (s *Server) handleEventCount(w http.ResponseWriter, r *http.Request, dpi bool) {
+	query, err := eventQuery(r.URL.Query())
+	if err != nil {
+		writeEventQueryError(w, err)
+		return
+	}
+	if dpi && query.SensorID == "" {
+		query.SensorID = s.sensorID
+	}
+	counter, ok := s.reader.(interface {
+		CountEvents(context.Context, store.Query) (int, error)
+	})
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "event_count_unavailable", "event count is unavailable")
+		return
+	}
+	ctx, cancel := contextWithRequestTimeout(r.Context())
+	defer cancel()
+	queriedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	total, err := counter.CountEvents(ctx, query)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_event_count_query", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, EventCountResponse{Total: total, QueriedAt: queriedAt})
 }
 
 // Stream log listing is intentionally separate from the legacy offset page.
@@ -3171,10 +3217,6 @@ func eventQuery(values url.Values) (store.Query, error) {
 	if err != nil {
 		return store.Query{}, fmt.Errorf("bad limit: %w", err)
 	}
-	cursor, err := cursorOffset(values.Get("cursor"))
-	if err != nil {
-		return store.Query{}, fmt.Errorf("bad cursor: %w", err)
-	}
 	port, err := optionalBoundedInt(values.Get("port"), 1, 65535)
 	if err != nil {
 		return store.Query{}, fmt.Errorf("bad port: %w", err)
@@ -3202,7 +3244,7 @@ func eventQuery(values url.Values) (store.Query, error) {
 		Proto:       values.Get("proto"),
 		AppProtocol: values.Get("app_protocol"),
 		Limit:       limit,
-		Cursor:      cursor,
+		EventCursor: values.Get("cursor"),
 	}, nil
 }
 
@@ -3392,6 +3434,8 @@ func writeEventQueryError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "bad_limit", strings.TrimSpace(strings.TrimPrefix(message, "bad limit:")))
 	case strings.HasPrefix(message, "bad cursor:"):
 		writeError(w, http.StatusBadRequest, "bad_cursor", strings.TrimSpace(strings.TrimPrefix(message, "bad cursor:")))
+	case strings.Contains(message, "event cursor"):
+		writeError(w, http.StatusBadRequest, "bad_cursor", message)
 	case strings.HasPrefix(message, "bad port:"):
 		writeError(w, http.StatusBadRequest, "bad_port", strings.TrimSpace(strings.TrimPrefix(message, "bad port:")))
 	default:

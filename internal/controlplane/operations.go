@@ -393,11 +393,7 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 		if page.Page.NextCursor == nil {
 			break
 		}
-		next, err := strconv.Atoi(*page.Page.NextCursor)
-		if err != nil {
-			return err
-		}
-		sharedQuery.Cursor = next
+		sharedQuery.Cursor = *page.Page.NextCursor
 	}
 	// ListSharedBehavior only exposes the atomically published current set. A
 	// successful empty read therefore represents a verified negative generation.

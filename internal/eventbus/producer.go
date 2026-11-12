@@ -37,19 +37,24 @@ func NewKafkaProducer(cfg Config) (*KafkaProducer, error) {
 	if cfg.Queue < 1 {
 		return nil, errors.New("event bus producer requires a positive queue")
 	}
-	client, err := kgo.NewClient(
+	opts := []kgo.Opt{
 		kgo.SeedBrokers(cfg.Brokers...),
 		kgo.ClientID(cfg.ClientID),
 		kgo.RequiredAcks(kgo.AllISRAcks()),
 		// Idempotent production is the franz-go default; do not disable it.
 		kgo.ProducerBatchCompression(kgo.ZstdCompression()),
 		kgo.ProducerLinger(cfg.Linger),
-		kgo.ProducerBatchMaxBytes(1<<20),
+		kgo.ProducerBatchMaxBytes(1 << 20),
 		kgo.MaxBufferedRecords(cfg.Queue),
-		kgo.RecordDeliveryTimeout(10*time.Second),
+		kgo.RecordDeliveryTimeout(10 * time.Second),
 		kgo.RecordRetries(5),
-		kgo.AllowAutoTopicCreation(),
-	)
+	}
+	// The best-effort shadow retains its historical auto-create behavior.
+	// A durable canary must be pointed at a pre-created, inspected topic.
+	if cfg.ReliableSource == "" {
+		opts = append(opts, kgo.AllowAutoTopicCreation())
+	}
+	client, err := kgo.NewClient(opts...)
 	if err != nil {
 		return nil, err
 	}

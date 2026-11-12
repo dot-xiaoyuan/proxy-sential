@@ -10,6 +10,7 @@ func clearEventBusEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
 		"PROXY_SENTINEL_EVENT_BUS_SHADOW",
+		"PROXY_SENTINEL_EVENT_BUS_RELIABLE_SOURCE",
 		"PROXY_SENTINEL_EVENT_BUS_BROKERS",
 		"PROXY_SENTINEL_EVENT_BUS_CLIENT_ID",
 		"PROXY_SENTINEL_EVENT_BUS_DISCOVERY_TOPIC",
@@ -56,6 +57,26 @@ func TestConfigEnabledRequiresBrokers(t *testing.T) {
 	}
 }
 
+func TestReliableSourceRequiresExplicitCanaryAndBroker(t *testing.T) {
+	clearEventBusEnv(t)
+	t.Setenv("PROXY_SENTINEL_EVENT_BUS_RELIABLE_SOURCE", "passive-discovery")
+	if _, err := ConfigFromEnv("sensor-a", t.TempDir()); err == nil {
+		t.Fatal("reliable canary accepted without a broker")
+	}
+	t.Setenv("PROXY_SENTINEL_EVENT_BUS_BROKERS", "127.0.0.1:19092")
+	cfg, err := ConfigFromEnv("sensor-a", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Enabled || cfg.ShadowEnabled || cfg.ReliableSource != "passive-discovery" {
+		t.Fatalf("wrong isolated canary config: %+v", cfg)
+	}
+	t.Setenv("PROXY_SENTINEL_EVENT_BUS_RELIABLE_SOURCE", "zeek")
+	if _, err := ConfigFromEnv("sensor-a", t.TempDir()); err == nil {
+		t.Fatal("unsupported source silently enabled")
+	}
+}
+
 func TestConfigEnabledParses(t *testing.T) {
 	clearEventBusEnv(t)
 	t.Setenv("PROXY_SENTINEL_EVENT_BUS_SHADOW", "true")
@@ -70,7 +91,7 @@ func TestConfigEnabledParses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.Enabled || len(cfg.Brokers) != 2 || cfg.ClientID != "custom" || cfg.DiscoveryTopic != "custom.topic" {
+	if !cfg.Enabled || !cfg.ShadowEnabled || len(cfg.Brokers) != 2 || cfg.ClientID != "custom" || cfg.DiscoveryTopic != "custom.topic" {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if cfg.Linger != 12*time.Millisecond || cfg.Queue != 64 || cfg.MaxRecordBytes != 131072 {

@@ -7,18 +7,22 @@ import (
 	"sync"
 	"time"
 
+	"proxy-sentinel/internal/discovery"
 	"proxy-sentinel/internal/streamlog"
 )
 
 // Only fixed lane/stage names enter these maps. No segment IDs, errors, samples
 // or event data are retained. Updating metrics never performs disk/network I/O.
 type passiveStreamMetrics struct {
-	mu             sync.Mutex
-	since          time.Time
-	stages         map[string]passiveStageMetrics
-	queues         map[string]passiveQueueMetrics
-	captureBatches passiveCaptureBatchMetrics
-	buffer         *passiveDurableBuffer
+	mu               sync.Mutex
+	since            time.Time
+	stages           map[string]passiveStageMetrics
+	queues           map[string]passiveQueueMetrics
+	projectionWrites map[string]passiveProjectionWriteMetrics
+	sinkAcks         map[string]passiveSinkAckMetrics
+	captureAccepted  map[string]passiveCaptureAcceptedMetrics
+	captureBatches   passiveCaptureBatchMetrics
+	buffer           *passiveDurableBuffer
 }
 type passiveStageMetrics struct {
 	Count    uint64  `json:"count"`
@@ -30,6 +34,26 @@ type passiveQueueMetrics struct {
 	Depth      int `json:"depth"`
 	Capacity   int `json:"capacity"`
 	SampledMax int `json:"sampled_max"`
+}
+type passiveProjectionWriteMetrics struct {
+	Segments    uint64 `json:"segments"`
+	Events      uint64 `json:"events"`
+	FreshEvents uint64 `json:"fresh_events"`
+	FactRows    uint64 `json:"pg_fact_rows"`
+	StateRows   uint64 `json:"pg_state_rows"`
+}
+type passiveSinkAckMetrics struct {
+	BodySegments   uint64 `json:"body_segments"`
+	BodyEvents     uint64 `json:"body_events"`
+	SearchSegments uint64 `json:"search_segments"`
+	SearchEvents   uint64 `json:"search_events"`
+	BusSegments    uint64 `json:"eventbus_segments"`
+	BusEvents      uint64 `json:"eventbus_events"`
+}
+type passiveCaptureAcceptedMetrics struct {
+	Segments    uint64 `json:"segments"`
+	Events      uint64 `json:"events"`
+	SourceBytes uint64 `json:"source_bytes"`
 }
 
 // Cumulative fixed buckets show whether the writer is accepting small or
@@ -49,22 +73,79 @@ type passiveCaptureBatchMetrics struct {
 	BytesLE1MiB    uint64 `json:"bytes_le_1_mib"`
 }
 type passiveMetricsSnapshot struct {
-	Kind           string                         `json:"kind"`
-	WindowStart    time.Time                      `json:"window_start"`
-	At             time.Time                      `json:"at"`
-	Stages         map[string]passiveStageMetrics `json:"stages"`
-	Queues         map[string]passiveQueueMetrics `json:"queues"`
-	CaptureBatches passiveCaptureBatchMetrics     `json:"capture_batches"`
-	DurableBacklog *passiveBacklogSnapshot        `json:"durable_backlog,omitempty"`
+	Kind             string                                   `json:"kind"`
+	WindowStart      time.Time                                `json:"window_start"`
+	At               time.Time                                `json:"at"`
+	Stages           map[string]passiveStageMetrics           `json:"stages"`
+	Queues           map[string]passiveQueueMetrics           `json:"queues"`
+	ProjectionWrites map[string]passiveProjectionWriteMetrics `json:"projection_writes"`
+	SinkAcks         map[string]passiveSinkAckMetrics         `json:"sink_acks"`
+	CaptureAccepted  map[string]passiveCaptureAcceptedMetrics `json:"capture_accepted"`
+	CaptureBatches   passiveCaptureBatchMetrics               `json:"capture_batches"`
+	DurableBacklog   *passiveBacklogSnapshot                  `json:"durable_backlog,omitempty"`
 }
 
 func newPassiveStreamMetrics() *passiveStreamMetrics {
-	return &passiveStreamMetrics{since: time.Now().UTC(), stages: make(map[string]passiveStageMetrics), queues: make(map[string]passiveQueueMetrics)}
+	return &passiveStreamMetrics{since: time.Now().UTC(), stages: make(map[string]passiveStageMetrics), queues: make(map[string]passiveQueueMetrics), projectionWrites: make(map[string]passiveProjectionWriteMetrics), sinkAcks: make(map[string]passiveSinkAckMetrics), captureAccepted: make(map[string]passiveCaptureAcceptedMetrics)}
+}
+
+// This counts standard events durably accepted at the capture boundary. For
+// passive packets, source bytes are serialized standard-event cursor bytes;
+// packet payloads are not retained and cannot be counted from this callback.
+func (m *passiveStreamMetrics) observeCapture(segment streamlog.Segment) {
+	if segment.Source == "" || segment.Epoch == "" || segment.EndOffset < segment.StartOffset || segment.StartOffset < 0 {
+		return
+	}
+	key := segment.Source + "/" + segment.Epoch
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current := m.captureAccepted[key]
+	current.Segments++
+	current.Events += uint64(len(segment.Events))
+	current.SourceBytes += uint64(segment.EndOffset - segment.StartOffset)
+	m.captureAccepted[key] = current
+}
+
+func (m *passiveStreamMetrics) observeAck(lane streamlog.Lane, segment streamlog.Segment) {
+	if segment.Source == "" || segment.Epoch == "" || (lane != streamlog.Archive && lane != streamlog.Search && lane != streamlog.EventBus) {
+		return
+	}
+	key := segment.Source + "/" + segment.Epoch
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current := m.sinkAcks[key]
+	if lane == streamlog.Archive {
+		current.BodySegments++
+		current.BodyEvents += uint64(len(segment.Events))
+	} else if lane == streamlog.Search {
+		current.SearchSegments++
+		current.SearchEvents += uint64(len(segment.Events))
+	} else {
+		current.BusSegments++
+		current.BusEvents += uint64(len(segment.Events))
+	}
+	m.sinkAcks[key] = current
+}
+
+func (m *passiveStreamMetrics) observeProjectionWrite(value discovery.StreamProjectionWriteStats) {
+	if value.Source == "" || value.Epoch == "" || value.Events < 0 || value.FreshEvents < 0 || value.FactRows < 0 || value.StateRows < 0 {
+		return
+	}
+	key := value.Source + "/" + value.Epoch
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current := m.projectionWrites[key]
+	current.Segments++
+	current.Events += uint64(value.Events)
+	current.FreshEvents += uint64(value.FreshEvents)
+	current.FactRows += uint64(value.FactRows)
+	current.StateRows += uint64(value.StateRows)
+	m.projectionWrites[key] = current
 }
 
 func (m *passiveStreamMetrics) observe(lane streamlog.Lane, stage streamlog.ProcessorStage, elapsed time.Duration, err error) {
 	switch lane {
-	case streamlog.Archive, streamlog.Search, streamlog.Projection, streamlog.RiskFeatures, "", "capture":
+	case streamlog.Archive, streamlog.Search, streamlog.Projection, streamlog.RiskFeatures, streamlog.EventBus, "", "capture":
 	default:
 		return
 	}
@@ -164,7 +245,7 @@ func (m *passiveStreamMetrics) observeJournal(phases streamlog.PassiveJournalPha
 
 func (m *passiveStreamMetrics) queue(name string, depth, capacity int) {
 	switch name {
-	case "archive", "search", "projection", "finalizer":
+	case "archive", "search", "projection", "eventbus", "finalizer":
 	default:
 		return
 	}
@@ -182,13 +263,16 @@ func (m *passiveStreamMetrics) queue(name string, depth, capacity int) {
 func (m *passiveStreamMetrics) snapshot(kind string, at time.Time) passiveMetricsSnapshot {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	snapshot := passiveMetricsSnapshot{Kind: kind, WindowStart: m.since, At: at.UTC(), Stages: m.stages, Queues: m.queues, CaptureBatches: m.captureBatches}
+	snapshot := passiveMetricsSnapshot{Kind: kind, WindowStart: m.since, At: at.UTC(), Stages: m.stages, Queues: m.queues, ProjectionWrites: m.projectionWrites, SinkAcks: m.sinkAcks, CaptureAccepted: m.captureAccepted, CaptureBatches: m.captureBatches}
 	if m.buffer != nil {
 		backlog := m.buffer.snapshot()
 		snapshot.DurableBacklog = &backlog
 	}
 	m.since = at.UTC()
 	m.stages = make(map[string]passiveStageMetrics)
+	m.projectionWrites = make(map[string]passiveProjectionWriteMetrics)
+	m.sinkAcks = make(map[string]passiveSinkAckMetrics)
+	m.captureAccepted = make(map[string]passiveCaptureAcceptedMetrics)
 	m.captureBatches = passiveCaptureBatchMetrics{}
 	m.queues = make(map[string]passiveQueueMetrics, len(snapshot.Queues))
 	for name, value := range snapshot.Queues {

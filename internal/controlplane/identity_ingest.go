@@ -282,6 +282,10 @@ func (s *Server) handleIdentityIngestStatus(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleIdentityBatches(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("seek") == "1" {
+		s.handleIdentityBatchesSeek(w, r)
+		return
+	}
 	if s.identityIngest.db == nil {
 		s.identityIngest.mu.Lock()
 		items := make([]IdentityIngestBatch, 0, len(s.identityIngest.batches))

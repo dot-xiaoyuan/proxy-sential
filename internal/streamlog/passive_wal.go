@@ -48,7 +48,7 @@ type PassiveWALReference struct {
 type passiveWALEntry struct {
 	state   State // Compact metadata only; body exists once in its accept frame.
 	receipt streamwal.Receipt
-	lanes   [3]sync.Mutex
+	lanes   [4]sync.Mutex
 	finish  sync.Mutex
 }
 
@@ -462,7 +462,11 @@ func (j *PassiveWALJournal) AppendAndCommitPassive(s Segment) (string, error) {
 }
 
 func (j *PassiveWALJournal) applyAccept(id string, s Segment, hash string, receipt streamwal.Receipt) {
-	j.entries[id] = &passiveWALEntry{state: stateWithoutEvents(State{ID: id, ContentSHA256: hash, Segment: s, Committed: true, Acks: map[Lane]Status{Archive: Pending, Search: Pending, Projection: Pending}}), receipt: receipt}
+	acks := map[Lane]Status{Archive: Pending, Search: Pending, Projection: Pending}
+	if s.EventBusRequired {
+		acks[EventBus] = Pending
+	}
+	j.entries[id] = &passiveWALEntry{state: stateWithoutEvents(State{ID: id, ContentSHA256: hash, Segment: s, Committed: true, Acks: acks}), receipt: receipt}
 	j.cursor.FileID = s.FileID
 	j.cursor.Offset = s.EndOffset
 	j.cursor.LastSegmentID = id
@@ -541,7 +545,7 @@ func applyPassiveTransition(state *State, kind string, t passiveTransition) erro
 	}
 	switch kind {
 	case "lane":
-		if passiveLaneIndex(t.Lane) < 0 {
+		if passiveLaneIndex(t.Lane) < 0 || state.Acks[t.Lane] == "" {
 			return ErrContentConflict
 		}
 		previous := state.Acks[t.Lane]
@@ -550,7 +554,7 @@ func applyPassiveTransition(state *State, kind string, t passiveTransition) erro
 		}
 		state.Acks[t.Lane] = t.Status
 	case "finalized":
-		for _, lane := range []Lane{Archive, Search, Projection} {
+		for _, lane := range requiredLanes(state.Segment) {
 			if state.Acks[lane] != Acked {
 				return ErrUnconfirmed
 			}
@@ -576,6 +580,8 @@ func passiveLaneIndex(lane Lane) int {
 		return 1
 	case Projection:
 		return 2
+	case EventBus:
+		return 3
 	}
 	return -1
 }
@@ -745,7 +751,7 @@ func (j *PassiveWALJournal) PendingLanes(id string) ([]Lane, error) {
 		return nil, ErrQuarantined
 	}
 	var lanes []Lane
-	for _, lane := range []Lane{Archive, Projection, Search} {
+	for _, lane := range requiredLanes(state.Segment) {
 		if state.Acks[lane] != Acked {
 			lanes = append(lanes, lane)
 		}

@@ -16,7 +16,6 @@ import type {
   EvidenceQuery,
   IdentityQuery,
   ListQuery,
-  Page,
   ProxyReviewQuery,
   RiskQuery,
   OrganizationKind,
@@ -24,7 +23,7 @@ import type {
 
 function usePagedQuery<
   TQuery extends { cursor?: string },
-  TData extends { page: Page },
+  TData extends { page: { next_cursor: string | null } },
 >(
   query: TQuery,
   keyFor: (value: TQuery) => readonly unknown[],
@@ -86,6 +85,7 @@ export const queryKeys = {
   dpiFingerprintConflicts: (query: ActivityOverviewQuery) =>
     ["dpi-fingerprint-conflicts", query] as const,
   dpiFlows: (query: EventQuery) => ["dpi-flows", query] as const,
+  dpiFlowsCount: (query: EventQuery) => ["dpi-flows-count", query] as const,
   dpiIpFlows: (ip: string, query: EventQuery) =>
     ["dpi-ip-flows", ip, query] as const,
   dpiFlow: (flowId: string) => ["dpi-flow", flowId] as const,
@@ -109,6 +109,7 @@ export const queryKeys = {
   endpointIdentity: (endpointId: string, query: IdentityQuery) =>
     ["endpoint-identity", endpointId, query] as const,
   events: (query: EventQuery) => ["events", query] as const,
+  eventsCount: (query: EventQuery) => ["events-count", query] as const,
   ingestStatus: ["ingest-status"] as const,
   ingestRuns: (query: ListQuery) => ["ingest-runs", query] as const,
   ingestDiagnostics: (query: ListQuery) =>
@@ -242,6 +243,10 @@ export function useDpiFingerprintConflicts(
 
 export function useDpiFlows(query: EventQuery) {
   return usePagedQuery(query, queryKeys.dpiFlows, api.dpiFlows);
+}
+
+export function useDpiFlowsCount(query: EventQuery, enabled = false) {
+  return useQuery({ queryKey: queryKeys.dpiFlowsCount(query), queryFn: () => api.dpiFlowsCount(query), enabled });
 }
 
 export function useDpiIpFlows(ip: string, query: EventQuery, enabled = true) {
@@ -425,6 +430,10 @@ export function useIpEvents(ip: string, limit = 20, enabled = true) {
 
 export function useEvents(query: EventQuery, enabled = true) {
   return usePagedQuery(query, queryKeys.events, api.events, enabled);
+}
+
+export function useEventsCount(query: EventQuery, enabled = false) {
+  return useQuery({ queryKey: queryKeys.eventsCount(query), queryFn: () => api.eventsCount(query), enabled });
 }
 
 export function useEvent(eventId: string) {

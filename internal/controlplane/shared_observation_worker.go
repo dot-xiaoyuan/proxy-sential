@@ -18,9 +18,11 @@ import (
 )
 
 type sharedObservationDocument struct {
-	Window     sharedaccess.Window             `json:"window"`
-	Assessment sharedaccess.BehaviorAssessment `json:"assessment"`
-	Result     sharedaccess.Result             `json:"result"`
+	Window          sharedaccess.Window             `json:"window"`
+	Assessment      sharedaccess.BehaviorAssessment `json:"assessment"`
+	Result          sharedaccess.Result             `json:"result"`
+	EpisodeScopeKey string                          `json:"episode_scope_key,omitempty"`
+	EpisodeSessions []sharedEpisodeSessionRef       `json:"episode_sessions,omitempty"`
 }
 
 var newSharedObservationLeaseToken = func() (string, error) {
@@ -396,7 +398,20 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 	// that won the job lease. A later source cutover cannot relabel this proof.
 	item.GenerationID = generation
 	decision.IdentityEvidence = identityEvidence
-	doc = sharedObservationDocument{Window: w, Assessment: item, Result: result}
+	var previousDoc sharedObservationDocument
+	if len(previous) > 0 {
+		_ = json.Unmarshal(previous, &previousDoc)
+	}
+	closeEpisode := previousDoc.EpisodeScopeKey != "" && sharedObservationEpisodeSessionsEnded(previousDoc.EpisodeSessions, identityEvidence, evaluatedAt)
+	doc = sharedObservationDocument{Window: w, Assessment: item, Result: result,
+		EpisodeScopeKey: previousDoc.EpisodeScopeKey, EpisodeSessions: previousDoc.EpisodeSessions}
+	if decision.Result == "matched" {
+		doc.EpisodeScopeKey = sharedObservationEpisodeScope(decision)
+		doc.EpisodeSessions = sharedObservationEpisodeSessions(identityEvidence, w.To)
+	} else if decision.Result == "expired" || closeEpisode {
+		doc.EpisodeScopeKey = ""
+		doc.EpisodeSessions = nil
+	}
 	raw, err := json.Marshal(doc)
 	if err != nil {
 		return failure(err)
@@ -421,6 +436,12 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 		if err = store.EnqueueSharedDeviceProfileJobsForObservations(ctx, tx, []store.SharedObservationProfileKey{
 			{SensorID: item.SensorID, CampusID: item.CampusID, EndpointID: item.EndpointID, IP: item.IP, ObservedAt: item.LastSeen},
 		}); err != nil {
+			_ = tx.Rollback()
+			return failure(err)
+		}
+	}
+	if closeEpisode || (decision.Result == "expired" && previousDoc.EpisodeScopeKey != "") {
+		if err = closeSharedObservationEpisode(ctx, tx, previousDoc.EpisodeScopeKey, evaluatedAt); err != nil {
 			_ = tx.Rollback()
 			return failure(err)
 		}
@@ -549,52 +570,43 @@ func sharedObservationNewDependency(lane string, marked bool) bool {
 }
 
 func persistSharedObservationDecision(ctx context.Context, tx *sql.Tx, d sharedaccess.ObservationDecision) error {
+	newEpisode, err := ensureSharedObservationEpisode(ctx, tx, &d)
+	if err != nil {
+		return err
+	}
 	raw, err := json.Marshal(d)
 	if err != nil {
 		return err
 	}
-	if d.Result == "matched" {
-		actionIDs := []string{}
-		if violationObservationOnly() {
-			actionIDs = append(actionIDs, "shared-record:"+d.DecisionID)
-		}
-		execution := policy.Execution{ID: d.ExecutionID, PolicyID: d.PolicyID, AccountID: d.AccountID, State: "recorded", LastEvaluated: d.EvaluatedAt, EvidenceIDs: []string{d.ObservationID}, Definition: sharedaccess.ObservationPolicy(), Stages: []policy.StageState{{Status: "recorded", ActionIDs: actionIDs, ExecuteCount: 0}}}
-		data, e := json.Marshal(execution)
-		if e != nil {
-			return e
-		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO shared_observation_executions(execution_id,account_id,evidence_version,state,document,expires_at) VALUES($1,$2,$3,'recorded',$4,$5) ON CONFLICT DO NOTHING`, d.ExecutionID, d.AccountID, d.EvidenceVersion, data, d.EvidenceExpiresAt)
-		if err != nil {
-			return err
-		}
-	}
 	if d.Result == "expired" {
-		_, err = tx.ExecContext(ctx, `UPDATE shared_observation_executions SET state='expired',document=jsonb_set(document,'{state}','"expired"') WHERE evidence_version=$1 AND state<>'expired'`, d.EvidenceVersion)
+		_, err = tx.ExecContext(ctx, `UPDATE shared_observation_executions e SET state='expired',document=jsonb_set(e.document,'{state}','"expired"')
+ WHERE e.evidence_version=$1 AND e.state<>'expired' AND NOT EXISTS
+ (SELECT 1 FROM shared_observation_episode_index i WHERE i.execution_id=e.execution_id)`, d.EvidenceVersion)
 		if err != nil {
 			return err
 		}
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO policy_decision_records(decision_id,execution_id,policy_id,policy_revision,account_id,known,violated,evaluated_at,document,trigger_type,subject_ip,result,observation_id,evidence_version)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'shared_access',$10::inet,$11,$12,$13) ON CONFLICT(decision_id) DO NOTHING`, d.DecisionID, d.ExecutionID, d.PolicyID, d.PolicyRevision, d.AccountID, d.Known, d.Violated, d.EvaluatedAt, raw, d.IP, d.Result, d.ObservationID, d.EvidenceVersion)
-	if err != nil || d.Result != "matched" || !violationObservationOnly() {
+	if err != nil || !newEpisode || !violationObservationOnly() {
 		return err
 	}
 	// A terminal record-only action is visible in the ordinary action ledger.
 	// Workers claim only pending actions; this row can never be delivered.
 	_, err = tx.ExecContext(ctx, `INSERT INTO enforcement_actions(action_id,idempotency_key,action_type,subject_type,subject_id,account_id,ip,campus_id,status,mode,evidence_ids,ruleset_version,policy_parameters,created_by,created_at)
 		VALUES($1,$1,'disconnect','account',$2,$2,$3::inet,NULLIF($4,''),'recorded','record_only',jsonb_build_array($5::text),$6,
-		jsonb_build_object('execution_id',$7::text,'policy_id',$8::text,'decision_id',$9::text,'policy_revision',$10::bigint,'evidence_version',$11::text,'observation_id',$5::text),
-		'shared_observation', $12) ON CONFLICT(idempotency_key) DO NOTHING`, "shared-record:"+d.DecisionID, d.AccountID, d.IP, d.CampusID, d.ObservationID, d.EvidenceVersion, d.ExecutionID, d.PolicyID, d.DecisionID, d.PolicyRevision, d.EvidenceVersion, d.EvaluatedAt)
+		jsonb_build_object('execution_id',$7::text,'episode_id',$7::text,'policy_id',$8::text,'decision_id',$9::text,'policy_revision',$10::bigint,'evidence_version',$11::text,'observation_id',$5::text),
+		'shared_observation', $12) ON CONFLICT(idempotency_key) DO NOTHING`, "shared-record:"+d.ExecutionID, d.AccountID, d.IP, d.CampusID, d.ObservationID, d.EvidenceVersion, d.ExecutionID, d.PolicyID, d.DecisionID, d.PolicyRevision, d.EvidenceVersion, d.EvaluatedAt)
 	if err != nil {
 		return err
 	}
 	// Enabled reporting channels receive a terminal record in the normal report
 	// ledger. The delivery worker claims queued/sending rows only.
 	_, err = tx.ExecContext(ctx, `INSERT INTO behavior_report_outbox(report_id,idempotency_key,channel_id,event_type,subject_type,subject_id,account_id,ip,occurred_at,payload,status)
-		SELECT 'shared-record:'||$1||':'||channel_id,'shared-record:'||$1||':'||channel_id,channel_id,'proxy_behavior','account',$2,$2,$3,$4,
-		jsonb_build_object('policy_decision_id',$1::text,'policy_id',$5::text,'policy_revision',$6::bigint,'observation_id',$7::text,
+		SELECT 'shared-record:'||$11||':'||channel_id,'shared-record:'||$11||':'||channel_id,channel_id,'proxy_behavior','account',$2,$2,$3,$4,
+		jsonb_build_object('policy_decision_id',$1::text,'episode_id',$11::text,'policy_id',$5::text,'policy_revision',$6::bigint,'observation_id',$7::text,
 		'evidence_version',$8::text,'campus_id',$9::text,'access_domain',$10::text,'execution_mode','record_only','external_request_sent',false),
 		'recorded' FROM behavior_report_channels WHERE enabled=true
-		ON CONFLICT(idempotency_key) DO NOTHING`, d.DecisionID, d.AccountID, d.IP, d.EvaluatedAt, d.PolicyID, d.PolicyRevision, d.ObservationID, d.EvidenceVersion, d.CampusID, d.AccessDomain)
+		ON CONFLICT(idempotency_key) DO NOTHING`, d.DecisionID, d.AccountID, d.IP, d.EvaluatedAt, d.PolicyID, d.PolicyRevision, d.ObservationID, d.EvidenceVersion, d.CampusID, d.AccessDomain, d.ExecutionID)
 	return err
 }

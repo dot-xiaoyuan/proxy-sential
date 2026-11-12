@@ -125,7 +125,7 @@ const mockOrganization = {
 }
 
 const mockConnectors = [{ connector_type: 'srun4k' as const, connector_id: 'portal-gateway', name: '4K 认证系统', endpoint_url: 'https://192.0.2.190:8001', action_mapping: { 'account_policy_v1': 'supported', 'session.disconnect': 'online-drop' }, mode: 'shadow' as const, enabled: true, shadow_ready: false, shadow_candidate_count: 12, shadow_reviewed_count: 10, shadow_accuracy: .9, updated_at: new Date().toISOString() }]
-const mockActions: Array<Record<string, unknown>> = [{ action_id:'shared-record:shared-observe-demo',idempotency_key:'shared-record:shared-observe-demo',action_type:'disconnect',subject_type:'account',subject_id:'campus-student-001',account_id:'campus-student-001',ip:'192.0.2.44',campus_id:'ncu',mode:'record_only',status:'recorded',retry_count:0,evidence_ids:['shared-behavior-test'],policy_parameters:{decision_id:'shared-observe-demo',policy_id:'builtin:shared-access-observe',policy_revision:1,evidence_version:'8e79c1a7fabc0123456789abcdef012345',observation_id:'shared-behavior-test'},created_by:'shared_observation',created_at:new Date().toISOString(),updated_at:new Date().toISOString() }]
+const mockActions: Array<Record<string, unknown>> = [{ action_id:'shared-record:shared-observe-demo',idempotency_key:'shared-record:shared-observe-demo',action_type:'disconnect',subject_type:'account',subject_id:'campus-student-001',account_id:'campus-student-001',ip:'192.0.2.44',campus_id:'ncu',mode:'record_only',status:'recorded',evidence_review_status:'rule_verified',retry_count:0,evidence_ids:['shared-behavior-test'],policy_parameters:{decision_id:'shared-observe-demo',episode_id:'shared-observe-demo',policy_id:'builtin:shared-access-observe',policy_revision:1,evidence_version:'8e79c1a7fabc0123456789abcdef012345',observation_id:'shared-behavior-test'},created_by:'shared_observation',created_at:new Date().toISOString(),updated_at:new Date().toISOString() }]
 const mockUsers = [{user_id:'admin-1',username:'admin',display_name:'系统管理员',role:'admin',disabled:false},{user_id:'reviewer-1',username:'reviewer',display_name:'风险复核员',role:'reviewer',disabled:false}]
 const mockCampusExceptions = [{exception_id:'exception-webvpn',scope_type:'domain',scope_value:'vpn.henu.edu.cn',reason:'学校 WebVPN',ruleset_version:'campus-exceptions-v1',valid_from:new Date().toISOString(),enabled:true,created_by:'admin-1',created_at:new Date().toISOString()}]
 
@@ -276,8 +276,10 @@ export const handlers = [
   http.get('/api/v1/dpi/fingerprint-conflicts', () => HttpResponse.json({ items: mockFingerprintConflicts })),
   http.get('/api/v1/dpi/flows', ({ request }) => {
     const url = new URL(request.url)
-    return HttpResponse.json(filterMockFlows(url))
+    const result = filterMockFlows(url)
+    return HttpResponse.json({ items: result.items, page: result.page })
   }),
+  http.get('/api/v1/dpi/flows/count', ({ request }) => HttpResponse.json({ total: filterMockFlows(new URL(request.url)).total, queried_at: new Date().toISOString() })),
   http.get('/api/v1/dpi/flows/:flowId', ({ params }) => {
     const flowId = normalizeIp(String(params.flowId))
     const flow = Object.values(mockFlowSamples).flat().find((item) => item.flow_id === flowId || item.event_id === flowId)
@@ -293,7 +295,8 @@ export const handlers = [
   http.get('/api/v1/dpi/ips/:ip/flows', ({ params, request }) => {
     const url = new URL(request.url)
     url.searchParams.set('src_ip', normalizeIp(String(params.ip)))
-    return HttpResponse.json(filterMockFlows(url))
+    const result = filterMockFlows(url)
+    return HttpResponse.json({ items: result.items, page: result.page })
   }),
   http.get('/api/v1/risks/stream-cutover', () => HttpResponse.json({
     active: true,
@@ -656,33 +659,15 @@ export const handlers = [
     const account = url.searchParams.get('subject_type') === 'account'
     return HttpResponse.json({ ...evidenceByIp['10.255.0.59'][1], evidence_id: id, ip: account ? '' : '192.0.2.8', subject_type: account ? 'account' : 'ip', subject_id: account ? 'mock-account' : '192.0.2.8' })
   }),
+  http.get('/api/v1/events/count', ({ request }) => HttpResponse.json({ total: filterMockEvents(new URL(request.url)).length, queried_at: new Date().toISOString() })),
   http.get('/api/v1/events', ({ request }) => {
     const url = new URL(request.url)
-    const q = url.searchParams.get('q')?.toLowerCase()
-    const eventType = url.searchParams.get('type')
-    const domain = url.searchParams.get('domain')?.toLowerCase()
-    const srcIp = url.searchParams.get('src_ip')
-    const dstIp = url.searchParams.get('dst_ip')
-    const userAgent = url.searchParams.get('user_agent')?.toLowerCase()
-    const fingerprint = url.searchParams.get('fingerprint')?.toLowerCase()
-    const proto = url.searchParams.get('proto')?.toLowerCase()
-    const port = url.searchParams.get('port')
-    const limit = Number(url.searchParams.get('limit') ?? 50)
-    const cursor = Number(url.searchParams.get('cursor') ?? 0)
-    const allEvents = Object.values(eventsByIp).flat()
-    const filtered = allEvents
-      .filter((event) => !eventType || event.type === eventType)
-      .filter((event) => !q || event.event_id.toLowerCase().includes(q) || JSON.stringify(event.subject).toLowerCase().includes(q))
-      .filter((event) => !domain || JSON.stringify(event.payload).toLowerCase().includes(domain))
-      .filter((event) => !srcIp || event.flow?.src_ip === srcIp || event.subject?.ip === srcIp)
-      .filter((event) => !dstIp || event.flow?.dst_ip === dstIp)
-      .filter((event) => !userAgent || String(event.payload?.user_agent ?? '').toLowerCase().includes(userAgent))
-      .filter((event) => !fingerprint || String(`${event.payload?.ja3 ?? ''} ${event.payload?.ja4 ?? ''}`).toLowerCase().includes(fingerprint))
-      .filter((event) => !proto || String(event.flow?.proto ?? '').toLowerCase() === proto)
-      .filter((event) => !port || String(event.flow?.dst_port ?? '') === port)
+    const limit = Number(url.searchParams.get('limit') ?? 20)
+    const cursor = mockEventOffset(url.searchParams.get('cursor'))
+    const filtered = filterMockEvents(url)
     const pageItems = filtered.slice(cursor, cursor + limit)
-    const nextCursor = cursor + pageItems.length < filtered.length ? String(cursor + pageItems.length) : null
-    return HttpResponse.json({ events: pageItems, page: { limit, next_cursor: nextCursor, total: filtered.length } })
+    const nextCursor = cursor + pageItems.length < filtered.length ? `event:${cursor + pageItems.length}` : null
+    return HttpResponse.json({ events: pageItems, page: { limit, next_cursor: nextCursor, has_more: nextCursor !== null } })
   }),
   http.get('/api/v1/events/:eventId', ({ params }) => {
     if (params.eventId === 'ai-relay-mock-1') return HttpResponse.json({event_id:'ai-relay-mock-1',type:'tls',source:'replay',timestamp:new Date(Date.now()-10*60_000).toISOString(),observer:{sensor_id:'mock-sensor'},subject:{ip:'10.20.0.11'},flow:{src_ip:'10.20.0.11',dst_ip:'203.0.113.11',dst_port:443,proto:'tcp',direction:'outbound'},payload:{sni:'api.yunwu.ai'},confidence:1})
@@ -752,7 +737,7 @@ function filterMockFlows(url: URL) {
   const proto = url.searchParams.get('proto')?.toLowerCase()
   const port = url.searchParams.get('port')
   const limit = Number(url.searchParams.get('limit') ?? 50)
-  const cursor = Number(url.searchParams.get('cursor') ?? 0)
+  const cursor = mockEventOffset(url.searchParams.get('cursor'))
   const filtered = Object.values(mockFlowSamples)
     .flat()
     .filter((flow) => !q || JSON.stringify(flow).toLowerCase().includes(q))
@@ -764,6 +749,33 @@ function filterMockFlows(url: URL) {
     .filter((flow) => !proto || String(flow.protocol ?? '').toLowerCase() === proto)
     .filter((flow) => !port || String(flow.dst_port ?? '') === port)
   const items = filtered.slice(cursor, cursor + limit)
-  const nextCursor = cursor + items.length < filtered.length ? String(cursor + items.length) : null
-  return { items, page: { limit, next_cursor: nextCursor, total: filtered.length } }
+  const nextCursor = cursor + items.length < filtered.length ? `event:${cursor + items.length}` : null
+  return { items, page: { limit, next_cursor: nextCursor, has_more: nextCursor !== null }, total: filtered.length }
+}
+
+function mockEventOffset(raw: string | null) {
+  const value = Number(raw?.replace(/^event:/, '') ?? 0)
+  return Number.isFinite(value) && value >= 0 ? value : 0
+}
+
+function filterMockEvents(url: URL) {
+  const q = url.searchParams.get('q')?.toLowerCase()
+  const eventType = url.searchParams.get('type')
+  const domain = url.searchParams.get('domain')?.toLowerCase()
+  const srcIp = url.searchParams.get('src_ip')
+  const dstIp = url.searchParams.get('dst_ip')
+  const userAgent = url.searchParams.get('user_agent')?.toLowerCase()
+  const fingerprint = url.searchParams.get('fingerprint')?.toLowerCase()
+  const proto = url.searchParams.get('proto')?.toLowerCase()
+  const port = url.searchParams.get('port')
+  return Object.values(eventsByIp).flat()
+    .filter((event) => !eventType || event.type === eventType)
+    .filter((event) => !q || event.event_id.toLowerCase().includes(q) || JSON.stringify(event.subject).toLowerCase().includes(q))
+    .filter((event) => !domain || JSON.stringify(event.payload).toLowerCase().includes(domain))
+    .filter((event) => !srcIp || event.flow?.src_ip === srcIp || event.subject?.ip === srcIp)
+    .filter((event) => !dstIp || event.flow?.dst_ip === dstIp)
+    .filter((event) => !userAgent || String(event.payload?.user_agent ?? '').toLowerCase().includes(userAgent))
+    .filter((event) => !fingerprint || String(`${event.payload?.ja3 ?? ''} ${event.payload?.ja4 ?? ''}`).toLowerCase().includes(fingerprint))
+    .filter((event) => !proto || String(event.flow?.proto ?? '').toLowerCase() === proto)
+    .filter((event) => !port || String(event.flow?.dst_port ?? '') === port)
 }

@@ -36,6 +36,23 @@ describe('共享策略仅记录', () => {
   expect(screen.getByText(sharedDecisionFixture.evidence_version)).toBeInTheDocument()
   await waitFor(() => expect(request).toHaveBeenCalledWith(expect.stringContaining('result=matched')))
  })
+ it('旧弱证据追加更正后不再显示为已确认共享', async () => {
+  vi.mocked(request).mockResolvedValue({items:[{...sharedDecisionFixture,evidence_review_status:'insufficient_evidence',evidence_review_reason:'strong_anchor_missing'}],next_cursor:''})
+  setup()
+  expect(await screen.findByText('旧规则记录：共享证据不足')).toBeInTheDocument()
+  expect(screen.getByText('旧规则证据不足')).toBeInTheDocument()
+  expect(screen.queryByText('已确认共享')).toBeNull()
+  ;(document.querySelector('.ant-table-row-expand-icon') as HTMLElement).click()
+  expect(await screen.findByText('历史核验原因：原证据缺少强锚点')).toBeInTheDocument()
+ })
+ it('缺少原证据时保留记录并标明核验未完成', async () => {
+  vi.mocked(request).mockResolvedValue({items:[{...sharedDecisionFixture,evidence:undefined,evidence_review_status:'unverified',evidence_review_reason:'saved_evidence_unavailable'}],next_cursor:''})
+  setup()
+  expect(await screen.findByText('历史共享结论待核验')).toBeInTheDocument()
+  expect(screen.getByText('证据缺失待核验')).toBeInTheDocument()
+  ;(document.querySelector('.ant-table-row-expand-icon') as HTMLElement).click()
+  expect(await screen.findByText('历史核验原因：原决策缺少可核验的证据内容')).toBeInTheDocument()
+ })
  it('关联观察和不足原因可查询，空结果不表示没有共享', async () => {
   vi.mocked(request).mockResolvedValue({items:[],next_cursor:''});setup('/shared-access?tab=decisions&decision_result=insufficient&observation_id=raw-proof')
   expect(await screen.findByText(/当前筛选下暂无评估记录/)).toBeInTheDocument()

@@ -41,6 +41,8 @@ const (
 	Archive    Lane = "archive"
 	Search     Lane = "search"
 	Projection Lane = "projection"
+	// EventBus is required only by segments accepted under the reliable canary.
+	EventBus Lane = "eventbus"
 	// RiskFeatures is checkpointed independently but scheduled by Search.
 	RiskFeatures Lane = "risk_features"
 )
@@ -80,6 +82,7 @@ type Segment struct {
 	NeedsProjection      bool               `json:"needs_projection"`
 	RiskFeaturesRequired bool               `json:"risk_features_required,omitempty"`
 	SplitRiskFeatures    bool               `json:"split_risk_features,omitempty"`
+	EventBusRequired     bool               `json:"eventbus_required,omitempty"`
 	Quarantined          bool               `json:"quarantined,omitempty"`
 	QuarantineReason     string             `json:"quarantine_reason,omitempty"`
 	Raw                  []byte             `json:"raw,omitempty"`
@@ -159,10 +162,11 @@ func contentHash(s Segment) (string, error) {
 		NeedsProjection      bool               `json:"needs_projection"`
 		RiskFeaturesRequired bool               `json:"risk_features_required,omitempty"`
 		SplitRiskFeatures    bool               `json:"split_risk_features,omitempty"`
+		EventBusRequired     bool               `json:"eventbus_required,omitempty"`
 		Quarantined          bool               `json:"quarantined,omitempty"`
 		QuarantineReason     string             `json:"quarantine_reason,omitempty"`
 		Events               []normalized.Event `json:"events"`
-	}{s.SourcePath, s.PreviousFileID, s.PreviousOffset, s.ParserVersion, s.BodyLayout, s.KeyScheme, s.PreviousGeneration, s.SourceGeneration, s.EventOffsets, s.RawSHA256, s.SourceBackedRaw, s.RawIsStandardEvents, s.EarlyProcessing, s.RawTailBytes, s.RawTailSHA256, s.Raw, s.NeedsProjection, s.RiskFeaturesRequired, s.SplitRiskFeatures, s.Quarantined, s.QuarantineReason, s.Events})
+	}{s.SourcePath, s.PreviousFileID, s.PreviousOffset, s.ParserVersion, s.BodyLayout, s.KeyScheme, s.PreviousGeneration, s.SourceGeneration, s.EventOffsets, s.RawSHA256, s.SourceBackedRaw, s.RawIsStandardEvents, s.EarlyProcessing, s.RawTailBytes, s.RawTailSHA256, s.Raw, s.NeedsProjection, s.RiskFeaturesRequired, s.SplitRiskFeatures, s.EventBusRequired, s.Quarantined, s.QuarantineReason, s.Events})
 	if err != nil {
 		return "", err
 	}
@@ -190,6 +194,9 @@ func (j *Journal) append(s Segment, allowEarly bool) (string, error) {
 	}
 	if s.SplitRiskFeatures && (!s.RiskFeaturesRequired || len(s.Events) == 0) {
 		return "", errors.New("split risk features require events and a risk-feature sink")
+	}
+	if s.EventBusRequired && (len(s.Events) == 0 || s.Quarantined) {
+		return "", errors.New("reliable event bus requires standard events")
 	}
 	if s.RawIsStandardEvents && (s.Source != "device-signals" && s.Source != "shared-device-signals" || len(s.Raw) == 0 || len(s.Events) == 0 || s.SourceBackedRaw || s.Quarantined) {
 		return "", errors.New("standard-event raw source requires inline device events")
@@ -364,6 +371,9 @@ func (j *Journal) load(id string) (State, error) {
 		if segment.SplitRiskFeatures {
 			state.Acks[RiskFeatures] = Pending
 		}
+		if segment.EventBusRequired {
+			state.Acks[EventBus] = Pending
+		}
 		if len(segment.Events) == 0 {
 			state.Acks[Archive], state.Acks[Search] = NotApplicable, NotApplicable
 		}
@@ -507,18 +517,31 @@ func (j *Journal) PendingLanes(id string) ([]Lane, error) {
 			return nil, fmt.Errorf("stream segment %s has invalid risk feature status: %w", id, ErrContentConflict)
 		}
 	}
+	if state.Segment.EventBusRequired {
+		switch state.Acks[EventBus] {
+		case Pending, Attempted:
+			lanes = append(lanes, EventBus)
+		case Acked:
+		default:
+			return nil, fmt.Errorf("stream segment %s has invalid event bus status: %w", id, ErrContentConflict)
+		}
+	}
 	return lanes, nil
 }
 
 func requiredLanes(segment Segment) []Lane {
+	lanes := []Lane{Archive, Search, Projection}
 	if segment.SplitRiskFeatures {
-		return []Lane{Archive, Search, Projection, RiskFeatures}
+		lanes = append(lanes, RiskFeatures)
 	}
-	return []Lane{Archive, Search, Projection}
+	if segment.EventBusRequired {
+		lanes = append(lanes, EventBus)
+	}
+	return lanes
 }
 
 func validLane(lane Lane) bool {
-	return lane == Archive || lane == Search || lane == Projection || lane == RiskFeatures
+	return lane == Archive || lane == Search || lane == Projection || lane == RiskFeatures || lane == EventBus
 }
 
 func (j *Journal) BeginAttempt(id string, lane Lane) error { return j.setAck(id, lane, Attempted) }

@@ -76,7 +76,7 @@ func TestSharedBehaviorCurrentWindowRetiresFalsePositivesPostgres(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Items) != 1 || page.Items[0].IP != "192.0.2.63" || page.Page.Total != 1 {
+	if len(page.Items) != 1 || page.Items[0].IP != "192.0.2.63" || page.Page.HasMore {
 		t.Fatalf("false positive appeared in default discovery: %+v", page)
 	}
 	page, err = s.ListSharedBehavior(ctx, SharedBehaviorQuery{Status: "candidate"})

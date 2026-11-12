@@ -62,6 +62,9 @@ func TestStreamWriteUsesPreparedBatchWithoutNormalPathLookup(t *testing.T) {
 	if strings.Contains(queries[1], "payload_json") || strings.Contains(queries[1], "origin") {
 		t.Fatalf("search contains full payload: %s", queries[1])
 	}
+	if !strings.Contains(queries[1], `"first_ingested_at":"2026-10-24 10:00:00.000000"`) {
+		t.Fatalf("search did not retain immutable first ingest time: %s", queries[1])
+	}
 }
 
 func TestStreamBodyLayoutV2RoutesDurableBodyAndReferences(t *testing.T) {

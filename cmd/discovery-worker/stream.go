@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -267,6 +268,7 @@ func runPassiveStreamWorker(opts passiveStreamOptions) (result error) {
 	if err != nil {
 		return err
 	}
+	recoveredNeedsBus := make(map[string]bool, len(recovered))
 	for _, id := range recovered {
 		quarantinePath := filepath.Join(opts.Spool, "discovery-quarantine", id+".json")
 		if _, err := os.Stat(quarantinePath); err == nil {
@@ -275,10 +277,58 @@ func runPassiveStreamWorker(opts passiveStreamOptions) (result error) {
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
+		pending, err := journal.PendingLanes(id)
+		if err != nil {
+			return err
+		}
+		for _, lane := range pending {
+			if lane == streamlog.EventBus {
+				recoveredNeedsBus[id] = true
+			}
+		}
+	}
+	statsDir := filepath.Join(opts.Spool, "stream-capture-stats")
+	busConfig, busConfigErr := eventbus.ConfigFromEnv(opts.Node, statsDir)
+	reliableRequested := strings.TrimSpace(os.Getenv("PROXY_SENTINEL_EVENT_BUS_RELIABLE_SOURCE")) != ""
+	if reliableRequested && busConfigErr != nil {
+		return fmt.Errorf("reliable event bus configuration: %w", busConfigErr)
+	}
+	for _, needed := range recoveredNeedsBus {
+		if needed && (busConfigErr != nil || busConfig.ReliableSource != "passive-discovery") {
+			return errors.New("pending reliable event bus segments require the passive-discovery producer configuration")
+		}
+	}
+	var reliableBus *eventbus.ReliablePublisher
+	if busConfigErr == nil && busConfig.ReliableSource == "passive-discovery" {
+		producer, err := eventbus.NewKafkaProducer(busConfig)
+		if err != nil {
+			return fmt.Errorf("reliable event bus producer: %w", err)
+		}
+		topicCtx, cancelTopic := context.WithTimeout(ctx, 10*time.Second)
+		topicStatus, topicErr := producer.PreflightReliableTopic(topicCtx, busConfig.DiscoveryTopic)
+		cancelTopic()
+		if topicErr != nil {
+			producer.Close()
+			return fmt.Errorf("reliable event bus topic preflight: %w", topicErr)
+		}
+		log.Printf("reliable event bus canary topic=%s partitions=%d replicas=%d retention=%s single_replica=%t; normalized-only consumer is required for the initial canary", busConfig.DiscoveryTopic, topicStatus.Partitions, topicStatus.Replicas, topicStatus.Retention, topicStatus.SingleReplica)
+		if topicStatus.SingleReplica {
+			log.Printf("reliable event bus canary topic=%s has one replica; a broker or node loss can remove the only retained message copy", busConfig.DiscoveryTopic)
+		}
+		reliableBus = eventbus.NewReliablePublisher(busConfig, producer, discovery.StreamPartitionKey)
+		defer func() {
+			closeCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			result = errors.Join(result, reliableBus.Close(closeCtx))
+		}()
 	}
 	projector, writer := newPassiveStreamLaneWriter(db, ch, opts.Collection)
+	projector.ObserveWrite = metrics.observeProjectionWrite
+	writer.Projector = projector
+	writer.RiskQueue = projector
+	laneWriter := passiveEventBusLaneWriter{StreamLaneWriter: writer, bus: reliableBus}
 	if opts.DrainOnly {
-		processor := streamlog.Processor{Journal: journal, Writer: writer}
+		processor := streamlog.Processor{Journal: journal, Writer: laneWriter, AckObserver: metrics.observeAck}
 		for _, id := range recovered {
 			for attempt := 0; attempt < 3; attempt++ {
 				// This is stopped-source recovery, outside the live 5-second
@@ -317,6 +367,9 @@ func runPassiveStreamWorker(opts passiveStreamOptions) (result error) {
 	if err != nil {
 		return err
 	}
+	if reliableBus != nil && buffer == nil {
+		return errors.New("reliable event bus requires a configured passive durable buffer for disk and backlog limits")
+	}
 	metrics.buffer = buffer
 	runtimeRepo := discovery.Repository{DB: runtimeDB}
 	if _, err := runtimeDB.ExecContext(ctx, `UPDATE discovery_protocol_runtime SET received=0,parsed=0,rejected=0,admitted=0,last_seen=NULL,last_success=NULL,error='' WHERE sensor_id=$1 AND owner='discovery-worker'`, opts.Node); err != nil {
@@ -325,7 +378,6 @@ func runPassiveStreamWorker(opts passiveStreamOptions) (result error) {
 	if err := runtimeRepo.ConfigureProtocolRuntime(ctx, opts.Node, opts.Collection); err != nil {
 		return fmt.Errorf("configure stream protocol runtime: %w", err)
 	}
-	statsDir := filepath.Join(opts.Spool, "stream-capture-stats")
 	go func() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
@@ -343,10 +395,13 @@ func runPassiveStreamWorker(opts passiveStreamOptions) (result error) {
 			}
 		}
 	}()
-	shadow, shadowErr := eventbus.NewShadowFromEnv(ctx, opts.Node, statsDir, discovery.StreamPartitionKey)
-	if shadowErr != nil {
-		log.Printf("event-bus shadow disabled: %v", shadowErr)
-		eventbus.WriteDisabledStats(statsDir, shadowErr)
+	var shadow *eventbus.Shadow
+	if reliableBus == nil {
+		shadow, err = eventbus.NewShadowFromEnv(ctx, opts.Node, statsDir, discovery.StreamPartitionKey)
+		if err != nil {
+			log.Printf("event-bus shadow disabled: %v", err)
+			eventbus.WriteDisabledStats(statsDir, err)
+		}
 	}
 	if shadow != nil {
 		defer func() {
@@ -357,8 +412,9 @@ func runPassiveStreamWorker(opts passiveStreamOptions) (result error) {
 			}
 		}()
 	}
-	processor := passiveStreamProcessor(journal, writer)
+	processor := passiveStreamProcessor(journal, laneWriter)
 	processor.Observer = metrics.observe
+	processor.AckObserver = metrics.observeAck
 	laneCapacity := 64
 	if buffer != nil {
 		laneCapacity = buffer.hard
@@ -366,12 +422,14 @@ func runPassiveStreamWorker(opts passiveStreamOptions) (result error) {
 	archiveQueue := make(chan string, laneCapacity)
 	searchQueue := make(chan string, laneCapacity)
 	projectionQueue := make(chan string, laneCapacity)
+	eventBusQueue := make(chan string, laneCapacity)
 	finalizeQueue := make(chan passiveFinalizerSignal, 256)
 	metricsDone := make(chan struct{})
 	sampleQueues := func() {
 		metrics.queue("archive", len(archiveQueue), cap(archiveQueue))
 		metrics.queue("search", len(searchQueue), cap(searchQueue))
 		metrics.queue("projection", len(projectionQueue), cap(projectionQueue))
+		metrics.queue("eventbus", len(eventBusQueue), cap(eventBusQueue))
 		metrics.queue("finalizer", len(finalizeQueue), cap(finalizeQueue))
 	}
 	go func() {
@@ -395,7 +453,7 @@ func runPassiveStreamWorker(opts passiveStreamOptions) (result error) {
 		metrics.report("shutdown")
 	}()
 
-	laneResults := make(chan error, 4)
+	laneResults := make(chan error, 5)
 	maintenanceResult := make(chan error, 1)
 	go func() {
 		ticker := time.NewTicker(time.Second)
@@ -462,6 +520,11 @@ func runPassiveStreamWorker(opts passiveStreamOptions) (result error) {
 					case <-time.After(200 * time.Millisecond):
 					}
 				}
+				if lane == streamlog.EventBus {
+					// The finalizer retries after three normal lane signals while
+					// this independent broker lane is still unconfirmed.
+					continue
+				}
 				started := time.Now()
 				select {
 				case finalizeQueue <- passiveFinalizerSignal{id: id, lane: lane}:
@@ -478,6 +541,7 @@ func runPassiveStreamWorker(opts passiveStreamOptions) (result error) {
 	go runLane(streamlog.Archive, archiveQueue)
 	go runLane(streamlog.Search, searchQueue)
 	go runLane(streamlog.Projection, projectionQueue)
+	go runLane(streamlog.EventBus, eventBusQueue)
 	go func() {
 		finalize := processor.FinalizeAfterLanes
 		if buffer != nil {
@@ -495,21 +559,26 @@ func runPassiveStreamWorker(opts passiveStreamOptions) (result error) {
 		}
 		laneResults <- err
 	}()
-	enqueue := func(id string) error {
+	enqueue := func(id string, needsBus bool) error {
 		for i, queue := range []chan string{archiveQueue, searchQueue, projectionQueue} {
 			lane := []streamlog.Lane{streamlog.Archive, streamlog.Search, streamlog.Projection}[i]
 			if err := enqueuePassiveLane(ctx, queue, id, lane, metrics); err != nil {
 				return err
 			}
 		}
+		if needsBus {
+			if err := enqueuePassiveLane(ctx, eventBusQueue, id, streamlog.EventBus, metrics); err != nil {
+				return err
+			}
+		}
 		return nil
 	}
 	for _, id := range recovered {
-		if err := enqueue(id); err != nil {
+		if err := enqueue(id, recoveredNeedsBus[id]); err != nil {
 			stop()
 			// Join lanes before the deferred final metrics snapshot, including failures
 			// while recovering the durable backlog before capture starts.
-			for range 4 {
+			for range 5 {
 				<-laneResults
 			}
 			<-maintenanceResult
@@ -525,17 +594,21 @@ func runPassiveStreamWorker(opts passiveStreamOptions) (result error) {
 		if buffer != nil {
 			captureJournal = passiveBufferedCaptureJournal{journal: journal, buffer: buffer}
 		}
+		if reliableBus != nil {
+			captureJournal = passiveReliableCaptureJournal{PassiveStreamJournal: captureJournal}
+		}
 		captureErr = discovery.CaptureStreamConfigured(ctx, opts.Interface, statsDir, source, allow, opts.Collection, captureJournal, scope, func(captured discovery.CapturedSegment) error {
 			metrics.observe("capture", "append_commit", captured.AppendCommitDuration, nil)
+			metrics.observeCapture(captured.Segment)
 			if shadow != nil {
 				shadow.Publish(captured.ID, captured.Segment)
 			}
-			return enqueue(captured.ID)
+			return enqueue(captured.ID, reliableBus != nil)
 		})
 	}
 	stop()
 	var consumerErr error
-	for range 4 {
+	for range 5 {
 		if err := <-laneResults; err != nil && consumerErr == nil {
 			consumerErr = err
 		}

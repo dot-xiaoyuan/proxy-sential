@@ -808,7 +808,7 @@ paths:
         - { name: coverage_state, in: query, schema: { type: string, enum: [unknown, partial, verified] } }
         - { name: confidence_min, in: query, schema: { type: integer, minimum: 0, maximum: 100 } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
-        - { name: cursor, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { name: cursor, in: query, description: Opaque keyset cursor scoped to the current filters, schema: { type: string } }
       responses:
         '200':
           description: Searchable shared-gateway observation page
@@ -2136,21 +2136,41 @@ paths:
         - { name: status, in: query, schema: { type: string, enum: [running, completed, failed] } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
         - { name: cursor, in: query, schema: { type: string } }
+        - { name: seek, in: query, description: Set to 1 for a bounded keyset page without a request-time count., schema: { type: string, enum: ['1'] } }
       responses:
         '200':
           description: Paginated synchronization history.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/IdentityBridgeRunPage' }
+              schema:
+                oneOf:
+                  - { $ref: '#/components/schemas/IdentityBridgeRunPage' }
+                  - { $ref: '#/components/schemas/IdentityBridgeRunSeekPage' }
   /integrations/identity/batches:
     get:
       operationId: listIdentityBatches
       parameters:
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
         - { name: cursor, in: query, schema: { type: string } }
+        - { name: seek, in: query, description: Set to 1 for a bounded keyset page without a request-time count., schema: { type: string, enum: ['1'] } }
       responses:
         "200":
           description: Paginated identity batches with status, error detail and retry count.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [items, page]
+                    properties:
+                      items: { type: array, items: { type: object, additionalProperties: true } }
+                      page: { $ref: '#/components/schemas/Page' }
+                  - type: object
+                    required: [items, next_cursor, has_more]
+                    properties:
+                      items: { type: array, items: { type: object, additionalProperties: true } }
+                      next_cursor: { type: string }
+                      has_more: { type: boolean }
   /integrations/identity/batches/{batch_id}/replay:
     post:
       operationId: replayIdentityBatch
@@ -2478,6 +2498,11 @@ paths:
                             - matched
                             - insufficient
                             - expired
+                        evidence_review_status:
+                          type: string
+                          enum: [rule_verified, pending_review, insufficient_evidence, unverified]
+                        evidence_review_reason:
+                          type: string
                         evidence:
                           type: object
                           additionalProperties: true
@@ -2773,6 +2798,33 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
+  /dpi/flows/count:
+    get:
+      operationId: countDpiFlows
+      description: Exact count requested separately from the bounded flow list.
+      parameters:
+        - $ref: "#/components/parameters/EventFilterQuery"
+        - $ref: "#/components/parameters/EventTypeQuery"
+        - $ref: "#/components/parameters/SensorIdQuery"
+        - $ref: "#/components/parameters/FromQuery"
+        - $ref: "#/components/parameters/ToQuery"
+        - $ref: "#/components/parameters/WindowQuery"
+        - $ref: "#/components/parameters/SrcIpQuery"
+        - $ref: "#/components/parameters/DstIpQuery"
+        - $ref: "#/components/parameters/DomainQuery"
+        - $ref: "#/components/parameters/UserAgentQuery"
+        - $ref: "#/components/parameters/FingerprintQuery"
+        - $ref: "#/components/parameters/PortQuery"
+        - $ref: "#/components/parameters/ProtoQuery"
+        - $ref: "#/components/parameters/AppProtocolQuery"
+      responses:
+        "200":
+          description: Exact matching flow count and query time.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListExactCount" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/InternalError" }
   /dpi/flows/{flow_id}:
     get:
       operationId: getDpiFlow
@@ -3790,6 +3842,39 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
+  /events/count:
+    get:
+      operationId: countEvents
+      description: Exact count requested separately from the bounded event list.
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: type, in: query, schema: { type: string } }
+        - { name: sensor_id, in: query, schema: { type: string } }
+        - $ref: "#/components/parameters/CampusIdQuery"
+        - $ref: "#/components/parameters/DepartmentQuery"
+        - $ref: "#/components/parameters/PersonTypeQuery"
+        - $ref: "#/components/parameters/SSIDQuery"
+        - $ref: "#/components/parameters/VLANQuery"
+        - $ref: "#/components/parameters/APQuery"
+        - $ref: "#/components/parameters/NASIPQuery"
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: window, in: query, schema: { type: string, enum: [10m, 1h, 24h] } }
+        - { name: src_ip, in: query, schema: { type: string } }
+        - { name: dst_ip, in: query, schema: { type: string } }
+        - { name: domain, in: query, schema: { type: string } }
+        - { name: user_agent, in: query, schema: { type: string } }
+        - { name: fingerprint, in: query, schema: { type: string } }
+        - { name: port, in: query, schema: { type: integer, minimum: 1, maximum: 65535 } }
+        - { name: proto, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Exact matching event count and query time.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListExactCount" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/InternalError" }
   /events/stream-index:
     get:
       operationId: listStreamEventIndex
@@ -4050,21 +4135,26 @@ paths:
         - name: q
           in: query
           schema: { type: string }
+        - { name: seek, in: query, description: Set to 1 for a bounded keyset page without a request-time count., schema: { type: string, enum: ['1'] } }
       responses:
         "200":
           description: Audit log entries.
           content:
             application/json:
               schema:
-                type: object
-                required: [logs, page]
-                properties:
-                  logs:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/AuditLog"
-                  page:
-                    $ref: "#/components/schemas/Page"
+                oneOf:
+                  - type: object
+                    required: [logs, page]
+                    properties:
+                      logs: { type: array, items: { $ref: '#/components/schemas/AuditLog' } }
+                      page: { $ref: '#/components/schemas/Page' }
+                  - type: object
+                    required: [logs, next_cursor, has_more, snapshot]
+                    properties:
+                      logs: { type: array, items: { $ref: '#/components/schemas/AuditLog' } }
+                      next_cursor: { type: string }
+                      has_more: { type: boolean }
+                      snapshot: { type: string, format: date-time }
         "400":
           $ref: "#/components/responses/BadRequest"
         "500":
@@ -6018,11 +6108,11 @@ components:
         items: { type: array, items: { $ref: '#/components/schemas/SharedBehaviorAssessment' } }
         page:
           type: object
-          required: [limit, next_cursor, total]
+          required: [limit, next_cursor, has_more]
           properties:
             limit: { type: integer }
             next_cursor: { type: [string, 'null'] }
-            total: { type: integer }
+            has_more: { type: boolean }
     SharedReviewHistoryPage:
       type: object
       required:
@@ -6386,6 +6476,15 @@ components:
           type: array
           items: { $ref: '#/components/schemas/IdentityBridgeRun' }
         page: { $ref: '#/components/schemas/Page' }
+    IdentityBridgeRunSeekPage:
+      type: object
+      required: [items, next_cursor, has_more]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/IdentityBridgeRun' }
+        next_cursor: { type: string }
+        has_more: { type: boolean }
     IdentitySnapshotReceipt:
       type: object
       required: [snapshot_id, status, observed_at, session_count, replayed]
@@ -7403,6 +7502,8 @@ components:
         expires_at: { type: string, format: date-time }
         status: { type: string, enum: [shadow, pending, running, succeeded, failed, revoked, expired, blocked, recorded] }
         mode: { type: string, enum: [shadow, active, record_only] }
+        evidence_review_status: { type: string, enum: [rule_verified, pending_review, insufficient_evidence, unverified] }
+        evidence_review_reason: { type: string }
         policy_parameters:
           type: object
           properties:
@@ -7768,7 +7869,7 @@ components:
             $ref: "#/components/schemas/NormalizedEventSummary"
         page:
           type: object
-          required: [limit, next_cursor, total]
+          required: [limit, next_cursor, has_more]
           properties:
             limit:
               type: integer
@@ -7776,8 +7877,14 @@ components:
               type:
                 - string
                 - "null"
-            total:
-              type: integer
+            has_more:
+              type: boolean
+    ListExactCount:
+      type: object
+      required: [total, queried_at]
+      properties:
+        total: { type: integer, format: int64 }
+        queried_at: { type: string, format: date-time }
     ProxyProtocolEvidence:
       type: object
       required: [evidence_id, protocol, outcome, trusted, reason, source, parser_id, parser_version, rule_version, config_version, request_at, response_at, connection_id, transaction_id, event_ids, attribution]
@@ -8378,9 +8485,16 @@ components:
       type: object
       required: [status, lag_seconds, result_version]
       properties:
-        status: { type: string, enum: [initializing, ready, processing, delayed, failed] }
+        status: { type: string, enum: [initializing, ready, processing, unknown, delayed, failed] }
         lag_seconds: { type: number }
+        processing_lag_seconds: { type: number, description: 已完成段从首次接收到投影完成的最大实测延迟 }
+        last_projected_input_at: { type: string, format: date-time, description: 已完成段的输入接收水位，不代表来源已追平 }
         result_version: { type: integer, format: int64 }
+        source: { type: string }
+        source_progress_status: { type: string, enum: [unverified, verified] }
+        archive_status: { type: string, enum: [unverified, ready, delayed, failed] }
+        active_epochs: { type: integer, format: int64 }
+        projected_epochs: { type: integer, format: int64 }
         oldest_pending_at: { type: string, format: date-time }
         ingested_at: { type: string, format: date-time }
         processed_at: { type: string, format: date-time }
@@ -9795,7 +9909,7 @@ components:
             $ref: "#/components/schemas/DpiFlowSample"
         page:
           type: object
-          required: [limit, next_cursor, total]
+          required: [limit, next_cursor, has_more]
           properties:
             limit:
               type: integer
@@ -9803,8 +9917,8 @@ components:
               type:
                 - string
                 - "null"
-            total:
-              type: integer
+            has_more:
+              type: boolean
     DpiFlowDetail:
       type: object
       required: [flow, event, risk, evidence]

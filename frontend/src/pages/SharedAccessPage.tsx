@@ -33,6 +33,7 @@ import { request } from '../shared/api/client'
 import { useSession } from '../shared/api/queries'
 import { can } from '../shared/auth/permissions'
 import { statusText } from '../shared/ui/status'
+import { RecordCursorPagination, useRecordCursorPagination } from '../shared/ui/RecordCursorPagination'
 import { AppEmptyState, AppErrorAlert, AppFactBar, AppListHeader, AppListSection, AppLoadingState, AppPageHeader, AppServerPagination, AppTable, AppTableBar, formatDateTime, useServerPagination, useCursorPagePosition, usePaginationMetadata } from '../shared/ui'
 
 type SharedResult = { state: string; reasons: string[]; signal_groups: string[]; quantity_known: boolean; device_lower_bound: number; confidence: number; from: string; to: string }
@@ -50,7 +51,7 @@ type SharedBehavior = {
 type SharedBehaviorDetail = SharedBehavior & { history: { status: SharedBehavior['status']; confidence: number; signal_groups: string[]; coverage_state: SharedBehavior['coverage_state']; rule_version: string; observed_at: string; created_at: string }[] }
 type Review = { review_id: string; account_id: string; campus_id: string; access_domain: string; session_generation: string; episode: number; latest_version: number; latest_result: SharedResult; coverage_state: string; last_conclusion?: { evidence_version: number; operator_id: string; conclusion: string; reason: string; created_at: string } }
 type Page<T> = { items: T[]; next_cursor: string }
-type OffsetPage<T> = { items: T[]; page: { total: number; limit: number; next_cursor?: string } }
+type CursorPage<T> = { items: T[]; page: { has_more: boolean; limit: number; next_cursor?: string | null } }
 type Status = { checked_at: string; identity: { connector_id: string; scope: { campus_id: string; access_domain: string }; state: string; blocker: string; fresh: boolean; observed_at: string; record_count: number }[]; collection: { state: string; blocker: string }; materialization: { state: string; blocker: string }; policy: { state: string; blocker: string }; controller: { state: string; blocker: string } }
 const states: Record<string, string> = { partial:'采集覆盖不足', expired:'证据已过期', processing:'处理中', failed:'处理失败', waiting:'等待数据', evaluated_per_window:'按事件窗口复核', healthy: '最近同步成功', pending: '等待检查', unavailable: '来源不可用', stale: '数据过期', disabled: '未启用', unknown: '尚未验证', blocked: '准入阻断', basis_present: '有共享候选依据', insufficient: '证据不足', not_matched: '未发现共享依据' }
 const blockers: Record<string, string> = { shared_evidence_expired:'共享观察证据已过期，等待新数据', shared_observation_disabled:'共享观测任务未启用', shared_collection_no_data:'尚无共享采集数据', shared_collection_stale:'共享采集数据已过期', shared_processing_failed:'共享处理失败，待办保留并重试', inventory_completeness_unproven: '清单完整性尚未证明', capture_coverage_not_verified: '采集覆盖尚未验证', materialization_freshness_not_verified: '物化新鲜度尚未验证', shared_review_gate_not_verified: '共享复核准入尚未验收', manual_action_not_verified: '人工处置尚未验收', identity_source_disabled: '身份来源未启用', identity_source_stale: '身份来源过期' }
@@ -94,17 +95,16 @@ export function SharedAccessPage() {
   const [tab,setTab]=useUrlState('tab','routers',['devices','routers','associations','history','reviews'],['status','history_basis','observations_cursors','observations_page','observations_limit']);
   const location=useLocation();const session=useSession();const [healthOpen,setHealthOpen]=useState(false);
   const cursor = useReviewPagination('/shared-access/reviews','reviews',tab==='reviews')
-  const behaviorPagination = useServerPagination('observations_')
   const [behaviorStatus, setBehaviorStatus] = useUrlState('status','',undefined,['observations_cursors','observations_page'])
   const [historyBasis,setHistoryBasis] = useUrlState('history_basis','shared',['shared','clues'],['status','observations_cursors','observations_page'])
   const [behaviorKeyword, setBehaviorKeyword] = useUrlState('keyword','',undefined,['observations_cursors','observations_page'])
+  const behaviorPagination = useRecordCursorPagination(`${tab}:${behaviorStatus}:${historyBasis}:${behaviorKeyword}`)
   const [expandedBehaviorRows,setExpandedBehaviorRows]=useState<string[]>([])
   const [behaviorSearchInput,setBehaviorSearchInput]=useState(behaviorKeyword)
-  useEffect(()=>{const timer=globalThis.setTimeout(()=>{const next=behaviorSearchInput.trim();if(next!==behaviorKeyword){setBehaviorKeyword(next);behaviorPagination.reset()}},300);return()=>globalThis.clearTimeout(timer)},[behaviorSearchInput])
+  useEffect(()=>{const timer=globalThis.setTimeout(()=>{const next=behaviorSearchInput.trim();if(next!==behaviorKeyword)setBehaviorKeyword(next)},300);return()=>globalThis.clearTimeout(timer)},[behaviorSearchInput])
   const status = useQuery({ queryKey: ['shared-access-status'], queryFn: () => request<Status>('/shared-access/status'), refetchInterval: 5000, enabled:healthOpen&&can(session.data,'identity:read') })
   const reviews = useQuery({ queryKey: ['shared-access-reviews', cursor.cursor, cursor.pageSize, cursor.snapshot], queryFn: () => request<Page<Review>>(`/shared-access/reviews?limit=${cursor.pageSize}&cursor=${encodeURIComponent(cursor.cursor)}&snapshot=${encodeURIComponent(cursor.snapshot)}`),enabled:tab==='reviews'&&cursor.ready })
-  const behavior = useQuery({ queryKey: ['shared-access-observations', behaviorPagination.cursor, behaviorPagination.pageSize, behaviorStatus, behaviorKeyword,tab,historyBasis], queryFn: () => request<OffsetPage<SharedBehavior>>(`/shared-access/observations?limit=${behaviorPagination.pageSize}&cursor=${encodeURIComponent(behaviorPagination.cursor)}&view=${tab==='history'?'history':'current'}${tab==='history'?`&history_basis=${encodeURIComponent(historyBasis)}`:''}&status=${encodeURIComponent(behaviorStatus)}&keyword=${encodeURIComponent(behaviorKeyword)}`), refetchInterval: 30000,enabled:tab==='associations'||tab==='history' })
-  useEffect(()=>{if(behavior.data&&!behavior.isFetching&&behavior.data!.items.length===0&&behaviorPagination.page>1)behaviorPagination.reset()},[behavior.data,behavior.isFetching,behaviorPagination])
+  const behavior = useQuery({ queryKey: ['shared-access-observations', behaviorPagination.cursor, behaviorPagination.pageSize, behaviorStatus, behaviorKeyword,tab,historyBasis], queryFn: () => request<CursorPage<SharedBehavior>>(`/shared-access/observations?limit=${behaviorPagination.pageSize}&cursor=${encodeURIComponent(behaviorPagination.cursor)}&view=${tab==='history'?'history':'current'}${tab==='history'?`&history_basis=${encodeURIComponent(historyBasis)}`:''}&status=${encodeURIComponent(behaviorStatus)}&keyword=${encodeURIComponent(behaviorKeyword)}`), refetchInterval: 30000,enabled:tab==='associations'||tab==='history' })
   const toggleBehaviorEvidence=(id:string)=>setExpandedBehaviorRows(current=>current.includes(id)?current.filter(value=>value!==id):[...current,id])
   const reviewColumns: ColumnsType<Review> = [
     {title:'账号',key:'account',width:180,render:(_,review)=><Link to={detailPath(`/shared-access/reviews/${review.review_id}`,location.pathname+location.search)}><strong>{review.account_id}</strong></Link>},
@@ -140,12 +140,12 @@ export function SharedAccessPage() {
     {(tab==='associations'||tab==='history')&&<>
       <AppTableBar searchPlaceholder="IP、终端、品牌或型号" searchValue={behaviorSearchInput} onSearchChange={setBehaviorSearchInput} filters={<Select aria-label={tab==='history'?'历史证据范围':'判定状态'} allowClear={tab!=='history'} placeholder="全部判定状态" value={tab==='history'?historyBasis:behaviorStatus || undefined} onChange={value => tab==='history'?setHistoryBasis(value):setBehaviorStatus(value || '')} options={tab==='history'?[{value:'shared',label:'历史多终端证据'},{value:'clues',label:'旧规则线索复核'}]:Object.entries(behaviorStates).map(([value, label]) => ({ value, label }))} />} />
       <section className="surface">
-      <AppListHeader title={tab==='history'?(historyBasis==='clues'?'旧规则线索复核':'历史多终端观察'):'多终端接入观察'} count={`${behavior.data?.page.total ?? 0} 条`} actions={<span className="shared-access-muted">仅记录，未执行</span>} />
+      <AppListHeader title={tab==='history'?(historyBasis==='clues'?'旧规则线索复核':'历史多终端观察'):'多终端接入观察'} count={behavior.data ? `本页 ${behavior.data.items.length} 条` : undefined} actions={<span className="shared-access-muted">仅记录，未执行</span>} />
       <p className="shared-access-muted">{tab==='history'?(historyBasis==='clues'?'这些旧规则线索缺少可靠的多终端证据，不表示曾经确认共享。原始评分和解释仅供追溯。':'仅展示当时有明确多终端证据且采集覆盖已验证的记录，不代表设备现在仍有共享行为。'):'仅展示有多终端接入关系的设备。接入关联不等于路由器共享：仍需验证路由 / NAT 转发。多 UA、TLS 指纹及 UA 型号均不作为共享依据。'}</p>
       <AppListSection isError={behavior.isError} errorTitle="共享网关观察读取失败" isLoading={behavior.isLoading} loadingRows={4} isEmpty={!behavior.data?.items.length} emptyText={tab==='history'?(historyBasis==='clues'?'暂无旧规则复核线索':'暂无有明确多终端证据的历史记录'):'暂无多终端接入关联证据；仅有协议线索的 IP 不列入共享核验，不表示已证明不存在共享'}>
         <AppTable rowKey="observation_id" columns={behaviorColumns} dataSource={behavior.data?.items ?? []} scroll={{x:960}} expandable={{expandedRowKeys:expandedBehaviorRows,showExpandColumn:false,expandedRowRender:item=><SharedBehaviorEvidence item={item} historical={tab==='history'} locationPath={location.pathname+location.search}/>}} />
       </AppListSection>
-      <AppServerPagination page={behaviorPagination.page} pageSize={behaviorPagination.pageSize} total={behavior.data?.page.total} onChange={behaviorPagination.update}/>
+      <RecordCursorPagination page={behaviorPagination.page} pageSize={behaviorPagination.pageSize} count={behavior.data?.items.length ?? 0} nextCursor={behavior.data?.page.next_cursor ?? ''} fetching={behavior.isFetching} onNext={()=>behaviorPagination.next(behavior.data?.page.next_cursor ?? '')} onPrevious={behaviorPagination.previous} onPageSizeChange={behaviorPagination.changePageSize}/>
       </section>
     </>}
     {tab==='reviews'&&<section className="surface">

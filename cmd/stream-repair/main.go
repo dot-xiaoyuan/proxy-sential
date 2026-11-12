@@ -1,4 +1,4 @@
-// stream-repair restores a stopped source's proven-unsent ClickHouse lane.
+// stream-repair reconciles one stopped source's ambiguous ClickHouse lane.
 // It does not mark the journal acknowledged; the ingest stream worker must
 // verify all consumers and finalize the segment afterward.
 package main

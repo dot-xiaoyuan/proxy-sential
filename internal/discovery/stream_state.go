@@ -41,6 +41,37 @@ type streamDiscoveryState struct {
 	Document             map[string]any `json:"document"`
 }
 
+// A repeat may bypass the expensive state fact scan only when its new fact
+// lease and receipt are written in the same transaction. The old state is
+// allowed to lag for less than the existing five-second freshness window.
+type streamRepeatStateSkip struct {
+	Scope         string
+	FirstObserved time.Time
+	LastObserved  time.Time
+	ValidUntil    time.Time
+}
+
+func streamRepeatStateCandidate(previous *streamDiscoveryFact, next streamDiscoveryFact, decision streamFactDecision) (streamRepeatStateSkip, bool) {
+	if previous == nil || decision.Result != "repeat_observation" || !decision.WriteFact || decision.VisibleChanged ||
+		previous.Scope != next.Scope || previous.Withdrawn || next.Withdrawn ||
+		next.Revision != previous.Revision || !next.Observed.After(previous.Observed) ||
+		!next.FirstObserved.Equal(previous.FirstObserved) || next.ValidUntil.Before(previous.ValidUntil) {
+		return streamRepeatStateSkip{}, false
+	}
+	return streamRepeatStateSkip{Scope: next.Scope, FirstObserved: next.FirstObserved, LastObserved: next.Observed, ValidUntil: next.ValidUntil}, true
+}
+
+func canSkipStreamRepeatState(old streamDiscoveryState, repeat streamRepeatStateSkip, now time.Time) bool {
+	// An extended lease is safe only because ExpiresAt remains at the old
+	// durable wake: ExpireStreamDiscoveryStates selects that row when due and
+	// rebuilds it from the already committed fact lease. Keep the five-second
+	// margin so the expiry worker runs before an old summary looks stale.
+	return old.Scope == repeat.Scope && old.Document["current"] == true && old.ExpiresAt != nil &&
+		old.ExpiresAt.After(now.Add(5*time.Second)) && !repeat.FirstObserved.Before(old.FirstSeen) &&
+		!repeat.LastObserved.Before(old.LastSeen) && repeat.LastObserved.Before(old.LastSeen.Add(5*time.Second)) &&
+		!repeat.LastObserved.After(now) && repeat.ValidUntil.After(repeat.LastObserved)
+}
+
 func buildStreamDiscoveryState(epoch, key string, facts []streamDiscoveryFact, previous *streamDiscoveryState, now time.Time) (streamDiscoveryState, error) {
 	return buildStreamDiscoveryStateSummary(epoch, key, facts, previous, now, len(facts), false, nil, nil)
 }
@@ -316,6 +347,14 @@ func streamDiscoveryStateMatchesStored(old streamDiscoveryState, next streamDisc
 }
 
 func publishStreamDiscoveryStates(ctx context.Context, tx *sql.Tx, epoch string, keys []string, newFactCounts map[string]int) error {
+	return publishStreamDiscoveryStatesCount(ctx, tx, epoch, keys, newFactCounts, nil)
+}
+
+func publishStreamDiscoveryStatesCount(ctx context.Context, tx *sql.Tx, epoch string, keys []string, newFactCounts map[string]int, affected *int64) error {
+	return publishStreamDiscoveryStatesCountWithRepeats(ctx, tx, epoch, keys, newFactCounts, nil, affected)
+}
+
+func publishStreamDiscoveryStatesCountWithRepeats(ctx context.Context, tx *sql.Tx, epoch string, keys []string, newFactCounts map[string]int, repeatCandidates map[string]streamRepeatStateSkip, affected *int64) error {
 	if len(keys) == 0 {
 		return nil
 	}
@@ -348,6 +387,22 @@ func publishStreamDiscoveryStates(ctx context.Context, tx *sql.Tx, epoch string,
 	rows.Close()
 	if err != nil {
 		return err
+	}
+	if len(repeatCandidates) > 0 {
+		now := time.Now().UTC()
+		remaining := make([]string, 0, len(keys))
+		for _, key := range keys {
+			candidate, repeat := repeatCandidates[key]
+			old, exists := oldStates[key]
+			if repeat && exists && newFactCounts[key] == 0 && canSkipStreamRepeatState(old, candidate, now) {
+				continue
+			}
+			remaining = append(remaining, key)
+		}
+		keys = remaining
+		if len(keys) == 0 {
+			return nil
+		}
 	}
 	factsByDevice := map[string][]streamDiscoveryFact{}
 	rows, err = tx.QueryContext(ctx, `SELECT v.device_key,to_jsonb(f) FROM unnest($2::text[]) AS v(device_key)
@@ -489,7 +544,7 @@ func publishStreamDiscoveryStates(ctx context.Context, tx *sql.Tx, epoch string,
 	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(9184,213)`); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO stream_discovery_device_state(epoch,device_key,scope_id,sensor_id,site,domain,vlan,interface_name,name,manufacturer,model_name,device_type,category,last_device_type,last_category,classification_status,first_seen,last_seen,expires_at,document)
+	result, err := tx.ExecContext(ctx, `INSERT INTO stream_discovery_device_state(epoch,device_key,scope_id,sensor_id,site,domain,vlan,interface_name,name,manufacturer,model_name,device_type,category,last_device_type,last_category,classification_status,first_seen,last_seen,expires_at,document)
  SELECT v.epoch,v.device_key,v.scope_id,v.sensor_id,v.site,v.domain,v.vlan,v.interface_name,v.name,v.manufacturer,v.model_name,v.device_type,v.category,v.last_device_type,v.last_category,v.classification_status,v.first_seen,v.last_seen,v.expires_at,v.document
  FROM jsonb_to_recordset($1::jsonb) AS v(epoch text,device_key text,scope_id text,sensor_id text,site text,domain text,vlan text,interface_name text,name text,manufacturer text,model_name text,device_type text,category text,last_device_type text,last_category text,classification_status text,first_seen timestamptz,last_seen timestamptz,expires_at timestamptz,document jsonb)
  ON CONFLICT(epoch,device_key) DO UPDATE SET scope_id=EXCLUDED.scope_id,sensor_id=EXCLUDED.sensor_id,site=EXCLUDED.site,domain=EXCLUDED.domain,vlan=EXCLUDED.vlan,interface_name=EXCLUDED.interface_name,name=EXCLUDED.name,manufacturer=EXCLUDED.manufacturer,model_name=EXCLUDED.model_name,device_type=EXCLUDED.device_type,category=EXCLUDED.category,last_device_type=EXCLUDED.last_device_type,last_category=EXCLUDED.last_category,classification_status=EXCLUDED.classification_status,first_seen=EXCLUDED.first_seen,last_seen=EXCLUDED.last_seen,expires_at=EXCLUDED.expires_at,document=EXCLUDED.document,result_version=nextval('stream_discovery_result_version'),updated_at=now()
@@ -497,6 +552,12 @@ func publishStreamDiscoveryStates(ctx context.Context, tx *sql.Tx, epoch string,
  OR stream_discovery_device_state.first_seen IS DISTINCT FROM EXCLUDED.first_seen
  OR stream_discovery_device_state.last_seen IS DISTINCT FROM EXCLUDED.last_seen
  OR stream_discovery_device_state.expires_at IS DISTINCT FROM EXCLUDED.expires_at`, raw)
+	if err != nil {
+		return err
+	}
+	if affected != nil {
+		*affected, err = result.RowsAffected()
+	}
 	return err
 }
 

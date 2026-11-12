@@ -17,6 +17,11 @@ import { can } from '../shared/auth/permissions'
 import { NativeObservations } from '../entities/evidence/NativeObservations'
 import { AppErrorAlert, AppListHeader, AppLoadingState, AppTable, formatDateTime } from '../shared/ui'
 import { RecordCursorPagination, useRecordCursorPagination } from '../shared/ui/RecordCursorPagination'
+import { evidenceReviewReason } from '../shared/evidenceReview'
+const evidenceReviewLabels: Record<string,string> = {
+  rule_verified: '强证据规则通过', pending_review: '历史记录待核验',
+  insufficient_evidence: '旧规则证据不足', unverified: '证据缺失，待核验',
+}
 export function ActionHistory(){
   const pagination=useRecordCursorPagination('actions')
   const params = new URLSearchParams({ seek: '1', limit: String(pagination.pageSize) })
@@ -63,6 +68,13 @@ export function ActionHistory(){
                       {value==='recorded'?'已记录，未执行':statusText(value)}
                     </Tag>
                   ),
+                },
+                {
+                  title: "证据核验",
+                  key: "evidence_review_status",
+                  render: (_, item) => item.evidence_review_status
+                    ? <Tag color={item.evidence_review_status==='insufficient_evidence'?'red':item.evidence_review_status==='rule_verified'?'green':'orange'} title={evidenceReviewReason(item.evidence_review_reason)}>{evidenceReviewLabels[item.evidence_review_status]}</Tag>
+                    : null,
                 },
                 {
                   title: "时间",

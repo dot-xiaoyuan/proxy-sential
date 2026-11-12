@@ -47,6 +47,14 @@ type RiskFeatureWriter interface {
 	ReconcileRiskFeatures(context.Context, string, Segment) error
 }
 
+// EventBusWriter is optional; only segments carrying the persisted canary bit
+// require it. Reconciliation may republish the same stable events after an
+// ambiguous callback, so downstream consumers must deduplicate by event ID.
+type EventBusWriter interface {
+	WriteEventBus(context.Context, string, Segment) error
+	ReconcileEventBus(context.Context, string, Segment) error
+}
+
 // ProcessorStage identifies a bounded operation; labels never contain segment IDs
 // or user data. Journal stages include local lock/disk work; write, reconcile and
 // finalize measure the sink call, including its own bounded input preparation.
@@ -82,6 +90,9 @@ type Processor struct {
 	// lane denotes whole-segment finalization. Errors are for counting, not logging
 	// evidence or request contents. Nil preserves existing processor behavior.
 	Observer func(Lane, ProcessorStage, time.Duration, error)
+	// AckObserver sees a lane only after its durable journal acknowledgement.
+	// It is for in-memory batch counters; it must be concurrency-safe and do no I/O.
+	AckObserver func(Lane, Segment)
 	// SinkTimeout starts after local source recovery and fsynced attempt state.
 	// A slow journal disk must not consume the database request's own budget.
 	SinkTimeout time.Duration
@@ -199,6 +210,15 @@ func (p Processor) DrainLane(ctx context.Context, id string, lane Lane) error {
 		return p.runLane(ctx, id, RiskFeatures, state, writer.WriteRiskFeatures, writer.ReconcileRiskFeatures)
 	case Projection:
 		return p.runLane(ctx, id, lane, state, p.Writer.Project, p.Writer.ReconcileProjection)
+	case EventBus:
+		if !state.Segment.EventBusRequired {
+			return ErrContentConflict
+		}
+		writer, ok := p.Writer.(EventBusWriter)
+		if !ok {
+			return errors.New("stream event bus writer is not configured")
+		}
+		return p.runLane(ctx, id, lane, state, writer.WriteEventBus, writer.ReconcileEventBus)
 	default:
 		return fmt.Errorf("invalid stream lane %q", lane)
 	}
@@ -300,6 +320,11 @@ func (p Processor) Drain(ctx context.Context, id string) error {
 			failures = append(failures, err)
 		}
 	}
+	if state.Segment.EventBusRequired {
+		if err := p.DrainLane(ctx, id, EventBus); err != nil {
+			failures = append(failures, err)
+		}
+	}
 	if len(failures) > 0 {
 		return errors.Join(failures...)
 	}
@@ -393,5 +418,8 @@ func (p Processor) runLane(ctx context.Context, id string, lane Lane, state Stat
 	err = p.Journal.setAckWithProof(id, lane, Acked, state.ContentSHA256)
 	p.observe(lane, StageAck, started, err)
 	reportSlow("ack", started)
+	if err == nil && p.AckObserver != nil {
+		p.AckObserver(lane, state.Segment)
+	}
 	return err
 }

@@ -211,6 +211,15 @@ has_compose() {
   docker compose version >/dev/null 2>&1
 }
 
+storage_replacement_allowed() {
+  # A missing current release is a fresh or incomplete installation. Once an
+  # application is serving, never replace storage as a side effect of an
+  # upgrade while its ready check is already failing.
+  [[ ! -e "$root/current" && ! -L "$root/current" ]] && return 0
+  curl -fsS --max-time 3 "$health_url" >/dev/null 2>&1 ||
+    die "refusing storage container replacement while $health_url is not ready"
+}
+
 start_storage_direct() {
   local container
   log "Docker Compose v2 is unavailable; using the compatible single-host Docker runtime"
@@ -228,6 +237,7 @@ start_storage_direct() {
     log "storage containers already run the pinned images; keeping them"
     return
   fi
+  storage_replacement_allowed
   for container in proxy-sentinel-postgres proxy-sentinel-clickhouse; do
     [[ "$container" == proxy-sentinel-postgres && "$postgres_keep" == true ]] && continue
     [[ "$container" == proxy-sentinel-clickhouse && "$clickhouse_keep" == true ]] && continue
@@ -276,13 +286,29 @@ install_clickhouse_system_log_policy() {
   mkdir -p "$dir"
   # System-log policy ships with the release. A running container on the pinned image is
   # kept, so it picks the policy up when it is next recreated, never by a forced restart.
-  install -m 0644 "$stage_dir/deploy/clickhouse/production-system-logs.xml" "$dir/production-system-logs.xml"
+  # A separate marker records the post-recovery decision to enable query_log TTL;
+  # old host XML alone cannot authorize it because 184 previously staged that TTL.
+  python3 "$stage_dir/scripts/converge-clickhouse-system-logs.py" \
+    --materialize-staged-policy --apply \
+    --base-policy "$stage_dir/deploy/clickhouse/production-system-logs.xml" \
+    --query-log-template "$stage_dir/deploy/clickhouse/production-query-log-retention.xml" \
+    --policy-file "$dir/production-system-logs.xml"
 }
 
 start_storage() {
   install_clickhouse_system_log_policy
   if has_compose; then
     docker compose --env-file "$runtime_env" -f "$stage_dir/deploy/compose/storage.yml" config --quiet
+    # The policy file is staged on the host, but adding its bind mount to an
+    # existing container would recreate ClickHouse during an application
+    # upgrade. Keep already-running pinned storage and activate the mount in a
+    # separate, healthy maintenance window.
+    if storage_container_current proxy-sentinel-postgres "$POSTGRES_IMAGE" &&
+      storage_container_current proxy-sentinel-clickhouse "$CLICKHOUSE_IMAGE"; then
+      log "storage containers already run pinned images; keeping them (ClickHouse log policy activation deferred)"
+      return
+    fi
+    storage_replacement_allowed
     docker compose --env-file "$runtime_env" -f "$stage_dir/deploy/compose/storage.yml" up -d
   else
     start_storage_direct

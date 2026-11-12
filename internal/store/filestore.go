@@ -836,51 +836,7 @@ func (s *FileStore) dpiEventSet(ctx context.Context, query ActivityQuery) (strin
 }
 
 func (s *FileStore) ListEvents(ctx context.Context, query Query) (EventPage, error) {
-	limit := query.Limit
-	if limit == 0 {
-		limit = 50
-	}
-	events, err := s.ListEventSamples(ctx, Query{
-		Level:       query.Level,
-		Q:           query.Q,
-		SensorID:    query.SensorID,
-		From:        query.From,
-		To:          query.To,
-		Window:      query.Window,
-		SrcIP:       query.SrcIP,
-		DstIP:       query.DstIP,
-		Domain:      query.Domain,
-		UserAgent:   query.UserAgent,
-		Fingerprint: query.Fingerprint,
-		Port:        query.Port,
-		Proto:       query.Proto,
-		AppProtocol: query.AppProtocol,
-		Limit:       -1,
-	})
-	if err != nil {
-		return EventPage{}, err
-	}
-	sort.Slice(events, func(i, j int) bool {
-		if events[i].Timestamp != events[j].Timestamp {
-			return events[i].Timestamp > events[j].Timestamp
-		}
-		return events[i].EventID > events[j].EventID
-	})
-	total := len(events)
-	cursor := query.Cursor
-	if cursor > total {
-		cursor = total
-	}
-	end := cursor + limit
-	if end > total {
-		end = total
-	}
-	var next *string
-	if end < total {
-		value := strconv.Itoa(end)
-		next = &value
-	}
-	return EventPage{Items: events[cursor:end], Page: Page{Limit: limit, NextCursor: next, Total: total}}, nil
+	return s.listEventCursorPage(ctx, query)
 }
 
 func (s *FileStore) GetEvent(ctx context.Context, eventID string) (normalized.Event, bool, error) {

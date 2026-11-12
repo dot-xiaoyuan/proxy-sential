@@ -77,7 +77,7 @@ func TestClickHouseAggregatesOneHundredThousandEventsWithoutRawReads(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Items) != 20 || page.Page.Limit != 20 || page.Page.Total != 100000 || page.Page.NextCursor == nil {
+	if len(page.Items) != 20 || page.Page.Limit != 20 || !page.Page.HasMore || page.Page.NextCursor == nil {
 		t.Fatalf("unexpected paginated event response: items=%d page=%+v", len(page.Items), page.Page)
 	}
 	encodedPage, err := json.Marshal(page)
@@ -186,9 +186,10 @@ func TestClickHouseEventPageCounterBoundariesMatchRaw(t *testing.T) {
 			if err != nil || got != want {
 				t.Fatalf("bounds %v level %s: got=%d want=%d err=%v", bounds, level, got, want, err)
 			}
-			for _, offset := range []int{0, 3, 100, 2000} {
+			cursor := ""
+			for _, offset := range []int{0, 3, 6} {
 				q.Limit = 3
-				q.Cursor = offset
+				q.EventCursor = cursor
 				page, err := s.ListEvents(ctx, q)
 				if err != nil {
 					t.Fatal(err)
@@ -203,14 +204,18 @@ func TestClickHouseEventPageCounterBoundariesMatchRaw(t *testing.T) {
 				if err = decodeJSONEachRow(data, &reference); err != nil {
 					t.Fatal(err)
 				}
-				if page.Page.Total != want || len(reference) != len(page.Items) {
-					t.Fatalf("page total=%d want=%d size=%d want=%d", page.Page.Total, want, len(page.Items), len(reference))
+				if len(reference) != len(page.Items) {
+					t.Fatalf("page size=%d want=%d", len(page.Items), len(reference))
 				}
 				for i, row := range reference {
 					if row.EventID != page.Items[i].EventID {
 						t.Fatalf("unstable page offset=%d position=%d got=%s want=%s", offset, i, page.Items[i].EventID, row.EventID)
 					}
 				}
+				if page.Page.NextCursor == nil {
+					break
+				}
+				cursor = *page.Page.NextCursor
 			}
 
 		}

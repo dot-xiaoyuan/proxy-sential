@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -28,23 +29,17 @@ func (s *ClickHouseStore) ReconcileSettledStreamBody(ctx context.Context, id str
 	for _, item := range prepared {
 		tables[streamBodyTable(item.retention, segment.BodyLayout)] = true
 	}
-	for table := range tables {
-		queued, err := s.streamSystemCount(ctx, "SELECT count() FROM system.asynchronous_inserts WHERE database=currentDatabase() AND table="+chQuote(table))
-		if err != nil {
-			return err
-		}
-		if queued != 0 {
-			return streamlog.ErrUnconfirmed
-		}
+	if err := s.requireQuietStreamRepair(ctx, sortedStreamRepairTables(tables)); err != nil {
+		return err
 	}
 	return s.ReconcileStreamBody(ctx, id, segment)
 }
 
-// RetryProvenUnsentStreamLane is an operator recovery path for a stopped
-// source. It reuses the original immutable segment and deduplication token
-// only when every expected row is absent, ClickHouse has no queued insert for
-// the table, and recent query logging proves the original token was never
-// received. A partial or ambiguous result stays on disk for investigation.
+// RetryProvenUnsentStreamLane is an operator recovery path for a source held by
+// the journal lease. It checks every expected key and hash in the immutable
+// segment and requires quiet ClickHouse insert queues before a distinct repair
+// token. A partial or conflicting result stays on disk for investigation.
+// The original insert's arrival cannot be proven from diagnostic query logs.
 func (s *ClickHouseStore) RetryProvenUnsentStreamLane(ctx context.Context, id string, segment streamlog.Segment, lane streamlog.Lane) error {
 	age := time.Since(segment.AcceptedAt)
 	if age < 2*time.Minute || age > time.Hour {
@@ -58,6 +53,9 @@ func (s *ClickHouseStore) RetryProvenUnsentStreamLane(ctx context.Context, id st
 		prepared, prepErr := prepareStreamEvents(segment)
 		if prepErr != nil {
 			return prepErr
+		}
+		if len(prepared) == 0 {
+			return fmt.Errorf("empty archive segment cannot be repaired: %w", streamlog.ErrUnconfirmed)
 		}
 		for _, item := range prepared {
 			if item.retention != prepared[0].retention {
@@ -100,37 +98,38 @@ func (s *ClickHouseStore) RetryProvenUnsentStreamLane(ctx context.Context, id st
 	if len(missing) != len(segment.Events) {
 		return fmt.Errorf("partially committed stream segment requires scoped manual review: %w", streamlog.ErrUnconfirmed)
 	}
-	from := segment.AcceptedAt.Add(-time.Minute).UTC().Format("2006-01-02 15:04:05")
 	tables := []string{table}
 	if rawRequired {
 		tables = append([]string{"stream_source_raw"}, tables...)
 	}
-	for _, sink := range tables {
-		queued, err := s.streamSystemCount(ctx, "SELECT count() FROM system.asynchronous_inserts WHERE database=currentDatabase() AND table="+chQuote(sink))
-		if err != nil {
-			return err
-		}
-		if queued != 0 {
-			return streamlog.ErrUnconfirmed
-		}
-		token := streamInsertSettings(id, sink)["insert_deduplication_token"]
-		received, err := s.streamSystemCount(ctx, "SELECT count() FROM system.query_log WHERE event_time >= toDateTime("+chQuote(from)+") AND Settings['insert_deduplication_token']="+chQuote(token))
-		if err != nil {
-			return err
-		}
-		if received != 0 {
-			return streamlog.ErrUnconfirmed
-		}
-		coverage, err := s.streamSystemCount(ctx, "SELECT count() FROM system.query_log WHERE event_time >= toDateTime("+chQuote(from)+") AND query LIKE "+chQuote("INSERT INTO "+sink+"%"))
-		if err != nil {
-			return err
-		}
-		if coverage == 0 {
+	if err := s.requireQuietStreamRepair(ctx, tables); err != nil {
+		return err
+	}
+	// An old asynchronous insert can finish while we establish the quiet
+	// interval. Recheck immutable keys after the interval and before minting a
+	// distinct repair token; any arrival leaves this attempt for manual review.
+	if lane == streamlog.Archive {
+		missing, err = s.missingStreamBodyEvents(ctx, segment)
+	} else {
+		missing, err = s.missingStreamSearchEvents(ctx, segment)
+	}
+	if err != nil {
+		return err
+	}
+	if len(missing) != len(segment.Events) {
+		return streamlog.ErrUnconfirmed
+	}
+	if rawRequired {
+		present, err := s.verifyStreamRaw(ctx, id, segment)
+		if err != nil || present {
+			if err != nil {
+				return err
+			}
 			return streamlog.ErrUnconfirmed
 		}
 	}
 	if lane == streamlog.Archive {
-		if err := s.WriteStreamBody(ctx, id, segment); err != nil {
+		if err := s.ReconcileStreamBody(ctx, id, segment); err != nil {
 			return err
 		}
 		if rawRequired {
@@ -151,7 +150,7 @@ func (s *ClickHouseStore) RetryProvenUnsentStreamLane(ctx context.Context, id st
 		}
 		return nil
 	}
-	if err := s.WriteStreamSearch(ctx, id, segment); err != nil {
+	if err := s.ReconcileStreamSearch(ctx, id, segment); err != nil {
 		return err
 	}
 	confirmed, err := s.VerifyStreamSearch(ctx, segment)
@@ -203,30 +202,17 @@ func (s *ClickHouseStore) RetryProvenUnsentStreamRiskFeatures(ctx context.Contex
 		return fmt.Errorf("partially committed risk feature segment requires scoped manual review: %w", streamlog.ErrUnconfirmed)
 	}
 	const table = "stream_risk_features_v1"
-	queued, err := s.streamSystemCount(ctx, "SELECT count() FROM system.asynchronous_inserts WHERE database=currentDatabase() AND table="+chQuote(table))
-	if err != nil || queued != 0 {
-		if err != nil {
-			return err
-		}
+	if err := s.requireQuietStreamRepair(ctx, []string{table}); err != nil {
+		return err
+	}
+	missing, err = s.missingStreamRiskFeatures(ctx, segment)
+	if err != nil {
+		return err
+	}
+	if len(missing) != len(features) {
 		return streamlog.ErrUnconfirmed
 	}
-	from := segment.AcceptedAt.Add(-time.Minute).UTC().Format("2006-01-02 15:04:05")
-	token := streamInsertSettings(id, table)["insert_deduplication_token"]
-	received, err := s.streamSystemCount(ctx, "SELECT count() FROM system.query_log WHERE event_time >= toDateTime("+chQuote(from)+") AND Settings['insert_deduplication_token']="+chQuote(token))
-	if err != nil || received != 0 {
-		if err != nil {
-			return err
-		}
-		return streamlog.ErrUnconfirmed
-	}
-	coverage, err := s.streamSystemCount(ctx, "SELECT count() FROM system.query_log WHERE event_time >= toDateTime("+chQuote(from)+") AND query LIKE 'INSERT INTO stream_risk_features_v1%'")
-	if err != nil || coverage == 0 {
-		if err != nil {
-			return err
-		}
-		return streamlog.ErrUnconfirmed
-	}
-	if err := s.WriteStreamRiskFeatures(ctx, id, segment); err != nil {
+	if err := s.WriteStreamRiskFeatures(ctx, streamRepairToken(id, table), segment); err != nil {
 		return err
 	}
 	confirmed, err := s.VerifyStreamRiskFeatures(ctx, segment)
@@ -235,6 +221,53 @@ func (s *ClickHouseStore) RetryProvenUnsentStreamRiskFeatures(ctx context.Contex
 			return err
 		}
 		return streamlog.ErrUnconfirmed
+	}
+	return nil
+}
+
+func streamRepairToken(segmentID, table string) string {
+	return fmt.Sprintf("repair:%s:%s:%d", segmentID, table, time.Now().UTC().UnixNano())
+}
+
+const streamRepairQuietInterval = 500 * time.Millisecond
+
+func sortedStreamRepairTables(tables map[string]bool) []string {
+	result := make([]string, 0, len(tables))
+	for table := range tables {
+		result = append(result, table)
+	}
+	sort.Strings(result)
+	return result
+}
+
+// requireQuietStreamRepair is only called with a stopped source lease held by
+// the operator command. The two checks include queued async inserts and active
+// INSERT requests; no diagnostic query-log retention is needed.
+func (s *ClickHouseStore) requireQuietStreamRepair(ctx context.Context, tables []string) error {
+	for check := 0; check < 2; check++ {
+		for _, table := range tables {
+			queued, err := s.streamSystemCount(ctx, "SELECT count() FROM system.asynchronous_inserts WHERE database=currentDatabase() AND table="+chQuote(table))
+			if err != nil {
+				return err
+			}
+			if queued != 0 {
+				return streamlog.ErrUnconfirmed
+			}
+			active, err := s.streamSystemCount(ctx, "SELECT count() FROM system.processes WHERE current_database=currentDatabase() AND lower(query_kind)='insert' AND positionCaseInsensitive(query,"+chQuote(table)+")>0")
+			if err != nil {
+				return err
+			}
+			if active != 0 {
+				return streamlog.ErrUnconfirmed
+			}
+		}
+		if check == 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(streamRepairQuietInterval):
+			}
+		}
 	}
 	return nil
 }

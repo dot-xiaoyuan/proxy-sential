@@ -215,11 +215,13 @@ func TestIdentityBatchWriteCoversEveryHotTable(t *testing.T) {
 		"endpoint_device_profiles",
 		"policy_identity_observations",
 		"device_signal_facts",
-		"device_signal_events",
 	} {
 		if !strings.Contains(code, table) {
 			t.Fatalf("batched write layer does not cover %s", table)
 		}
+	}
+	if strings.Contains(code, "INSERT INTO device_signal_events") {
+		t.Fatal("hot signal write reintroduced the per-event join table")
 	}
 	if count := strings.Count(code, "FROM unnest("); count < 8 {
 		t.Fatalf("expected the batched layer to use unnest for every table, found %d", count)

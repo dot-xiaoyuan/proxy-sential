@@ -3,9 +3,10 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Empty, Modal, Segmented, Select, Space, Tag, Tooltip, Typography } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { Link, useSearchParams } from 'react-router-dom'
-import { isDiscoveryReadPathUnsupported, request } from '../shared/api/client'
+import { request } from '../shared/api/client'
 import type { components } from '../shared/api/generated'
-import { AppErrorAlert, AppListHeader, AppServerPagination, AppTable, AppTableBar, useCursorPagePosition } from '../shared/ui'
+import { AppErrorAlert, AppListHeader, AppTable, AppTableBar } from '../shared/ui'
+import { RecordCursorPagination } from '../shared/ui/RecordCursorPagination'
 import { DeviceAddress } from '../entities/device/DeviceAddress'
 import { DiscoveryDeviceIcon } from '../entities/device/DiscoveryDeviceIcon'
 import { observedTimeLabel, observedTimeTitle } from '../shared/ui/observedTime'
@@ -14,7 +15,6 @@ import { DiscoveryEvidenceSummary } from './DiscoveryEvidenceSummary'
 
 type Device = components['schemas']['DiscoveryDevice']
 type DevicePage = components['schemas']['DiscoveryDevicePage']
-type Metadata = components['schemas']['DiscoveryDeviceMetadata']
 type ChassisCandidate = components['schemas']['DiscoveryChassisCandidate']
 
 function rowKey(item: Device) {
@@ -47,21 +47,17 @@ export function RouterAssetsPanel() {
   if (state) scope.set('state', state)
   const scopeKey = scope.toString()
   const filterKey = `${scopeKey}|${pageSize}`
-  const [paging, setPaging] = useState({ key: filterKey, page: 0 })
-  useEffect(()=>setPaging(current=>current.key===filterKey?current:{key:filterKey,page:0}),[filterKey])
-  const page = paging.key === filterKey ? paging.page : 0
-  const position = useCursorPagePosition({ path: '/discovery/devices/position', query: scope, page: page + 1, pageSize })
+  const [paging, setPaging] = useState({ key: filterKey, page: 1, cursors: [''] })
+  useEffect(()=>setPaging(current=>current.key===filterKey?current:{key:filterKey,page:1,cursors:['']}),[filterKey])
+  const currentPaging = paging.key === filterKey ? paging : { key: filterKey, page: 1, cursors: [''] }
+  const page = currentPaging.page
   const query = new URLSearchParams(scope)
   query.set('limit', String(pageSize))
-  if (position.cursor) query.set('cursor', position.cursor)
+  const cursor = currentPaging.cursors[page - 1]
+  if (cursor) query.set('cursor', cursor)
   const devices = useQuery({
     queryKey: ['router-assets', query.toString()],
     queryFn: ({ signal }) => request<DevicePage>(`/discovery/devices?${query}`, { signal }),
-    enabled: position.ready,
-  })
-  const metadata = useQuery({
-    queryKey: ['router-assets-metadata', scopeKey],
-    queryFn: ({ signal }) => request<Metadata>(`/discovery/devices/metadata?${scope}`, { signal }),
   })
   const chassisCandidates = useQuery({
     queryKey: ['router-chassis-candidates', window],
@@ -83,8 +79,19 @@ export function RouterAssetsPanel() {
       return next
     }, { replace: true })
   }
-  const refresh = () => { const first=new URLSearchParams(query);first.delete('cursor');setPaging({key:filterKey,page:0});void position.invalidate();void metadata.refetch();void queryClient.invalidateQueries({queryKey:['router-assets'],refetchType:'none'});void queryClient.refetchQueries({queryKey:['router-assets',first.toString()],exact:true}) }
-  const items = position.ready ? devices.data?.items ?? [] : []
+  const refresh = () => { const first=new URLSearchParams(query);first.delete('cursor');setPaging({key:filterKey,page:1,cursors:['']});void queryClient.invalidateQueries({queryKey:['router-assets'],refetchType:'none'});void queryClient.refetchQueries({queryKey:['router-assets',first.toString()],exact:true}) }
+  const items = devices.data?.items ?? []
+  const freshness = devices.data?.freshness
+  const processedAt = freshness?.processed_at ? observedTimeTitle(freshness.processed_at) : undefined
+  const processingLag = freshness?.processing_lag_seconds ?? 0
+  const freshnessMessage = freshness?.status === 'delayed' ? processingLag > 300
+    ? `设备投影处理延迟约 ${Math.ceil(processingLag / 60)} 分钟${processedAt ? `，最近完成于 ${processedAt}` : ''}；不具备来源追平证明，当前列表可能不是最新结果。`
+    : `设备投影${processedAt ? `最近完成于 ${processedAt}` : '完成时间已过期'}，可能存在处理延迟；不具备来源追平证明，当前列表可能不是最新结果。`
+    : freshness?.status === 'initializing' ? '设备投影正在初始化，当前列表尚未覆盖全部来源。'
+      : freshness?.status === 'failed' ? '设备投影处理失败，当前列表可能不是最新结果。'
+        : freshness?.status === 'unknown' || freshness?.source_progress_status === 'unverified' ? `来源进度尚未核验，不具备来源追平证明${processedAt ? `；设备投影最近完成于 ${processedAt}` : ''}。` : ''
+  const emptyDescription = freshness && (freshness.status === 'delayed' || freshness.status === 'initializing' || freshness.source_progress_status === 'unverified')
+    ? `当前已处理范围内暂无匹配的${label}设备` : `当前观测范围内暂无匹配的${label}设备`
   const filtered = Boolean(search || state || window !== '24h')
   const columns = [
     {
@@ -136,28 +143,19 @@ export function RouterAssetsPanel() {
         {filtered && <Button type="text" onClick={reset}>清空筛选</Button>}
       </>}
     />
-    {position.isError && (isDiscoveryReadPathUnsupported(position.error)
-      ? <Typography.Text type="secondary">当前发现读取路径不提供页码定位，列表从首页开始展示。</Typography.Text>
-      : <AppErrorAlert title="页码定位失败" message={position.error.message} action={<Button onClick={() => void position.refetch()}>重试定位</Button>} />)}
-    {metadata.isError && (isDiscoveryReadPathUnsupported(metadata.error)
-      ? <Typography.Text type="secondary">当前发现读取路径不提供设备数量统计，不影响设备列表查看。</Typography.Text>
-      : <AppErrorAlert title="读取设备数量失败" message={metadata.error.message} action={<Button onClick={() => void metadata.refetch()}>重试统计</Button>} />)}
+    {freshnessMessage && <div className="router-freshness-note" role="status">{freshnessMessage}</div>}
     <section className="surface center-list-surface">
       <AppListHeader
         title={`${label}设备`}
-        count={metadata.data ? `共 ${metadata.data.total} 条设备记录` : undefined}
         description="设备类型用于资产管理；违规与共享行为需另行核验。"
-        actions={<Button aria-label="刷新设备" icon={<ReloadOutlined />} loading={devices.isFetching || metadata.isFetching} onClick={refresh}>刷新</Button>}
+        actions={<Button aria-label="刷新设备" icon={<ReloadOutlined />} loading={devices.isFetching} onClick={refresh}>刷新</Button>}
       />
       {devices.isError ? <AppErrorAlert title="读取网络设备失败" message={devices.error.message} action={<Button onClick={() => void devices.refetch()}>重新读取</Button>} /> : <>
-        <AppTable className="passive-ledger-table" rowKey={rowKey} columns={columns} dataSource={items} loading={devices.isPending||position.isLocating} tableLayout="fixed" scroll={{ x: 900 }} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`当前观测范围内暂无匹配的${label}设备`}>{filtered && <Button onClick={reset}>清空筛选</Button>}</Empty> }} />
-        {(items.length > 0 || page > 0) && <AppServerPagination page={page + 1} pageSize={pageSize} disabled={devices.isFetching || position.isLocating}
-          total={metadata.data?.total}
-          totalText={metadata.data ? `共 ${metadata.data.total} 条` : metadata.isError ? (isDiscoveryReadPathUnsupported(metadata.error) ? '当前读取路径不提供总数' : '数量读取失败') : '正在读取总数'}
-          onChange={(nextPage, nextSize) => {
-            if (nextSize !== pageSize) { setPageSize(nextSize); return }
-            setPaging({ key: filterKey, page: nextPage - 1 })
-          }} />}
+        <AppTable className="passive-ledger-table" rowKey={rowKey} columns={columns} dataSource={items} loading={devices.isPending} tableLayout="fixed" scroll={{ x: 900 }} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={emptyDescription}>{filtered && <Button onClick={reset}>清空筛选</Button>}</Empty> }} />
+        {(items.length > 0 || page > 1) && <RecordCursorPagination page={page} pageSize={pageSize} count={items.length} nextCursor={devices.data?.next_cursor ?? ''} fetching={devices.isFetching}
+          onNext={() => { const next = devices.data?.next_cursor; if (next) setPaging({ key: filterKey, page: page + 1, cursors: [...currentPaging.cursors.slice(0, page), next] }) }}
+          onPrevious={() => setPaging({ ...currentPaging, page: Math.max(1, page - 1) })}
+          onPageSizeChange={size => { setPageSize(size); setPaging({ key: '', page: 1, cursors: [''] }) }} />}
       </>}
     </section>
     <Modal title="设备资料" className="discovery-evidence-modal" open={Boolean(selected)} onCancel={() => setSelected(undefined)} footer={selected ? <Link to={discoveryLink(selected)}>在发现设备中查看</Link> : null}>

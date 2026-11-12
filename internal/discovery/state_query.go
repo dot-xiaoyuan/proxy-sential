@@ -40,7 +40,13 @@ func (r Repository) DevicesState(ctx context.Context, q DeviceQuery) (map[string
 	freshWhere := []string{"s.epoch=c.epoch"}
 	legacyWhere := []string{`NOT EXISTS(SELECT 1 FROM stream_discovery_device_state f JOIN stream_source_cutovers c ON c.epoch=f.epoch AND c.state='active' WHERE f.device_key=s.device_key)`}
 	if r.ActiveStreamOnly {
-		freshWhere = append(freshWhere, ActiveStreamCurrentPredicate)
+		if q.State == "expired" {
+			// Historical classification is an explicit filter. Keep the latest
+			// expired result visible without presenting it as a current device.
+			freshWhere = append(freshWhere, ActiveStreamLatestPredicate)
+		} else {
+			freshWhere = append(freshWhere, ActiveStreamCurrentPredicate)
+		}
 		legacyWhere = []string{"false"}
 	}
 	addBoth := func(condition string) {
@@ -121,8 +127,6 @@ func (r Repository) DevicesState(ctx context.Context, q DeviceQuery) (map[string
 			addBoth("(lower(s.name) LIKE " + p + " ESCAPE '\\' OR lower(s.manufacturer) LIKE " + p + " ESCAPE '\\' OR lower(s.model_name) LIKE " + p + " ESCAPE '\\')")
 		}
 	}
-	countWhere := append([]string(nil), freshWhere...)
-	countArgs := append([]any(nil), args...)
 	if q.Cursor != "" {
 		raw, e := base64.RawURLEncoding.DecodeString(q.Cursor)
 		var c stateCursor
@@ -222,20 +226,6 @@ ORDER BY last_seen DESC,device_key LIMIT ` + limit
 		return nil, err
 	}
 	result := map[string]any{"items": items, "has_more": more, "next_cursor": cursor, "limit": q.Limit, "window": q.Window.String(), "freshness": fresh}
-	if r.ActiveStreamOnly {
-		// Statistics have their own deadline and cannot make a valid page fail.
-		countCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-		defer cancel()
-		var total int64
-		if e := r.DB.QueryRowContext(countCtx, `SELECT count(*) FROM
- (SELECT DISTINCT epoch FROM stream_source_cutovers WHERE state='active') c
- JOIN stream_discovery_device_state s ON s.epoch=c.epoch WHERE `+strings.Join(countWhere, " AND "), countArgs...).Scan(&total); e == nil {
-			result["total"] = total
-			result["total_status"] = "ready"
-		} else {
-			result["total_status"] = "unavailable"
-		}
-	}
 	return result, nil
 }
 func (r Repository) DiscoveryFreshness(ctx context.Context) (map[string]any, error) {

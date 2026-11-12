@@ -36,11 +36,11 @@ func TestSharedBehaviorHistoryBasisReplay(t *testing.T) {
 		}
 	}
 	page, err := s.ListSharedBehavior(ctx, SharedBehaviorQuery{View: "history"})
-	if err != nil || page.Page.Total != 1 || len(page.Items) != 1 || page.Items[0].ObservationID != "strong" || page.Items[0].Current {
+	if err != nil || len(page.Items) != 1 || page.Items[0].ObservationID != "strong" || page.Items[0].Current {
 		t.Fatalf("weak historical records entered default sharing history: %+v %v", page, err)
 	}
 	clues, err := s.ListSharedBehavior(ctx, SharedBehaviorQuery{View: "history", HistoryBasis: "clues"})
-	if err != nil || clues.Page.Total != 1 || len(clues.Items) != 1 || clues.Items[0].ObservationID == "strong" || clues.Items[0].Current {
+	if err != nil || len(clues.Items) != 5 || clues.Items[0].ObservationID == "strong" || clues.Items[0].Current {
 		t.Fatalf("explicit clue review lost records or revived sharing: %+v %v", clues, err)
 	}
 	// Inspect each weak kind independently; filters apply before episode deduplication.

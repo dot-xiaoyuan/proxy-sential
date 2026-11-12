@@ -4,7 +4,7 @@ export const sharedDecisionFixture: SharedPolicyDecision = {
  evidence_version: '8e79c1a7fabc0123456789abcdef012345', account_id: 'campus-student-001', ip: '192.0.2.44',
  campus_id: 'ncu', access_domain: 'bond0-router-minimal-overnight', evaluated_at: new Date().toISOString(),
  evidence_expires_at: new Date(Date.now() + 180000).toISOString(), mode: 'manual', planned_action: 'disconnect', delivery_status: 'record_only',
- result: 'matched', reasons: ['confirmed_shared_observation'],
+ result: 'matched', reasons: ['confirmed_shared_observation'], evidence_review_status: 'rule_verified',
  evidence: { rule_version: 'shared-access/v5', from: new Date(Date.now() - 60000).toISOString(), to: new Date().toISOString(), device_lower_bound: 2, records: [{ event_id: 'handshake-' + 'a'.repeat(96), source: 'handshake-sidecar', collector_instance_id: 'ncu184-router-minimal-demo' }] },
 }
 export function sharedDecisionMock(url: URL) {

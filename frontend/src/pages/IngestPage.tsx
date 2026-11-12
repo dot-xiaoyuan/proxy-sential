@@ -18,6 +18,7 @@ import type { ColumnsType } from "antd/es/table";
 
 import {
   useEvents,
+  useEventsCount,
   useIngestDiagnostics,
   useIngestEventTypes,
   useIngestErrors,
@@ -35,6 +36,7 @@ import {
   AppServerPagination,
   useServerPagination,
 } from "../shared/ui";
+import { RecordCursorPagination, useRecordCursorPagination } from "../shared/ui/RecordCursorPagination";
 
 export function IngestPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [activeTab, setActiveTab] = useUrlState("diagnostic_tab","nodes",["nodes","types","diagnostics","errors","events"]);
@@ -43,7 +45,8 @@ export function IngestPage({ embedded = false }: { embedded?: boolean } = {}) {
     data: unknown;
   } | null>(null);
   const errorPage = useServerPagination("errors_");
-  const eventPage = useServerPagination("events_");
+  const eventPage = useRecordCursorPagination("ingest-events");
+  const [eventCountRequested, setEventCountRequested] = useState(false);
   const diagnosticPage = useServerPagination("diagnostics_");
 
   const status = useIngestStatus();
@@ -57,9 +60,10 @@ export function IngestPage({ embedded = false }: { embedded?: boolean } = {}) {
     activeTab === "errors",
   );
   const events = useEvents(
-    { limit: eventPage.pageSize, cursor: eventPage.cursor },
+    { limit: eventPage.pageSize, cursor: eventPage.cursor || undefined },
     activeTab === "events",
   );
+  const eventCount = useEventsCount({}, activeTab === "events" && eventCountRequested);
 
   if (status.isLoading) {
     return <AppLoadingState rows={6} />;
@@ -367,7 +371,7 @@ export function IngestPage({ embedded = false }: { embedded?: boolean } = {}) {
               label: "最近事件",
               children: (
                 <div className="ingest-table-container">
-                  <AppListHeader title="最近事件" count={`${events.data?.page.total ?? 0} 条`} />
+                  <AppListHeader title="最近事件" count={eventCountRequested ? eventCount.isPending ? "统计中" : eventCount.isError ? "统计失败" : `共 ${eventCount.data?.total ?? 0} 条` : `本页 ${events.data?.events.length ?? 0} 条`} actions={<Button size="small" onClick={() => setEventCountRequested(true)}>统计总数</Button>} />
                   <AppTable<NormalizedEventSummary>
                     columns={eventColumns}
                     dataSource={events.data?.events ?? []}
@@ -376,12 +380,7 @@ export function IngestPage({ embedded = false }: { embedded?: boolean } = {}) {
                     scroll={{ x: "max-content", y: 420 }}
                     size="small"
                   />
-                  <AppServerPagination
-                    page={eventPage.page}
-                    pageSize={eventPage.pageSize}
-                    total={events.data?.page.total}
-                    onChange={eventPage.update}
-                  />
+                  {((events.data?.events.length ?? 0) > 0 || eventPage.page > 1) && <RecordCursorPagination page={eventPage.page} pageSize={eventPage.pageSize} count={events.data?.events.length ?? 0} nextCursor={events.data?.page.next_cursor ?? ''} fetching={events.isFetching} onNext={() => eventPage.next(events.data?.page.next_cursor ?? '')} onPrevious={eventPage.previous} onPageSizeChange={eventPage.changePageSize} />}
                 </div>
               ),
             },

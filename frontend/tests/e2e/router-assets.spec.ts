@@ -4,40 +4,45 @@ import { writeFile } from 'node:fs/promises'
 for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }, { width: 1440, height: 900 }]) {
   test(`discovered router assets remain separate from role evidence ${viewport.width}`, async ({ page }, info) => {
     const errors: string[] = []
+    const discoveryRequests: string[] = []
     page.on('pageerror', error => errors.push(error.message))
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
     page.on('response', response => { if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`) })
+    page.on('request', request => { if (request.url().includes('/discovery/devices')) discoveryRequests.push(request.url()) })
     await page.setViewportSize(viewport)
     await page.addInitScript(() => {
       const original = window.fetch.bind(window)
       window.fetch = async (input, init) => {
         const raw = typeof input === 'string' ? input : input instanceof Request ? input.url : input.href
         const url = new URL(raw, location.origin)
-        if (!url.pathname.endsWith('/discovery/devices') && !url.pathname.endsWith('/discovery/devices/metadata')) return original(input, init)
+        if (!url.pathname.endsWith('/discovery/devices')) return original(input, init)
         const stamp = new Date().toISOString()
         const type = url.searchParams.get('type') || 'router'
-        const response = url.pathname.endsWith('/metadata') ? { total: 2, as_of: stamp, count_unit: 'trusted_discovery_identity' } : {
+        const response = {
           items: [
             { id: 'router-current', mac: '02:20:40:00:00:04', name: '教学楼路由设备', device_type: type, category: 'network', identity_kind: 'link_layer_device', manufacturer: 'Huawei', model_name: 'AR6120', classification_status: 'identified', first_seen: stamp, last_seen: stamp, current: true, current_addresses: ['192.0.2.41'], primary_ip: '192.0.2.41', last_observed_ip: '192.0.2.41', protocols: ['lldp', 'dhcp'], capabilities: ['routing'], observations: [], evidence_count: 2, domain: '教学网', vlan: '20' },
             { id: 'router-expired', mac: '02:20:40:00:00:05', name: '历史路由记录', device_type: '', last_device_type: type, category: 'network', identity_kind: 'link_layer_device', classification_status: 'expired', first_seen: stamp, last_seen: stamp, current: false, current_addresses: [], primary_ip: '192.0.2.42', last_observed_ip: '192.0.2.42', protocols: ['dhcp'], capabilities: [], observations: [], evidence_count: 1 },
           ], limit: 20, next_cursor: '', has_more: false,
+          freshness: { status: 'unknown', source: 'stream', source_progress_status: 'unverified', processed_at: stamp, lag_seconds: 0, processing_lag_seconds: 0, result_version: 42 },
         }
         return new Response(JSON.stringify(response), { headers: { 'Content-Type': 'application/json' } })
       }
     })
     await page.goto('/devices?tab=network&routers_view=router')
-    await expect(page.getByText('共 2 条设备记录', { exact: true })).toBeVisible()
+    await expect(page.getByText('第 1 页 · 本页 2 条', { exact: true })).toBeVisible()
+    await expect(page.getByText(/来源进度尚未核验/)).toBeVisible()
+    await expect(page.getByText(/不具备来源追平证明/)).toBeVisible()
     await expect(page.getByText('教学楼路由设备', { exact: true })).toBeVisible()
     await expect(page.getByText('历史路由器', { exact: true })).toBeVisible()
     await expect(page.getByText('历史 IP：192.0.2.42', { exact: true })).toBeVisible()
     await expect(page.getByText('设备类型用于资产管理；违规与共享行为需另行核验。', { exact: true })).toBeVisible()
-    await expect(page.locator('.ant-pagination-next')).toHaveClass(/ant-pagination-disabled/)
-    await expect(page.locator('.ant-pagination-prev')).toHaveClass(/ant-pagination-disabled/)
-    await expect(page.getByTitle('2', { exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '下一页' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: '上一页' })).toBeDisabled()
+    expect(discoveryRequests.some(url => url.includes('/metadata') || url.includes('/position'))).toBe(false)
     const probe = await page.evaluate(() => {
-      const panel = document.querySelector('.router-observations-panel')!
+      const panel = document.querySelector('section.router-observations-panel')!
       const controls = [...panel.querySelectorAll('.ant-btn,.ant-tag')].filter(element => element.getBoundingClientRect().width > 0)
-      const selected = panel.querySelector('.ant-segmented-item-selected')!
+      const selected = panel.querySelector('.ant-segmented-item:has(input:checked), .ant-segmented-item-selected, .ant-segmented-item')!
       const foreground = getComputedStyle(selected).color
       const background = getComputedStyle(selected).backgroundColor
       const luminance = (color: string) => {
@@ -58,7 +63,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     })
     await writeFile(info.outputPath('router-assets-dom.json'), JSON.stringify({ viewport, probe, errors }, null, 2))
     await page.screenshot({ path: info.outputPath('router-assets.png'), fullPage: true, animations: 'disabled' })
-    await page.locator('.app-server-pagination').screenshot({ path: info.outputPath('router-assets-pagination.png'), animations: 'disabled' })
+    await page.locator('.shared-policy-cursor-pagination').screenshot({ path: info.outputPath('router-assets-pagination.png'), animations: 'disabled' })
     expect(probe.overflow).toBe(false)
     expect(probe.panelOverflow).toBe(false)
     expect(probe.controls).toEqual([])

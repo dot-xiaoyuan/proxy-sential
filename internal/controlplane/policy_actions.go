@@ -18,6 +18,7 @@ import (
 // Controllers advertising account_policy_v1 must revoke only this lease and combine active limits.
 type PolicyActionParameters struct {
 	DecisionID      string                   `json:"decision_id,omitempty"`
+	EpisodeID       string                   `json:"episode_id,omitempty"`
 	PolicyID        string                   `json:"policy_id,omitempty"`
 	PolicyRevision  int                      `json:"policy_revision,omitempty"`
 	EvidenceVersion string                   `json:"evidence_version,omitempty"`

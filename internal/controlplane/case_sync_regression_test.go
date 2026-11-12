@@ -39,7 +39,7 @@ func (r *routerCaseSyncReader) GetRouterObservation(context.Context, string) (st
 }
 
 func (r *caseSyncReader) ListSharedBehavior(context.Context, store.SharedBehaviorQuery) (store.SharedBehaviorPage, error) {
-	return store.SharedBehaviorPage{Items: r.shared, Page: store.Page{Limit: 100, Total: len(r.shared)}}, r.sharedErr
+	return store.SharedBehaviorPage{Items: r.shared, Page: store.SharedBehaviorCursorPage{Limit: 100}}, r.sharedErr
 }
 
 func (r *caseSyncReader) GetSharedBehavior(context.Context, string) (store.SharedBehaviorDetail, bool, error) {

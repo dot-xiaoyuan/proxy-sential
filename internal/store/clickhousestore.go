@@ -466,28 +466,105 @@ FORMAT JSONEachRow`, strings.Join(clauses, " AND "), limit)
 
 func (s *ClickHouseStore) ListEvents(ctx context.Context, query Query) (EventPage, error) {
 	limit := query.Limit
-	if limit == 0 {
-		limit = 50
+	if limit <= 0 {
+		limit = 20
 	}
+	if limit > maxEventPageSize {
+		limit = maxEventPageSize
+	}
+	effective, cursor, err := prepareEventListQuery(query, time.Now())
+	if err != nil {
+		return EventPage{}, err
+	}
+	where, err := eventWhereSQL(effective)
+	if err != nil {
+		return EventPage{}, err
+	}
+	if cursor.After.Timestamp != "" {
+		seek := fmt.Sprintf("(timestamp,event_id,sensor_id)<(parseDateTime64BestEffort(%s,6),%s,%s)", chQuote(cursor.After.Timestamp), chQuote(cursor.After.EventID), chQuote(cursor.After.SensorID))
+		if where == "" {
+			where = " WHERE " + seek
+		} else {
+			where += " AND " + seek
+		}
+	}
+	// The first read sorts only keys. The second read fetches full bodies for at
+	// most one page, avoiding OFFSET and a request-time count over history.
+	anchor := cursor.To
+	if cursor.After.Timestamp != "" {
+		anchor = cursor.After.Timestamp
+	}
+	anchorTime, _ := time.Parse(time.RFC3339Nano, anchor)
+	span := 5 * time.Minute
+	var keys []eventKey
+	var data []byte
+	for {
+		pageWhere := where
+		lower := anchorTime.Add(-span)
+		bounded := span >= 7*24*time.Hour
+		if cursor.From != "" {
+			from, _ := time.Parse(time.RFC3339Nano, cursor.From)
+			bounded = bounded || !lower.After(from)
+		}
+		if !bounded {
+			pageWhere += " AND timestamp>=parseDateTime64BestEffort(" + chQuote(lower.Format(time.RFC3339Nano)) + ",6)"
+		}
+		keySQL := fmt.Sprintf("SELECT timestamp,event_id,sensor_id FROM normalized_events%s ORDER BY timestamp DESC,event_id DESC,sensor_id DESC LIMIT 1 BY timestamp,event_id,sensor_id LIMIT %d SETTINGS max_threads=1,max_block_size=8192,max_memory_usage=268435456,max_execution_time=20 FORMAT JSONEachRow", pageWhere, limit+1)
+		data, err = s.query(ctx, keySQL)
+		if err != nil {
+			return EventPage{}, err
+		}
+		keys = keys[:0]
+		if err = decodeJSONEachRow(data, &keys); err != nil {
+			return EventPage{}, err
+		}
+		for i := range keys {
+			keys[i].Timestamp, err = normalizeEventKeyTimestamp(keys[i].Timestamp)
+			if err != nil {
+				return EventPage{}, err
+			}
+		}
+		if len(keys) > limit || bounded {
+			break
+		}
+		span *= 2
+	}
+	page := EventCursorPage{Limit: limit, HasMore: len(keys) > limit}
+	if page.HasMore {
+		keys = keys[:limit]
+		page.NextCursor = encodeEventListCursor(cursor, keys[len(keys)-1])
+	}
+	if len(keys) == 0 {
+		return EventPage{Items: []normalized.Event{}, Page: page}, nil
+	}
+	literals := make([]string, 0, len(keys))
+	for _, key := range keys {
+		literals = append(literals, fmt.Sprintf("(parseDateTime64BestEffort(%s,6),%s,%s)", chQuote(key.Timestamp), chQuote(key.EventID), chQuote(key.SensorID)))
+	}
+	bodyWhere := fmt.Sprintf(" WHERE (timestamp,event_id,sensor_id) IN (%s)", strings.Join(literals, ","))
+	if where != "" {
+		bodyWhere += " AND " + strings.TrimPrefix(where, " WHERE ")
+	}
+	bodySQL := fmt.Sprintf("SELECT timestamp,event_id,schema_version,source,source_event_type,type,subject_ip,campus_id,observer_json,payload_json,flow_json,raw_ref_json,confidence FROM normalized_events%s ORDER BY timestamp DESC,event_id DESC,sensor_id DESC LIMIT 1 BY timestamp,event_id,sensor_id LIMIT %d SETTINGS max_threads=1,max_block_size=8192,max_memory_usage=268435456,max_execution_time=20 FORMAT JSONEachRow", bodyWhere, limit)
+	data, err = s.query(ctx, bodySQL)
+	if err != nil {
+		return EventPage{}, err
+	}
+	events, err := decodeEventRows(data)
+	if err != nil {
+		return EventPage{}, err
+	}
+	return EventPage{Items: events, Page: page}, nil
+}
+
+func (s *ClickHouseStore) CountEvents(ctx context.Context, query Query) (int, error) {
+	query.EventCursor = ""
+	query.Cursor = 0
 	where, err := eventWhereSQL(query)
 	if err != nil {
-		return EventPage{}, err
+		return 0, err
 	}
-	total, err := s.eventPageCount(ctx, query, where)
-	if err != nil {
-		return EventPage{}, err
-	}
-	query.Limit = limit
-	events, err := s.ListEventSamples(ctx, query)
-	if err != nil {
-		return EventPage{}, err
-	}
-	var next *string
-	if query.Cursor+len(events) < total {
-		value := fmt.Sprintf("%d", query.Cursor+len(events))
-		next = &value
-	}
-	return EventPage{Items: events, Page: Page{Limit: limit, NextCursor: next, Total: total}}, nil
+	return s.eventPageCount(ctx, query, where)
 }
 
 func (s *ClickHouseStore) GetIPActivity(ctx context.Context, ip string, limit int) (ActivityProfile, error) {

@@ -51,6 +51,8 @@ type Query struct {
 	AppProtocol     string
 	Limit           int
 	Cursor          int
+	// EventCursor is the filter-bound seek cursor used by event and DPI lists.
+	EventCursor string
 	// InventoryCursor is the opaque, filter-bound cursor used by the device
 	// inventory read model. Cursor remains for the other legacy list readers.
 	InventoryCursor string
@@ -170,7 +172,13 @@ type DeviceInventoryReader interface {
 
 type EventPage struct {
 	Items []normalized.Event
-	Page  Page
+	Page  EventCursorPage
+}
+
+type EventCursorPage struct {
+	Limit      int     `json:"limit"`
+	NextCursor *string `json:"next_cursor"`
+	HasMore    bool    `json:"has_more"`
 }
 
 type Run struct {
@@ -597,7 +605,7 @@ type DPIFlowDetail struct {
 
 type DPIFlowPage struct {
 	Items []DPIFlowSample `json:"items"`
-	Page  Page            `json:"page"`
+	Page  EventCursorPage `json:"page"`
 }
 
 type DeviceSignal struct {
@@ -706,7 +714,7 @@ type EndpointDeviceInventory struct {
 	OwnershipClass          string                          `json:"ownership_class"`
 	MergeStatus             string                          `json:"merge_status"`
 	CurrentAccount          string                          `json:"current_account,omitempty"`
-	CurrentIP               string                          `json:"current_ip,omitempty"` // Most recently observed address; does not imply online status.
+	CurrentIP               string                          `json:"current_ip,omitempty"`   // Most recently observed address; does not imply online status.
 	CurrentIPv4             string                          `json:"current_ipv4,omitempty"` // Most recently observed IPv4 address; operational key for policies and risk.
 	CurrentIPv6             string                          `json:"current_ipv6,omitempty"` // Most recently observed IPv6 address; SLAAC evidence, never substitutes for IPv4.
 	CurrentAccessID         string                          `json:"current_access_id,omitempty"`

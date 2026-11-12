@@ -47,12 +47,7 @@ func (s *Server) handleSharedBehavior(w http.ResponseWriter, r *http.Request, pa
 		query.Limit = parsed
 	}
 	if value := r.URL.Query().Get("cursor"); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "bad_pagination", "cursor 必须为整数")
-			return
-		}
-		query.Cursor = parsed
+		query.Cursor = value
 	}
 	if value := r.URL.Query().Get("confidence_min"); value != "" {
 		parsed, err := strconv.Atoi(value)

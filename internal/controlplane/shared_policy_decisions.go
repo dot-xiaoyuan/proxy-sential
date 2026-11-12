@@ -202,6 +202,7 @@ func (s *Server) queryPolicyDecisionPage(w http.ResponseWriter, r *http.Request,
 	}
 	defer rows.Close()
 	items := []json.RawMessage{}
+	decisionIDs := []string{}
 	next := ""
 	var last policyDecisionCursor
 	for rows.Next() {
@@ -222,10 +223,17 @@ func (s *Server) queryPolicyDecisionPage(w http.ResponseWriter, r *http.Request,
 			return
 		}
 		items = append(items, json.RawMessage(raw))
+		decisionIDs = append(decisionIDs, id)
 		last = policyDecisionCursor{At: at, ID: id, Snapshot: cursor.Snapshot, Key: key}
 	}
 	if err = rows.Err(); err != nil {
 		writeError(w, 503, "policy_decisions_failed", "策略记录读取失败")
+		return
+	}
+	rows.Close()
+	items, err = annotateSharedDecisionReview(ctx, s.productPolicies.db, decisionIDs, items)
+	if err != nil {
+		writeError(w, 503, "policy_decisions_failed", "策略证据核验状态读取失败")
 		return
 	}
 	response := map[string]any{"items": items, "next_cursor": next, "snapshot": cursor.Snapshot}

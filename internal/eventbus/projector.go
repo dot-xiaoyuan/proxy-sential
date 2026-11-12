@@ -2,6 +2,8 @@ package eventbus
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kgo"
+	"proxy-sentinel/internal/normalized"
 )
 
 // Receipt is the minimum immutable row needed to prove that one Kafka record
@@ -32,9 +35,10 @@ type Receipt struct {
 	ConsumedAt  time.Time
 }
 
-// ReceiptSink is the Phase 2 shadow boundary. A sink must make repeated writes
-// of the same event idempotent; the projector commits Kafka offsets only after
-// the sink returns success.
+// ReceiptSink is a per-destination confirmation boundary. The projector
+// commits Kafka offsets only after the sink returns success. Each destination
+// owns its replay behavior; this interface does not provide a cross-database
+// transaction or exactly-once delivery.
 type ReceiptSink interface {
 	WriteReceipts(ctx context.Context, receipts []Receipt) error
 }
@@ -50,6 +54,7 @@ type ProjectorOptions struct {
 	BatchSize     int
 	FetchMaxBytes int
 	FlushInterval time.Duration
+	QuarantineDir string
 }
 
 func (o ProjectorOptions) validate() error {
@@ -111,9 +116,11 @@ func (p *Projector) Close() {
 }
 
 // Run consumes until ctx is canceled or a fatal transport/sink error occurs.
-// Offsets are committed record-by-record only after the whole batch sink write
-// succeeds. A crash between sink success and offset commit therefore replays a
-// batch; ClickHouse ReplacingMergeTree and the unique event key absorb it.
+// Offsets are committed only after the whole batch sink write succeeds. A
+// crash between sink success and offset commit replays the batch. The
+// normalized-only sink synchronously checks the retained event ID and body
+// before inserting, but independent concurrent writers still need isolation;
+// ReplacingMergeTree merges are not an immediate deduplication guarantee.
 func (p *Projector) Run(ctx context.Context) error {
 	if p == nil || p.client == nil {
 		return errors.New("event bus projector is closed")
@@ -135,17 +142,16 @@ func (p *Projector) Run(ctx context.Context) error {
 			return fmt.Errorf("event bus projector poll: %v", errs)
 		}
 		for _, record := range fetches.Records() {
-			receipt, err := receiptFromRecord(record)
+			receipt, include, err := p.receiptOrQuarantine(record, time.Now().UTC())
 			if err != nil {
-				// Malformed records must not stop the whole shadow stream. The
-				// record is committed with the batch and its position is logged;
-				// a production projector will route these to a DLQ instead.
-				log.Printf("event-bus projector: skipping invalid record partition=%d offset=%d: %v", record.Partition, record.Offset, err)
-				records = append(records, record)
-			} else {
-				receipts = append(receipts, receipt)
-				records = append(records, record)
+				// No sink or Kafka offset commit has occurred for this fetched
+				// batch. Earlier records remain replayable with this position.
+				return err
 			}
+			if include {
+				receipts = append(receipts, receipt)
+			}
+			records = append(records, record)
 			if len(records) >= p.opts.BatchSize {
 				if err := p.flush(ctx, records, receipts); err != nil {
 					return err
@@ -181,8 +187,47 @@ func (p *Projector) flush(ctx context.Context, records []*kgo.Record, receipts [
 	if err := p.client.CommitRecords(ctx, records...); err != nil {
 		return fmt.Errorf("event bus projector commit: %w", err)
 	}
-	log.Printf("event-bus projector: wrote=%d skipped=%d topic=%s group=%s", len(receipts), len(records)-len(receipts), p.opts.Topic, p.opts.Group)
+	log.Printf("event-bus projector: wrote=%d quarantined=%d topic=%s group=%s", len(receipts), len(records)-len(receipts), p.opts.Topic, p.opts.Group)
 	return nil
+}
+
+const (
+	// normalized_events has a seven-day observation-time TTL. Its retained
+	// body can prove an event ID only inside the six-day canary window. The
+	// one-minute guard prevents a record crossing the proof boundary between
+	// classification and the sink's independent check.
+	normalizedProofWindow          = 6 * 24 * time.Hour
+	normalizedProofBoundaryGuard   = time.Minute
+	normalizedProofWindowGapReason = "normalized_event_id_proof_window_exceeded"
+	normalizedFutureGapReason      = "normalized_event_observation_more_than_one_hour_ahead"
+)
+
+// receiptOrQuarantine preserves the original Kafka position and envelope as
+// an explicit projection gap before allowing its offset into a committed
+// batch. An old observation remains in its authoritative stream body; this
+// step neither writes normalized_events nor claims that projection succeeded.
+func (p *Projector) receiptOrQuarantine(record *kgo.Record, now time.Time) (Receipt, bool, error) {
+	if record == nil {
+		return Receipt{}, false, errors.New("event bus projector received nil record")
+	}
+	receipt, err := receiptFromRecord(record)
+	reason := ""
+	if err != nil {
+		reason = err.Error()
+	} else if receipt.ObservedAt.Before(now.Add(-normalizedProofWindow + normalizedProofBoundaryGuard)) {
+		reason = normalizedProofWindowGapReason
+	} else if receipt.ObservedAt.After(now.Add(time.Hour - normalizedProofBoundaryGuard)) {
+		reason = normalizedFutureGapReason
+	}
+	if reason == "" {
+		return receipt, true, nil
+	}
+	path, quarantineErr := quarantineInvalidRecord(p.opts.QuarantineDir, record, reason)
+	if quarantineErr != nil {
+		return Receipt{}, false, fmt.Errorf("event bus projector cannot quarantine partition=%d offset=%d: %w", record.Partition, record.Offset, quarantineErr)
+	}
+	log.Printf("event-bus projector: quarantined record partition=%d offset=%d reason=%s path=%s", record.Partition, record.Offset, reason, path)
+	return Receipt{}, false, nil
 }
 
 func receiptFromRecord(record *kgo.Record) (Receipt, error) {
@@ -199,8 +244,20 @@ func receiptFromRecord(record *kgo.Record) (Receipt, error) {
 	if envelope.EventID == "" || envelope.PartitionKey == "" {
 		return Receipt{}, errors.New("event bus envelope has no event id or partition key")
 	}
-	if envelope.ObservedAt.IsZero() {
-		return Receipt{}, errors.New("event bus envelope has no observation time")
+	if envelope.ObservedAt.IsZero() || envelope.AcceptedAt.IsZero() || envelope.SegmentID == "" {
+		return Receipt{}, errors.New("event bus envelope has no observation, acceptance or segment position")
+	}
+	var event normalized.Event
+	if err := json.Unmarshal(envelope.Event, &event); err != nil {
+		return Receipt{}, fmt.Errorf("decode event bus event: %w", err)
+	}
+	observed, err := time.Parse(time.RFC3339Nano, event.Timestamp)
+	if err != nil || event.EventID != envelope.EventID || event.Type == "" || event.Type != envelope.EventType || !observed.Equal(envelope.ObservedAt) {
+		return Receipt{}, errors.New("event bus event identity, type or observation time conflicts with envelope")
+	}
+	hash := sha256.Sum256(envelope.Event)
+	if envelope.ContentHash != "sha256:"+hex.EncodeToString(hash[:]) {
+		return Receipt{}, errors.New("event bus event content hash conflicts with envelope")
 	}
 	return Receipt{
 		EventID:     envelope.EventID,

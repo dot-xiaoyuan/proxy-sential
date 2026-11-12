@@ -18,9 +18,10 @@ type statisticsResponse struct {
 	status      int
 }
 type statisticsEntry struct {
-	value   statisticsResponse
-	loading chan struct{}
-	touched time.Time
+	value    statisticsResponse
+	loading  chan struct{}
+	touched  time.Time
+	lastLoad time.Time
 }
 type statisticsCache struct {
 	mu      sync.Mutex
@@ -32,7 +33,12 @@ type statisticsCache struct {
 // rebuild briefly contended with ingest. Keep the response usable while a
 // single-flight refresh catches up.
 const (
-	statisticsLoadLimit = 12 * time.Second
+	statisticsLoadLimit               = 12 * time.Second
+	recognitionStatisticsRefreshAfter = 2 * time.Minute
+	recognitionStatisticsMaxAge       = 5 * time.Minute
+	recognitionStatisticsRetryDelay   = 15 * time.Second
+	recognitionCatalogRetryDelay      = 3 * time.Second
+	recognitionCatalogRetryAttempts   = 4
 )
 
 func newStatisticsCache() *statisticsCache {
@@ -81,6 +87,17 @@ func statisticsWrite(w http.ResponseWriter, value statisticsResponse) {
 	}
 	w.WriteHeader(value.status)
 	_, _ = w.Write(value.body)
+}
+
+func statisticsWriteRoute(w http.ResponseWriter, path string, value statisticsResponse) {
+	// Recognition coverage comes from a prepared catalog generation. Once that
+	// generation is too old, the cached HTTP body must not outlive its source.
+	if path == "/device-recognition/summary" && value.status == http.StatusOK &&
+		(value.asOf.IsZero() || time.Since(value.asOf) >= recognitionStatisticsMaxAge) {
+		writeError(w, http.StatusServiceUnavailable, "recognition_statistics_not_ready", "设备识别统计尚未就绪，请稍后重试")
+		return
+	}
+	statisticsWrite(w, value)
 }
 
 func statisticsFreshnessResponse(value statisticsResponse) statisticsResponse {
@@ -152,6 +169,10 @@ func (c *statisticsCache) load(r *http.Request, path string, dispatch func(http.
 	return result
 }
 func (c *statisticsCache) serve(w http.ResponseWriter, r *http.Request, path string, dispatch func(http.ResponseWriter, *http.Request, string)) {
+	if path == "/device-recognition/summary" {
+		c.serveRecognitionSummary(w, r, path, dispatch)
+		return
+	}
 	key := statisticsKey(r, path)
 	for {
 		c.mu.Lock()
@@ -173,7 +194,7 @@ func (c *statisticsCache) serve(w http.ResponseWriter, r *http.Request, path str
 			if len(c.entries) >= 256 {
 				c.mu.Unlock()
 				value := c.load(r, path, dispatch)
-				statisticsWrite(w, value)
+				statisticsWriteRoute(w, path, value)
 				return
 			}
 			entry = &statisticsEntry{}
@@ -186,7 +207,7 @@ func (c *statisticsCache) serve(w http.ResponseWriter, r *http.Request, path str
 		if entry.value.status >= 500 && age < time.Second {
 			value := entry.value
 			c.mu.Unlock()
-			statisticsWrite(w, value)
+			statisticsWriteRoute(w, path, value)
 			return
 		}
 		if entry.value.status == 200 {
@@ -209,7 +230,7 @@ func (c *statisticsCache) serve(w http.ResponseWriter, r *http.Request, path str
 				}(entry)
 			}
 			c.mu.Unlock()
-			statisticsWrite(w, value)
+			statisticsWriteRoute(w, path, value)
 			return
 		}
 		if entry.loading != nil {
@@ -241,7 +262,88 @@ func (c *statisticsCache) serve(w http.ResponseWriter, r *http.Request, path str
 		if value.status >= 500 && entry.value.status == 200 {
 			value = entry.value
 		}
-		statisticsWrite(w, value)
+		statisticsWriteRoute(w, path, value)
 		return
 	}
+}
+
+// Recognition summary requires 24-hour and seven-day ClickHouse aggregates.
+// Fill one cached response in the background; an HTTP reader never performs
+// those scans or waits for one already in progress.
+func (c *statisticsCache) serveRecognitionSummary(w http.ResponseWriter, r *http.Request, path string, dispatch func(http.ResponseWriter, *http.Request, string)) {
+	key := statisticsKey(r, path)
+	now := time.Now()
+	c.mu.Lock()
+	if c.entries == nil {
+		c.entries = make(map[string]*statisticsEntry)
+	}
+	entry := c.entries[key]
+	if entry == nil {
+		if len(c.entries) >= 256 {
+			var oldestKey string
+			var oldest time.Time
+			for candidateKey, candidate := range c.entries {
+				if candidate.loading == nil && (oldest.IsZero() || candidate.touched.Before(oldest)) {
+					oldestKey, oldest = candidateKey, candidate.touched
+				}
+			}
+			if oldestKey != "" {
+				delete(c.entries, oldestKey)
+			}
+		}
+		if len(c.entries) >= 256 {
+			c.mu.Unlock()
+			writeError(w, http.StatusServiceUnavailable, "recognition_statistics_not_ready", "设备识别统计尚未就绪，请稍后重试")
+			return
+		}
+		entry = &statisticsEntry{}
+		c.entries[key] = entry
+	}
+	entry.touched = now
+	value := entry.value
+	fresh := value.status == http.StatusOK && !value.asOf.IsZero() && now.Sub(value.asOf) < recognitionStatisticsMaxAge
+	refreshDue := !fresh || now.Sub(value.asOf) >= recognitionStatisticsRefreshAfter
+	loadInterval := recognitionStatisticsRetryDelay
+	if fresh {
+		loadInterval = recognitionStatisticsRefreshAfter
+	}
+	if refreshDue && entry.loading == nil && (entry.lastLoad.IsZero() || now.Sub(entry.lastLoad) >= loadInterval) {
+		entry.loading = make(chan struct{})
+		entry.lastLoad = now
+		go func() {
+			result := c.load(r, path, dispatch)
+			// A cold catalog starts its own bounded prewarm. Retry that explicit
+			// readiness state in the same background fill; ClickHouse errors do
+			// not trigger a succession of full scans.
+			for attempt := 1; attempt < recognitionCatalogRetryAttempts && recognitionCatalogPending(result); attempt++ {
+				time.Sleep(recognitionCatalogRetryDelay)
+				result = c.load(r, path, dispatch)
+			}
+			c.mu.Lock()
+			if result.status == http.StatusOK && !result.asOf.IsZero() && time.Since(result.asOf) < recognitionStatisticsMaxAge {
+				entry.value = result
+			}
+			close(entry.loading)
+			entry.loading = nil
+			c.mu.Unlock()
+		}()
+	}
+	c.mu.Unlock()
+	if fresh {
+		statisticsWriteRoute(w, path, value)
+		return
+	}
+	writeError(w, http.StatusServiceUnavailable, "recognition_statistics_not_ready", "设备识别统计尚未就绪，请稍后重试")
+}
+
+func recognitionCatalogPending(result statisticsResponse) bool {
+	if result.status != http.StatusInternalServerError {
+		return false
+	}
+	var failure ErrorResponse
+	if json.Unmarshal(result.body, &failure) != nil || failure.Code != "read_device_recognition_summary_failed" {
+		return false
+	}
+	return strings.Contains(failure.Message, "recognition statistics not prepared") ||
+		strings.Contains(failure.Message, "recognition statistics expired")
 }

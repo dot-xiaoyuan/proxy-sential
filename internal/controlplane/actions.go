@@ -47,37 +47,39 @@ type ActionConnector struct {
 }
 
 type EnforcementAction struct {
-	PolicyParameters   PolicyActionParameters `json:"policy_parameters,omitempty"`
-	ActionID           string                 `json:"action_id"`
-	IdempotencyKey     string                 `json:"idempotency_key"`
-	CaseID             string                 `json:"case_id,omitempty"`
-	ConnectorID        string                 `json:"connector_id"`
-	ActionType         string                 `json:"action_type"`
-	SubjectType        string                 `json:"subject_type"`
-	SubjectID          string                 `json:"subject_id"`
-	IP                 string                 `json:"ip,omitempty"`
-	AccountID          string                 `json:"account_id,omitempty"`
-	EndpointID         string                 `json:"endpoint_id,omitempty"`
-	SessionID          string                 `json:"session_id,omitempty"`
-	CampusID           string                 `json:"campus_id,omitempty"`
-	Status             string                 `json:"status"`
-	Mode               string                 `json:"mode"`
-	DurationSeconds    int                    `json:"duration_seconds"`
-	EvidenceIDs        []string               `json:"evidence_ids"`
-	RulesetVersion     string                 `json:"ruleset_version,omitempty"`
-	RemoteActionID     string                 `json:"remote_action_id,omitempty"`
-	RetryCount         int                    `json:"retry_count"`
-	PrecheckRetryCount int                    `json:"precheck_retry_count,omitempty"`
-	PrecheckRetryable  bool                   `json:"precheck_retryable,omitempty"`
-	ParentActionID     string                 `json:"parent_action_id,omitempty"`
-	NextAttemptAt      string                 `json:"next_attempt_at,omitempty"`
-	CooldownUntil      string                 `json:"cooldown_until,omitempty"`
-	ExpiresAt          string                 `json:"expires_at,omitempty"`
-	LastError          string                 `json:"last_error,omitempty"`
-	CreatedBy          string                 `json:"created_by"`
-	CreatedAt          string                 `json:"created_at"`
-	UpdatedAt          string                 `json:"updated_at"`
-	Blockers           []string               `json:"blockers,omitempty"`
+	PolicyParameters     PolicyActionParameters `json:"policy_parameters,omitempty"`
+	ActionID             string                 `json:"action_id"`
+	IdempotencyKey       string                 `json:"idempotency_key"`
+	CaseID               string                 `json:"case_id,omitempty"`
+	ConnectorID          string                 `json:"connector_id"`
+	ActionType           string                 `json:"action_type"`
+	SubjectType          string                 `json:"subject_type"`
+	SubjectID            string                 `json:"subject_id"`
+	IP                   string                 `json:"ip,omitempty"`
+	AccountID            string                 `json:"account_id,omitempty"`
+	EndpointID           string                 `json:"endpoint_id,omitempty"`
+	SessionID            string                 `json:"session_id,omitempty"`
+	CampusID             string                 `json:"campus_id,omitempty"`
+	Status               string                 `json:"status"`
+	Mode                 string                 `json:"mode"`
+	DurationSeconds      int                    `json:"duration_seconds"`
+	EvidenceIDs          []string               `json:"evidence_ids"`
+	EvidenceReviewStatus string                 `json:"evidence_review_status,omitempty"`
+	EvidenceReviewReason string                 `json:"evidence_review_reason,omitempty"`
+	RulesetVersion       string                 `json:"ruleset_version,omitempty"`
+	RemoteActionID       string                 `json:"remote_action_id,omitempty"`
+	RetryCount           int                    `json:"retry_count"`
+	PrecheckRetryCount   int                    `json:"precheck_retry_count,omitempty"`
+	PrecheckRetryable    bool                   `json:"precheck_retryable,omitempty"`
+	ParentActionID       string                 `json:"parent_action_id,omitempty"`
+	NextAttemptAt        string                 `json:"next_attempt_at,omitempty"`
+	CooldownUntil        string                 `json:"cooldown_until,omitempty"`
+	ExpiresAt            string                 `json:"expires_at,omitempty"`
+	LastError            string                 `json:"last_error,omitempty"`
+	CreatedBy            string                 `json:"created_by"`
+	CreatedAt            string                 `json:"created_at"`
+	UpdatedAt            string                 `json:"updated_at"`
+	Blockers             []string               `json:"blockers,omitempty"`
 }
 
 type executeActionRequest struct {
@@ -382,7 +384,9 @@ func (s *Server) handleEmergencyStop(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleConnectorTest(w http.ResponseWriter, r *http.Request, connectorID string) {
-	if s.observeTestRequest(w, r, "拟连接器测试", connectorID) { return }
+	if s.observeTestRequest(w, r, "拟连接器测试", connectorID) {
+		return
+	}
 	if s.operations.db != nil && !s.operations.readView {
 		s.connectorTestPostgres(w, r, connectorID)
 		return

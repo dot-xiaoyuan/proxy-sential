@@ -107,6 +107,8 @@ func run(args []string) error {
 		return runDeviceCensus(args[1:])
 	case "router":
 		return runRouter(args[1:])
+	case "shared-observation-correction":
+		return runSharedObservationCorrection(args[1:])
 	case "application-library":
 		return runApplicationLibrary(args[1:])
 	case "migrate":

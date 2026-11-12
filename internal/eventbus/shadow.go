@@ -48,7 +48,7 @@ func NewShadowFromEnv(ctx context.Context, node, statsDir string, keyFunc Partit
 	if err != nil {
 		return nil, err
 	}
-	if !cfg.Enabled {
+	if !cfg.ShadowEnabled {
 		return nil, nil
 	}
 	if ctx != nil && ctx.Err() != nil {

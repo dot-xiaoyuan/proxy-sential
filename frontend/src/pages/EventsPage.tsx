@@ -12,9 +12,10 @@ import { Button,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 
-import { useEvents } from '../shared/api/queries'
+import { useEvents, useEventsCount } from '../shared/api/queries'
 import type { EventQuery, NormalizedEventSummary } from '../shared/api/types'
-import { AppErrorAlert, AppListHeader, AppLoadingState, AppServerPagination, AppTable, AppTableBar, AppTimePicker, formatDateTime, type ReportWindow, UniversityDimensionFilters } from '../shared/ui'
+import { AppErrorAlert, AppListHeader, AppLoadingState, AppTable, AppTableBar, AppTimePicker, formatDateTime, type ReportWindow, UniversityDimensionFilters } from '../shared/ui'
+import { RecordCursorPagination, useRecordCursorPagination } from '../shared/ui/RecordCursorPagination'
 import { StreamEventsPanel } from '../widgets/StreamEventsPanel'
 
 export function EventsPage() {
@@ -25,7 +26,13 @@ export function EventsPage() {
   const activeType = query.type ?? ''
   const [streamOpen, setStreamOpen] = useState(false)
   const [filtersOpen, setFiltersOpen] = useState(false)
-  const events = useEvents({ ...query, window: quickWindow })
+  const countQuery = { ...query, window: quickWindow, cursor: undefined, limit: undefined }
+  const filterScope = JSON.stringify(countQuery)
+  const pagination = useRecordCursorPagination(filterScope)
+  const [countScope, setCountScope] = useState('')
+  const countActive = countScope === filterScope
+  const events = useEvents({ ...query, window: quickWindow, limit: pagination.pageSize, cursor: pagination.cursor || undefined })
+  const eventCount = useEventsCount(countQuery, countActive)
 
   const columns: ColumnsType<NormalizedEventSummary> = [
     {
@@ -168,8 +175,9 @@ export function EventsPage() {
     <main className="page">
       <section className="surface list-surface">
         <div className="list-surface-head">
-          <AppListHeader title="标准事件" count={`${events.data?.page.total ?? 0} 条`} actions={
+          <AppListHeader title="标准事件" count={countActive ? eventCount.isPending ? '统计中' : eventCount.isError ? '统计失败' : `共 ${eventCount.data?.total ?? 0} 条` : `本页 ${events.data?.events.length ?? 0} 条`} actions={
             <div className="list-head-actions">
+              <Button size="small" onClick={() => setCountScope(filterScope)}>统计总数</Button>
               <Button size="small" onClick={() => setStreamOpen(true)}>新流事件检索</Button>
               <Button size="small" onClick={() => setFiltersOpen(true)}>高校维度与技术字段</Button>
             </div>
@@ -204,7 +212,7 @@ export function EventsPage() {
           scroll={{ x: 960 }}
           size="small"
         />
-        <AppServerPagination page={Math.floor(Number(query.cursor ?? 0) / (query.limit ?? 20)) + 1} pageSize={query.limit ?? 20} total={events.data?.page.total} onChange={(page, pageSize) => updateQuery(setSearchParams, { ...query, limit: pageSize, cursor: String((page - 1) * pageSize) })} />
+        {((events.data?.events.length ?? 0) > 0 || pagination.page > 1) && <RecordCursorPagination page={pagination.page} pageSize={pagination.pageSize} count={events.data?.events.length ?? 0} nextCursor={events.data?.page.next_cursor ?? ''} fetching={events.isFetching} onNext={() => pagination.next(events.data?.page.next_cursor ?? '')} onPrevious={pagination.previous} onPageSizeChange={pagination.changePageSize} />}
       </section>
       <Drawer rootClassName="list-drawer" title="新流事件检索" placement="right" size={900} open={streamOpen} onClose={() => setStreamOpen(false)} destroyOnHidden><StreamEventsPanel /></Drawer>
       <Drawer rootClassName="list-drawer" title="高校维度与技术字段筛选" placement="right" size={520} open={filtersOpen} onClose={() => setFiltersOpen(false)}>{filtersPanel}</Drawer>
@@ -214,7 +222,6 @@ export function EventsPage() {
 
 function queryFromSearchParams(params: URLSearchParams): EventQuery {
   const port = params.get('port')
-  const limit = params.get('limit')
   return {
     q: params.get('q') || undefined,
     type: params.get('type') || undefined,
@@ -237,8 +244,6 @@ function queryFromSearchParams(params: URLSearchParams): EventQuery {
     port: port ? Number(port) : undefined,
     proto: params.get('proto') || undefined,
 		app_protocol: params.get('app_protocol') || undefined,
-    limit: limit ? Number(limit) : 20,
-    cursor: params.get('cursor') || undefined,
   }
 }
 
@@ -265,8 +270,6 @@ function updateQuery(setSearchParams: (params: URLSearchParams) => void, query: 
   if (query.port) params.set('port', String(query.port))
   if (query.proto) params.set('proto', query.proto)
   if (query.app_protocol) params.set('app_protocol', query.app_protocol)
-  if (query.limit) params.set('limit', String(query.limit))
-  if (query.cursor) params.set('cursor', query.cursor)
   setSearchParams(params)
 }
 

@@ -136,6 +136,52 @@ func TestPassiveWALAcceptAtomicallyAdvancesCursorAndRetainsFirstTime(t *testing.
 	}
 }
 
+func TestPassiveWALEventBusCanaryRetainsUnackedSegmentAfterRestart(t *testing.T) {
+	legacy, segment := passiveWALFixture(t)
+	segment.EventBusRequired = true
+	j, err := OpenPassiveWALJournal(legacy, segment.SourcePath, PassiveWALOptions{WriteEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := j.AppendAndCommitPassive(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := &retryEventBusWriter{fail: true}
+	p := Processor{Journal: j, Writer: writer}
+	for _, lane := range []Lane{Archive, Search, Projection} {
+		if err := p.DrainLane(context.Background(), id, lane); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := p.DrainLane(context.Background(), id, EventBus); err == nil {
+		t.Fatal("expected broker failure")
+	}
+	if err := j.Release(id); !errors.Is(err, ErrUnconfirmed) {
+		t.Fatalf("released before broker ACK: %v", err)
+	}
+	if err := j.Close(); err != nil {
+		t.Fatal(err)
+	}
+	j, err = OpenPassiveWALJournal(legacy, segment.SourcePath, PassiveWALOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+	state, err := j.Load(id)
+	if err != nil || state.Acks[EventBus] != Attempted || !state.Segment.EventBusRequired {
+		t.Fatalf("lost pending delivery: %+v %v", state, err)
+	}
+	writer.fail = false
+	p.Journal = j
+	if err := p.DrainLane(context.Background(), id, EventBus); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.FinalizeAfterLanes(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPassiveWALUnknownLaneReplaysReconcileAndPreservesBody(t *testing.T) {
 	legacy, s := passiveWALFixture(t)
 	j, err := OpenPassiveWALJournal(legacy, s.SourcePath, PassiveWALOptions{WriteEnabled: true})

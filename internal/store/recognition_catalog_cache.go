@@ -11,11 +11,13 @@ import (
 )
 
 type recognitionCatalogEntry struct {
-	items    []EndpointDeviceInventory
-	asOf     time.Time
-	loading  chan struct{}
-	err      error
-	failedAt time.Time
+	items        []EndpointDeviceInventory
+	summary      DeviceRecognitionSummary
+	summaryReady bool
+	asOf         time.Time
+	loading      chan struct{}
+	err          error
+	failedAt     time.Time
 }
 type recognitionCatalogCache struct {
 	mu      sync.Mutex
@@ -97,6 +99,7 @@ func (s *PostgresStore) fillRecognitionCatalog(ctx context.Context, snapshot dom
 	cache := &s.recognitionCatalog
 	started := time.Now()
 	fingerprintVersion := fingerprint.Default().Version()
+	var summary DeviceRecognitionSummary
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("recognition statistics refresh failed")
@@ -104,6 +107,8 @@ func (s *PostgresStore) fillRecognitionCatalog(ctx context.Context, snapshot dom
 		cache.mu.Lock()
 		if err == nil {
 			e.items = items
+			e.summary = summary
+			e.summaryReady = true
 			e.asOf = started
 			e.err = nil
 		} else {
@@ -125,7 +130,69 @@ func (s *PostgresStore) fillRecognitionCatalog(ctx context.Context, snapshot dom
 	if err == nil && fingerprint.Default().Version() != fingerprintVersion {
 		err = fmt.Errorf("fingerprint version changed during statistics refresh")
 	}
+	if err == nil {
+		summary = summarizeRecognitionCatalog(items)
+		if time.Since(started) >= recognitionCatalogFreshness {
+			err = fmt.Errorf("recognition statistics exceeded the freshness budget")
+		} else if fingerprint.Default().Version() != fingerprintVersion {
+			err = fmt.Errorf("fingerprint version changed during statistics refresh")
+		}
+	}
 	return items, started, err
+}
+
+// Endpoint statistics use the same verified catalog generation as facets and
+// device recognition, but HTTP reads receive only its compact prepared result.
+// Missing or over-stale preparation is reported instead of showing zeroes.
+func (s *PostgresStore) endpointRecognitionSummarySnapshot(ctx context.Context) (DeviceRecognitionSummary, time.Time, error) {
+	snapshot := ctx.Value(domainReadKey{}).(domainReadSnapshot)
+	key := snapshot.version + ":" + strconv.FormatBool(snapshot.enabled) + ":" + fingerprint.Default().Version()
+	cache := &s.recognitionCatalog
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if cache.entries == nil {
+		cache.entries = map[string]*recognitionCatalogEntry{}
+	}
+	e := cache.entries[key]
+	if e == nil {
+		if len(cache.entries) >= 4 {
+			for oldKey, old := range cache.entries {
+				if old.loading == nil {
+					delete(cache.entries, oldKey)
+					break
+				}
+			}
+		}
+		if len(cache.entries) < 4 {
+			e = &recognitionCatalogEntry{loading: make(chan struct{})}
+			cache.entries[key] = e
+			go s.fillRecognitionCatalog(ctx, snapshot, e)
+		}
+		return DeviceRecognitionSummary{}, time.Time{}, fmt.Errorf("recognition statistics not prepared")
+	}
+	if !e.summaryReady {
+		if e.loading == nil && (e.err == nil || time.Since(e.failedAt) >= recognitionCatalogRetryDelay) {
+			e.loading = make(chan struct{})
+			go s.fillRecognitionCatalog(ctx, snapshot, e)
+		}
+		return DeviceRecognitionSummary{}, time.Time{}, fmt.Errorf("recognition statistics not prepared")
+	}
+	age := time.Since(e.asOf)
+	if age >= recognitionCatalogStaleLimit {
+		if e.loading == nil && (e.err == nil || time.Since(e.failedAt) >= recognitionCatalogRetryDelay) {
+			e.loading = make(chan struct{})
+			go s.fillRecognitionCatalog(ctx, snapshot, e)
+		}
+		if e.err != nil {
+			return DeviceRecognitionSummary{}, time.Time{}, fmt.Errorf("recognition statistics expired: %w", e.err)
+		}
+		return DeviceRecognitionSummary{}, time.Time{}, fmt.Errorf("recognition statistics expired")
+	}
+	if age >= recognitionCatalogRefreshAfter && e.loading == nil && (e.err == nil || time.Since(e.failedAt) >= recognitionCatalogRetryDelay) {
+		e.loading = make(chan struct{})
+		go s.fillRecognitionCatalog(ctx, snapshot, e)
+	}
+	return e.summary, e.asOf, nil
 }
 
 func (s *PostgresStore) WarmEndpointRecognitionCatalog(ctx context.Context) error {
@@ -148,11 +215,14 @@ func (s *PostgresStore) recognitionCatalogHealth(ctx context.Context) error {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	e := cache.entries[key]
-	if e == nil || e.items == nil {
+	if e == nil || e.items == nil || !e.summaryReady {
 		return fmt.Errorf("recognition statistics are not prepared")
 	}
-	if e.err != nil && time.Since(e.asOf) >= recognitionCatalogStaleLimit {
-		return e.err
+	if time.Since(e.asOf) >= recognitionCatalogStaleLimit {
+		if e.err != nil {
+			return e.err
+		}
+		return fmt.Errorf("recognition statistics are stale")
 	}
 	return nil
 }

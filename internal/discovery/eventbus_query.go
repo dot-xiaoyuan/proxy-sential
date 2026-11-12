@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"strings"
-	"sync"
 	"time"
 
 	"proxy-sentinel/internal/fingerprint"
@@ -19,13 +18,6 @@ type eventBusStateCursor struct {
 	Key       string    `json:"k"`
 	Version   int       `json:"v"`
 }
-
-type eventBusTotalEntry struct {
-	total int64
-	at    time.Time
-}
-
-var eventBusTotals sync.Map
 
 // DevicesEventBus serves the shadow current-state table. For devices that also
 // exist in the active stream projection it layers the existing rich document
@@ -115,8 +107,6 @@ func (r Repository) DevicesEventBus(ctx context.Context, q DeviceQuery) (map[str
 			where = append(where, "((c.document->>'name') ILIKE "+p+" OR (c.document->>'manufacturer') ILIKE "+p+" OR (c.document->>'model_name') ILIKE "+p+" OR c.facts::text ILIKE "+p+")")
 		}
 	}
-	countWhere := append([]string(nil), where...)
-	countArgs := append([]any(nil), args...)
 	if q.Cursor != "" {
 		raw, err := base64.RawURLEncoding.DecodeString(q.Cursor)
 		var c eventBusStateCursor
@@ -180,22 +170,16 @@ ORDER BY c.last_seen DESC,c.device_key LIMIT ` + limit
 		b, _ := json.Marshal(keys[q.Limit-1])
 		cursor = base64.RawURLEncoding.EncodeToString(b)
 	}
-	freshness := map[string]any{"status": "ready", "source": "eventbus", "lag_seconds": 0, "result_version": 0}
+	// The copied current table has an independent worker and can stop while
+	// the maintained stream projection continues. Never label it ready by
+	// virtue of answering a list query.
+	freshCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+	freshness, freshErr := r.EventBusCurrentFreshness(freshCtx)
+	cancel()
+	if freshErr != nil {
+		freshness = map[string]any{"status": "failed", "source": "eventbus", "lag_seconds": float64(0), "result_version": int64(0), "source_progress_status": "unverified", "error": "projection watermark unavailable"}
+	}
 	result := map[string]any{"items": items, "has_more": more, "next_cursor": cursor, "limit": q.Limit, "window": q.Window.String(), "freshness": freshness}
-	cacheKey := fmt.Sprintf("%p|%s", r.DB, signature)
-	var total int64
-	if cached, ok := eventBusTotals.Load(cacheKey); ok {
-		entry := cached.(eventBusTotalEntry)
-		if time.Since(entry.at) < 5*time.Second {
-			total = entry.total
-		}
-	}
-	if total == 0 {
-		if countErr := r.DB.QueryRowContext(ctx, `SELECT count(*) FROM discovery_device_current_shadow c WHERE `+strings.Join(countWhere, " AND "), countArgs...).Scan(&total); countErr == nil {
-			eventBusTotals.Store(cacheKey, eventBusTotalEntry{total: total, at: time.Now()})
-		}
-	}
-	result["total"] = total
 	return result, nil
 }
 

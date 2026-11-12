@@ -129,7 +129,11 @@ func TestSharedObservationCommitsOnlyRecordsAndRetriesFailedTransaction(t *testi
 		if retiredRows+upsertedRows > 0 {
 			mock.ExpectExec("INSERT INTO shared_device_profile_jobs").WillReturnResult(sqlmock.NewResult(0, 1))
 		}
+		mock.ExpectExec("SELECT pg_advisory_xact_lock").WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectQuery("SELECT e.execution_id FROM shared_observation_episode_index").WillReturnError(sql.ErrNoRows)
+		mock.ExpectQuery("SELECT e.execution_id FROM shared_observation_episode_index").WillReturnError(sql.ErrNoRows)
 		mock.ExpectExec("INSERT INTO shared_observation_executions").WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec("INSERT INTO shared_observation_episode_index").WillReturnResult(sqlmock.NewResult(0, 1))
 		expectation := mock.ExpectExec("INSERT INTO policy_decision_records")
 		if fail {
 			expectation.WillReturnError(errors.New("database unavailable"))

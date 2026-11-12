@@ -1,10 +1,11 @@
 <clickhouse>
     <!--
       Production system-log policy (mounted into /etc/clickhouse-server/config.d/).
-      The image default kept text_log at trace with no TTL: on 184 it held 18.8 GiB and
-      2.37e8 rows, and query_log/part_log/trace_log/query_views_log also had no TTL.
-      Business evidence tables are unaffected. part_log and query_log stay enabled because
-      capacity diagnosis depends on them; all system logs keep 7 days.
+      The image default can retain system logs without TTL. The 184 container
+      predating this mount has accumulated large text_log/query_log partitions.
+      Business evidence tables are unaffected. query_log stays enabled without
+      TTL until the query-log-free stream repair is active on the server.
+      Other system logs keep seven days.
     -->
     <logger>
         <level>information</level>
@@ -15,7 +16,6 @@
         <level>information</level>
         <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
     </text_log>
-    <query_log><ttl>event_date + INTERVAL 7 DAY DELETE</ttl></query_log>
     <part_log><ttl>event_date + INTERVAL 7 DAY DELETE</ttl></part_log>
     <trace_log><ttl>event_date + INTERVAL 7 DAY DELETE</ttl></trace_log>
     <query_views_log><ttl>event_date + INTERVAL 7 DAY DELETE</ttl></query_views_log>

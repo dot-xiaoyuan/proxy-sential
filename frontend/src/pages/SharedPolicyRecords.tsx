@@ -10,13 +10,15 @@ import { AppEmptyState, AppErrorAlert, AppListHeader, AppLoadingState, AppTable,
 import type { ColumnsType } from 'antd/es/table'
 import { formatDateTime } from '../shared/ui/format'
 import { statusColor } from '../shared/ui/status'
+import { evidenceReviewReason } from '../shared/evidenceReview'
 
 export type SharedPolicyDecision = {
  decision_id: string; observation_id: string; policy_id?: string; policy_revision: number; evidence_version: string;
  account_id: string; ip: string; campus_id: string; access_domain: string; evaluated_at: string;
  evidence_expires_at: string; mode: 'manual' | 'observe'; planned_action: string; delivery_status: 'record_only' | 'not_sent';
  result: 'matched' | 'insufficient' | 'expired'; reasons: string[];
- evidence: { rule_version: string; from: string; to: string; device_lower_bound?: number; records?: { event_id: string; source: string; collector_instance_id?: string }[] };
+ evidence_review_status?: 'rule_verified'|'pending_review'|'insufficient_evidence'|'unverified'; evidence_review_reason?: string;
+ evidence?: { rule_version?: string; from?: string; to?: string; device_lower_bound?: number; records?: { event_id: string; source: string; collector_instance_id?: string }[] };
 }
 const reasons: Record<string, string> = {
  feature_value_limit: '特征数量达到采集上限',
@@ -76,19 +78,26 @@ function windowDuration(from: string, to: string) {
  return minutes < 60 ? `${minutes} 分钟` : `${Math.round(minutes / 6) / 10} 小时`
 }
 function behaviorTitle(item: SharedPolicyDecision) {
+ if (item.evidence_review_status === 'insufficient_evidence') return '旧规则记录：共享证据不足'
+ if (item.result === 'matched' && ['pending_review','unverified'].includes(item.evidence_review_status ?? '')) return '历史共享结论待核验'
  if (item.result === 'expired') return '共享证据已过期'
  if (item.result === 'insufficient') return '共享行为待核验'
- const devices = item.evidence.device_lower_bound ?? 0
+ const devices = item.evidence?.device_lower_bound ?? 0
  return devices > 1 ? `同一账号下至少 ${devices} 台设备同时共享上网` : '同一账号下多台设备共享上网'
 }
 function behaviorNote(item: SharedPolicyDecision) {
+ if (item.evidence_review_status === 'insufficient_evidence') return '原决策和动作仍保留；原证据不满足现行强证据要求'
+ if (item.evidence_review_status === 'unverified') return '原决策仍保留；保存的证据缺失，尚不能核验'
  if (item.result === 'expired') return '当时证据已过期，仅保留记录'
  if (item.result === 'insufficient') return sharedReason(item.reasons[0] ?? '') || '证据不足，暂未确认共享'
- const duration = windowDuration(item.evidence.from, item.evidence.to)
- const devices = item.evidence.device_lower_bound
+ const duration = item.evidence?.from && item.evidence?.to ? windowDuration(item.evidence.from, item.evidence.to) : ''
+ const devices = item.evidence?.device_lower_bound
  return [duration && `观察 ${duration}`, devices ? `设备下界 ${devices} 台` : ''].filter(Boolean).join(' · ')
 }
 function outcomeLabel(item: SharedPolicyDecision) {
+ if (item.result === 'matched' && item.evidence_review_status === 'insufficient_evidence') return '旧规则证据不足'
+ if (item.result === 'matched' && item.evidence_review_status === 'unverified') return '证据缺失待核验'
+ if (item.result === 'matched' && item.evidence_review_status === 'pending_review') return '历史命中待核验'
  return item.result === 'matched' ? '已确认共享' : item.result === 'insufficient' ? '待核验' : '已过期'
 }
 
@@ -131,12 +140,12 @@ export function SharedPolicyRecords() {
  const previousPage=()=>{if(page>1)setPaging({...currentPaging,page:page-1})}
  const moreCount = [ip, from, to].filter(Boolean).length
  const columns: ColumnsType<SharedPolicyDecision> = [
-  { title: '用户与位置', key: 'subject', width: 220, render: (_, item) => <div className="shared-record-subject"><strong>{item.account_id || item.ip}</strong><span className="shared-access-muted">{item.account_id ? `IP ${item.ip}` : ''}</span><span className="shared-access-muted">{[item.campus_id, item.access_domain].filter(Boolean).join(' / ')}</span></div> },
-  { title: '共享行为', key: 'behavior', width: 250, render: (_, item) => <div className="shared-record-behavior"><strong>{behaviorTitle(item)}</strong><span className="shared-access-muted">{behaviorNote(item)}</span></div> },
-  { title: '命中策略', key: 'policy', width: 155, render: (_, item) => <span className="shared-record-policy">{sharedPolicyLabel(item.policy_id, item.policy_revision)}</span> },
-  { title: '处理', key: 'result', width: 115, render: (_, item) => <div className="shared-record-outcome"><Tag color={statusColor(item.result)}>{outcomeLabel(item)}</Tag><span className="shared-access-muted">{item.result === 'matched' ? '仅记录，未执行' : item.result === 'insufficient' ? '未生成处置' : '仅保留记录'}</span></div> },
+  { title: '用户与位置', key: 'subject', width: 205, render: (_, item) => <div className="shared-record-subject"><strong>{item.account_id || item.ip}</strong><span className="shared-access-muted">{item.account_id ? `IP ${item.ip}` : ''}</span><span className="shared-access-muted">{[item.campus_id, item.access_domain].filter(Boolean).join(' / ')}</span></div> },
+  { title: '共享行为', key: 'behavior', width: 225, render: (_, item) => <div className="shared-record-behavior"><strong>{behaviorTitle(item)}</strong><span className="shared-access-muted">{behaviorNote(item)}</span></div> },
+  { title: '命中策略', key: 'policy', width: 145, render: (_, item) => <span className="shared-record-policy">{sharedPolicyLabel(item.policy_id, item.policy_revision)}</span> },
+  { title: '处理', key: 'result', width: 145, render: (_, item) => <div className="shared-record-outcome"><Tag color={item.evidence_review_status==='insufficient_evidence'?'red':item.evidence_review_status==='unverified'||item.evidence_review_status==='pending_review'?'orange':statusColor(item.result)}>{outcomeLabel(item)}</Tag><span className="shared-access-muted">{item.result === 'matched' ? '仅记录，未执行' : item.result === 'insufficient' ? '未生成处置' : '仅保留记录'}</span></div> },
   { title: '时间', key: 'time', width: 135, render: (_, item) => formatTime(item.evaluated_at) },
-  { title: '操作', key: 'detail', width: 85, render: (_, item) => <Link to={`/shared-access/observations/${encodeURIComponent(item.observation_id)}`}>查看详情</Link> },
+  { title: '操作', key: 'detail', width: 80, render: (_, item) => <Link to={`/shared-access/observations/${encodeURIComponent(item.observation_id)}`}>查看详情</Link> },
  ]
  return <>
   <AppTableBar
@@ -155,7 +164,7 @@ export function SharedPolicyRecords() {
   />
   <section className="shared-record-panel">
     <AppListHeader title="共享行为与策略命中" count={`${items.length} 条`} />
-    <div className="shared-record-intro"><Tag>仅记录，未执行</Tag><span>命中后不会下线或发送请求</span>{can(session.data,'actions:read')&&<Link to="/actions?tab=actions">查看处置记录</Link>}{can(session.data,'behavior-reports:read')&&<Link to="/actions?tab=reports">查看上报记录</Link>}<details><summary>判定与执行说明</summary><p>路由器身份、下游共享关系及事件时账号归责均核验通过后记录策略命中。命中时同步写入处置动作记录，并按已启用的通道写入上报记录；两类记录均为仅记录状态，不向外部系统发送请求。</p></details></div>
+    <div className="shared-record-intro"><Tag>仅记录，未执行</Tag><span>命中后不会下线或发送请求</span>{can(session.data,'actions:read')&&<Link to="/actions?tab=actions">查看处置记录</Link>}{can(session.data,'behavior-reports:read')&&<Link to="/actions?tab=reports">查看上报记录</Link>}<details><summary>判定与执行说明</summary><p>路由器身份、下游共享关系及事件时账号归责均核验通过后记录策略命中。每个连续违规时段只生成一次处置动作及每通道上报记录，证据变化继续留下策略决策。旧规则命中仍保留原始记录；核验状态说明其证据是否足以支持现行结论。所有处置与上报均为仅记录状态，不向外部系统发送请求。</p></details></div>
     {observation && <p className="shared-record-id">当前观察：{observation} <Button type="link" onClick={() => update('observation_id', '')}>清除关联筛选</Button></p>}
     {invalidRange ? <Alert type="warning" title="请填写有效时间，且结束时间晚于开始时间" /> : query.isError ? <AppErrorAlert title="策略记录读取失败" /> : query.isLoading ? <AppLoadingState rows={3} /> : !items.length ? <div className="shared-record-empty"><AppEmptyState description={result==='matched'?'当前筛选下暂无策略命中记录':'当前筛选下暂无评估记录'} />{result==='matched'&&<><p className="shared-access-muted">已识别的路由器仍需核验共享关系，采集待办不属于策略命中。</p><Button onClick={()=>update('decision_result','insufficient')}>查看未通过评估</Button></>}</div> : <AppTable
       rowKey="decision_id"
@@ -163,10 +172,11 @@ export function SharedPolicyRecords() {
       dataSource={items}
       scroll={{ x: 960 }}
       expandable={{ expandedRowRender: item => <div className="shared-record-expanded">
-        <dl className="shared-record-facts"><div><dt>命中策略</dt><dd>{sharedPolicyLabel(item.policy_id, item.policy_revision)} · 规则 {item.evidence.rule_version}</dd></div><div><dt>证据版本</dt><dd className="shared-record-id">{item.evidence_version}</dd></div><div><dt>观察窗口</dt><dd>{formatTime(item.evidence.from)} 至 {formatTime(item.evidence.to)}</dd></div>{!!item.evidence.device_lower_bound && <div><dt>设备数量下界</dt><dd>{item.evidence.device_lower_bound}</dd></div>}</dl>
+        <dl className="shared-record-facts"><div><dt>命中策略</dt><dd>{sharedPolicyLabel(item.policy_id, item.policy_revision)}{item.evidence?.rule_version ? ` · 规则 ${item.evidence.rule_version}` : ''}</dd></div><div><dt>证据版本</dt><dd className="shared-record-id">{item.evidence_version}</dd></div>{item.evidence?.from && item.evidence?.to && <div><dt>观察窗口</dt><dd>{formatTime(item.evidence.from)} 至 {formatTime(item.evidence.to)}</dd></div>}{!!item.evidence?.device_lower_bound && <div><dt>设备数量下界</dt><dd>{item.evidence.device_lower_bound}</dd></div>}</dl>
         <RecordReasons values={item.reasons} />
+        {item.evidence_review_reason && <p className="shared-access-muted">历史核验原因：{evidenceReviewReason(item.evidence_review_reason)}</p>}
         {item.result === 'matched' && item.evidence_expires_at && new Date(item.evidence_expires_at).getTime() <= Date.now() && <p className="shared-access-muted">证据已过期，保留当时命中记录。</p>}
-        {!!item.evidence.records?.length && <div className="shared-record-detail-scroll">{item.evidence.records.map(ref => <p className="shared-record-id" key={`${ref.source}/${ref.event_id}`}>{[ref.source, ref.collector_instance_id, ref.event_id].filter(Boolean).join(' / ')}</p>)}</div>}
+        {!!item.evidence?.records?.length && <div className="shared-record-detail-scroll">{item.evidence.records.map(ref => <p className="shared-record-id" key={`${ref.source}/${ref.event_id}`}>{[ref.source, ref.collector_instance_id, ref.event_id].filter(Boolean).join(' / ')}</p>)}</div>}
       </div> }}
     />}
     <div className="shared-policy-cursor-pagination"><span>第 {page} 页 · 本页 {items.length} 条</span><Select aria-label="每页条数" value={pageSize} options={[{value:20,label:'每页 20 条'},{value:50,label:'每页 50 条'}]} onChange={changePageSize}/><Button disabled={page===1||query.isFetching} onClick={previousPage}>上一页</Button><Button disabled={!query.data?.next_cursor||query.isFetching} onClick={nextPage}>下一页</Button></div>

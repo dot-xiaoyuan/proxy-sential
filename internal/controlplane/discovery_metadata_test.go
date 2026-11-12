@@ -18,9 +18,9 @@ func TestDiscoveryMetadataUsesIndependentFilteredCount(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	mock.ExpectQuery(`(?s)GROUP BY identity_key.*matched AS.*classification_status.*GROUP BY classification_status`).WillReturnRows(sqlmock.NewRows([]string{"status", "type", "count", "as_of"}).AddRow("identified", "access_point", 23, time.Now().UTC()))
+	mock.ExpectQuery(`(?s)GROUP BY identity_key.*matched AS.*classification_status.*GROUP BY classification_status`).WillReturnRows(sqlmock.NewRows([]string{"status", "type", "count", "as_of"}).AddRow("identified", "printer", 23, time.Now().UTC()))
 	server := &Server{operations: &operationsState{db: db}}
-	request := httptest.NewRequest("GET", "/discovery/devices/metadata?mode=passive&type=access_point&state=identified&cursor=ignored&limit=bad&offset=99", nil)
+	request := httptest.NewRequest("GET", "/discovery/devices/metadata?mode=passive&type=printer&state=identified&cursor=ignored&limit=bad&offset=99", nil)
 	response := httptest.NewRecorder()
 	server.handleDiscovery(response, request, "/discovery/devices/metadata")
 	if response.Code != 200 {

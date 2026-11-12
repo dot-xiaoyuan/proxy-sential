@@ -371,6 +371,10 @@ func putOptionalTime(target map[string]any, key string, value sql.NullTime) {
 }
 
 func (s *Server) handleIdentityBridgeRuns(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("seek") == "1" {
+		s.handleIdentityBridgeRunsSeek(w, r)
+		return
+	}
 	limit, err := boundedInt(r.URL.Query().Get("limit"), 20, 1, 50)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_limit", err.Error())

@@ -190,6 +190,10 @@ func (s *ClickHouseStore) writeStreamBodyEvents(ctx context.Context, tokenID, ra
 }
 
 func (s *ClickHouseStore) writeStreamRaw(ctx context.Context, segmentID string, segment streamlog.Segment, prepared []preparedStreamEvent) error {
+	return s.writeStreamRawWithToken(ctx, segmentID, segmentID, segment, prepared)
+}
+
+func (s *ClickHouseStore) writeStreamRawWithToken(ctx context.Context, tokenID, segmentID string, segment streamlog.Segment, prepared []preparedStreamEvent) error {
 	sum := sha256.Sum256(segment.Raw)
 	if segment.RawSHA256 != hex.EncodeToString(sum[:]) {
 		return streamlog.ErrContentConflict
@@ -214,7 +218,7 @@ func (s *ClickHouseStore) writeStreamRaw(ctx context.Context, segmentID string, 
 	}); err != nil {
 		return err
 	}
-	_, err := s.queryWithSettings(ctx, body.String(), streamInsertSettings(segmentID, "stream_source_raw"))
+	_, err := s.queryWithSettings(ctx, body.String(), streamInsertSettings(tokenID, "stream_source_raw"))
 	return err
 }
 
@@ -237,9 +241,10 @@ func (s *ClickHouseStore) WriteStreamSearch(ctx context.Context, segmentID strin
 		row := map[string]any{
 			"scope_id": item.scope, "event_key": item.key, "content_sha256": item.hash,
 			"archive_month": archiveMonth, "retention_class": item.retention,
-			"observed_at": item.observed.Format("2006-01-02 15:04:05.000000"),
-			"protocol":    firstNonEmpty(item.event.SourceEventType, item.event.Source),
-			"event_type":  item.event.Type, "source": item.event.Source,
+			"first_ingested_at": segment.AcceptedAt.UTC().Format("2006-01-02 15:04:05.000000"),
+			"observed_at":       item.observed.Format("2006-01-02 15:04:05.000000"),
+			"protocol":          firstNonEmpty(item.event.SourceEventType, item.event.Source),
+			"event_type":        item.event.Type, "source": item.event.Source,
 			"router_score_possible": routerScorePossible,
 			"sensor_id":             stringFromMap(item.event.Observer, "sensor_id"),
 			"campus_id":             stringFromMap(item.event.Subject, "campus_id"),
@@ -296,7 +301,6 @@ func (s *ClickHouseStore) ReconcileStreamBody(ctx context.Context, segmentID str
 	partial := segment
 	partial.Events = make([]normalized.Event, 0, len(missing))
 	partial.EventOffsets = make([]int64, 0, len(missing))
-	var tokenKey strings.Builder
 	for _, index := range missing {
 		partial.Events = append(partial.Events, segment.Events[index])
 		offset := segment.StartOffset + int64(index)
@@ -304,15 +308,13 @@ func (s *ClickHouseStore) ReconcileStreamBody(ctx context.Context, segmentID str
 			offset = segment.EventOffsets[index]
 		}
 		partial.EventOffsets = append(partial.EventOffsets, offset)
-		fmt.Fprintf(&tokenKey, "%d,", index)
 	}
-	token := sha256.Sum256([]byte(segmentID + "\x00" + tokenKey.String()))
 	partial.Raw = nil
 	prepared, err := prepareStreamEvents(partial)
 	if err != nil {
 		return err
 	}
-	if err := s.writeStreamBodyEvents(ctx, hex.EncodeToString(token[:]), segmentID, partial, prepared, streamRawArchiveRequired(segment)); err != nil {
+	if err := s.writeStreamBodyEvents(ctx, streamRepairToken(segmentID, "body"), segmentID, partial, prepared, streamRawArchiveRequired(segment)); err != nil {
 		return err
 	}
 	confirmed, err := s.VerifyStreamBody(ctx, segment)
@@ -334,7 +336,7 @@ func (s *ClickHouseStore) reconcileStreamRaw(ctx context.Context, segmentID stri
 	if err != nil {
 		return err
 	}
-	if err := s.writeStreamRaw(ctx, segmentID, segment, prepared); err != nil {
+	if err := s.writeStreamRawWithToken(ctx, streamRepairToken(segmentID, "stream_source_raw"), segmentID, segment, prepared); err != nil {
 		return err
 	}
 	confirmed, err = s.verifyStreamRaw(ctx, segmentID, segment)
@@ -448,7 +450,6 @@ func (s *ClickHouseStore) ReconcileStreamSearch(ctx context.Context, segmentID s
 	partial := segment
 	partial.Events = make([]normalized.Event, 0, len(missing))
 	partial.EventOffsets = make([]int64, 0, len(missing))
-	var tokenKey strings.Builder
 	for _, index := range missing {
 		partial.Events = append(partial.Events, segment.Events[index])
 		offset := segment.StartOffset + int64(index)
@@ -456,10 +457,8 @@ func (s *ClickHouseStore) ReconcileStreamSearch(ctx context.Context, segmentID s
 			offset = segment.EventOffsets[index]
 		}
 		partial.EventOffsets = append(partial.EventOffsets, offset)
-		fmt.Fprintf(&tokenKey, "%d,", index)
 	}
-	token := sha256.Sum256([]byte(segmentID + "\x00search\x00" + tokenKey.String()))
-	if err := s.WriteStreamSearch(ctx, hex.EncodeToString(token[:]), partial); err != nil {
+	if err := s.WriteStreamSearch(ctx, streamRepairToken(segmentID, "stream_event_search"), partial); err != nil {
 		return err
 	}
 	confirmed, err := s.VerifyStreamSearch(ctx, segment)

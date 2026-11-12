@@ -112,7 +112,7 @@ func (j *Journal) applyAckLog(id string, state *State) (int64, error) {
 func (j *Journal) appendAck(id string, lane Lane, status Status, entrySealed bool) error {
 	// The caller holds the segment lock. Validate and truncate only an
 	// incomplete final write; complete corrupt records stop the source.
-	state := State{Acks: map[Lane]Status{Archive: Pending, Search: Pending, Projection: Pending, RiskFeatures: Pending}}
+	state := State{Acks: map[Lane]Status{Archive: Pending, Search: Pending, Projection: Pending, RiskFeatures: Pending, EventBus: Pending}}
 	valid, err := j.applyAckLog(id, &state)
 	if err != nil {
 		return err

@@ -98,3 +98,37 @@ func TestProcessorObserverRecordsLocalFailuresWithoutSinkCalls(t *testing.T) {
 		t.Fatal("load failure missing")
 	}
 }
+
+func TestProcessorAckObserverCountsOnlyDurableTransitions(t *testing.T) {
+	j, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := appendCommitted(t, j, testSegment())
+	w := &fakeLaneWriter{failArchiveOnce: true}
+	var confirmed []Lane
+	p := Processor{Journal: j, Writer: w, AckObserver: func(lane Lane, segment Segment) {
+		if len(segment.Events) == 0 {
+			t.Fatal("ack observer lost the confirmed segment")
+		}
+		confirmed = append(confirmed, lane)
+	}}
+	if err := p.DrainLane(context.Background(), id, Archive); err == nil {
+		t.Fatal("expected first archive failure")
+	}
+	if len(confirmed) != 0 {
+		t.Fatalf("failed write was counted as confirmed: %v", confirmed)
+	}
+	if err := p.DrainLane(context.Background(), id, Archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.DrainLane(context.Background(), id, Archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.DrainLane(context.Background(), id, Search); err != nil {
+		t.Fatal(err)
+	}
+	if len(confirmed) != 2 || confirmed[0] != Archive || confirmed[1] != Search {
+		t.Fatalf("lane confirmation counted twice or missed: %v", confirmed)
+	}
+}

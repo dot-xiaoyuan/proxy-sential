@@ -26,6 +26,7 @@ import type {
   DeviceSignal,
   Evidence,
   EventListResponse,
+  EventCountResponse,
   StreamBodyRef,
   StreamEventIndexPage,
   StreamEventIndexQuery,
@@ -173,6 +174,7 @@ export const api = {
   dpiFingerprintConflicts: (query: ActivityOverviewQuery) =>
     request<{ items: FingerprintConflictItem[] }>(`/dpi/fingerprint-conflicts${search(query)}`),
   dpiFlows: (query: EventQuery) => request<DpiFlowListResponse>(`/dpi/flows${search(query)}`),
+  dpiFlowsCount: (query: EventQuery) => request<EventCountResponse>(`/dpi/flows/count${search(query)}`),
   dpiIpFlows: (ip: string, query: EventQuery) =>
     request<DpiFlowListResponse>(`/dpi/ips/${encodeURIComponent(ip)}/flows${search(query)}`),
   dpiFlow: (flowId: string) =>
@@ -221,6 +223,7 @@ export const api = {
     ),
   aiRelayUsages: (query: AIRelayUsageQuery) => request<AIRelayUsagePage>(`/ai-relay/usages${search(query)}`),
   events: (query: EventQuery) => request<EventListResponse>(`/events${search(query)}`),
+  eventsCount: (query: EventQuery) => request<EventCountResponse>(`/events/count${search(query)}`),
   streamEventIndex: (query: StreamEventIndexQuery) => request<StreamEventIndexPage>(`/events/stream-index${search(query)}`),
   ipTrafficObservations: (ip: string, query: IpTrafficObservationQuery) => request<IpTrafficObservationPage>(`/ips/${encodeURIComponent(ip)}/traffic-observations${search(query)}`),
   streamEventBody: (ref: StreamBodyRef) => request<NormalizedEventSummary>(`/events/stream-body${search({ ref: JSON.stringify(ref) })}`),

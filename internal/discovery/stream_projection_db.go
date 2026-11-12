@@ -24,8 +24,20 @@ var ErrUnsupportedStreamProjection = errors.New("selected stream event has no di
 // StreamDiscoveryProjector writes only selected discovery facts. The source
 // body is never copied into PostgreSQL; all receipts and device changes carry
 // an immutable ClickHouse body locator.
+type StreamProjectionWriteStats struct {
+	Source      string
+	Epoch       string
+	Events      int
+	FreshEvents int
+	FactRows    int64
+	StateRows   int64
+}
+
 type StreamDiscoveryProjector struct {
 	DB *sql.DB
+	// Called only after the projection transaction commits. It must not block
+	// the journal lane or persist event-level metrics.
+	ObserveWrite func(StreamProjectionWriteStats)
 	// Compatibility releases keep this false and dual-write stream2 keys so
 	// their previous release can still process them. Only a later release with
 	// that compatibility version as rollback may enable compact-only writes.
@@ -146,7 +158,15 @@ const streamRecognitionRepeatCoalesceWindow = time.Minute
 // while recognition updates endpoint_recognition_jobs rows. Reversing the two
 // lets concurrent expiry and projection transactions deadlock.
 func publishStreamStateAndRecognition(ctx context.Context, tx *sql.Tx, epoch string, keys []string, newFactCounts map[string]int, dirty, deferred *streamRecognitionDirty) error {
-	if err := publishStreamDiscoveryStates(ctx, tx, epoch, keys, newFactCounts); err != nil {
+	return publishStreamStateAndRecognitionCount(ctx, tx, epoch, keys, newFactCounts, dirty, deferred, nil)
+}
+
+func publishStreamStateAndRecognitionCount(ctx context.Context, tx *sql.Tx, epoch string, keys []string, newFactCounts map[string]int, dirty, deferred *streamRecognitionDirty, stateRows *int64) error {
+	return publishStreamStateAndRecognitionCountWithRepeats(ctx, tx, epoch, keys, newFactCounts, nil, dirty, deferred, stateRows)
+}
+
+func publishStreamStateAndRecognitionCountWithRepeats(ctx context.Context, tx *sql.Tx, epoch string, keys []string, newFactCounts map[string]int, repeatCandidates map[string]streamRepeatStateSkip, dirty, deferred *streamRecognitionDirty, stateRows *int64) error {
+	if err := publishStreamDiscoveryStatesCountWithRepeats(ctx, tx, epoch, keys, newFactCounts, repeatCandidates, stateRows); err != nil {
 		return err
 	}
 	immediate, err := dirty.resolve(ctx, tx)
@@ -488,7 +508,10 @@ func (p StreamDiscoveryProjector) MarkStreamRiskSubjectsDirty(ctx context.Contex
  WHERE NOT EXISTS (SELECT 1 FROM stream_risk_fresh_cutovers c
                    WHERE c.sensor_id=r.sensor_id AND $2::timestamptz<c.accepted_after)
  ON CONFLICT(sensor_id,subject_type,subject_id) DO UPDATE
- SET generation=nextval('risk_feature_dirty_generation'),last_dirty_at=now(),
+ SET generation=CASE WHEN risk_feature_dirty_subjects.claimed_generation IS NOT NULL
+                     THEN nextval('risk_feature_dirty_generation')
+                     ELSE risk_feature_dirty_subjects.generation END,
+     last_dirty_at=now(),
      last_observed_at=GREATEST(risk_feature_dirty_subjects.last_observed_at,EXCLUDED.last_observed_at)`, raw, segment.AcceptedAt.UTC())
 	if err != nil {
 		return err
@@ -692,7 +715,13 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 				return err
 			}
 		}
-		return tx.Commit()
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		if p.ObserveWrite != nil {
+			p.ObserveWrite(StreamProjectionWriteStats{Source: segment.Source, Epoch: segment.Epoch, Events: len(segment.Events)})
+		}
+		return nil
 	}
 	keys := make([]string, 0)
 	seenDevices := map[string]bool{}
@@ -716,6 +745,8 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 	}
 	mark("merge_facts")
 	factWrites := map[string]streamDiscoveryFact{}
+	repeatCandidates := map[string]streamRepeatStateSkip{}
+	repeatBlocked := map[string]bool{}
 	dirty := newStreamRecognitionDirty()
 	deferredDirty := newStreamRecognitionDirty()
 	newFactCounts := map[string]int{}
@@ -746,6 +777,30 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 		if hasPrior && prior.FirstObserved.Before(item.Fact.FirstObserved) {
 			item.Fact.FirstObserved = prior.FirstObserved
 		}
+		if candidate, ok := streamRepeatStateCandidate(priorPtr, item.Fact, decision); ok && !repeatBlocked[item.Fact.Device] {
+			if accumulated, exists := repeatCandidates[item.Fact.Device]; exists {
+				if accumulated.Scope != candidate.Scope {
+					repeatBlocked[item.Fact.Device] = true
+					delete(repeatCandidates, item.Fact.Device)
+				} else {
+					if candidate.FirstObserved.Before(accumulated.FirstObserved) {
+						accumulated.FirstObserved = candidate.FirstObserved
+					}
+					if candidate.LastObserved.After(accumulated.LastObserved) {
+						accumulated.LastObserved = candidate.LastObserved
+					}
+					if candidate.ValidUntil.After(accumulated.ValidUntil) {
+						accumulated.ValidUntil = candidate.ValidUntil
+					}
+					repeatCandidates[item.Fact.Device] = accumulated
+				}
+			} else {
+				repeatCandidates[item.Fact.Device] = candidate
+			}
+		} else {
+			repeatBlocked[item.Fact.Device] = true
+			delete(repeatCandidates, item.Fact.Device)
+		}
 		versions[identity] = item.Fact
 		factWrites[identity] = item.Fact
 		routeRecognitionWake(dirty, deferredDirty, priorPtr, item.Fact, decision)
@@ -759,7 +814,8 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 		}
 	}
 	mark("write_facts")
-	if err := writeStreamDiscoveryFacts(ctx, tx, factWrites); err != nil {
+	var factRows int64
+	if err := writeStreamDiscoveryFactsCount(ctx, tx, factWrites, &factRows); err != nil {
 		return err
 	}
 	mark("write_changes")
@@ -798,11 +854,18 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 		stateKeys = append(stateKeys, key)
 	}
 	sort.Strings(stateKeys)
-	if err := publishStreamStateAndRecognition(ctx, tx, segment.Epoch, stateKeys, newFactCounts, dirty, deferredDirty); err != nil {
+	var stateRows int64
+	if err := publishStreamStateAndRecognitionCountWithRepeats(ctx, tx, segment.Epoch, stateKeys, newFactCounts, repeatCandidates, dirty, deferredDirty, &stateRows); err != nil {
 		return err
 	}
 	mark("commit")
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if p.ObserveWrite != nil {
+		p.ObserveWrite(StreamProjectionWriteStats{Source: segment.Source, Epoch: segment.Epoch, Events: len(segment.Events), FreshEvents: len(fresh), FactRows: factRows, StateRows: stateRows})
+	}
+	return nil
 }
 
 func streamAcceptedMonth(at time.Time) time.Time {
@@ -1139,6 +1202,10 @@ func addRecognitionDirtyMACs(changed map[string]bool, previous *streamDiscoveryF
 }
 
 func writeStreamDiscoveryFacts(ctx context.Context, tx *sql.Tx, facts map[string]streamDiscoveryFact) error {
+	return writeStreamDiscoveryFactsCount(ctx, tx, facts, nil)
+}
+
+func writeStreamDiscoveryFactsCount(ctx context.Context, tx *sql.Tx, facts map[string]streamDiscoveryFact, affected *int64) error {
 	if len(facts) == 0 {
 		return nil
 	}
@@ -1155,12 +1222,18 @@ func writeStreamDiscoveryFacts(ctx context.Context, tx *sql.Tx, facts map[string
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO stream_discovery_facts(epoch,device_key,fact_key,scope_id,source_id,protocol,service_instance,event_key,visible_event_key,revision,first_observed_at,observed_at,valid_until,withdrawn,semantic_hash,ip,mac,name,manufacturer,model_name,device_type,candidate_type,candidate_reason,excluded,capabilities,address_binding,sensor_id,site,domain,vlan,vrf,interface_name,recognition_fields)
+	result, err := tx.ExecContext(ctx, `INSERT INTO stream_discovery_facts(epoch,device_key,fact_key,scope_id,source_id,protocol,service_instance,event_key,visible_event_key,revision,first_observed_at,observed_at,valid_until,withdrawn,semantic_hash,ip,mac,name,manufacturer,model_name,device_type,candidate_type,candidate_reason,excluded,capabilities,address_binding,sensor_id,site,domain,vlan,vrf,interface_name,recognition_fields)
  SELECT v.epoch,v.device_key,v.fact_key,v.scope_id,v.source_id,v.protocol,v.service_instance,v.event_key,v.visible_event_key,v.revision,v.first_observed_at,v.observed_at,v.valid_until,v.withdrawn,v.semantic_hash,v.ip,v.mac,v.name,v.manufacturer,v.model_name,v.device_type,v.candidate_type,v.candidate_reason,v.excluded,coalesce(v.capabilities,'{}'::text[]),v.address_binding,v.sensor_id,v.site,v.domain,v.vlan,v.vrf,v.interface_name,coalesce(v.recognition_fields,'{}'::jsonb)
  FROM jsonb_to_recordset($1::jsonb) AS v(epoch text,device_key text,fact_key text,scope_id text,source_id text,protocol text,service_instance text,event_key text,visible_event_key text,revision bigint,first_observed_at timestamptz,observed_at timestamptz,valid_until timestamptz,withdrawn boolean,semantic_hash text,ip text,mac text,name text,manufacturer text,model_name text,device_type text,candidate_type text,candidate_reason text,excluded boolean,capabilities text[],address_binding boolean,sensor_id text,site text,domain text,vlan text,vrf text,interface_name text,recognition_fields jsonb)
  ON CONFLICT(epoch,device_key,fact_key) DO UPDATE SET scope_id=EXCLUDED.scope_id,source_id=EXCLUDED.source_id,protocol=EXCLUDED.protocol,service_instance=EXCLUDED.service_instance,event_key=EXCLUDED.event_key,visible_event_key=EXCLUDED.visible_event_key,revision=EXCLUDED.revision,first_observed_at=least(stream_discovery_facts.first_observed_at,EXCLUDED.first_observed_at),observed_at=EXCLUDED.observed_at,valid_until=EXCLUDED.valid_until,withdrawn=EXCLUDED.withdrawn,semantic_hash=EXCLUDED.semantic_hash,ip=EXCLUDED.ip,mac=EXCLUDED.mac,name=EXCLUDED.name,manufacturer=EXCLUDED.manufacturer,model_name=EXCLUDED.model_name,device_type=EXCLUDED.device_type,candidate_type=EXCLUDED.candidate_type,candidate_reason=EXCLUDED.candidate_reason,excluded=EXCLUDED.excluded,capabilities=EXCLUDED.capabilities,address_binding=EXCLUDED.address_binding,sensor_id=EXCLUDED.sensor_id,site=EXCLUDED.site,domain=EXCLUDED.domain,vlan=EXCLUDED.vlan,vrf=EXCLUDED.vrf,interface_name=EXCLUDED.interface_name,recognition_fields=EXCLUDED.recognition_fields
  WHERE (EXCLUDED.event_key=stream_discovery_facts.event_key AND EXCLUDED.revision>stream_discovery_facts.revision)
  OR (EXCLUDED.event_key<>stream_discovery_facts.event_key AND (EXCLUDED.observed_at,EXCLUDED.event_key)>(stream_discovery_facts.observed_at,stream_discovery_facts.event_key))`, raw)
+	if err != nil {
+		return err
+	}
+	if affected != nil {
+		*affected, err = result.RowsAffected()
+	}
 	return err
 }
 

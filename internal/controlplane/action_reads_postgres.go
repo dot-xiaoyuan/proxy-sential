@@ -48,6 +48,10 @@ func (s *Server) actionReadPostgres(w http.ResponseWriter, r *http.Request) {
 				fail(err)
 				return
 			}
+			if err = annotateSharedActionReview(ctx, tx, doc.Actions); err != nil {
+				fail(err)
+				return
+			}
 			items := mapValues(doc.Actions)
 			sort.Slice(items, func(i, j int) bool {
 				if items[i].CreatedAt == items[j].CreatedAt {
@@ -80,6 +84,10 @@ func (s *Server) actionReadPostgres(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err = loadActionsScoped(ctx, tx, &doc, ` ORDER BY created_at DESC,action_id DESC LIMIT $1 OFFSET $2`, []any{limit, offset}); err != nil {
+			fail(err)
+			return
+		}
+		if err = annotateSharedActionReview(ctx, tx, doc.Actions); err != nil {
 			fail(err)
 			return
 		}
@@ -173,6 +181,10 @@ func (s *Server) actionReadPostgres(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		if err = loadActionsScoped(ctx, tx, &doc, ` WHERE action_id=$1`, []any{parts[0]}); err != nil {
+			fail(err)
+			return
+		}
+		if err = annotateSharedActionReview(ctx, tx, doc.Actions); err != nil {
 			fail(err)
 			return
 		}
