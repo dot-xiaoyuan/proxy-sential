@@ -17,3 +17,5 @@
 PG 242 补充声明级撤销及规则版本索引；PG 243 记录固定起点的保留窗回填游标和缺少原文引用的缺口。`PROXY_SENTINEL_HARDWARE_BACKFILL=true` 单独启用每批 100 条的回填，无原文引用的条目跳过并计缺口，不补造历史。回填完成后分析派生表统计信息，再比较影子与现有读取；新读取仍由独立 gate 决定。可用起点为实际可引用数据的最早时间，不能用请求的 30 天边界代替。
 
 回填游标使用 latest 表真实主键五元组 `(device_key,source_id,origin,service_type,port)`，不是可重复的事件 ID。PG 244 记录固定起点后被更新的行；`backfill_complete` 仅表示当前投影遍历完成，`coverage=retained_latest_only` 明确其不等于完整 30 天历史。实时输入和独立规则重算继续分别处理，不把回填遍历结束描述为全校覆盖完成。
+
+哑终端冲突记录按重点词表内字典序最小的冲突类型进入一个代表分组，避免同身份重复计数；该分组不表示已确认类型。发现清单的确定硬件类型保持空，状态为 conflict，详情返回完整 `hardware_conflicting_types`。统计中的 conflict 与 identified 分列，不能把冲突分组加入已识别数量。
