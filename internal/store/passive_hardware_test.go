@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/DATA-DOG/go-sqlmock"
 	"testing"
 	"time"
 
@@ -154,5 +157,38 @@ func TestHardwareBackfillPostgresDuplicateEventIDsAcrossPages(t *testing.T) {
 	db.QueryRow(`SELECT count(*) FROM passive_hardware_dirty`).Scan(&queued)
 	if rows != 201 || changed != 1 || !complete || queued != 200 {
 		t.Fatalf("duplicate IDs crossed cursor boundary: rows=%d changed=%d complete=%v queued=%d", rows, changed, complete, queued)
+	}
+}
+
+func TestHardwareOwnershipRevocationLookupPreservesPartialIndexAdmission(t *testing.T) {
+	// The revoked side must independently imply the deployed partial-index
+	// predicate; correlation to v.origin alone selected a broad history bitmap.
+	matcher := sqlmock.QueryMatcherFunc(func(_, actual string) error {
+		start := strings.Index(actual, "FROM discovery_observations revoked")
+		if start < 0 {
+			return fmt.Errorf("missing event-time revocation check")
+		}
+		revoked := actual[start:]
+		for _, predicate := range []string{"revoked.origin IN ('arp','ndp','dhcp')", "coalesce(revoked.data->>'mac','')<>''", "revoked.origin=v.origin", "revoked.observed_at>=v.observed_at", "revoked.observed_at<=$3", "coalesce(revoked.data->>'vlan','')=$6", "coalesce(revoked.data->>'vrf','')=$7"} {
+			if !strings.Contains(revoked, predicate) {
+				return fmt.Errorf("indexed, scoped revocation predicate missing: %s", predicate)
+			}
+		}
+		return nil
+	})
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(matcher))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC()
+	mock.ExpectQuery("indexed ownership").WithArgs("sensor", "10.0.0.2", now, "campus", "access", "20", "prod").WillReturnRows(sqlmock.NewRows([]string{"mac", "count"}).AddRow("00:11:22:33:44:55", 1))
+	o := discovery.Observation{Origin: "snmp", Node: "sensor", Site: "campus", Domain: "access", VLAN: "20", VRF: "prod", IP: "10.0.0.2", ObservedAt: now, Evidence: normalized.Event{Payload: map[string]any{"is_response": true, "response_source_ip": "10.0.0.2"}}}
+	got, err := resolveHardwareOwnership(context.Background(), db, o)
+	if err != nil || got.MAC != "00:11:22:33:44:55" {
+		t.Fatalf("indexed ownership failed: %+v %v", got, err)
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
