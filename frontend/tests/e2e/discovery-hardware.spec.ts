@@ -16,7 +16,11 @@ test('persistent hardware, activity, and sources remain distinct at three viewpo
   await expect(page.locator('.ant-select-dropdown').filter({visible:true})).toHaveCount(0)
   await expect(page.getByText('回放多功能打印机',{exact:true})).toBeVisible()
   await expect(page.getByText('最近活动线索已过期',{exact:true})).toBeVisible()
-  await expect(page.locator('.census-types .census-type')).toHaveCount(8)
+  await page.getByRole('button',{name:'范围、清单与比对'}).click()
+  const censusDetail=page.getByRole('dialog')
+  await expect(censusDetail.locator('.census-types .census-type')).toHaveCount(8)
+  await censusDetail.locator('.ant-drawer-close').click()
+  await expect(censusDetail).not.toBeVisible()
   await expect(page.locator('.center-list-surface.is-updating')).toHaveCount(0)
   for(const viewport of [{width:390,height:844},{width:1280,height:800},{width:1440,height:900}]){
     await page.setViewportSize(viewport)
