@@ -21,6 +21,8 @@ type captureBucket struct {
 	handshakeFeatureSamples int
 	controlParseFailures    int
 	controlKeyDrops         int
+	sadpFragments           map[sadpFragmentKey]*sadpAssembly
+	lastSADPFragmentSweep   time.Time
 }
 
 // At roughly 0.5-1 KiB per normalized JSON record, this hard ceiling keeps the
@@ -48,7 +50,10 @@ func (b *captureBucket) addFrame(frame []byte, scope *normalized.CaptureScope) {
 			}
 		}
 	}
-	controls := parseControlFrames(frame)
+	controls, fragmented := b.acceptSADPFragment(frame)
+	if !fragmented {
+		controls = parseControlFrames(frame)
+	}
 	if eth, ok := parseEthernetFrame(frame); ok && eth.etherType == 0x893a && len(controls) == 0 {
 		b.controlParseFailures++
 	}

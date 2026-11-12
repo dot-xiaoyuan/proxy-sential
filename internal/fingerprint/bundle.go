@@ -26,6 +26,7 @@ const (
 	BundleSchemaVersionV5   = "device-fingerprint-bundle/v5"
 	BundleSchemaVersionV6   = "device-fingerprint-bundle/v6"
 	BundleSchemaVersionV7   = "device-fingerprint-bundle/v7"
+	BundleSchemaVersionV8   = "device-fingerprint-bundle/v8"
 	BundleSchemaVersion     = BundleSchemaVersionV6
 	MaxBundleBytes          = 32 << 20
 	MaxBundleContent        = 128 << 20
@@ -332,7 +333,7 @@ func VerifyBundleBytes(data []byte) (Bundle, error) {
 	// deliberately absent: accepting them before a schema bump would let a
 	// bundle carry unverified bytes that newer readers ignore and older readers
 	// reject outright. They join this list together with the v7 payload.
-	allowed := map[string]bool{"multisource-catalog.json": true, "multisource-provenance.json": true, "manifest.json": true, "oui.csv": true, "device-rules.json": true, "router-rules.json": true, "fingerbank-dhcp.json": true, "brand-aliases.json": true, "domain-signatures.json": true, "application-signatures.json": true, "licenses/ODbL-1.0.html": true, "licenses/DbCL-1.0.html": true, "licenses/NextDNS-MIT.txt": true, "licenses/NOTICE.txt": true, "licenses/HaGeZi-GPL-3.0.txt": true, "sources/hagezi.json": true, "snmp-enterprise-oid.json": true, "device-type-prior.json": true, "model-catalog.json": true, "service-type-catalog.json": true}
+	allowed := map[string]bool{"multisource-catalog.json": true, "multisource-provenance.json": true, "manifest.json": true, "oui.csv": true, "device-rules.json": true, "router-rules.json": true, "fingerbank-dhcp.json": true, "brand-aliases.json": true, "domain-signatures.json": true, "application-signatures.json": true, "licenses/ODbL-1.0.html": true, "licenses/DbCL-1.0.html": true, "licenses/NextDNS-MIT.txt": true, "licenses/NOTICE.txt": true, "licenses/HaGeZi-GPL-3.0.txt": true, "sources/hagezi.json": true, "snmp-enterprise-oid.json": true, "device-type-prior.json": true, "model-catalog.json": true, "service-type-catalog.json": true, "hardware-catalog.json": true, "hardware-provenance.json": true}
 	for {
 		header, err := reader.Next()
 		if err == io.EOF {
@@ -381,7 +382,7 @@ func VerifyBundleBytes(data []byte) (Bundle, error) {
 	if manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 {
 		required = append(required, "application-signatures.json")
 	}
-	if manifest.SchemaVersion == BundleSchemaVersionV5 || manifest.SchemaVersion == BundleSchemaVersionV6 || manifest.SchemaVersion == BundleSchemaVersionV7 {
+	if manifest.SchemaVersion == BundleSchemaVersionV5 || manifest.SchemaVersion == BundleSchemaVersionV6 || (manifest.SchemaVersion == BundleSchemaVersionV7 || manifest.SchemaVersion == BundleSchemaVersionV8) {
 		required = append(required, "domain-signatures.json", "application-signatures.json", "router-rules.json")
 		for _, source := range manifest.Sources {
 			if source.Name == "NextDNS native-tracking-domains" {
@@ -394,18 +395,21 @@ func VerifyBundleBytes(data []byte) (Bundle, error) {
 			required = append(required, "licenses/HaGeZi-GPL-3.0.txt", "sources/hagezi.json")
 		}
 	}
-	if manifest.SchemaVersion == BundleSchemaVersionV6 || manifest.SchemaVersion == BundleSchemaVersionV7 {
+	if manifest.SchemaVersion == BundleSchemaVersionV6 || (manifest.SchemaVersion == BundleSchemaVersionV7 || manifest.SchemaVersion == BundleSchemaVersionV8) {
 		required = append(required, "multisource-catalog.json", "multisource-provenance.json")
 	}
-	if manifest.SchemaVersion == BundleSchemaVersionV7 {
+	if manifest.SchemaVersion == BundleSchemaVersionV7 || manifest.SchemaVersion == BundleSchemaVersionV8 {
 		required = append(required, "snmp-enterprise-oid.json", "device-type-prior.json", "model-catalog.json", "service-type-catalog.json")
+	}
+	if manifest.SchemaVersion == BundleSchemaVersionV8 {
+		required = append(required, "hardware-catalog.json", "hardware-provenance.json")
 	}
 	for _, name := range required {
 		if len(files[name]) == 0 {
 			return Bundle{}, fmt.Errorf("bundle is missing %q", name)
 		}
 	}
-	if (manifest.SchemaVersion != BundleSchemaVersionV1 && manifest.SchemaVersion != BundleSchemaVersionV2 && manifest.SchemaVersion != BundleSchemaVersionV3 && manifest.SchemaVersion != BundleSchemaVersionV4 && manifest.SchemaVersion != BundleSchemaVersionV5 && manifest.SchemaVersion != BundleSchemaVersionV6 && manifest.SchemaVersion != BundleSchemaVersionV7) || manifest.Version == "" {
+	if (manifest.SchemaVersion != BundleSchemaVersionV1 && manifest.SchemaVersion != BundleSchemaVersionV2 && manifest.SchemaVersion != BundleSchemaVersionV3 && manifest.SchemaVersion != BundleSchemaVersionV4 && manifest.SchemaVersion != BundleSchemaVersionV5 && manifest.SchemaVersion != BundleSchemaVersionV6 && (manifest.SchemaVersion != BundleSchemaVersionV7 && manifest.SchemaVersion != BundleSchemaVersionV8)) || manifest.Version == "" {
 		return Bundle{}, fmt.Errorf("unsupported bundle manifest")
 	}
 	if _, err := time.Parse(time.RFC3339Nano, manifest.CreatedAt); err != nil {
@@ -414,7 +418,7 @@ func VerifyBundleBytes(data []byte) (Bundle, error) {
 	if len(manifest.Files) != len(required)-1 {
 		return Bundle{}, fmt.Errorf("bundle manifest must describe exactly the fixed payload files")
 	}
-	if manifest.SchemaVersion != BundleSchemaVersionV7 {
+	if manifest.SchemaVersion != BundleSchemaVersionV7 && manifest.SchemaVersion != BundleSchemaVersionV8 {
 		for _, name := range []string{"snmp-enterprise-oid.json", "device-type-prior.json", "model-catalog.json", "service-type-catalog.json"} {
 			if _, present := files[name]; present {
 				return Bundle{}, fmt.Errorf("bundle contains unsupported entry %q", name)
@@ -430,17 +434,22 @@ func VerifyBundleBytes(data []byte) (Bundle, error) {
 			return Bundle{}, fmt.Errorf("bundle checksum mismatch for %q", name)
 		}
 	}
-	if manifest.SchemaVersion == BundleSchemaVersionV6 || manifest.SchemaVersion == BundleSchemaVersionV7 {
+	if manifest.SchemaVersion == BundleSchemaVersionV6 || (manifest.SchemaVersion == BundleSchemaVersionV7 || manifest.SchemaVersion == BundleSchemaVersionV8) {
 		if err := VerifyCatalogProvenance(files["multisource-catalog.json"], files["multisource-provenance.json"]); err != nil {
 			return Bundle{}, err
 		}
 	}
-	if manifest.SchemaVersion == BundleSchemaVersionV7 {
+	if manifest.SchemaVersion == BundleSchemaVersionV7 || manifest.SchemaVersion == BundleSchemaVersionV8 {
 		tables, err := parseBundleSignatureTables(files)
 		if err != nil {
 			return Bundle{}, err
 		}
 		if err := verifyV7Sources(manifest, tables); err != nil {
+			return Bundle{}, err
+		}
+	}
+	if manifest.SchemaVersion == BundleSchemaVersionV8 {
+		if err := verifyV8Hardware(manifest, files); err != nil {
 			return Bundle{}, err
 		}
 	}
@@ -454,7 +463,7 @@ func VerifyBundleBytes(data []byte) (Bundle, error) {
 	if manifest.SchemaVersion == BundleSchemaVersionV4 && library.DomainRuleCount() == 0 {
 		return Bundle{}, fmt.Errorf("v4 bundle requires non-empty domain rules")
 	}
-	if manifest.SchemaVersion == BundleSchemaVersionV5 || manifest.SchemaVersion == BundleSchemaVersionV6 || manifest.SchemaVersion == BundleSchemaVersionV7 {
+	if manifest.SchemaVersion == BundleSchemaVersionV5 || manifest.SchemaVersion == BundleSchemaVersionV6 || (manifest.SchemaVersion == BundleSchemaVersionV7 || manifest.SchemaVersion == BundleSchemaVersionV8) {
 		if library.DomainRuleCount() == 0 {
 			return Bundle{}, fmt.Errorf("v5 bundle requires non-empty domain rules")
 		}
@@ -465,7 +474,7 @@ func VerifyBundleBytes(data []byte) (Bundle, error) {
 	if len(library.ouis) == 0 || len(library.rules) == 0 || len(library.dhcp) == 0 || len(library.aliases) == 0 {
 		return Bundle{}, fmt.Errorf("bundle must contain non-empty OUI, device, DHCP and brand alias rules")
 	}
-	if manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 || manifest.SchemaVersion == BundleSchemaVersionV5 || manifest.SchemaVersion == BundleSchemaVersionV6 || manifest.SchemaVersion == BundleSchemaVersionV7 {
+	if manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 || manifest.SchemaVersion == BundleSchemaVersionV5 || manifest.SchemaVersion == BundleSchemaVersionV6 || (manifest.SchemaVersion == BundleSchemaVersionV7 || manifest.SchemaVersion == BundleSchemaVersionV8) {
 		rules, err := ParseApplicationSignatures(files["application-signatures.json"])
 		if err != nil || len(rules) == 0 {
 			return Bundle{}, fmt.Errorf("bundle application signatures are invalid: %w", err)
@@ -483,7 +492,7 @@ func validateBundleSourcesAndLicenses(manifest BundleManifest, files map[string]
 	if manifest.SchemaVersion == BundleSchemaVersionV2 || manifest.SchemaVersion == BundleSchemaVersionV3 || len(files["licenses/NextDNS-MIT.txt"]) > 0 {
 		requiredSources["NextDNS native-tracking-domains"] = "MIT"
 	}
-	if manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 || manifest.SchemaVersion == BundleSchemaVersionV5 || manifest.SchemaVersion == BundleSchemaVersionV6 || manifest.SchemaVersion == BundleSchemaVersionV7 {
+	if manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 || manifest.SchemaVersion == BundleSchemaVersionV5 || manifest.SchemaVersion == BundleSchemaVersionV6 || (manifest.SchemaVersion == BundleSchemaVersionV7 || manifest.SchemaVersion == BundleSchemaVersionV8) {
 		requiredSources["Proxy Sentinel application signatures"] = "internal-rule"
 	}
 	seen := map[string]bool{}
@@ -526,7 +535,7 @@ func validateBundleSourcesAndLicenses(manifest BundleManifest, files map[string]
 			return fmt.Errorf("bundle must preserve NextDNS MIT attribution")
 		}
 	}
-	if (manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 || manifest.SchemaVersion == BundleSchemaVersionV5 || manifest.SchemaVersion == BundleSchemaVersionV6 || manifest.SchemaVersion == BundleSchemaVersionV7) && (!strings.Contains(notice, "application signatures") || !strings.Contains(notice, "internal rules")) {
+	if (manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 || manifest.SchemaVersion == BundleSchemaVersionV5 || manifest.SchemaVersion == BundleSchemaVersionV6 || (manifest.SchemaVersion == BundleSchemaVersionV7 || manifest.SchemaVersion == BundleSchemaVersionV8)) && (!strings.Contains(notice, "application signatures") || !strings.Contains(notice, "internal rules")) {
 		return fmt.Errorf("bundle NOTICE must describe application signature licensing")
 	}
 	return nil

@@ -21,7 +21,11 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 	} else if query.Window < 0 || query.Window > 30*24*time.Hour {
 		query.Window = 30 * 24 * time.Hour
 	}
-	if query.Limit <= 0 || query.Limit > 200 {
+	maxLimit := 200
+	if query.Export {
+		maxLimit = 1000
+	}
+	if query.Limit <= 0 || query.Limit > maxLimit {
 		query.Limit = 50
 	}
 	if query.Offset != 0 {
@@ -30,6 +34,13 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 	if query.View != "" && query.View != "iot" {
 		return indexedDeviceSelection{}, fmt.Errorf("invalid discovery view")
 	}
+	reviewPredicate, err := indexedReviewPredicate(query.ReviewReason)
+	if query.HardwareV2 {
+		reviewPredicate, err = hardwareReviewPredicate(query.ReviewReason)
+	}
+	if err != nil {
+		return indexedDeviceSelection{}, err
+	}
 	origins, err := indexedOrigins(query.Mode)
 	if err != nil {
 		return indexedDeviceSelection{}, err
@@ -37,7 +48,11 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 	args := []any{}
 	baseWhere := []string{"l.observed_at<=now()", "NOT l.withdrawn"}
 	if query.Window > 0 {
-		args = append(args, time.Now().UTC().Add(-query.Window))
+		at := query.SnapshotAt
+		if at.IsZero() {
+			at = time.Now().UTC()
+		}
+		args = append(args, at.Add(-query.Window))
 		baseWhere = append(baseWhere, "l.observed_at>=$1")
 	}
 	for _, filter := range []struct{ key, value string }{{"domain", query.Domain}, {"vlan", query.VLAN}} {
@@ -94,7 +109,11 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 		// of them against the identified/expired/candidate type columns.
 		args = append(args, query.DeviceType)
 		match := "= ANY(string_to_array($" + fmt.Sprint(len(args)) + ", ','))"
-		classifiedWhere = append(classifiedWhere, "((classification_status='identified' AND effective_types[1]"+match+") OR (classification_status='expired' AND historical_type"+match+") OR (classification_status='candidate' AND candidate_role"+match+"))")
+		if query.HardwareV2 {
+			classifiedWhere = append(classifiedWhere, "projection_type"+match)
+		} else {
+			classifiedWhere = append(classifiedWhere, "((classification_status='identified' AND effective_types[1]"+match+") OR (classification_status='expired' AND historical_type"+match+") OR (classification_status='candidate' AND candidate_role"+match+"))")
+		}
 	}
 	if query.Protocol != "" {
 		args = append(args, query.Protocol)
@@ -132,49 +151,104 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 		args = append(args, "%"+strings.ToLower(query.OSFamily)+"%")
 		classifiedWhere = append(classifiedWhere, "lower(profile_os) LIKE $"+fmt.Sprint(len(args)))
 	}
+	if query.HardwareV2 && query.ReviewReason != "" {
+		at := query.SnapshotAt
+		if at.IsZero() {
+			at = time.Now().UTC()
+		}
+		args = append(args, at)
+		reviewPredicate, err = hardwareReviewPredicate(query.ReviewReason, fmt.Sprintf("$%d", len(args)))
+		if err != nil {
+			return indexedDeviceSelection{}, err
+		}
+	}
+	if reviewPredicate != "" {
+		classifiedWhere = append(classifiedWhere, reviewPredicate)
+	}
 	matchedWhere := ""
 	if len(classifiedWhere) > 0 {
 		matchedWhere = " WHERE " + strings.Join(classifiedWhere, " AND ")
 	}
-	statement := `WITH recognition AS MATERIALIZED (
- SELECT endpoint_id,
-  coalesce(role,'') role,
-  coalesce(os_family,'') os_family,
-  coalesce(NULLIF(summary->>'device_type_confidence','')::double precision,confidence,0) profile_confidence,
-  CASE WHEN jsonb_array_length(coalesce(summary->'conflict_dimensions','[]'::jsonb))>0
-   THEN summary->'conflict_dimensions' ? 'device_type'
-   ELSE coalesce(conflict,false) END profile_conflict
- FROM endpoint_recognition_summary
-), candidate_rows AS (
- SELECT l.id,l.device_key,l.observed_at,l.valid_until,lower(coalesce(l.data->>'ip','')) search_ip,lower(coalesce(l.data->>'mac','')) search_mac,lower(coalesce(l.data->>'name','')) search_name,lower(coalesce(l.data->>'device_type','')) search_device_type,lower(coalesce(l.data->>'manufacturer','')) search_manufacturer,lower(coalesce(l.data->>'model_name','')) search_model,` + indexedIdentitySQL + ` identity_key,` + indexedObservationCapabilitiesSQL + ` observation_capabilities,` + indexedObservationTypeSQL + ` observed_type,
- coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id,'') linked_endpoint,
- coalesce(rec.role,'') profile_role,coalesce(rec.profile_confidence,0) profile_confidence,coalesce(rec.os_family,'') profile_os,
- CASE WHEN coalesce(rec.profile_confidence,0)>=0.8 AND NOT (coalesce(rec.profile_conflict,false)) THEN coalesce(rec.role,'') ELSE '' END profile_type,
- (coalesce(rec.profile_conflict,false)) AND coalesce(rec.role,'')<>'' profile_conflict,
- CASE WHEN NOT (coalesce(rec.profile_conflict,false)) AND coalesce(rec.profile_confidence,0)>=0.4 AND coalesce(rec.profile_confidence,0)<0.8 THEN coalesce(rec.role,'') ELSE '' END profile_candidate_role
+	deviceKeysSQL := "NULL::text[]"
+	if query.ReviewReason == "new_priority" || query.ReviewReason == "type_change" || query.ReviewReason == "address_only" {
+		deviceKeysSQL = "array_agg(DISTINCT device_key)"
+	}
+	addressSourcesSQL := "false"
+	if query.ReviewReason == "address_only" {
+		addressSourcesSQL = "bool_and(origin IN ('arp','ndp'))"
+	}
+	statement := `WITH trusted_address AS MATERIALIZED (
+ SELECT m.id observation_id,t.mac FROM discovery_observation_latest m
+ JOIN LATERAL (
+  SELECT min(lower(v.data->>'mac')) mac FROM discovery_observation_latest v
+  WHERE v.data->>'ip'=m.data->>'ip' AND v.observed_at<=now() AND v.valid_until>now() AND NOT v.withdrawn
+   AND coalesce(v.data->>'mac','')<>''
+   AND coalesce(v.data->>'node','')=coalesce(m.data->>'node','')
+   AND coalesce(v.data->>'site','')=coalesce(m.data->>'site','')
+   AND coalesce(v.data->>'domain','')=coalesce(m.data->>'domain','')
+   AND coalesce(v.data->>'vlan','')=coalesce(m.data->>'vlan','')
+   AND coalesce(v.data->>'vrf','')=coalesce(m.data->>'vrf','')
+   AND (v.origin IN ('arp','ndp','dhcp') OR (v.origin='sadp' AND v.data->'evidence'->'payload'->>'identity_status' IN ('direct_l2','arp_binding')))
+  HAVING count(DISTINCT lower(v.data->>'mac'))=1
+   AND bool_or(v.origin='arp' OR (v.origin='sadp' AND v.data->'evidence'->'payload'->>'identity_status' IN ('direct_l2','arp_binding')))
+ ) t ON lower(coalesce(m.data->'evidence'->'payload'->>'claimed_mac',''))=t.mac
+ WHERE m.origin='sadp' AND NOT m.withdrawn AND m.observed_at<=now() AND m.observed_at>=now()-interval '30 days'
+  AND coalesce(m.data->>'node','')<>'' AND coalesce(m.data->>'site','')<>'' AND coalesce(m.data->>'domain','')<>''
+  AND coalesce(m.data->>'mac','')='' AND m.data->'evidence'->'payload'->>'identity_status'='l2_mismatch'
+  AND m.data->'evidence'->'payload'->>'claimed_ip'=m.data->>'ip'
+), link_exceptions AS MATERIALIZED (
+ SELECT observation_id,endpoint_id FROM discovery_identity_links
+ WHERE coalesce(basis->>'mac','')='' OR lower(endpoint_id)<>'mac:'||lower(basis->>'mac')
+), candidate_links AS (
+ SELECT l.id,l.device_key,l.origin,l.observed_at,l.valid_until,l.data,
+ coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id) linked_endpoint
  FROM discovery_observation_latest l
- -- MAC-matching links add no identity information. Their historical table is
- -- large; inspect it only for observations without a MAC or link exceptions.
+ -- Most MAC links repeat the observed MAC. Only look up missing-MAC links
+ -- and explicit identity exceptions in the large historical link table.
  LEFT JOIN LATERAL (
   SELECT endpoint_id FROM discovery_identity_links
   WHERE observation_id=l.id AND coalesce(l.data->>'mac','')=''
   LIMIT 1
  ) i ON true
- LEFT JOIN discovery_identity_links ix ON ix.observation_id=l.id
- AND (coalesce(ix.basis->>'mac','')='' OR lower(ix.endpoint_id)<>'mac:'||lower(ix.basis->>'mac'))
+ LEFT JOIN link_exceptions ix ON ix.observation_id=l.id
  LEFT JOIN device_address_leases dl ON dl.event_id=l.id AND dl.action='ack'
  AND dl.sensor_id=coalesce(l.data->>'node','') AND host(dl.ip)=coalesce(l.data->>'ip','')
  AND dl.campus_id=coalesce(l.data->'evidence'->'subject'->>'campus_id','')
  AND dl.endpoint_id='mac:'||lower(coalesce(l.data->>'mac',''))
- LEFT JOIN recognition rec ON rec.endpoint_id=coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id,'mac:'||lower(coalesce(l.data->>'mac','')))
  WHERE ` + strings.Join(baseWhere, " AND ") + `
+), display_links AS MATERIALIZED (
+ SELECT l.*,
+ CASE WHEN t.mac IS NOT NULL
+  THEN 'mac:'||t.mac ELSE l.linked_endpoint END display_endpoint
+ FROM candidate_links l LEFT JOIN trusted_address t ON t.observation_id=l.id
+), recognition AS MATERIALIZED (
+ SELECT rec.endpoint_id,
+  coalesce(rec.role,'') role,
+  coalesce(rec.os_family,'') os_family,
+  coalesce(NULLIF(rec.summary->>'device_type_confidence','')::double precision,rec.confidence,0) profile_confidence,
+  CASE WHEN jsonb_array_length(coalesce(rec.summary->'conflict_dimensions','[]'::jsonb))>0
+   THEN rec.summary->'conflict_dimensions' ? 'device_type'
+   ELSE coalesce(rec.conflict,false) END profile_conflict
+ FROM endpoint_recognition_summary rec
+ JOIN (SELECT DISTINCT coalesce(display_endpoint,'mac:'||lower(coalesce(data->>'mac',''))) endpoint_id
+       FROM display_links) active ON active.endpoint_id=rec.endpoint_id
+), candidate_rows AS (
+ SELECT l.id,l.device_key,l.origin,l.observed_at,l.valid_until,l.data,lower(coalesce(l.data->>'ip','')) search_ip,lower(coalesce(l.data->>'mac','')) search_mac,lower(coalesce(l.data->>'name','')) search_name,lower(coalesce(l.data->>'device_type','')) search_device_type,lower(coalesce(l.data->>'manufacturer','')) search_manufacturer,lower(coalesce(l.data->>'model_name','')) search_model,` + indexedIdentitySQL + ` identity_key,` + indexedObservationCapabilitiesSQL + ` observation_capabilities,` + indexedObservationTypeSQL + ` observed_type,
+ coalesce(l.display_endpoint,'') linked_endpoint,
+ coalesce(rec.role,'') profile_role,coalesce(rec.profile_confidence,0) profile_confidence,coalesce(rec.os_family,'') profile_os,
+ CASE WHEN coalesce(rec.profile_confidence,0)>=0.8 AND NOT (coalesce(rec.profile_conflict,false)) THEN coalesce(rec.role,'') ELSE '' END profile_type,
+ (coalesce(rec.profile_conflict,false)) AND coalesce(rec.role,'')<>'' profile_conflict,
+ CASE WHEN NOT (coalesce(rec.profile_conflict,false)) AND coalesce(rec.profile_confidence,0)>=0.4 AND coalesce(rec.profile_confidence,0)<0.8 THEN coalesce(rec.role,'') ELSE '' END profile_candidate_role
+ FROM display_links l
+ LEFT JOIN recognition rec ON rec.endpoint_id=coalesce(l.display_endpoint,'mac:'||lower(coalesce(l.data->>'mac','')))
 ), candidate_grouped AS (
- SELECT identity_key,min(device_key COLLATE "C") device_key,max(observed_at) last_seen,
+ SELECT identity_key,coalesce(min(device_key COLLATE "C") FILTER (WHERE coalesce(data->>'mac','')<>''),min(device_key COLLATE "C")) device_key,` + deviceKeysSQL + ` device_keys,max(observed_at) last_seen,
  max(profile_os) profile_os,
  bool_or(observation_capabilities ?| ARRAY['printing','scanning']) has_printing,
  bool_or(observation_capabilities ? 'network_video') has_video,
  bool_or(observation_capabilities ?| ARRAY['casting','media_rendering']) has_media,
  bool_or(valid_until>now()) is_current,
+ ` + addressSourcesSQL + ` only_address_sources,
  bool_or(profile_conflict AND valid_until>now()) type_conflict,
  coalesce(array_agg(observed_type) FILTER (WHERE valid_until>now()),'{}'::text[]) || coalesce(array_agg(profile_type) FILTER (WHERE valid_until>now()),'{}'::text[]) types,
  (array_agg(observed_type ORDER BY observed_at DESC,id) FILTER (WHERE observed_type<>''))[1] historical_type,
@@ -184,13 +258,52 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
  FROM candidate_rows
  GROUP BY identity_key` + candidateHaving + `
 ), candidate_types AS (
- SELECT *,` + indexedEffectiveTypesSQL + ` effective_types FROM candidate_grouped
+ ` + indexedTypesProjection(query.HardwareV2) + `
 ), candidate_classified AS (
- SELECT *,` + indexedClassificationStateSQL + ` classification_status FROM candidate_types
+ SELECT *,` + indexedClassificationProjection(query.HardwareV2) + ` classification_status FROM candidate_types
 ), candidate_source AS (
  SELECT *,` + indexedCategorySQL(query.View) + ` category FROM candidate_classified
 ), matched AS (
  SELECT * FROM candidate_source` + matchedWhere + `
 )`
 	return indexedDeviceSelection{Query: query, CTE: statement, Args: args}, nil
+}
+
+// Each history probe is scoped to a current identity's indexed device keys.
+// It never joins or groups the full historical observation table in a list read.
+func indexedReviewPredicate(reason string) (string, error) {
+	switch reason {
+	case "":
+		return "", nil
+	case "conflict":
+		return "classification_status='conflict'", nil
+	case "new_priority":
+		return `classification_status='identified' AND effective_types[1] IN ('printer','camera','recorder','access_control','voip_phone')
+ AND NOT EXISTS (SELECT 1 FROM unnest(device_keys) AS dk(device_key) JOIN LATERAL
+	 (SELECT h.observed_at FROM discovery_observations h WHERE h.device_key=dk.device_key
+	  ORDER BY h.observed_at ASC LIMIT 1) first_observation ON true
+	 WHERE first_observation.observed_at<now()-interval '7 days')`, nil
+	case "type_change":
+		return `classification_status='identified' AND EXISTS (
+ SELECT 1 FROM unnest(device_keys) AS dk(device_key) JOIN LATERAL (
+  SELECT 1 FROM discovery_observations h
+  WHERE h.device_key=dk.device_key AND h.observed_at>=now()-interval '7 days'
+    AND h.observed_at<last_seen AND h.valid_until>h.observed_at
+    AND h.data->>'confidence' IN ('strong','confirmed')
+    AND coalesce(h.data->>'device_type','')<>''
+    AND h.data->>'device_type'<>effective_types[1]
+  LIMIT 1
+ ) old ON true)`, nil
+	case "address_only":
+		return `classification_status='candidate' AND only_address_sources AND cardinality(effective_types)=0 AND candidate_role=''
+ AND EXISTS (SELECT 1 FROM unnest(device_keys) AS dk(device_key) JOIN LATERAL
+	 (SELECT h.observed_at FROM discovery_observations h WHERE h.device_key=dk.device_key
+	  AND h.origin IN ('arp','ndp') ORDER BY h.observed_at ASC LIMIT 1) first_address ON true
+	 WHERE first_address.observed_at<=now()-interval '7 days')
+ AND NOT EXISTS (SELECT 1 FROM unnest(device_keys) AS dk(device_key)
+  JOIN discovery_observation_latest other ON other.device_key=dk.device_key
+  WHERE other.origin NOT IN ('arp','ndp') AND other.observed_at>=now()-interval '7 days')`, nil
+	default:
+		return "", fmt.Errorf("invalid discovery review reason")
+	}
 }

@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,13 +16,28 @@ func TestIndexedCursorIncludesEveryFilter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, change := range []func(*DeviceQuery){func(q *DeviceQuery) { q.Protocol = "arp" }, func(q *DeviceQuery) { q.State = "identified" }, func(q *DeviceQuery) { q.Domain = "school" }, func(q *DeviceQuery) { q.VLAN = "204" }} {
+	for _, change := range []func(*DeviceQuery){func(q *DeviceQuery) { q.Protocol = "arp" }, func(q *DeviceQuery) { q.State = "identified" }, func(q *DeviceQuery) { q.Domain = "school" }, func(q *DeviceQuery) { q.VLAN = "204" }, func(q *DeviceQuery) { q.ReviewReason = "conflict" }} {
 		other := q
 		other.Cursor = cursor
 		change(&other)
 		if _, err := decodeIndexedDeviceCursor(other); err == nil {
 			t.Fatal("cursor reused across different filters")
 		}
+	}
+}
+
+func TestIndexedReviewFiltersSharePageAndMetadataSelection(t *testing.T) {
+	for _, reason := range []string{"new_priority", "type_change", "conflict", "address_only"} {
+		selection, err := buildIndexedDeviceSelection(DeviceQuery{Mode: "passive", ReviewReason: reason})
+		if err != nil {
+			t.Fatalf("%s: %v", reason, err)
+		}
+		if !strings.Contains(selection.CTE, "matched AS") || !strings.Contains(selection.CTE, "discovery_observations") && reason != "conflict" {
+			t.Fatalf("%s missing bounded review predicate: %s", reason, selection.CTE)
+		}
+	}
+	if _, err := buildIndexedDeviceSelection(DeviceQuery{ReviewReason: "invented"}); err == nil {
+		t.Fatal("unknown review reason accepted")
 	}
 }
 

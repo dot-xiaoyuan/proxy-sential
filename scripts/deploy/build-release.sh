@@ -66,6 +66,7 @@ JS
   cp -R migrations "$release_dir/migrations"
   cp -R assets/suricata "$release_dir/assets/suricata"
   cp -R assets/zeek "$release_dir/assets/zeek"
+  cp scripts/zeek/install-icsnpp.sh "$release_dir/scripts/install-icsnpp.sh"
   mkdir -p "$release_dir/collectors"
   cp -R collectors/zeek "$release_dir/collectors/zeek"
   go run ./cmd/proxy-sentinel device-fingerprint build-embedded --version "offline-$version" --output "$release_dir/assets/device-fingerprints/bootstrap.tar.gz"

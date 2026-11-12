@@ -1,0 +1,140 @@
+{
+  "version": "hardware-model-review-2026-11-12.2",
+  "entries": [
+    {
+      "id": "canon-mf260-series",
+      "pattern": "(?i)^(?:Canon )?MF260(?: Series)?$",
+      "type": "printer",
+      "model": "Canon MF260 Series",
+      "manufacturer": "Canon",
+      "capabilities": [
+        "scanning"
+      ],
+      "source_url": "https://www.canon-emirates.ae/media/MF264dw_MF267dw_MF269dw_Data%20Sheet_EM_FINAL_LR_tcm209-1727778.pdf",
+      "rationale": "Canon's MF260 series datasheet identifies this model family as multifunction monochrome printers with scanning; series-level self-report does not select a specific MF264/MF267/MF269 variant.",
+      "positive": [
+        "Canon MF260 Series",
+        "MF260 Series"
+      ],
+      "negative": [
+        "Canon",
+        "Canon scanner",
+        "Canon MF2600",
+        "MF260 firmware"
+      ]
+    },
+    {
+      "id": "kyocera-ecosys-m8124cidn",
+      "pattern": "(?i)^(?:Kyocera )?ECOSYS M8124cidn$",
+      "type": "printer",
+      "model": "ECOSYS M8124cidn",
+      "manufacturer": "Kyocera",
+      "capabilities": [
+        "scanning"
+      ],
+      "source_url": "https://www.kyoceradocumentsolutions.com/in/en/products/catalog/pdf/Brochure_ECOSYS_m4125idn_m4132idn_m8124cidn_IN.pdf",
+      "rationale": "The manufacturer's brochure identifies the exact M8124cidn as a multifunction printer with scanning; a scanner service alone does not establish this chassis type.",
+      "positive": [
+        "ECOSYS M8124cidn",
+        "Kyocera ECOSYS M8124cidn"
+      ],
+      "negative": [
+        "ECOSYS",
+        "Kyocera",
+        "ECOSYS M8124cidn firmware",
+        "ECOSYS M8124"
+      ]
+    },
+    {
+      "id": "hp-laserjet-mfp-m227-m231-series",
+      "pattern": "(?i)^HP LaserJet MFP M227-M231$",
+      "type": "printer",
+      "model": "HP LaserJet MFP M227-M231",
+      "manufacturer": "HP",
+      "capabilities": [
+        "scanning"
+      ],
+      "source_url": "https://h10032.www1.hp.com/ctg/Manual/c05200561.pdf",
+      "rationale": "HP identifies M227-M229 and M230-M231 as multifunction LaserJet printer families with scanning. The observed DNS-SD model reports the combined M227-M231 family; retain that granularity and do not infer M227fdn from the service instance name.",
+      "positive": [
+        "HP LaserJet MFP M227-M231",
+        "hp laserjet mfp m227-m231"
+      ],
+      "negative": [
+        "HP",
+        "HP LaserJet",
+        "HP LaserJet MFP M227-M231 firmware",
+        "HP LaserJet MFP M227-M2310",
+        "HP LaserJet MFP M227fdn"
+      ],
+      "sample_evidence_ids": [
+        "dns-sd-txt-0314a1688ad7c5ab74929a8bbf7877af",
+        "dns-sd-txt-6d3353b227a717923eecc29ef269c2bc"
+      ]
+    },
+    {
+      "id": "hikvision-ds-7808n-q2",
+      "pattern": "(?i)^DS-7808N-Q2$",
+      "type": "recorder",
+      "model": "DS-7808N-Q2",
+      "manufacturer": "Hikvision",
+      "source_url": "https://dealer-static.hikvision.com/upload/file/doc/DOC000087101-DS-7800N-Q2_20230308.pdf",
+      "rationale": "The manufacturer DS-7800N-Q2 datasheet explicitly lists DS-7808N-Q2 as an NVR. Only this complete SADP self-reported model is reviewed; the vendor, numeric DeviceType and near-match suffixes do not establish a hardware type.",
+      "positive": [
+        "DS-7808N-Q2",
+        "ds-7808n-q2"
+      ],
+      "negative": [
+        "Hikvision",
+        "DS-7808N",
+        "DS-7808N-Q20",
+        "DS-7808N-Q2/8P",
+        "DS-7816N-Q2"
+      ],
+      "sample_evidence_ids": [
+        "control-86bcb6597c49487916f0de2deb6b15cb"
+      ]
+    },
+    {
+      "id": "h3c-e528c-pwr",
+      "pattern": "(?i)^(?:H3C )?E528C-PWR$",
+      "type": "switch",
+      "model": "E528C-PWR",
+      "manufacturer": "H3C",
+      "source_url": "https://www.h3c.com/cn/Products_And_Solution/InterConnect/Products/Switches/Products/Park_Switches/Access_Switch/H3C_E/E500C/",
+      "rationale": "The H3C E500C product page explicitly identifies E528C-PWR as an Ethernet switch. This exact model may be taken from an attributed response via the pinned LibreNMS Comware hardware capture. H3C vendor, enterprise OID and other Comware models remain insufficient; historical SNMP aggregates without ownership are excluded.",
+      "positive": [
+        "E528C-PWR",
+        "H3C E528C-PWR"
+      ],
+      "negative": [
+        "H3C",
+        "H3C Comware",
+        "E528C",
+        "E528C-PWR-OTHER",
+        "1.3.6.1.4.1.25506"
+      ]
+    },
+    {
+      "id": "h3c-s5570s-28s-hpwr-ei-a",
+      "pattern": "(?i)^(?:H3C )?S5570S-28S-HPWR-EI-A$",
+      "type": "switch",
+      "model": "S5570S-28S-HPWR-EI-A",
+      "manufacturer": "H3C",
+      "source_url": "https://www.h3c.com/en/d_202405/2157278_294551_0.htm",
+      "rationale": "H3C hardware specifications explicitly name S5570S-28S-HPWR-EI-A as a switch. The complete suffix is retained; use only an attributed hardware self-report or complete matching Comware response. No broad H3C-to-switch inference is permitted.",
+      "positive": [
+        "S5570S-28S-HPWR-EI-A",
+        "H3C S5570S-28S-HPWR-EI-A"
+      ],
+      "negative": [
+        "H3C",
+        "H3C Comware",
+        "S5570S",
+        "S5570S-28S-HPWR-EI",
+        "S5570S-28S-HPWR-EI-A-OTHER",
+        "1.3.6.1.4.1.25506"
+      ]
+    }
+  ]
+}

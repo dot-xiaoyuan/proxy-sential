@@ -1,21 +1,9 @@
 {
-  "version": "device-type-prior-2026-11-07.1",
+  "version": "device-type-prior-2026-11-11.1",
   "source": "vendor product-line curation",
   "source_url": "internal://proxy-sentinel/device-type-prior",
   "license": "internal-rule",
   "entries": [
-    {
-      "vendor": "Hangzhou Hikvision",
-      "match": "contains",
-      "device_type": "camera",
-      "confidence": 0.7
-    },
-    {
-      "vendor": "Hikvision",
-      "match": "contains",
-      "device_type": "camera",
-      "confidence": 0.7
-    },
     {
       "vendor": "Dahua Technology",
       "match": "contains",

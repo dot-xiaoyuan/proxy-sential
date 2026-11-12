@@ -9,6 +9,22 @@ import (
 	"proxy-sentinel/internal/discovery"
 )
 
+func TestScopedHardwareCannotBeDecoratedByMACOnlySummary(t *testing.T) {
+	items := []map[string]any{
+		{"mac": "00:11:22:33:44:55", "hardware_type_status": "identified", "hardware_type": "printer"},
+		{"mac": "00:11:22:33:44:55", "hardware_type_status": "revoked"},
+	}
+	applyDiscoveryRecognition(items, map[string][]int{"00:11:22:33:44:55": {0, 1}}, map[string]discoveryRecognition{
+		"00:11:22:33:44:55": {DeviceType: "camera", Model: "different scope", Brand: "unscoped", OSFamily: "Linux", Confidence: .99},
+	})
+	for _, item := range items {
+		got, ok := item["recognition"].(discoveryRecognition)
+		if !ok || got.DeviceType != "" || got.Model != "" || got.Brand != "" {
+			t.Fatalf("MAC-only hardware decoration escaped scope: %#v", item)
+		}
+	}
+}
+
 func TestEnrichDiscoveryRecognitionJoinsByMAC(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -105,5 +121,14 @@ func TestDiscoveryRecognitionDoesNotOverrideConflictOrExpiry(t *testing.T) {
 		if got.DeviceType != "" || got.OSFamily != "Linux" {
 			t.Fatalf("%s: %+v", state, got)
 		}
+	}
+}
+
+func TestDiscoveryRecognitionKeepsVerifiedProductAboveVendorClue(t *testing.T) {
+	items := []map[string]any{{"mac": "08:54:11:13:c1:84", "classification_status": "identified", "device_type": "access_control"}}
+	applyDiscoveryRecognition(items, map[string][]int{"08:54:11:13:c1:84": {0}}, map[string]discoveryRecognition{"08:54:11:13:c1:84": {DeviceType: "camera", Brand: "Hikvision", Confidence: .7, Source: "ieee_oui"}})
+	got := items[0]["recognition"].(discoveryRecognition)
+	if got.DeviceType != "" || got.Brand != "Hikvision" || items[0]["device_type"] != "access_control" {
+		t.Fatalf("OUI camera clue contradicted verified access terminal: %+v", items[0])
 	}
 }

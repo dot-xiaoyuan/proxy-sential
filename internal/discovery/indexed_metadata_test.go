@@ -16,9 +16,12 @@ func TestIndexedSelectionLimitsHistoricalLinkLookup(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, fragment := range []string{
+		"link_exceptions AS MATERIALIZED",
+		"LEFT JOIN link_exceptions ix ON ix.observation_id=l.id",
 		"LEFT JOIN LATERAL (",
 		"coalesce(l.data->>'mac','')=''",
-		"coalesce(ix.basis->>'mac','')='' OR lower(ix.endpoint_id)<>'mac:'||lower(ix.basis->>'mac')",
+		"coalesce(basis->>'mac','')='' OR lower(endpoint_id)<>'mac:'||lower(basis->>'mac')",
+		"FROM display_links) active ON active.endpoint_id=rec.endpoint_id",
 	} {
 		if !strings.Contains(selection.CTE, fragment) {
 			t.Fatalf("current selection still scans historical links: missing %q", fragment)
@@ -33,7 +36,7 @@ func TestIndexedMetadataCountsFilteredTrustedIdentitiesWithoutPagination(t *test
 	}
 	defer db.Close()
 	at := time.Now().UTC()
-	mock.ExpectQuery(`(?s)identity_key.*GROUP BY identity_key.*matched.*classification_status.*GROUP BY classification_status`).WillReturnRows(sqlmock.NewRows([]string{"status", "type", "count", "as_of"}).AddRow("identified", "access_point", 5, at).AddRow("candidate", "", 2, at).AddRow("conflict", "", 1, at).AddRow("expired", "", 1, at))
+	mock.ExpectQuery(`(?s)identity_key.*GROUP BY identity_key.*matched.*classification_status.*GROUP BY classification_status`).WillReturnRows(sqlmock.NewRows([]string{"status", "type", "count", "as_of"}).AddRow("identified", "access_point", 5, at).AddRow("candidate", "access_point", 2, at).AddRow("conflict", "", 1, at).AddRow("expired", "", 1, at))
 	mock.ExpectQuery(`FROM passive_discovery_state`).WillReturnRows(sqlmock.NewRows([]string{"cursor_timestamp", "last_success_at", "last_error", "updated_at"}).AddRow(at, at, "", at))
 	metadata, err := (Repository{DB: db}).DevicesIndexedMetadata(context.Background(), DeviceQuery{Mode: "passive", DeviceType: "access_point", State: "identified", Cursor: "ignored", Offset: 99, Limit: 1})
 	if err != nil {

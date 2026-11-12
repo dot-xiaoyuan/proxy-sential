@@ -2,8 +2,8 @@ package discovery
 
 import "strings"
 
-// RTSPDeviceIdentity maps an RTSP client User-Agent or a responder Server
-// header to a camera or recorder. Playback software names are not devices.
+// RTSPDeviceIdentity classifies only explicit camera or recorder roles in an
+// RTSP User-Agent or responder Server header. A vendor name alone is a clue.
 func RTSPDeviceIdentity(values ...string) (deviceType, brand, model string) {
 	text := strings.ToLower(strings.TrimSpace(strings.Join(values, " ")))
 	if text == "" {
@@ -15,25 +15,38 @@ func RTSPDeviceIdentity(values ...string) (deviceType, brand, model string) {
 		}
 	}
 	recorder := strings.Contains(text, "nvr") || strings.Contains(text, "dvr")
+	camera := strings.Contains(text, "camera")
 	switch {
 	case strings.Contains(text, "hikvision"):
 		if recorder {
 			return "recorder", "Hikvision", ""
 		}
-		return "camera", "Hikvision", ""
+		if camera {
+			return "camera", "Hikvision", ""
+		}
 	case strings.Contains(text, "dahua"):
 		if recorder {
 			return "recorder", "Dahua", ""
 		}
-		return "camera", "Dahua", ""
+		if camera {
+			return "camera", "Dahua", ""
+		}
 	case strings.Contains(text, "uniview"):
-		return "camera", "Uniview", ""
+		if camera {
+			return "camera", "Uniview", ""
+		}
 	case strings.Contains(text, "axis"):
-		return "camera", "Axis", ""
+		if camera {
+			return "camera", "Axis", ""
+		}
 	case strings.Contains(text, "reolink"):
-		return "camera", "Reolink", ""
+		if camera {
+			return "camera", "Reolink", ""
+		}
 	case strings.Contains(text, "bosch"):
-		return "camera", "Bosch", ""
+		if camera {
+			return "camera", "Bosch", ""
+		}
 	}
 	return "", "", ""
 }

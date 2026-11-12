@@ -17,6 +17,11 @@ require (
 )
 
 require (
+	github.com/runZeroInc/recog-go v0.1.1-0.20230801014443-aa6fe9074750
+	github.com/sirupsen/logrus v1.9.3 // indirect
+)
+
+require (
 	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect

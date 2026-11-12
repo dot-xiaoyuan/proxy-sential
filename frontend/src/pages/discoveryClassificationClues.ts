@@ -1,3 +1,4 @@
+import type { HardwareView } from './discoveryHardware'
 import type { components } from '../shared/api/generated'
 
 type Device = components['schemas']['DiscoveryDevice']
@@ -19,7 +20,11 @@ export function discoveryNameClue(name?: string) {
   return { label: rule[1], detail: `名称“${value}”含${rule[2]}；名称可自行设置，不能据此确认设备类型、操作系统或用途。` }
 }
 
-export function discoveryClassificationExplanation(item: Partial<Pick<Device, 'classification_status' | 'protocols' | 'device_type'>> & { recognition?: { device_type?: string; confidence?: number } }) {
+export function discoveryClassificationExplanation(item: Partial<Pick<Device, 'classification_status' | 'protocols' | 'device_type'>> & HardwareView & { recognition?: { device_type?: string; confidence?: number } }) {
+  if (item.hardware_type_status === 'identified') return '硬件类型来自已归属的产品证据；服务公告到期不清除类型，活动与地址绑定单独判断。'
+  if (item.hardware_type_status === 'revoked') return '支撑硬件类型的证据已撤销或失效，旧画像不再作为类型结论。'
+  if (item.hardware_type_status === 'conflict') return '同一可信身份存在互斥的硬件类型证据，需核对原文与归属。'
+  if (item.hardware_type_status === 'candidate') return '现有证据不足以确认硬件主类型；服务能力与厂商信息保留为线索。'
   if (item.classification_status === 'conflict') return '当前类型证据互相冲突，需核对各条证据，不能据此确认设备类型。'
   if (item.classification_status === 'expired') return '分类证据已过期；历史类型不代表当前有效分类。'
   if (item.device_type || (item.recognition?.device_type && (item.recognition.confidence ?? 0) >= .8)) return ''

@@ -13,8 +13,8 @@ func TestProductRuleTableCarriesProvenance(t *testing.T) {
 	if table.Version == "" || table.Source == "" || table.SourceURL == "" || table.License == "" {
 		t.Fatalf("product rule table must declare version, source, source_url and license: %+v", table)
 	}
-	if len(table.Entries) != 8 {
-		t.Fatalf("product rule table must keep the migrated eight entries, got %d", len(table.Entries))
+	if len(table.Entries) != 12 {
+		t.Fatalf("product rule table must include four verified SADP models, got %d", len(table.Entries))
 	}
 }
 

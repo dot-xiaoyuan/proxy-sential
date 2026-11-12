@@ -15,6 +15,7 @@ import (
 )
 
 type Repository struct {
+	HardwareV2       bool
 	BackfillArchive  func(context.Context, []normalized.Event) error
 	Collection       *CollectionConfig
 	ArchiveDiscovery func(context.Context, string, time.Time, []normalized.Event) error
@@ -232,7 +233,9 @@ func (r Repository) Finish(ctx context.Context, t Task, s Snapshot, runErr error
 }
 
 type DeviceQuery struct {
+	HardwareV2                    bool
 	Protocol, State, Domain, VLAN string
+	ReviewReason                  string
 	View                          string
 	Mode                          string
 	Window                        time.Duration
@@ -245,6 +248,9 @@ type DeviceQuery struct {
 	Limit                         int
 	Offset                        int
 	Cursor                        string
+	// Export freezes the window boundary and permits larger internal pages.
+	Export     bool
+	SnapshotAt time.Time
 }
 
 type AddressDetail struct {
@@ -260,6 +266,8 @@ type HistoricalAddress struct {
 }
 
 type DeviceView struct {
+	HardwareDetails
+	reviewProjectionAt   *time.Time
 	indexedIdentityKey   string
 	SensorID             string              `json:"sensor_id,omitempty"`
 	Site                 string              `json:"site,omitempty"`
@@ -268,7 +276,11 @@ type DeviceView struct {
 	Manufacturer         string              `json:"manufacturer,omitempty"`
 	ModelName            string              `json:"model_name,omitempty"`
 	ClassificationStatus string              `json:"classification_status,omitempty"`
+	ReviewReason         string              `json:"review_reason,omitempty"`
+	ReviewObservedAt     *time.Time          `json:"review_observed_at,omitempty"`
 	LastDeviceType       string              `json:"last_device_type,omitempty"`
+	LastProductType      string              `json:"last_product_type,omitempty"`
+	LastProductAt        *time.Time          `json:"last_product_at,omitempty"`
 	ID                   string              `json:"id"`
 	PrimaryIP            string              `json:"primary_ip,omitempty"`
 	Addresses            []string            `json:"addresses"`
@@ -476,6 +488,8 @@ func aggregateDeviceRows(rows []deviceObservationRow, now time.Time) []DeviceVie
 		currentTypes    map[string]bool
 		historicalType  string
 		historicalAt    time.Time
+		productTypes    map[string]bool
+		productAt       time.Time
 		profileConflict bool
 	}
 	groups := map[int]*collected{}
@@ -486,7 +500,7 @@ func aggregateDeviceRows(rows []deviceObservationRow, now time.Time) []DeviceVie
 		root := sets.find(index)
 		group := groups[root]
 		if group == nil {
-			group = &collected{view: newDeviceView(row.DeviceKey, o.ObservedAt), deviceKeys: map[string]bool{}, addresses: map[string]bool{}, caps: map[string]bool{}, protocols: map[string]bool{}, endpoints: map[string]bool{}, profileTypes: map[string]bool{}, candidateTypes: map[string]bool{}, currentTypes: map[string]bool{}}
+			group = &collected{view: newDeviceView(row.DeviceKey, o.ObservedAt), deviceKeys: map[string]bool{}, addresses: map[string]bool{}, caps: map[string]bool{}, protocols: map[string]bool{}, endpoints: map[string]bool{}, profileTypes: map[string]bool{}, candidateTypes: map[string]bool{}, currentTypes: map[string]bool{}, productTypes: map[string]bool{}}
 			groups[root] = group
 		}
 		group.deviceKeys[row.DeviceKey] = true
@@ -517,6 +531,14 @@ func aggregateDeviceRows(rows []deviceObservationRow, now time.Time) []DeviceVie
 			if group.historicalType == "" || o.ObservedAt.After(group.historicalAt) {
 				group.historicalType = o.DeviceType
 				group.historicalAt = o.ObservedAt
+			}
+		}
+		if o.DeviceType != "" && o.ModelName != "" && o.MAC != "" && o.Confidence == "strong" &&
+			(o.Origin == "dns_sd" && o.Evidence.Payload["l2_source_mac_direct"] == true ||
+				o.Origin == "sadp" && (o.Evidence.Payload["identity_status"] == "direct_l2" || o.Evidence.Payload["identity_status"] == "arp_binding")) {
+			group.productTypes[o.DeviceType] = true
+			if o.ObservedAt.After(group.productAt) {
+				group.productAt = o.ObservedAt
 			}
 		}
 		if group.view.SensorID == "" {
@@ -598,6 +620,13 @@ func aggregateDeviceRows(rows []deviceObservationRow, now time.Time) []DeviceVie
 			allTypes[value] = true
 		}
 		refineDeviceTypes(allTypes)
+		if len(group.productTypes) == 1 {
+			for value := range group.productTypes {
+				group.view.LastProductType = value
+			}
+			at := group.productAt
+			group.view.LastProductAt = &at
+		}
 		switch {
 		case !group.view.Current:
 			group.view.ClassificationStatus = "expired"
@@ -738,7 +767,7 @@ func (r Repository) DevicesFiltered(ctx context.Context, query DeviceQuery) (map
 	origins := []string{}
 	switch query.Mode {
 	case "passive":
-		origins = []string{"dhcp", "arp", "ndp", "dns_sd", "ssdp", "ws_discovery", "ieee1905_client"}
+		origins = []string{"dhcp", "arp", "ndp", "dns_sd", "ssdp", "ws_discovery", "sadp", "ieee1905_client"}
 	case "infrastructure":
 		origins = []string{"fdb", "neighbor", "lldp", "cdp"}
 	case "active":

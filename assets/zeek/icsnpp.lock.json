@@ -1,0 +1,21 @@
+{
+  "schema_version": "passive-icsnpp-lock/v1",
+  "minimum_zeek_version": "6.1.0",
+  "locally_tested_zeek_versions": ["8.2.0"],
+  "packages": [
+    {
+      "name": "icsnpp-bacnet",
+      "repository": "https://github.com/cisagov/icsnpp-bacnet",
+      "commit": "72d1572ec170e16e0676de7f07d903f63b87ba31",
+      "archive_sha256": "f9fa41e44565e3ba96277616431a5fe321a5af9f4ca1fc43c39db5e22ce96580",
+      "usage": "native passive parser and response-only device property log"
+    },
+    {
+      "name": "icsnpp-modbus",
+      "repository": "https://github.com/cisagov/icsnpp-modbus",
+      "commit": "6dd3dab173169e454a73925d0426d3c019104852",
+      "archive_sha256": "1896ae9f87bae7d557f09f5fb5226169449dff8b15197b9e005bb3896db91d80",
+      "usage": "bounded response-only adaptation of device identification schema/decoding in passive-industrial-signals.zeek; no upstream request/register tables"
+    }
+  ]
+}

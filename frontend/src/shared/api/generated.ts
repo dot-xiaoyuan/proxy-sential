@@ -123,6 +123,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/discovery/census/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Read projected mirror-visible identifiers and effective terminal counts; requires identity:read. Counts are scoped identifiers, not physical devices. */
+        get: operations["getDiscoveryCensusSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/census/identifiers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Cursor page from the same current projection; requires identity:read. */
+        get: operations["listDiscoveryCensusIdentifiers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/census/compare-stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Read-only repeatable-read NDJSON manifest, all scoped IP/MAC/active-binding/terminal rows, and completion counts. Emits an explicit error record on interruption or the 2,000,000-row bound. */
+        get: operations["streamDiscoveryCensusComparison"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/discovery/types": {
         parameters: {
             query?: never;
@@ -473,6 +524,23 @@ export interface paths {
         };
         /** @description Exact filtered count of discovered devices grouped by source scope and trusted endpoint or MAC identity, falling back to the discovery key. Uses the same current-index grouping and filters as the indexed discovery list. Does not claim a physical terminal census. Cursor, offset and limit are ignored. Requires identity:read. */
         get: operations["getDiscoveryDeviceMetadata"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/devices/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Complete filtered discovery export from one read-only repeatable-read snapshot. NDJSON starts with a manifest and ends with a complete count record; clients must reject a missing end record or an error record. At most 200000 devices. Requires identity:read. */
+        get: operations["streamDiscoveryDevicesExport"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4324,6 +4392,7 @@ export interface paths {
                     type?: string;
                     protocol?: string;
                     state?: "identified" | "expired" | "conflict" | "candidate";
+                    review_reason?: "new_priority" | "type_change" | "conflict" | "address_only";
                     domain?: string;
                     vlan?: string;
                     /** @description IoT requires an unwithdrawn service announcement with device capability evidence; DHCP or hostname alone is insufficient. */
@@ -7934,6 +8003,96 @@ export interface components {
             matched_at: string;
             is_recent_ip: boolean;
         };
+        DiscoveryCensusSummary: {
+            metric_version: string;
+            scope: {
+                sensor_id: string;
+                campus_id?: string;
+                access_domain?: string;
+                vlan?: string;
+                vrf?: string;
+            };
+            window: string;
+            /** @enum {string} */
+            status: "initializing" | "ready" | "partial" | "delayed" | "scope_changed";
+            /** Format: date-time */
+            as_of?: string;
+            /** Format: date-time */
+            available_from?: string;
+            /** Format: date-time */
+            last_success_at?: string;
+            /** Format: date-time */
+            oldest_pending_at?: string;
+            /** Format: int64 */
+            failed_batches: number;
+            last_batch_rows: number;
+            last_batch_ms: number;
+            scope_version?: string;
+            /** Format: int64 */
+            observed_ips: number;
+            /** Format: int64 */
+            observed_ipv4: number;
+            /** Format: int64 */
+            observed_ipv6: number;
+            /** Format: int64 */
+            observed_macs: number;
+            /** Format: int64 */
+            random_macs: number;
+            /** Format: int64 */
+            incomplete_scope: number;
+            /** Format: int64 */
+            active_bindings: number;
+            /** Format: int64 */
+            identified_terminals: number;
+            /** Format: int64 */
+            terminal_candidates: number;
+            /** Format: int64 */
+            terminal_conflicts: number;
+            /** Format: int64 */
+            terminal_expired: number;
+            /** Format: int64 */
+            manually_verified: number;
+            types: {
+                device_type: string;
+                /** Format: int64 */
+                identified: number;
+                /** Format: int64 */
+                candidate: number;
+                /** Format: int64 */
+                conflict: number;
+                /** Format: int64 */
+                expired: number;
+            }[];
+        };
+        DiscoveryCensusRow: {
+            /** @enum {string} */
+            kind: "ip" | "mac" | "binding" | "terminal";
+            scope_key: string;
+            sensor_id: string;
+            campus_id: string;
+            access_domain: string;
+            vlan: string;
+            vrf: string;
+            value: string;
+            ip?: string;
+            mac?: string;
+            ip_family?: number;
+            random_mac?: boolean;
+            /** Format: date-time */
+            first_seen: string;
+            /** Format: date-time */
+            last_seen: string;
+            last_event_id?: string;
+            source?: string;
+            effective_type?: string;
+            classification_status?: string;
+            device_key?: string;
+        };
+        DiscoveryCensusPage: {
+            items: components["schemas"]["DiscoveryCensusRow"][];
+            next_cursor: string;
+            has_more: boolean;
+        };
         DiscoveryFreshness: {
             /** @enum {string} */
             status: "initializing" | "ready" | "processing" | "delayed" | "failed";
@@ -8224,10 +8383,40 @@ export interface components {
             items: components["schemas"]["DiscoveryChassisCandidate"][];
         };
         DiscoveryDevice: {
+            /** @description 可信作用域身份的持久硬件类型；服务 TTL 到期不清除 */
+            hardware_type?: string;
+            /** @enum {string} */
+            hardware_type_status?: "identified" | "candidate" | "conflict" | "revoked";
+            hardware_model?: string;
+            hardware_model_status?: string;
+            hardware_conflicting_types?: string[];
+            hardware_conflicting_models?: string[];
+            /** Format: date-time */
+            type_evidence_at?: string;
+            type_rule_version?: string;
+            /** @enum {string} */
+            activity_status?: "active" | "stale";
+            classification_version?: string;
+            type_sources?: {
+                source: string;
+                rule_id: string;
+                rule_version: string;
+                evidence_id: string;
+                /** Format: date-time */
+                observed_at: string;
+            }[];
             last_device_type?: string;
+            /** @description 最近的可信二层归属型号自报对应的历史类型；不代表当前有效类型或人工核实 */
+            last_product_type?: string;
+            /** Format: date-time */
+            last_product_at?: string;
             last_category?: string;
             /** @enum {string} */
             classification_status?: "identified" | "expired" | "conflict" | "candidate";
+            /** @enum {string} */
+            review_reason?: "new_priority" | "type_change" | "conflict" | "address_only";
+            /** Format: date-time */
+            review_observed_at?: string;
             classification?: {
                 reason?: string;
                 rule_version?: string;
@@ -8265,6 +8454,7 @@ export interface components {
             observations: components["schemas"]["DiscoveryObservation"][];
         };
         DiscoveryDeviceMetadata: {
+            classification_version?: string;
             /** Format: int64 */
             total: number;
             /**
@@ -8278,6 +8468,7 @@ export interface components {
             conflict: number;
             /** Format: int64 */
             expired: number;
+            /** @description Counts by current identified device type only; candidate clues are included in candidate, not in this array. */
             types: {
                 device_type: string;
                 /** Format: int64 */
@@ -8293,6 +8484,22 @@ export interface components {
             window: string;
         };
         DiscoveryDevicePage: {
+            classification_version?: string;
+            hardware_freshness?: {
+                status?: string;
+                error?: string;
+                pending_identities?: number;
+                failed_identities?: number;
+                /** Format: date-time */
+                oldest_pending_at?: string;
+                backfill_complete?: boolean;
+                backfill_rows?: number;
+                missing_source_refs?: number;
+                changed_after_backfill_start?: number;
+                /** Format: date-time */
+                available_from?: string;
+                coverage?: string;
+            };
             freshness?: components["schemas"]["DiscoveryFreshness"];
             items: components["schemas"]["DiscoveryDevice"][];
             next_cursor: string;
@@ -9512,6 +9719,89 @@ export interface operations {
             };
         };
     };
+    getDiscoveryCensusSummary: {
+        parameters: {
+            query?: {
+                window?: "24h" | "7d" | "30d";
+                sensor_id?: string;
+                campus_id?: string;
+                access_domain?: string;
+                vlan?: string;
+                vrf?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Projection counts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryCensusSummary"];
+                };
+            };
+        };
+    };
+    listDiscoveryCensusIdentifiers: {
+        parameters: {
+            query?: {
+                window?: "24h" | "7d" | "30d";
+                kind?: "ip" | "mac" | "binding" | "terminal";
+                terminal_status?: "identified" | "candidate" | "conflict" | "expired";
+                cursor?: string;
+                limit?: number;
+                campus_id?: string;
+                access_domain?: string;
+                vlan?: string;
+                vrf?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Census page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryCensusPage"];
+                };
+            };
+        };
+    };
+    streamDiscoveryCensusComparison: {
+        parameters: {
+            query?: {
+                window?: "24h" | "7d" | "30d";
+                campus_id?: string;
+                access_domain?: string;
+                vlan?: string;
+                vrf?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description NDJSON comparison stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-ndjson": string;
+                };
+            };
+        };
+    };
     getDiscoveryTypes: {
         parameters: {
             query?: never;
@@ -10021,6 +10311,7 @@ export interface operations {
                 type?: string;
                 protocol?: string;
                 state?: "identified" | "expired" | "conflict" | "candidate";
+                review_reason?: "new_priority" | "type_change" | "conflict" | "address_only";
                 domain?: string;
                 vlan?: string;
                 /** @description IoT requires an unwithdrawn service announcement with device capability evidence; DHCP or hostname alone is insufficient. */
@@ -10068,6 +10359,7 @@ export interface operations {
                 type?: string;
                 protocol?: string;
                 state?: "identified" | "expired" | "conflict" | "candidate";
+                review_reason?: "new_priority" | "type_change" | "conflict" | "address_only";
                 domain?: string;
                 vlan?: string;
                 /** @description IoT requires an unwithdrawn service announcement with device capability evidence; DHCP or hostname alone is insufficient. */
@@ -10112,6 +10404,69 @@ export interface operations {
                 content?: never;
             };
             /** @description Count could not be read; never reported as an empty result */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    streamDiscoveryDevicesExport: {
+        parameters: {
+            query?: {
+                type?: string;
+                protocol?: string;
+                state?: string;
+                review_reason?: "new_priority" | "type_change" | "conflict" | "address_only";
+                domain?: string;
+                vlan?: string;
+                view?: "iot";
+                mode?: "passive" | "infrastructure" | "active" | "all";
+                window?: string;
+                search?: string;
+                category?: string;
+                capability?: string;
+                random_mac?: boolean;
+                os?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description NDJSON manifest, device records, and mandatory complete end record. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-ndjson": string;
+                };
+            };
+            /** @description Invalid filters or pagination position */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Indexed discovery read path unavailable */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Result exceeds the explicit 200000-device export limit */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Snapshot or first page could not be read */
             500: {
                 headers: {
                     [name: string]: unknown;

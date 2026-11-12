@@ -65,6 +65,47 @@ paths:
       description: Authenticated read-only MCP JSON-RPC tools; requires cases:read. No action tools exist.
       responses:
         '200': { description: MCP JSON-RPC result }
+  /discovery/census/summary:
+    get:
+      operationId: getDiscoveryCensusSummary
+      description: Read projected mirror-visible identifiers and effective terminal counts; requires identity:read. Counts are scoped identifiers, not physical devices.
+      parameters:
+        - { name: window, in: query, schema: { type: string, enum: [24h, 7d, 30d], default: 24h } }
+        - { name: sensor_id, in: query, schema: { type: string } }
+        - { name: campus_id, in: query, schema: { type: string } }
+        - { name: access_domain, in: query, schema: { type: string } }
+        - { name: vlan, in: query, schema: { type: string } }
+        - { name: vrf, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Projection counts, source cutoff, availability and gaps, content: { application/json: { schema: { $ref: '#/components/schemas/DiscoveryCensusSummary' } } } }
+  /discovery/census/identifiers:
+    get:
+      operationId: listDiscoveryCensusIdentifiers
+      description: Cursor page from the same current projection; requires identity:read.
+      parameters:
+        - { name: window, in: query, schema: { type: string, enum: [24h, 7d, 30d], default: 24h } }
+        - { name: kind, in: query, schema: { type: string, enum: [ip, mac, binding, terminal] } }
+        - { name: terminal_status, in: query, schema: { type: string, enum: [identified, candidate, conflict, expired] } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
+        - { name: campus_id, in: query, schema: { type: string } }
+        - { name: access_domain, in: query, schema: { type: string } }
+        - { name: vlan, in: query, schema: { type: string } }
+        - { name: vrf, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Census page, content: { application/json: { schema: { $ref: '#/components/schemas/DiscoveryCensusPage' } } } }
+  /discovery/census/compare-stream:
+    get:
+      operationId: streamDiscoveryCensusComparison
+      description: Read-only repeatable-read NDJSON manifest, all scoped IP/MAC/active-binding/terminal rows, and completion counts. Emits an explicit error record on interruption or the 2,000,000-row bound.
+      parameters:
+        - { name: window, in: query, schema: { type: string, enum: [24h, 7d, 30d], default: 24h } }
+        - { name: campus_id, in: query, schema: { type: string } }
+        - { name: access_domain, in: query, schema: { type: string } }
+        - { name: vlan, in: query, schema: { type: string } }
+        - { name: vrf, in: query, schema: { type: string } }
+      responses:
+        '200': { description: NDJSON comparison stream, content: { application/x-ndjson: { schema: { type: string } } } }
   /discovery/types:
     get:
       operationId: getDiscoveryTypes
@@ -312,6 +353,7 @@ paths:
         - { name: type, in: query, schema: { type: string } }
         - { name: protocol, in: query, schema: { type: string } }
         - { name: state, in: query, schema: { type: string, enum: [identified, expired, conflict, candidate] } }
+        - { name: review_reason, in: query, schema: { type: string, enum: [new_priority, type_change, conflict, address_only] } }
         - { name: domain, in: query, schema: { type: string } }
         - { name: vlan, in: query, schema: { type: string } }
         - { name: view, in: query, description: IoT requires an unwithdrawn service announcement with device capability evidence; DHCP or hostname alone is insufficient., schema: { type: string, enum: [iot] } }
@@ -340,6 +382,7 @@ paths:
         - { name: type, in: query, schema: { type: string } }
         - { name: protocol, in: query, schema: { type: string } }
         - { name: state, in: query, schema: { type: string, enum: [identified, expired, conflict, candidate] } }
+        - { name: review_reason, in: query, schema: { type: string, enum: [new_priority, type_change, conflict, address_only] } }
         - { name: domain, in: query, schema: { type: string } }
         - { name: vlan, in: query, schema: { type: string } }
         - { name: view, in: query, description: IoT requires an unwithdrawn service announcement with device capability evidence; DHCP or hostname alone is insufficient., schema: { type: string, enum: [iot] } }
@@ -359,6 +402,35 @@ paths:
         '400': { description: Invalid filter or time window }
         '409': { description: Current discovery read path does not support this indexed metadata contract }
         '500': { description: Count could not be read; never reported as an empty result }
+  /discovery/devices/export:
+    get:
+      operationId: streamDiscoveryDevicesExport
+      description: Complete filtered discovery export from one read-only repeatable-read snapshot. NDJSON starts with a manifest and ends with a complete count record; clients must reject a missing end record or an error record. At most 200000 devices. Requires identity:read.
+      parameters:
+        - { name: type, in: query, schema: { type: string } }
+        - { name: protocol, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string } }
+        - { name: review_reason, in: query, schema: { type: string, enum: [new_priority, type_change, conflict, address_only] } }
+        - { name: domain, in: query, schema: { type: string } }
+        - { name: vlan, in: query, schema: { type: string } }
+        - { name: view, in: query, schema: { type: string, enum: [iot] } }
+        - { name: mode, in: query, schema: { type: string, enum: [passive, infrastructure, active, all], default: all } }
+        - { name: window, in: query, schema: { type: string, default: 24h } }
+        - { name: search, in: query, schema: { type: string } }
+        - { name: category, in: query, schema: { type: string } }
+        - { name: capability, in: query, schema: { type: string } }
+        - { name: random_mac, in: query, schema: { type: boolean } }
+        - { name: os, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: NDJSON manifest, device records, and mandatory complete end record.
+          content:
+            application/x-ndjson:
+              schema: { type: string }
+        '400': { description: Invalid filters or pagination position }
+        '409': { description: Indexed discovery read path unavailable }
+        '413': { description: Result exceeds the explicit 200000-device export limit }
+        '500': { description: Snapshot or first page could not be read }
   /router-observations:
     get:
       operationId: listRouterObservations
@@ -4428,6 +4500,15 @@ paths:
               - expired
               - conflict
               - candidate
+        - name: review_reason
+          in: query
+          schema:
+            type: string
+            enum:
+              - new_priority
+              - type_change
+              - conflict
+              - address_only
         - name: domain
           in: query
           schema:
@@ -8354,6 +8435,83 @@ components:
         source: { type: string, enum: [ip_observation, account_session] }
         matched_at: { type: string, format: date-time }
         is_recent_ip: { type: boolean }
+    DiscoveryCensusSummary:
+      type: object
+      required: [metric_version, scope, window, status, failed_batches, last_batch_rows, last_batch_ms, observed_ips, observed_ipv4, observed_ipv6, observed_macs, random_macs, incomplete_scope, active_bindings, identified_terminals, terminal_candidates, terminal_conflicts, terminal_expired, manually_verified, types]
+      properties:
+        metric_version: { type: string }
+        scope:
+          type: object
+          required: [sensor_id]
+          properties:
+            sensor_id: { type: string }
+            campus_id: { type: string }
+            access_domain: { type: string }
+            vlan: { type: string }
+            vrf: { type: string }
+        window: { type: string }
+        status: { type: string, enum: [initializing, ready, partial, delayed, scope_changed] }
+        as_of: { type: string, format: date-time }
+        available_from: { type: string, format: date-time }
+        last_success_at: { type: string, format: date-time }
+        oldest_pending_at: { type: string, format: date-time }
+        failed_batches: { type: integer, format: int64 }
+        last_batch_rows: { type: integer }
+        last_batch_ms: { type: integer }
+        scope_version: { type: string }
+        observed_ips: { type: integer, format: int64 }
+        observed_ipv4: { type: integer, format: int64 }
+        observed_ipv6: { type: integer, format: int64 }
+        observed_macs: { type: integer, format: int64 }
+        random_macs: { type: integer, format: int64 }
+        incomplete_scope: { type: integer, format: int64 }
+        active_bindings: { type: integer, format: int64 }
+        identified_terminals: { type: integer, format: int64 }
+        terminal_candidates: { type: integer, format: int64 }
+        terminal_conflicts: { type: integer, format: int64 }
+        terminal_expired: { type: integer, format: int64 }
+        manually_verified: { type: integer, format: int64 }
+        types:
+          type: array
+          items:
+            type: object
+            required: [device_type, identified, candidate, conflict, expired]
+            properties:
+              device_type: { type: string }
+              identified: { type: integer, format: int64 }
+              candidate: { type: integer, format: int64 }
+              conflict: { type: integer, format: int64 }
+              expired: { type: integer, format: int64 }
+    DiscoveryCensusRow:
+      type: object
+      required: [kind, scope_key, sensor_id, campus_id, access_domain, vlan, vrf, value, first_seen, last_seen]
+      properties:
+        kind: { type: string, enum: [ip, mac, binding, terminal] }
+        scope_key: { type: string }
+        sensor_id: { type: string }
+        campus_id: { type: string }
+        access_domain: { type: string }
+        vlan: { type: string }
+        vrf: { type: string }
+        value: { type: string }
+        ip: { type: string }
+        mac: { type: string }
+        ip_family: { type: integer }
+        random_mac: { type: boolean }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+        last_event_id: { type: string }
+        source: { type: string }
+        effective_type: { type: string }
+        classification_status: { type: string }
+        device_key: { type: string }
+    DiscoveryCensusPage:
+      type: object
+      required: [items, next_cursor, has_more]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/DiscoveryCensusRow' } }
+        next_cursor: { type: string }
+        has_more: { type: boolean }
     DiscoveryFreshness:
       type: object
       required: [status, lag_seconds, result_version]
@@ -8677,9 +8835,34 @@ components:
       type: object
       required: [id, observations, category, identity_kind, capabilities, protocols, first_seen, last_seen, current, evidence_count]
       properties:
+        hardware_type: { type: string, description: "可信作用域身份的持久硬件类型；服务 TTL 到期不清除" }
+        hardware_type_status: { type: string, enum: [identified, candidate, conflict, revoked] }
+        hardware_model: { type: string }
+        hardware_model_status: { type: string }
+        hardware_conflicting_types: { type: array, items: { type: string } }
+        hardware_conflicting_models: { type: array, items: { type: string } }
+        type_evidence_at: { type: string, format: date-time }
+        type_rule_version: { type: string }
+        activity_status: { type: string, enum: [active, stale] }
+        classification_version: { type: string }
+        type_sources:
+          type: array
+          items:
+            type: object
+            required: [source, rule_id, rule_version, evidence_id, observed_at]
+            properties:
+              source: { type: string }
+              rule_id: { type: string }
+              rule_version: { type: string }
+              evidence_id: { type: string }
+              observed_at: { type: string, format: date-time }
         last_device_type: { type: string }
+        last_product_type: { type: string, description: "最近的可信二层归属型号自报对应的历史类型；不代表当前有效类型或人工核实" }
+        last_product_at: { type: string, format: date-time }
         last_category: { type: string }
         classification_status: { type: string, enum: [identified, expired, conflict, candidate] }
+        review_reason: { type: string, enum: [new_priority, type_change, conflict, address_only] }
+        review_observed_at: { type: string, format: date-time }
         classification: { type: object, properties: { reason: { type: string }, rule_version: { type: string }, conflict: { type: boolean }, confidence: { type: string } } }
         manufacturer: { type: string }
         model_name: { type: string }
@@ -8711,6 +8894,7 @@ components:
       type: object
       required: [total, identified, candidate, conflict, expired, types, as_of, count_unit, window]
       properties:
+        classification_version: { type: string }
         total: { type: integer, format: int64, minimum: 0 }
         identified: { type: integer, format: int64, minimum: 0, description: Current non-conflicting identities with one explicit device type. }
         candidate: { type: integer, format: int64, minimum: 0 }
@@ -8718,6 +8902,7 @@ components:
         expired: { type: integer, format: int64, minimum: 0 }
         types:
           type: array
+          description: Counts by current identified device type only; candidate clues are included in candidate, not in this array.
           items:
             type: object
             required: [device_type, count]
@@ -8731,6 +8916,21 @@ components:
       type: object
       required: [items, next_cursor, has_more, limit, window]
       properties:
+        classification_version: { type: string }
+        hardware_freshness:
+          type: object
+          properties:
+            status: { type: string }
+            error: { type: string }
+            pending_identities: { type: integer }
+            failed_identities: { type: integer }
+            oldest_pending_at: { type: string, format: date-time }
+            backfill_complete: { type: boolean }
+            backfill_rows: { type: integer }
+            missing_source_refs: { type: integer }
+            changed_after_backfill_start: { type: integer }
+            available_from: { type: string, format: date-time }
+            coverage: { type: string }
         freshness: { $ref: '#/components/schemas/DiscoveryFreshness' }
         items: { type: array, items: { $ref: '#/components/schemas/DiscoveryDevice' } }
         next_cursor: { type: string }

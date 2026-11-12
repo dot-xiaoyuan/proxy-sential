@@ -5,6 +5,9 @@ package discovery
 var DeviceTypes = func() []IoTType {
 	items := append([]IoTType(nil), IoTTypes...)
 	return append(items,
+		IoTType{"environment_monitor", "动环设备", "iot"},
+		IoTType{"ups", "UPS", "iot"},
+		IoTType{"pdu", "PDU", "iot"},
 		IoTType{"access_point", "无线接入点", "network"},
 		IoTType{"router", "路由器", "network"},
 		IoTType{"switch", "交换机", "network"},

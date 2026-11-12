@@ -31,7 +31,7 @@ function mockReads(observedPortResult: unknown = {
       connection_outcome: 'syn_ack_observed', last_seen: '2026-11-01T12:00:00Z', evidence_id: 'flow-443',
     }],
   },
-}, deviceRow: typeof device & {mac?:string;name?:string;device_type?:string;endpoint_id?:string;recognition?:{device_type?:string;confidence?:number;os_family?:string;os_family_confidence?:number;rule_version?:string;source?:string;evidence?:string[];brand?:string;model?:string;brand_inference_status?:string;brand_inference_brand?:string;brand_inference_confidence?:number}} = device, coverage = { enabled: true, items: [] as Array<{protocol:string;enabled:boolean;message_source_epoch?:string}> }, includeListTotal = true) {
+}, deviceRow: typeof device & {hardware_type?:string;hardware_type_status?:string;hardware_model?:string;hardware_model_status?:string;type_evidence_at?:string;type_rule_version?:string;activity_status?:string;type_sources?:Array<{source:string;rule_id:string;rule_version:string;evidence_id:string;observed_at:string}>;mac?:string;name?:string;device_type?:string;last_product_type?:string;last_product_at?:string;endpoint_id?:string;review_reason?:string;review_observed_at?:string;recognition?:{device_type?:string;confidence?:number;os_family?:string;os_family_confidence?:number;rule_version?:string;source?:string;evidence?:string[];brand?:string;model?:string;brand_inference_status?:string;brand_inference_brand?:string;brand_inference_confidence?:number}} = device, coverage = { enabled: true, items: [] as Array<{protocol:string;enabled:boolean;message_source_epoch?:string}> }, includeListTotal = true) {
   request.mockImplementation((path: string) => {
     if (path.startsWith('/discovery/observed-ports?')) {
       return observedPortResult instanceof Error ? Promise.reject(observedPortResult) : Promise.resolve(observedPortResult)
@@ -44,6 +44,8 @@ function mockReads(observedPortResult: unknown = {
     if (path.startsWith('/device-inventory/')) return Promise.resolve({ profile: { recognition: { source_matches: [{ source_id: 'satori', rule_id: 'fixture-dhcp-options', version: 'fixture', name: 'Hikvision DHCP options', strength: 'self_report', fields: ['dhcp_options'], observed: { dhcp_options: '53,61,12,81' } }] } } })
     if (path === '/discovery/coverage') return Promise.resolve(coverage)
     if (path === '/discovery/statistics') return Promise.resolve({ items: [], pending_updates: 0 })
+    if (path.startsWith('/discovery/census/summary?')) return Promise.resolve({ metric_version:'passive-census/v1',scope:{sensor_id:'sensor-a'},window:'24h0m0s',status:'initializing',failed_batches:0,observed_ips:0,observed_ipv4:0,observed_ipv6:0,observed_macs:0,random_macs:0,incomplete_scope:0,active_bindings:0,identified_terminals:0,terminal_candidates:0,terminal_conflicts:0,terminal_expired:0,manually_verified:0,types:[] })
+    if (path.startsWith('/discovery/census/identifiers?')) return Promise.resolve({items:[],next_cursor:'',has_more:false})
     if (path === '/discovery/types') return Promise.resolve({ items: [] })
     if (path.startsWith('/discovery/service-clues?')) return Promise.resolve({ items: {} })
     if (path.startsWith('/discovery/passive-signals?')) return Promise.resolve({ items: [] })
@@ -64,8 +66,19 @@ function observedCalls() {
 
 afterEach(() => { cleanup(); request.mockReset() })
 
+it('uses the same review reason for the list and count', async () => {
+  mockReads({items:{}}, {...device,classification_status:'conflict',review_reason:'conflict',review_observed_at:'2026-11-10T08:00:00Z'})
+  renderPanel(['/?discovery_review_reason=conflict'])
+  await waitFor(() => {
+    for (const endpoint of ['/discovery/devices?', '/discovery/devices/metadata?']) {
+      expect(request.mock.calls.some(([path]) => String(path).startsWith(endpoint) && String(path).includes('review_reason=conflict'))).toBe(true)
+    }
+  })
+  expect(await screen.findByText(/类型证据冲突 ·/)).toBeInTheDocument()
+})
+
 it('shows the filtered discovery metadata total when the cursor page has no total', async () => {
-  mockReads({items:{}}, {...device,mac:'02:00:00:20:40:01',recognition:{device_type:'access_point',confidence:0.9}}, undefined, false)
+  mockReads({items:{}}, {...device,classification_status:'identified',device_type:'access_point',mac:'02:00:00:20:40:01',recognition:{device_type:'access_point',confidence:0.9}}, undefined, false)
   renderPanel()
   const summary = await screen.findByLabelText('发现设备摘要')
   const overview = await screen.findByLabelText('发现设备总览')
@@ -97,7 +110,7 @@ it('shows complete discovery and confirmed type counts using the same metadata s
   const overview=await screen.findByLabelText('发现设备总览')
   await waitFor(()=>expect(overview).toHaveTextContent('已识别类型 42'))
   expect(overview).toHaveTextContent('共 84 个设备')
-  expect(overview).toHaveTextContent('具体类型（合计 42）')
+  expect(overview).toHaveTextContent('已识别类型（合计 42）')
   expect(overview).toHaveTextContent('待核实 35')
   expect(overview).toHaveTextContent('类型冲突 4')
   expect(overview).toHaveTextContent('证据过期 3')
@@ -107,7 +120,7 @@ it('shows complete discovery and confirmed type counts using the same metadata s
   const routerTypeButton = screen.getAllByRole('button').find(button => button.textContent === '路由器 30')
   expect(routerTypeButton).toBeTruthy()
   fireEvent.click(routerTypeButton!)
-  await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).includes('type=router'))).toBe(true))
+  await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).includes('type=router') && String(path).includes('state=identified'))).toBe(true))
 })
 
 it('keeps the type overview visible when the statistics request fails', async () => {
@@ -123,11 +136,36 @@ it('keeps the type overview visible when the statistics request fails', async ()
   expect(overview).toHaveTextContent('已识别类型')
 })
 
+it('keeps the last successful list and offers a retry when refresh fails', async () => {
+  mockReads()
+  const normalRead = request.getMockImplementation()!
+  let listReads = 0
+  request.mockImplementation((path: string) => path.startsWith('/discovery/devices?') && ++listReads > 1
+    ? Promise.reject(new Error('读取发现结果失败'))
+    : normalRead(path))
+  renderPanel()
+  await screen.findByRole('table')
+  fireEvent.click(screen.getByRole('button',{name:'刷新数据'}))
+  await waitFor(() => expect(screen.getByText('读取发现设备失败')).toBeInTheDocument())
+  expect(screen.getByText(/当前展示上次成功读取的结果/)).toBeInTheDocument()
+  expect(screen.getByRole('button',{name:'重试列表'})).toBeInTheDocument()
+  expect(screen.getByRole('table')).toBeInTheDocument()
+})
+
 it('renders endpoint types that are outside the IoT type catalogue', async () => {
   mockReads({items:{}}, {...device,device_type:'router'})
   renderPanel()
   await waitFor(()=>expect(screen.getByRole('table')).toHaveTextContent('路由器 · 类型线索'))
   expect(screen.queryByText('待分类')).not.toBeInTheDocument()
+})
+
+it('keeps an expired product self-report visible without counting it as an effective type', async () => {
+  mockReads({items:{}}, {...device, device_type:'camera', last_product_type:'printer', last_product_at:'2026-11-01T09:00:00Z'})
+  renderPanel()
+  const table = await screen.findByRole('table')
+  await waitFor(()=>expect(table).toHaveTextContent('打印机 · 历史型号自报'))
+  expect(table).not.toHaveTextContent('摄像头 · 类型线索')
+  expect(screen.getByLabelText('发现设备摘要')).toHaveTextContent('本页明确类型 0')
 })
 
 it('keeps a computer hostname out of confirmed device type and OS fields', async () => {
@@ -330,6 +368,12 @@ it('filters VoIP phones from the quick types', async () => {
 
 it('exports the filtered discovery rows as CSV', async () => {
   mockReads()
+  const oldFetch=globalThis.fetch
+  globalThis.fetch=vi.fn().mockResolvedValue(new Response([
+    JSON.stringify({record:'manifest',total:1,snapshot_at:'2026-11-11T03:00:00Z'}),
+    JSON.stringify({record:'item',item:device}),
+    JSON.stringify({record:'end',count:1,complete:true}),
+  ].join('\n')+'\n'))
   const blobs: Blob[] = []
   const create = URL.createObjectURL
   const revoke = URL.revokeObjectURL
@@ -338,7 +382,7 @@ it('exports the filtered discovery rows as CSV', async () => {
   const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {})
   try {
     renderPanel()
-    fireEvent.click(screen.getByRole("button", { name: /导出/ }))
+    fireEvent.click(screen.getByRole("button", { name: '导出全部筛选结果' }))
     await waitFor(() => expect(blobs.length).toBe(1))
     const csv = await blobs[0].text()
     expect(csv).toContain("标识,名称,MAC")
@@ -348,6 +392,7 @@ it('exports the filtered discovery rows as CSV', async () => {
     click.mockRestore()
     URL.createObjectURL = create
     URL.revokeObjectURL = revoke
+    globalThis.fetch=oldFetch
   }
 })
 
@@ -560,3 +605,38 @@ it('manages saved discovery views', async () => {
   expect(localStorage.getItem('proxy-sentinel.discovery.views.v1')).toContain('视图B')
 })
 
+
+
+it('retains a known hardware type when service observations expire and shows its dated source', async () => {
+  mockReads({items:{}}, {...device,classification_status:'expired',device_type:'camera',hardware_type:'printer',hardware_type_status:'identified',hardware_model:'Canon MF260 Series',type_evidence_at:'2026-11-09T08:00:00Z',type_rule_version:'hardware-v8',activity_status:'stale',type_sources:[{source:'dns_sd',rule_id:'canon-mf260',rule_version:'hardware-v8',evidence_id:'model-event-1',observed_at:'2026-11-09T08:00:00Z'}]})
+  renderPanel()
+  expect((await screen.findAllByText('打印机'))[0]).toBeVisible()
+  expect(await screen.findByLabelText('发现设备摘要')).toHaveTextContent('本页明确类型 1')
+  expect(await screen.findByText('最近活动线索已过期')).toBeVisible()
+  fireEvent.click(screen.getByRole('button',{name:'查看详情'}))
+  const dialog=await screen.findByRole('dialog')
+  expect(within(dialog).getByText('类型依据时间')).toBeInTheDocument()
+  expect(within(dialog).getByText('model-event-1')).toBeInTheDocument()
+  expect(within(dialog).getByText('Canon MF260 Series')).toBeInTheDocument()
+})
+
+it('does not revive a revoked scoped hardware type through a legacy endpoint summary', async () => {
+  mockReads({items:{}}, {...device,hardware_type_status:'revoked',activity_status:'active',recognition:{device_type:'camera',confidence:0.99}})
+  renderPanel()
+  expect(await screen.findByLabelText('发现设备摘要')).toHaveTextContent('本页明确类型 0')
+  expect(await screen.findByText('硬件结论已撤销')).toBeVisible()
+  expect(screen.queryByText('摄像头')).not.toBeInTheDocument()
+})
+
+
+it('shows hardware projection failure instead of inventing zero backlog', async () => {
+  mockReads()
+  const normalRead=request.getMockImplementation()!
+  request.mockImplementation(async(path:string)=>{
+    const result=await normalRead(path)
+    return path.startsWith('/discovery/devices?')?{...result,hardware_freshness:{status:'failed',error:'规则包版本尚未就绪'}}:result
+  })
+  renderPanel()
+  expect(await screen.findByText('硬件分类处理异常：规则包版本尚未就绪')).toBeVisible()
+  expect(screen.getByLabelText('硬件分类处理进度')).not.toHaveTextContent('待处理 0')
+})

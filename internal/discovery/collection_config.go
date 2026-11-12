@@ -68,6 +68,7 @@ func DefaultCollectionConfig() CollectionConfig {
 	for _, p := range DiscoveryCaptureProtocols {
 		c.Protocols = append(c.Protocols, ProtocolOwner{p, "discovery-worker", true})
 	}
+	c.Protocols = append(c.Protocols, ProtocolOwner{"sadp", "device-signal", true})
 	c.Protocols = append(c.Protocols, ProtocolOwner{"dhcp", "zeek", true})
 	for _, p := range []string{"ipp", "rtsp", "http", "tls", "mqtt"} {
 		c.Protocols = append(c.Protocols, ProtocolOwner{p, "zeek", false})

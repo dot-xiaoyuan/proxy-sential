@@ -152,9 +152,17 @@ func (p *logParser) updateDirective(line string) {
 }
 
 func (p logParser) convertLine(raw []byte, lineOffset int, opts Options) (normalized.Event, error) {
+	if (opts.LogKind == "snmp" || opts.LogKind == "bacnet" || opts.LogKind == "modbus") && len(raw) > 32768 {
+		return normalized.Event{}, fmt.Errorf("passive identity record exceeds 32 KiB")
+	}
 	fields, err := p.fieldsFor(raw)
 	if err != nil {
 		return normalized.Event{}, err
+	}
+	if (opts.LogKind == "snmp" || opts.LogKind == "bacnet" || opts.LogKind == "modbus") && !strings.HasPrefix(strings.TrimSpace(string(raw)), "{") {
+		for key, value := range fields {
+			fields[key] = unescapeIdentityTSV(value)
+		}
 	}
 	if opts.LogKind == "proxy" {
 		return proxyEvent(raw, fields, opts)
@@ -169,7 +177,12 @@ func (p logParser) convertLine(raw []byte, lineOffset int, opts Options) (normal
 	case "lldp", "ssdp":
 		return infrastructureDiscoveryEventFromFields(raw, fields, lineOffset, opts)
 	case "snmp":
+		if fields["parser_version"] != "" {
+			return snmpResponseEvent(raw, fields, lineOffset, opts)
+		}
 		return snmpDiscoveryEventFromFields(fields, lineOffset, opts)
+	case "bacnet", "modbus":
+		return industrialResponseEvent(raw, fields, lineOffset, opts)
 	case "sip":
 		return sipDiscoveryEventFromFields(fields, lineOffset, opts)
 	case "sip-server":
@@ -209,7 +222,12 @@ func snmpDiscoveryEventFromFields(fields map[string]string, lineOffset int, opts
 		return normalized.Event{}, fmt.Errorf("missing Zeek SNMP responder port")
 	}
 
-	payload := map[string]any{"origin": "snmp", "system_description": description}
+	// Historical snmp.log is a connection aggregate. It cannot prove which
+	// packet endpoint supplied a value, so never advertise it as a direct response.
+	if len(description) > 2048 {
+		return normalized.Event{}, fmt.Errorf("legacy SNMP description exceeds budget")
+	}
+	payload := map[string]any{"origin": "snmp", "system_description": description, "is_response": false, "parser_version": "zeek-snmp-legacy", "ownership_quality": "legacy_aggregate"}
 	copyPayload(payload, fields, "version", "version")
 	if value := normalizeTimestamp(first(fields, "up_since")); value != "" {
 		payload["up_since"] = value

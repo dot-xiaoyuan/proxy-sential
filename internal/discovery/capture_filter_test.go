@@ -48,7 +48,7 @@ func TestDiscoveryFilterRejectsUnrelatedTaggedTraffic(t *testing.T) {
 		t.Fatal(e)
 	}
 	for _, tags := range []int{0, 1, 2} {
-		for _, port := range []int{443, 53, 5353, 1900, 3702, 161, 5683, 47808} {
+		for _, port := range []int{443, 53, 5353, 1900, 3702, 37020, 161, 5683, 47808} {
 			off := 14 + tags*4
 			f := make([]byte, off+28)
 			binary.BigEndian.PutUint16(f[12:14], 0x0800)
@@ -67,6 +67,20 @@ func TestDiscoveryFilterRejectsUnrelatedTaggedTraffic(t *testing.T) {
 			if (got > 0) != want {
 				t.Fatalf("tags=%d port=%d got=%d", tags, port, got)
 			}
+		}
+		// The second SADP IPv4 fragment has no UDP port header.
+		off := 14 + tags*4
+		fragment := make([]byte, off+28)
+		binary.BigEndian.PutUint16(fragment[12:14], 0x0800)
+		for i := 0; i < tags; i++ {
+			binary.BigEndian.PutUint16(fragment[12+i*4:14+i*4], 0x8100)
+			binary.BigEndian.PutUint16(fragment[16+i*4:18+i*4], 0x0800)
+		}
+		fragment[off], fragment[off+9] = 0x45, 17
+		binary.BigEndian.PutUint16(fragment[off+6:off+8], 1480/8)
+		got, e := vm.Run(fragment)
+		if e != nil || got == 0 {
+			t.Fatalf("tags=%d SADP continuation rejected: result=%d err=%v", tags, got, e)
 		}
 	}
 }

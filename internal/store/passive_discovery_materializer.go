@@ -45,6 +45,7 @@ type passiveDiscoveryRow struct {
 	ObserverJSON    string  `json:"observer_json"`
 	PayloadJSON     string  `json:"payload_json"`
 	FlowJSON        string  `json:"flow_json"`
+	RawRefJSON      string  `json:"raw_ref_json"`
 	Confidence      float64 `json:"confidence"`
 }
 
@@ -206,9 +207,9 @@ func (s *DBStore) passiveDiscoveryEvents(ctx context.Context, sensorID string, c
 	if os.Getenv("PROXY_SENTINEL_PASSIVE_DISCOVERY_DHCP_ONLY") == "true" {
 		where += " AND source_event_type='dhcp'"
 	} else {
-		where += " AND source_event_type IN ('dhcp','arp','ndp','mdns','ssdp','ws_discovery','lldp','cdp','ieee1905_client_association','ieee1905_topology','ttl','http-device','snmp','tls','ssl','x509','sip','rtsp')"
+		where += " AND source_event_type IN ('dhcp','arp','ndp','mdns','ssdp','ws_discovery','sadp','lldp','cdp','ieee1905_client_association','ieee1905_topology','ttl','http-device','snmp','tls','ssl','x509','sip','rtsp','bacnet','modbus')"
 	}
-	query := fmt.Sprintf(`SELECT formatDateTime(timestamp,'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') event_timestamp,event_id,source,source_event_type,type,sensor_id,campus_id,subject_ip,subject_mac,observer_json,payload_json,flow_json,confidence FROM passive_discovery_events_v2 PREWHERE %s ORDER BY timestamp,event_id LIMIT %d SETTINGS max_threads=1,max_memory_usage=268435456,max_execution_time=20 FORMAT JSONEachRow`, where, limit)
+	query := fmt.Sprintf(`SELECT formatDateTime(timestamp,'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') event_timestamp,event_id,source,source_event_type,type,sensor_id,campus_id,subject_ip,subject_mac,observer_json,payload_json,flow_json,raw_ref_json,confidence FROM passive_discovery_events_v2 PREWHERE %s ORDER BY timestamp,event_id LIMIT %d SETTINGS max_threads=1,max_memory_usage=268435456,max_execution_time=20 FORMAT JSONEachRow`, where, limit)
 	raw, err := s.ch.query(ctx, query)
 	if err != nil {
 		return nil, cursor, false, err
@@ -234,6 +235,7 @@ func (s *DBStore) passiveDiscoveryEvents(ctx context.Context, sensorID string, c
 		_ = json.Unmarshal([]byte(row.ObserverJSON), &event.Observer)
 		_ = json.Unmarshal([]byte(row.PayloadJSON), &event.Payload)
 		_ = json.Unmarshal([]byte(row.FlowJSON), &event.Flow)
+		_ = json.Unmarshal([]byte(row.RawRefJSON), &event.RawRef)
 		event.Observer["sensor_id"] = row.SensorID
 		events = append(events, event)
 		next.Timestamp, next.EventID = stamp.UTC(), row.EventID
@@ -369,12 +371,17 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 	if domain == "" {
 		domain = interfaceName
 	}
-	o := discovery.Observation{ID: event.EventID, EventID: event.EventID, SourceID: "passive:" + passiveString(event.Observer, "sensor_id") + ":" + interfaceName, Node: passiveString(event.Observer, "sensor_id"), Site: campus, Domain: domain, VLAN: passiveString(event.Payload, "vlan"), IP: ip, MAC: mac, Interface: interfaceName, ObservedAt: at, Evidence: event, RuleVersion: discovery.RuleVersion, Confidence: "strong"}
+	o := discovery.Observation{ID: event.EventID, EventID: event.EventID, SourceID: "passive:" + passiveString(event.Observer, "sensor_id") + ":" + interfaceName, Node: passiveString(event.Observer, "sensor_id"), Site: campus, Domain: domain, VLAN: passiveScopeField(event, "vlan"), VRF: passiveScopeField(event, "vrf"), IP: ip, MAC: mac, Interface: interfaceName, ObservedAt: at, Evidence: event, RuleVersion: discovery.RuleVersion, Confidence: "strong"}
 	if o.Site == "" {
 		o.Site = o.Node
 	}
 	switch kind {
 	case "dhcp":
+		action := strings.ToUpper(passiveString(event.Payload, "msg_types") + " " + passiveString(event.Payload, "message_type") + " " + passiveString(event.Payload, "action"))
+		if discovery.HardwareProjectionEnabled() && (strings.Contains(action, "RELEASE") || strings.Contains(action, "NAK")) && mac != "" && scope.allows(ip) {
+			o.Origin, o.Withdrawn, o.ValidUntil, o.Confidence, o.Explanation = "dhcp", true, at, "confirmed", "DHCP 地址声明撤销"
+			break
+		}
 		if !strings.Contains(strings.ToUpper(passiveString(event.Payload, "msg_types")), "ACK") || mac == "" || !scope.allows(ip) {
 			return discovery.Observation{}, "dhcp_not_ack_or_out_of_scope"
 		}
@@ -414,11 +421,17 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 		o.IP = serverIP
 		o.ModelName = subject
 		o.DeviceType = tlsCertDeviceType(subject, issuer)
+	case "bacnet", "modbus":
+		if event.Payload["is_response"] != true || ip == "" || !scope.allows(ip) {
+			return discovery.Observation{}, "invalid_device_response"
+		}
+		o.Origin, o.ModelName, o.Manufacturer, o.ValidUntil = kind, passiveString(event.Payload, "product_model"), passiveString(event.Payload, "manufacturer"), at.Add(24*time.Hour)
+		o.Confidence, o.Explanation = "clue", "设备响应；协议实体归属待核实"
 	case "snmp":
 		// SNMP agent identity: the system description names the exact product
 		// (printers, switches, routers). The subject is the agent address.
 		description := discovery.CleanReportedText(passiveString(event.Payload, "system_description"))
-		if ip == "" || description == "" || !scope.allows(ip) {
+		if ip == "" || (description == "" && passiveString(event.Payload, "system_object_id") == "" && !passiveSNMPVarbindsPresent(event.Payload["snmp_varbinds"])) || !scope.allows(ip) {
 			return discovery.Observation{}, "invalid_snmp_identity"
 		}
 		o.Origin, o.Explanation, o.ValidUntil = "snmp", "SNMP agent 系统描述", at.Add(24*time.Hour)
@@ -426,6 +439,10 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 		o.Name = description
 		o.ModelName = description
 		o.DeviceType = snmpDeviceType(description)
+		if discovery.HardwareProjectionEnabled() && event.Payload["is_response"] != true {
+			o.Confidence = "clue"
+			o.DeviceType = ""
+		}
 	case "http-device":
 		// The response served by a LAN device: the server and HTML title are
 		// self-reported product evidence, not verified hardware.
@@ -511,6 +528,39 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 		if kind, brand, model := discovery.RTSPDeviceIdentity(passiveString(event.Payload, "user_agent"), passiveString(event.Payload, "server")); kind != "" {
 			o.DeviceType, o.Manufacturer, o.ModelName = kind, brand, model
 			o.Capabilities = []string{"network_video"}
+		}
+	case "sadp":
+		o.RuleVersion = discovery.RuleVersion + "/" + discovery.ProductRulesVersion()
+		model := discovery.CleanReportedText(passiveString(event.Payload, "product_model"))
+		claimedIP := passiveString(event.Payload, "claimed_ip")
+		claimedMAC := validPassiveMAC(passiveString(event.Payload, "claimed_mac"))
+		frameMAC := validPassiveMAC(passiveString(event.Payload, "l2_source_mac"))
+		status := passiveString(event.Payload, "identity_status")
+		payloadHash := passiveString(event.Payload, "payload_sha256")
+		if event.Source != "packet-sidecar" || event.Payload["is_response"] != true || passiveString(event.Payload, "message_type") != "probe_match" ||
+			ip == "" || !scope.allows(ip) || passiveString(event.Flow, "src_ip") != ip || claimedMAC == "" || frameMAC == "" || model == "" ||
+			len(payloadHash) != 64 || status != "direct_l2" && status != "l2_mismatch" && status != "ip_mismatch" {
+			return discovery.Observation{}, "invalid_sadp_response"
+		}
+		if _, err := hex.DecodeString(payloadHash); err != nil {
+			return discovery.Observation{}, "invalid_sadp_digest"
+		}
+		if status == "direct_l2" && (claimedIP != ip || claimedMAC != mac || frameMAC != mac) ||
+			status == "l2_mismatch" && (claimedIP != ip || mac != "" || frameMAC == claimedMAC) ||
+			status == "ip_mismatch" && (claimedIP == ip || mac != "") {
+			return discovery.Observation{}, "invalid_sadp_identity"
+		}
+		o.Origin, o.ModelName, o.ValidUntil = "sadp", model, at.Add(30*time.Minute)
+		o.Confidence, o.Explanation = "clue", "SADP 自报型号；设备归属待核实"
+		if status == "ip_mismatch" {
+			o.Explanation = "SADP 自报 IP 与报文源 IP 冲突"
+		}
+		if status == "direct_l2" {
+			o.Confidence, o.Explanation = "strong", "SADP 自报型号与直接二层来源一致"
+			o.DeviceType, o.Manufacturer, o.ModelName = discovery.ProductModelType(model)
+			if o.ModelName == "" {
+				o.ModelName = model
+			}
 		}
 	case "ssdp":
 		if !scope.allows(ip) {
@@ -737,7 +787,7 @@ func passiveTXTObservation(event normalized.Event, sensor, iface, recordName, te
 func tlsCertDeviceType(subject, issuer string) string {
 	lower := strings.ToLower(subject + " " + issuer)
 	switch {
-	case strings.Contains(lower, "hikvision"), strings.Contains(lower, "dahua"), strings.Contains(lower, "axis"):
+	case strings.Contains(lower, "network camera"), strings.Contains(lower, "ip camera"):
 		return "camera"
 	case strings.Contains(lower, "laserjet"), strings.Contains(lower, "officejet"), strings.Contains(lower, "printer"):
 		return "printer"
@@ -769,7 +819,7 @@ func ssdpServerDeviceType(server string) string {
 	case strings.Contains(lower, "roku"), strings.Contains(lower, "sonos"), strings.Contains(lower, "chromecast"),
 		strings.Contains(lower, "googlecast"), strings.Contains(lower, "spotify"):
 		return "media_device"
-	case strings.Contains(lower, "hikvision"), strings.Contains(lower, "dahua"), strings.Contains(lower, "axis"):
+	case strings.Contains(lower, "network camera"), strings.Contains(lower, "ip camera"):
 		return "camera"
 	case strings.Contains(lower, "unifi"), strings.Contains(lower, "ubiquiti"), strings.Contains(lower, "aruba"):
 		return "access_point"
@@ -789,7 +839,7 @@ func snmpDeviceType(description string) string {
 		return "router"
 	case strings.Contains(lower, "switch"):
 		return "switch"
-	case strings.Contains(lower, "camera"), strings.Contains(lower, "hikvision"), strings.Contains(lower, "dahua"):
+	case strings.Contains(lower, "camera"):
 		return "camera"
 	}
 	return ""
@@ -800,8 +850,7 @@ func snmpDeviceType(description string) string {
 func httpDeviceType(server, title string) string {
 	lower := strings.ToLower(server + " " + title)
 	switch {
-	case strings.Contains(lower, "hikvision"), strings.Contains(lower, "dahua"), strings.Contains(lower, "axis"),
-		strings.Contains(lower, "network camera"), strings.Contains(lower, "ip camera"), strings.Contains(lower, "onvif"):
+	case strings.Contains(lower, "network camera"), strings.Contains(lower, "ip camera"):
 		return "camera"
 	case strings.Contains(lower, "routeros"), strings.Contains(lower, "mikrotik"):
 		return "router"
@@ -1118,6 +1167,7 @@ ON CONFLICT(endpoint_id) DO NOTHING`, macs); err != nil {
 		}
 	}
 	rows := make([]map[string]any, 0, len(ids))
+	hardwareObservations := make([]discovery.Observation, 0, len(ids))
 	links := make([]passiveLinkRow, 0, len(ids))
 	for _, id := range ids {
 		o := pending[id]
@@ -1126,7 +1176,13 @@ ON CONFLICT(endpoint_id) DO NOTHING`, macs); err != nil {
 		}
 		// Service advertisements usually carry an IP but no MAC. Reuse only an
 		// event-time DHCP/ARP/NDP binding; never manufacture a terminal identity.
-		if o.MAC == "" && o.IP != "" {
+		if discovery.HardwareProjectionEnabled() {
+			var err error
+			o, err = resolveHardwareOwnership(ctx, db, o)
+			if err != nil {
+				return nil, err
+			}
+		} else if o.Origin != "sadp" && o.MAC == "" && o.IP != "" {
 			var mac string
 			err := db.QueryRowContext(ctx, `SELECT lower(data->>'mac')
 FROM discovery_observations
@@ -1146,6 +1202,7 @@ ORDER BY observed_at DESC,id DESC LIMIT 1`, o.Node, o.IP, o.ObservedAt).Scan(&ma
 		if link != nil {
 			links = append(links, *link)
 		}
+		hardwareObservations = append(hardwareObservations, o)
 		raw, _ := json.Marshal(o)
 		rows = append(rows, map[string]any{
 			"id": o.ID, "device_key": o.Key(), "source_id": o.SourceID, "origin": o.Origin,
@@ -1164,6 +1221,11 @@ ORDER BY r.id
 ON CONFLICT(id) DO UPDATE SET device_key=EXCLUDED.device_key,source_id=EXCLUDED.source_id,origin=EXCLUDED.origin,observed_at=EXCLUDED.observed_at,valid_until=EXCLUDED.valid_until,withdrawn=EXCLUDED.withdrawn,data=EXCLUDED.data,service_instance=EXCLUDED.service_instance WHERE EXCLUDED.observed_at>=discovery_observations.observed_at+interval '60 seconds'`, string(payload)); err != nil {
 		return nil, err
 	}
+	if discovery.HardwareProjectionEnabled() {
+		if err := discovery.EnqueueHardwareObservations(ctx, db, hardwareObservations); err != nil {
+			return nil, err
+		}
+	}
 	return links, nil
 }
 
@@ -1176,7 +1238,13 @@ func (s *DBStore) insertPassiveObservation(ctx context.Context, db passiveDiscov
 	}
 	// Service advertisements usually carry an IP but no MAC. Reuse only an
 	// event-time DHCP/ARP/NDP binding; never manufacture a terminal identity.
-	if o.MAC == "" && o.IP != "" {
+	if discovery.HardwareProjectionEnabled() {
+		var err error
+		o, err = resolveHardwareOwnership(ctx, db, o)
+		if err != nil {
+			return nil, err
+		}
+	} else if o.Origin != "sadp" && o.MAC == "" && o.IP != "" {
 		var mac string
 		err := db.QueryRowContext(ctx, `SELECT lower(data->>'mac')
 FROM discovery_observations
@@ -1195,6 +1263,11 @@ ORDER BY observed_at DESC,id DESC LIMIT 1`, o.Node, o.IP, o.ObservedAt).Scan(&ma
 	serviceInstance := passiveString(o.Evidence.Payload, "service_instance")
 	if _, err := db.ExecContext(ctx, `INSERT INTO discovery_observations(id,device_key,source_id,origin,observed_at,valid_until,withdrawn,data,service_instance) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(id) DO UPDATE SET device_key=EXCLUDED.device_key,source_id=EXCLUDED.source_id,origin=EXCLUDED.origin,observed_at=EXCLUDED.observed_at,valid_until=EXCLUDED.valid_until,withdrawn=EXCLUDED.withdrawn,data=EXCLUDED.data,service_instance=EXCLUDED.service_instance WHERE EXCLUDED.observed_at>=discovery_observations.observed_at+interval '60 seconds'`, o.ID, o.Key(), o.SourceID, o.Origin, o.ObservedAt, o.ValidUntil, o.Withdrawn, raw, serviceInstance); err != nil {
 		return nil, err
+	}
+	if discovery.HardwareProjectionEnabled() {
+		if err := discovery.EnqueueHardwareObservations(ctx, db, []discovery.Observation{o}); err != nil {
+			return nil, err
+		}
 	}
 	return s.passiveObservationLink(ctx, db, o)
 }
@@ -1289,6 +1362,13 @@ func passiveDirectResponderMAC(event normalized.Event) string {
 }
 
 func passiveDirectResponderIdentity(o discovery.Observation) bool {
+	if o.Origin == "sadp" && o.Evidence.Source == "packet-sidecar" &&
+		(passiveString(o.Evidence.Payload, "identity_status") == "direct_l2" || passiveString(o.Evidence.Payload, "identity_status") == "arp_binding") &&
+		validPassiveMAC(passiveString(o.Evidence.Payload, "claimed_mac")) == validPassiveMAC(o.MAC) &&
+		validPassiveMAC(passiveString(o.Evidence.Subject, "mac")) == validPassiveMAC(o.MAC) &&
+		passiveString(o.Evidence.Subject, "ip") == o.IP && passiveString(o.Evidence.Payload, "claimed_ip") == o.IP {
+		return true
+	}
 	// A multicast DNS response is sent from the responder's own frame, so the
 	// logged L2 source MAC is frame-level ownership even when the observation
 	// came from a TXT or SRV answer instead of a PTR.
@@ -1301,6 +1381,67 @@ func passiveDirectResponderIdentity(o discovery.Observation) bool {
 	}
 	destination, err := netip.ParseAddr(passiveString(o.Evidence.Flow, "dst_ip"))
 	return err == nil && destination.IsMulticast()
+}
+
+// A routed SADP frame can carry a gateway source MAC. Confirm the product's
+// claimed MAC against a current, same-scope ARP/NDP/DHCP fact at event time.
+// A conflicting or missing binding leaves the model visible as a clue only.
+func verifySADPBinding(ctx context.Context, db passiveDiscoveryDB, o discovery.Observation) (discovery.Observation, error) {
+	if o.Origin != "sadp" || o.MAC != "" || passiveString(o.Evidence.Payload, "identity_status") != "l2_mismatch" {
+		return o, nil
+	}
+	claimed := validPassiveMAC(passiveString(o.Evidence.Payload, "claimed_mac"))
+	if claimed == "" || passiveString(o.Evidence.Payload, "claimed_ip") != o.IP {
+		return o, nil
+	}
+	rows, err := db.QueryContext(ctx, `SELECT lower(data->>'mac') FROM discovery_observation_latest
+WHERE data->>'ip'=$1 AND data->>'node'=$2 AND data->>'site'=$3 AND data->>'domain'=$4
+ AND coalesce(data->>'vlan','')=$5 AND origin IN ('arp','ndp','dhcp')
+ AND NOT withdrawn AND observed_at<=$6 AND valid_until>$6
+ORDER BY observed_at DESC,id DESC LIMIT 17`, o.IP, o.Node, o.Site, o.Domain, o.VLAN, o.ObservedAt)
+	if err != nil {
+		return o, err
+	}
+	defer rows.Close()
+	seen, conflict := 0, false
+	for rows.Next() {
+		var mac string
+		if err = rows.Scan(&mac); err != nil {
+			return o, err
+		}
+		seen++
+		if seen > 16 || validPassiveMAC(mac) != claimed {
+			conflict = true
+		}
+	}
+	if err = rows.Err(); err != nil {
+		return o, err
+	}
+	if seen == 0 {
+		return o, nil
+	}
+	if conflict {
+		o.Explanation = "SADP 自报 MAC 与同作用域地址绑定冲突"
+		return o, nil
+	}
+	o.MAC, o.Confidence, o.Explanation = claimed, "strong", "SADP 自报型号与同作用域地址绑定一致"
+	o.DeviceType, o.Manufacturer, o.ModelName = discovery.ProductModelType(o.ModelName)
+	if o.ModelName == "" {
+		o.ModelName = passiveString(o.Evidence.Payload, "product_model")
+	}
+	subject := make(map[string]any, len(o.Evidence.Subject)+1)
+	for key, value := range o.Evidence.Subject {
+		subject[key] = value
+	}
+	subject["mac"] = claimed
+	o.Evidence.Subject = subject
+	payload := make(map[string]any, len(o.Evidence.Payload))
+	for key, value := range o.Evidence.Payload {
+		payload[key] = value
+	}
+	payload["identity_status"] = "arp_binding"
+	o.Evidence.Payload = payload
+	return o, nil
 }
 
 func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []normalized.Event, scope passiveDiscoveryScope) (passiveDiscoveryBatchStats, error) {
@@ -1332,11 +1473,23 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 	pendingLinks := make([]passiveLinkRow, 0, len(events))
 	pendingIDs := make(map[string]int)
 	pendingObs := make(map[string]discovery.Observation, len(events))
+	affectedKeys := make(map[string]bool, len(events))
 	flushARP := func() error {
 		if len(pendingARP) == 0 {
 			return nil
 		}
-		if err := measure("arp_batch", func() error { return s.insertPassiveARPBatch(ctx, tx, pendingARP) }); err != nil {
+		for _, observation := range pendingARP {
+			affectedKeys[observation.Key()] = true
+		}
+		if err := measure("arp_batch", func() error {
+			if err := s.insertPassiveARPBatch(ctx, tx, pendingARP); err != nil {
+				return err
+			}
+			if discovery.HardwareProjectionEnabled() {
+				return discovery.EnqueueHardwareObservations(ctx, tx, pendingARP)
+			}
+			return nil
+		}); err != nil {
 			return err
 		}
 		pendingARP = pendingARP[:0]
@@ -1392,6 +1545,12 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 			var observation discovery.Observation
 			observation, reason = passiveObservation(event, scope)
 			if reason == "" {
+				if observation.Origin == "sadp" {
+					stage := time.Now()
+					observation, eventErr = verifySADPBinding(ctx, tx, observation)
+					sections["sadp_binding"] += time.Since(stage)
+					discovery.ObserveStage(ctx, "sadp_binding", stage, eventErr)
+				}
 				observations = []discovery.Observation{observation}
 			}
 		}
@@ -1412,6 +1571,7 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 				continue
 			}
 			pendingObs[observation.ID] = observation
+			affectedKeys[observation.Key()] = true
 			stats.Emitted++
 		}
 	}
@@ -1433,6 +1593,14 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 	err = tx.Commit()
 	sections["commit"] += time.Since(commitStage)
 	discovery.ObserveStage(ctx, "commit", commitStage, err)
+	if err == nil && os.Getenv("PROXY_SENTINEL_PASSIVE_CENSUS_ENABLED") == "true" {
+		keys := make([]string, 0, len(affectedKeys))
+		for key := range affectedKeys {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		err = discovery.RefreshCensusTerminals(ctx, s.pg.db, s.pg.sensorID, keys)
+	}
 	logSlowPassiveBatch(stats, sections, time.Since(started))
 	return stats, err
 }
@@ -1466,6 +1634,9 @@ func (s *DBStore) runPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 	if os.Getenv("PROXY_SENTINEL_PASSIVE_DISCOVERY_DISABLED") == "true" {
 		return
 	}
+	hardwareDone := make(chan struct{})
+	go func() { defer close(hardwareDone); s.runPassiveHardwareProjection(ctx, sensorID) }()
+	defer func() { <-hardwareDone }()
 	observer := discovery.NewPipelineObserver()
 	ctx = discovery.WithPipelineObserver(ctx, observer)
 	heartbeatDone := make(chan struct{})
@@ -1566,6 +1737,8 @@ func (s *DBStore) RunPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 		return
 	}
 	liveDone := make(chan struct{})
+	censusDone := make(chan struct{})
+	go func() { defer close(censusDone); s.runPassiveCensusProjection(ctx) }()
 	go func() {
 		defer close(liveDone)
 		s.runPassiveLivePTRMaterializer(ctx, sensorID)
@@ -1573,6 +1746,7 @@ func (s *DBStore) RunPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 	go s.runPassiveObservationRetention(ctx, sensorID)
 	s.runPassiveDiscoveryMaterializer(ctx, sensorID)
 	<-liveDone
+	<-censusDone
 }
 
 // runPassiveObservationRetention applies the observation hot-window and folds
@@ -1598,7 +1772,7 @@ func (s *DBStore) runPassiveObservationRetention(ctx context.Context, sensorID s
 }
 
 func (s *DBStore) cleanupPassiveObservations(ctx context.Context) error {
-	for _, q := range []string{
+	queries := []string{
 		`DELETE FROM discovery_observations WHERE id IN(SELECT id FROM discovery_observations WHERE observed_at<now()-interval '30 days' LIMIT 5000)`,
 		// Continuously re-observed DNS-SD advertisements keep a shorter hot
 		// window: seven days covers the brand window and the page's service
@@ -1611,7 +1785,14 @@ func (s *DBStore) cleanupPassiveObservations(ctx context.Context) error {
 			 AND n.service_instance=o.service_instance
 			 AND (n.observed_at>o.observed_at OR (n.observed_at=o.observed_at AND n.id>o.id))
 			WHERE o.origin='dns_sd' AND o.observed_at<now()-interval '2 days' LIMIT 5000)`,
-	} {
+	}
+	if os.Getenv("PROXY_SENTINEL_PASSIVE_CENSUS_ENABLED") == "true" {
+		queries = append(queries, `DELETE FROM passive_census_identifier_5m WHERE (bucket_at,scope_key,kind,value) IN
+		 (SELECT bucket_at,scope_key,kind,value FROM passive_census_identifier_5m WHERE bucket_at<now()-interval '30 days' ORDER BY bucket_at LIMIT 20000)`)
+		queries = append(queries, `DELETE FROM passive_census_pending_batches WHERE id IN
+		 (SELECT id FROM passive_census_pending_batches WHERE processed_at<now()-interval '7 days' ORDER BY processed_at LIMIT 5000)`)
+	}
+	for _, q := range queries {
 		// Bound each retention statement: a plan change can turn the dedup join
 		// into a multi-minute scan on this table, and a runaway delete holds the
 		// row locks the materializer's next batch needs.

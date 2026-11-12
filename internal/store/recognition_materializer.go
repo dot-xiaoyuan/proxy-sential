@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"proxy-sentinel/internal/discovery"
 	"proxy-sentinel/internal/fingerprint"
 )
 
@@ -167,6 +168,12 @@ IS DISTINCT FROM
 		job.Timings["write_ms"] = float64(time.Since(writeStarted)) / float64(time.Millisecond)
 	}
 	if err == nil {
+		if os.Getenv("PROXY_SENTINEL_PASSIVE_CENSUS_ENABLED") == "true" && item.PrimaryMAC != "" {
+			err = discovery.RefreshCensusTerminalMAC(ctx, s.pg.db, s.pg.sensorID, item.PrimaryMAC)
+			if err != nil {
+				return err
+			}
+		}
 		s.fingerprintMatches.record(time.Now(), job.Historical, item.SourceMatches)
 	}
 	return err
@@ -208,6 +215,8 @@ func (s *DBStore) finishRecognitionJob(ctx context.Context, job recognitionJob, 
 
 func (s *DBStore) RunRecognitionMaterializer(ctx context.Context) {
 	var workers sync.WaitGroup
+	workers.Add(1)
+	go func() { defer workers.Done(); s.runPassiveCensusProjection(ctx) }()
 	workers.Add(1)
 	go func() { defer workers.Done(); s.runFingerprintRebuild(ctx) }()
 	workers.Add(1)

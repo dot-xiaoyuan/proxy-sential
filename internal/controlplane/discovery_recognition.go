@@ -37,8 +37,21 @@ type discoveryRecognition struct {
 // current discovery page by MAC. The read is bounded by the page size, creates
 // no rows and leaves devices without a MAC or without a summary untouched.
 func enrichDiscoveryRecognition(ctx context.Context, db *sql.DB, page map[string]any) {
+	if db == nil {
+		return
+	}
+	enrichDiscoveryRecognitionQueryer(ctx, db, page)
+}
+
+func enrichDiscoveryRecognitionSnapshot(ctx context.Context, tx *sql.Tx, page map[string]any) {
+	enrichDiscoveryRecognitionQueryer(ctx, tx, page)
+}
+
+func enrichDiscoveryRecognitionQueryer(ctx context.Context, db interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, page map[string]any) {
 	items, ok := discoveryPageItems(page)
-	if !ok || len(items) == 0 || db == nil {
+	if !ok || len(items) == 0 {
 		return
 	}
 	macs, positions := discoveryPageMACs(items)
@@ -141,10 +154,25 @@ func applyDiscoveryRecognition(items []map[string]any, positions map[string][]in
 				continue
 			}
 			decoration := item
+			// V2 hardware facts carry full network scope. A MAC-only endpoint
+			// summary cannot restore withdrawn facts or import another VLAN's model.
+			if status, _ := items[index]["hardware_type_status"].(string); status != "" {
+				decoration.DeviceType = ""
+				decoration.Brand = ""
+				decoration.Model = ""
+				decoration.BrandInferenceStatus = ""
+				decoration.BrandInferenceBrand = ""
+				decoration.BrandInferenceConfidence = 0
+			}
 			// Discovery explicitly distinguishes current conclusions from conflicted
 			// or expired evidence. A summary decoration must not override that state.
 			if state, _ := items[index]["classification_status"].(string); state == "conflict" || state == "expired" {
 				decoration.DeviceType = ""
+			} else if state == "identified" {
+				currentType, _ := items[index]["device_type"].(string)
+				if currentType != "" && decoration.DeviceType != currentType && (decoration.Source == "ieee_oui" || decoration.Confidence < .8) {
+					decoration.DeviceType = ""
+				}
 			}
 			items[index]["recognition"] = decoration
 		}

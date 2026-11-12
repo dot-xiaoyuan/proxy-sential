@@ -85,15 +85,17 @@ type Rule struct {
 }
 
 type Library struct {
-	catalog     *Catalog
-	version     string
-	ouis        map[string]string
-	rules       []Rule
-	ruleIndex   map[string][]int
-	dhcp        map[string][]DHCPFingerprint
-	aliases     map[string]string
-	domains     []DomainSignature
-	domainIndex *domainNode
+	hardware              *HardwareCatalog
+	installedBundleSchema string
+	catalog               *Catalog
+	version               string
+	ouis                  map[string]string
+	rules                 []Rule
+	ruleIndex             map[string][]int
+	dhcp                  map[string][]DHCPFingerprint
+	aliases               map[string]string
+	domains               []DomainSignature
+	domainIndex           *domainNode
 }
 
 var (

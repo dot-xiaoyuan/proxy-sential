@@ -8,7 +8,8 @@ func TestRTSPDeviceIdentity(t *testing.T) {
 	}{
 		{"HIKVISION player NVR V4.84.030", "recorder", "Hikvision"},
 		{"Dahua NVR", "recorder", "Dahua"},
-		{"Hikvision", "camera", "Hikvision"},
+		{"Hikvision", "", ""},
+		{"Hikvision DS-K1T6QT-F72M", "", ""},
 		{"AXIS Camera", "camera", "Axis"},
 		{"VLC/3.0.20 LibVLC/3.0.20", "", ""},
 		{"ffmpeg", "", ""},

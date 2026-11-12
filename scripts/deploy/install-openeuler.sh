@@ -54,6 +54,12 @@ device_signal_bucket="${PROXY_SENTINEL_DEVICE_SIGNAL_BUCKET:-30s}"
 capture_scope_path="${PROXY_SENTINEL_CAPTURE_SCOPE_CONFIG:-}"
 collector_instance_id="${PROXY_SENTINEL_COLLECTOR_INSTANCE_ID:-}"
 offline_install="${PROXY_SENTINEL_OFFLINE:-false}"
+hardware_v2="${PROXY_SENTINEL_HARDWARE_V2:-false}"
+hardware_shadow="${PROXY_SENTINEL_HARDWARE_SHADOW:-false}"
+icsnpp_enabled="${PROXY_SENTINEL_ZEEK_ICSNPP_ENABLED:-false}"
+icsnpp_prefix="${PROXY_SENTINEL_ZEEK_ICSNPP_PREFIX:-$root/collectors/icsnpp}"
+hardware_capture=false
+if [[ "$hardware_v2" == true || "$hardware_shadow" == true ]]; then hardware_capture=true; fi
 if [[ "$manage_zeek" == true ]]; then
   : "${PROXY_SENTINEL_ZEEK_DHCP_PATH:=$zeek_log_dir/dhcp.log}"
   : "${PROXY_SENTINEL_ZEEK_SOFTWARE_PATH:=$zeek_log_dir/software.log}"
@@ -67,7 +73,14 @@ if [[ "$manage_zeek" == true ]]; then
   : "${PROXY_SENTINEL_ZEEK_X509_PATH:=$zeek_log_dir/x509.log}"
   : "${PROXY_SENTINEL_ZEEK_LLDP_PATH:=$zeek_log_dir/lldp.log}"
   : "${PROXY_SENTINEL_ZEEK_SSDP_PATH:=$zeek_log_dir/ssdp.log}"
-  : "${PROXY_SENTINEL_ZEEK_SNMP_PATH:=$zeek_log_dir/snmp.log}"
+  snmp_default_path="$zeek_log_dir/snmp.log"
+  if [[ "$hardware_capture" == true ]]; then snmp_default_path="$zeek_log_dir/snmp_device.log"; fi
+  : "${PROXY_SENTINEL_ZEEK_SNMP_PATH:=$snmp_default_path}"
+  if [[ "$hardware_capture" == true && "$icsnpp_enabled" == true ]]; then
+    : "${PROXY_SENTINEL_ZEEK_BACNET_PATH:=$zeek_log_dir/bacnet_property.log}"
+    : "${PROXY_SENTINEL_ZEEK_MODBUS_PATH:=$zeek_log_dir/modbus_read_device_identification.log}"
+    export PROXY_SENTINEL_ZEEK_BACNET_PATH PROXY_SENTINEL_ZEEK_MODBUS_PATH
+  fi
   export PROXY_SENTINEL_ZEEK_DHCP_PATH PROXY_SENTINEL_ZEEK_SOFTWARE_PATH PROXY_SENTINEL_ZEEK_MDNS_PATH PROXY_SENTINEL_ZEEK_NBNS_PATH PROXY_SENTINEL_ZEEK_LLMNR_PATH
   export PROXY_SENTINEL_ZEEK_CONN_PATH PROXY_SENTINEL_ZEEK_DNS_PATH PROXY_SENTINEL_ZEEK_HTTP_PATH PROXY_SENTINEL_ZEEK_SSL_PATH PROXY_SENTINEL_ZEEK_X509_PATH PROXY_SENTINEL_ZEEK_LLDP_PATH PROXY_SENTINEL_ZEEK_SSDP_PATH PROXY_SENTINEL_ZEEK_SNMP_PATH
 fi
@@ -142,6 +155,14 @@ preflight() {
   [[ "$manage_device_signals" == true || "$manage_device_signals" == false ]] || die "PROXY_SENTINEL_MANAGE_DEVICE_SIGNALS must be true or false"
   [[ "$ingest_enabled" == true || "$ingest_enabled" == false ]] || die "PROXY_SENTINEL_INGEST_ENABLED must be true or false"
   [[ "$offline_install" == true || "$offline_install" == false ]] || die "PROXY_SENTINEL_OFFLINE must be true or false"
+  [[ "$hardware_v2" == true || "$hardware_v2" == false ]] || die "PROXY_SENTINEL_HARDWARE_V2 must be true or false"
+  [[ "$hardware_shadow" == true || "$hardware_shadow" == false ]] || die "PROXY_SENTINEL_HARDWARE_SHADOW must be true or false"
+  [[ "$icsnpp_enabled" == true || "$icsnpp_enabled" == false ]] || die "PROXY_SENTINEL_ZEEK_ICSNPP_ENABLED must be true or false"
+  if [[ "$icsnpp_enabled" == true ]]; then
+    [[ "$hardware_capture" == true && "$manage_zeek" == true ]] || die "ICSNPP capture requires managed Zeek and an explicit hardware V2 or shadow gate"
+    [[ "$icsnpp_prefix" =~ ^/[A-Za-z0-9._/:+-]+$ && -f "$icsnpp_prefix/manifest.json" ]] || die "build the pinned ICSNPP artifact explicitly before enabling capture"
+    command -v zeek-config >/dev/null || die "zeek-config is required to check the ICSNPP ABI"
+  fi
   [[ "$sensor_id" =~ ^[A-Za-z0-9._-]+$ && "$interface" =~ ^[A-Za-z0-9._:-]+$ ]] || die "unsafe sensor or interface value"
 	[[ "$device_signal_bucket" =~ ^[1-9][0-9]*s$ ]] || die "PROXY_SENTINEL_DEVICE_SIGNAL_BUCKET must be a positive second duration"
 	[[ -z "$collector_instance_id" || "$collector_instance_id" =~ ^[A-Za-z0-9._-]+$ ]] || die "unsafe PROXY_SENTINEL_COLLECTOR_INSTANCE_ID"
@@ -167,6 +188,10 @@ preflight() {
   append_ingest_source PROXY_SENTINEL_ZEEK_LLDP_PATH --zeek-lldp
   append_ingest_source PROXY_SENTINEL_ZEEK_SSDP_PATH --zeek-ssdp
   append_ingest_source PROXY_SENTINEL_ZEEK_SNMP_PATH --zeek-snmp
+  if [[ "$hardware_capture" == true ]]; then
+    append_ingest_source PROXY_SENTINEL_ZEEK_BACNET_PATH --zeek-bacnet
+    append_ingest_source PROXY_SENTINEL_ZEEK_MODBUS_PATH --zeek-modbus
+  fi
   if [[ "$manage_device_signals" == true ]]; then
     PROXY_SENTINEL_DEVICE_SIGNAL_PATH="$device_signal_path"
     export PROXY_SENTINEL_DEVICE_SIGNAL_PATH
@@ -183,6 +208,10 @@ preflight() {
   if [[ -n "${PROXY_SENTINEL_ZEEK_LLDP_PATH:-}" ]]; then shadow_zeek_args+=" --zeek-lldp $PROXY_SENTINEL_ZEEK_LLDP_PATH"; fi
   if [[ -n "${PROXY_SENTINEL_ZEEK_SSDP_PATH:-}" ]]; then shadow_zeek_args+=" --zeek-ssdp $PROXY_SENTINEL_ZEEK_SSDP_PATH"; fi
   if [[ -n "${PROXY_SENTINEL_ZEEK_SNMP_PATH:-}" ]]; then shadow_zeek_args+=" --zeek-snmp $PROXY_SENTINEL_ZEEK_SNMP_PATH"; fi
+  if [[ "$hardware_capture" == true ]]; then
+    if [[ -n "${PROXY_SENTINEL_ZEEK_BACNET_PATH:-}" ]]; then shadow_zeek_args+=" --zeek-bacnet $PROXY_SENTINEL_ZEEK_BACNET_PATH"; fi
+    if [[ -n "${PROXY_SENTINEL_ZEEK_MODBUS_PATH:-}" ]]; then shadow_zeek_args+=" --zeek-modbus $PROXY_SENTINEL_ZEEK_MODBUS_PATH"; fi
+  fi
   (cd "$(dirname "$archive")" && sha256sum -c "$(basename "$checksum")")
   tar -tzf "$archive" >/dev/null
   [[ ! -e "$release_dir" && ! -e "$stage_dir" ]] || die "release version already exists: $version"
@@ -349,6 +378,9 @@ tar -C "$stage_dir" -xzf "$archive"
 (cd "$stage_dir" && sha256sum -c SHA256SUMS >/dev/null)
 python3 "$stage_dir/scripts/verify-service-expectations.py" --root "$root"
 chmod 0755 "$stage_dir/bin/proxy-sentinel" "$stage_dir/scripts/proxy-sentinelctl"
+if [[ "$icsnpp_enabled" == true ]]; then
+  bash "$stage_dir/scripts/install-icsnpp.sh" --check --prefix "$icsnpp_prefix" --lock "$stage_dir/assets/zeek/icsnpp.lock.json"
+fi
 
 had_storage=false
 if docker inspect proxy-sentinel-postgres proxy-sentinel-clickhouse >/dev/null 2>&1; then had_storage=true; fi
@@ -713,6 +745,13 @@ fi
 
 if [[ "$manage_zeek" == true ]]; then
   command -v zeek >/dev/null || die "Zeek is required when PROXY_SENTINEL_MANAGE_ZEEK=true"
+  zeek_hardware_args=""
+  zeek_hardware_environment=""
+  if [[ "$hardware_capture" == true ]]; then zeek_hardware_args=" ProxySentinelSNMP::enabled=T"; fi
+  if [[ "$icsnpp_enabled" == true ]]; then
+    zeek_hardware_args+=" $root/current/assets/zeek/passive-industrial-signals.zeek"
+    printf -v zeek_hardware_environment 'Environment="ZEEK_PLUGIN_PATH=%s/plugins:%s"\nEnvironment="ZEEKPATH=%s:%s/plugins/ICSNPP_Bacnet/scripts"' "$icsnpp_prefix" "$(zeek-config --plugin_dir)" "$(zeek-config --zeekpath)" "$icsnpp_prefix"
+  fi
   mkdir -p "$zeek_log_dir"
   cat > /etc/systemd/system/proxy-sentinel-zeek.service <<EOF
 # Managed by proxy-sentinel install-openeuler.sh
@@ -723,8 +762,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=$zeek_log_dir
+$zeek_hardware_environment
 ExecStartPre=/usr/bin/test -w $zeek_log_dir
-ExecStart=/usr/local/bin/zeek -i $interface $root/current/assets/zeek/local-device-signals.zeek policy/protocols/dhcp/software.zeek policy/protocols/conn/mac-logging.zeek $root/current/assets/zeek/proxy-transactions.zeek
+ExecStart=/usr/local/bin/zeek -i $interface $root/current/assets/zeek/local-device-signals.zeek policy/protocols/dhcp/software.zeek policy/protocols/conn/mac-logging.zeek $root/current/assets/zeek/proxy-transactions.zeek$zeek_hardware_args
 Restart=always
 RestartSec=5
 TimeoutStopSec=30

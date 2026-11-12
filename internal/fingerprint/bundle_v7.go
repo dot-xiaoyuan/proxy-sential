@@ -77,7 +77,7 @@ func verifyV7Sources(manifest BundleManifest, tables bundleSignatureTables) erro
 }
 
 func signatureTablesForBundle(bundle Bundle) (bundleSignatureTables, error) {
-	if bundle.Manifest.SchemaVersion == BundleSchemaVersionV7 {
+	if bundle.Manifest.SchemaVersion == BundleSchemaVersionV7 || bundle.Manifest.SchemaVersion == BundleSchemaVersionV8 {
 		return parseBundleSignatureTables(bundle.Files)
 	}
 	return parseBundleSignatureTables(v7SignatureFiles)

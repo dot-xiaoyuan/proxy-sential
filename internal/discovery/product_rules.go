@@ -37,6 +37,28 @@ var embeddedProductRules []byte
 // consumer product family is a data change, not a release.
 var campusProductRules = mustLoadProductRules(embeddedProductRules)
 
+var campusProductRulesVersion = func() string {
+	var table productRuleTable
+	if err := json.Unmarshal(embeddedProductRules, &table); err != nil {
+		panic(err)
+	}
+	return table.Version
+}()
+
+func ProductRulesVersion() string { return campusProductRulesVersion }
+
+// ProductModelType matches a product-bearing self-report against the reviewed
+// catalogue. Callers must establish protocol attribution before using its
+// result as an effective device type.
+func ProductModelType(value string) (kind, manufacturer, model string) {
+	for _, rule := range campusProductRules {
+		if matched := rule.pattern.FindString(value); matched != "" {
+			return rule.kind, rule.manufacturer, matched
+		}
+	}
+	return "", "", ""
+}
+
 func mustLoadProductRules(data []byte) []productRule {
 	rules, err := parseProductRules(data)
 	if err != nil {
@@ -110,6 +132,9 @@ func applyProductRules(o *Observation) {
 	if p == nil {
 		return
 	}
+	if o.Origin == "sadp" && o.ModelName == "" {
+		return
+	}
 	fields := []string{o.ModelName, str(p, "product_model"), str(p, "printer_make_and_model")}
 	if o.Origin == "snmp" {
 		fields = append(fields, str(p, "system_description"))
@@ -131,25 +156,23 @@ func applyProductRules(o *Observation) {
 		}
 	}
 	for _, value := range fields {
-		for _, rule := range campusProductRules {
-			if model := rule.pattern.FindString(value); model != "" {
-				// Inferred attributes belong to the observation. Never mutate the
-				// input shared with archival, retries and the durable receipt hash.
-				derived := make(map[string]any, len(p)+3)
-				for key, value := range p {
-					derived[key] = value
-				}
-				p = derived
-				o.Evidence.Payload = derived
-				p["product_verified"] = true
-				p["product_type"] = rule.kind
-				p["product_model"] = model
-				o.ModelName = model
-				if o.Manufacturer == "" {
-					o.Manufacturer = rule.manufacturer
-				}
-				return
+		if kind, manufacturer, model := ProductModelType(value); model != "" {
+			// Inferred attributes belong to the observation. Never mutate the
+			// input shared with archival, retries and the durable receipt hash.
+			derived := make(map[string]any, len(p)+3)
+			for key, value := range p {
+				derived[key] = value
 			}
+			p = derived
+			o.Evidence.Payload = derived
+			p["product_verified"] = true
+			p["product_type"] = kind
+			p["product_model"] = model
+			o.ModelName = model
+			if o.Manufacturer == "" {
+				o.Manufacturer = manufacturer
+			}
+			return
 		}
 	}
 }

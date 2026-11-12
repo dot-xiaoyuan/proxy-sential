@@ -1,0 +1,10 @@
+{
+  "source": "https://github.com/cisagov/icsnpp-bacnet",
+  "commit": "72d1572ec170e16e0676de7f07d903f63b87ba31",
+  "upstream_path": "testing/traces/bacnet_services.pcap",
+  "upstream_sha256": "0469ba567f8c16764147803b3afa37bed0a0005c8ec5011a05b5022609a3d1ef",
+  "selection": "unaltered packet records at second 1116591898, microseconds 0..180000",
+  "selected_packets": 8,
+  "fixture_sha256": "ee9942d195441519d9acbc02d564ab4b2f65b714751f79d699b37445b48a9a4d",
+  "note": "Upstream test traffic, not campus traffic or site acceptance."
+}

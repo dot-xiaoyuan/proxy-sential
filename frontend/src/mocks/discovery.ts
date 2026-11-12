@@ -14,6 +14,23 @@ function filteredPassiveDevices(url: URL) {
 }
 
 export const discoveryHandlers=[
+ http.get('*/discovery/census/summary',({request})=>{
+  const window=new URL(request.url).searchParams.get('window')||'24h'
+  return HttpResponse.json({metric_version:'passive-census/v1',scope:{sensor_id:'sensor-test'},window,status:window==='24h'?'ready':'partial',as_of:now,available_from:new Date(Date.now()-25*3600_000).toISOString(),last_success_at:now,failed_batches:0,last_batch_rows:4,last_batch_ms:8,scope_version:'fixture',observed_ips:2,observed_ipv4:1,observed_ipv6:1,observed_macs:1,random_macs:0,incomplete_scope:0,active_bindings:1,identified_terminals:1,terminal_candidates:0,terminal_conflicts:0,terminal_expired:0,manually_verified:0,types:[{device_type:'printer',identified:1,candidate:0,conflict:0,expired:0},...['camera','recorder','access_control','voip_phone'].map(device_type=>({device_type,identified:0,candidate:0,conflict:0,expired:0}))]})
+ }),
+ http.get('*/discovery/census/identifiers',({request})=>{
+  const kind=new URL(request.url).searchParams.get('kind')||'ip'
+  const scope={scope_key:'fixture-scope',sensor_id:'sensor-test',campus_id:'主校区',access_domain:'教学网',vlan:'20',vrf:'',first_seen:now,last_seen:now}
+  const items={ip:[{...scope,kind:'ip',value:'192.0.2.10',ip_family:4},{...scope,kind:'ip',value:'2001:db8:20::10',ip_family:6}],mac:[{...scope,kind:'mac',value:'00:11:22:33:44:55',random_mac:false}],binding:[{...scope,kind:'binding',value:'192.0.2.10|00:11:22:33:44:55',ip:'192.0.2.10',mac:'00:11:22:33:44:55'}],terminal:[{...scope,kind:'terminal',value:JSON.stringify(['identity','sensor-test','主校区','教学网','20','','mac','00:11:22:33:44:55']),device_key:'fixture-printer',mac:'00:11:22:33:44:55',effective_type:'printer',classification_status:'identified'}]}
+  return HttpResponse.json({items:items[kind as keyof typeof items]??[],next_cursor:'',has_more:false})
+ }),
+ http.get('*/discovery/census/compare-stream',()=>{
+  const scope={scope_key:'fixture-scope',sensor_id:'sensor-test',campus_id:'主校区',access_domain:'教学网',vlan:'20',vrf:'',first_seen:now,last_seen:now}
+  const items=[{...scope,kind:'ip',value:'192.0.2.10',ip_family:4},{...scope,kind:'ip',value:'2001:db8:20::10',ip_family:6},{...scope,kind:'mac',value:'00:11:22:33:44:55'},{...scope,kind:'binding',value:'192.0.2.10|00:11:22:33:44:55',ip:'192.0.2.10',mac:'00:11:22:33:44:55'},{...scope,kind:'terminal',value:JSON.stringify(['identity','sensor-test','主校区','教学网','20','','mac','00:11:22:33:44:55']),mac:'00:11:22:33:44:55',effective_type:'printer',classification_status:'identified'}]
+  const summary={status:'ready',observed_ips:2,observed_ipv4:1,observed_ipv6:1,observed_macs:1,random_macs:0,active_bindings:1,identified_terminals:1,terminal_candidates:0,terminal_conflicts:0,terminal_expired:0}
+  const body=[{record:'manifest',summary},...items.map(item=>({record:'item',item})),{record:'end',counts:{ip:2,ipv4:1,ipv6:1,mac:1,random_mac:0,binding:1,terminal:1,identified_terminal:1,candidate_terminal:0,conflict_terminal:0,expired_terminal:0},complete:true}].map(item=>JSON.stringify(item)).join('\n')+'\n'
+  return new HttpResponse(body,{headers:{'Content-Type':'application/x-ndjson'}})
+ }),
  http.get('*/discovery/devices/position',({request})=>{
   const url=new URL(request.url),page=Number(url.searchParams.get('page')??1),limit=Number(url.searchParams.get('limit')??20)
   const items=filteredPassiveDevices(url),offset=(page-1)*limit

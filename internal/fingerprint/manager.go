@@ -137,8 +137,14 @@ func (m *Manager) ImportWithGuard(data []byte, check func() error) (Status, erro
 	if err != nil {
 		return m.fail(err)
 	}
+	library.installedBundleSchema = bundle.Manifest.SchemaVersion
 	if err := library.LoadCatalog(bundle.Files["multisource-catalog.json"]); err != nil {
 		return m.fail(err)
+	}
+	if bundle.Manifest.SchemaVersion == BundleSchemaVersionV8 {
+		if err := library.LoadHardwareCatalog(bundle.Files["hardware-catalog.json"], bundle.Files["multisource-provenance.json"], bundle.Files["hardware-provenance.json"]); err != nil {
+			return m.fail(err)
+		}
 	}
 	tables, err := signatureTablesForBundle(bundle)
 	if err != nil {
@@ -176,7 +182,7 @@ func (m *Manager) ImportWithGuard(data []byte, check func() error) (Status, erro
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	m.mu.Lock()
 	status := libraryStatus(library, Status{Version: bundle.Manifest.Version, Status: "ready", Source: "offline-bundle", Checksum: bundleChecksum(bundle), UpdatedAt: now, LastCheckedAt: now, OfflineMode: m.status.OfflineMode, Sources: bundle.Manifest.Sources, Licenses: bundleLicenses(bundle.Manifest), BackfillStatus: "pending", DomainBackfillStatus: domainBackfillInitialStatus(bundle.Manifest)})
-	if bundle.Manifest.SchemaVersion == BundleSchemaVersionV7 {
+	if bundle.Manifest.SchemaVersion == BundleSchemaVersionV7 || bundle.Manifest.SchemaVersion == BundleSchemaVersionV8 {
 		status.SignatureTableCounts = signatureTableCounts(tables)
 	}
 	m.status = status
@@ -328,7 +334,7 @@ func bundleLicenses(manifest BundleManifest) []string {
 	return result
 }
 func domainBackfillInitialStatus(manifest BundleManifest) string {
-	if manifest.SchemaVersion == BundleSchemaVersionV2 || manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 || manifest.SchemaVersion == BundleSchemaVersionV5 || manifest.SchemaVersion == BundleSchemaVersionV6 || manifest.SchemaVersion == BundleSchemaVersionV7 {
+	if manifest.SchemaVersion == BundleSchemaVersionV2 || manifest.SchemaVersion == BundleSchemaVersionV3 || manifest.SchemaVersion == BundleSchemaVersionV4 || manifest.SchemaVersion == BundleSchemaVersionV5 || manifest.SchemaVersion == BundleSchemaVersionV6 || (manifest.SchemaVersion == BundleSchemaVersionV7 || manifest.SchemaVersion == BundleSchemaVersionV8) {
 		return "pending"
 	}
 	return "not_required"
@@ -564,7 +570,7 @@ func (m *Manager) loadCurrent() {
 			return
 		}
 		installedSchema = manifest.SchemaVersion
-		if manifest.SchemaVersion == BundleSchemaVersionV6 || manifest.SchemaVersion == BundleSchemaVersionV7 {
+		if manifest.SchemaVersion == BundleSchemaVersionV6 || (manifest.SchemaVersion == BundleSchemaVersionV7 || manifest.SchemaVersion == BundleSchemaVersionV8) {
 			files := map[string][]byte{}
 			total := 0
 			for name, metadata := range manifest.Files {
@@ -614,6 +620,10 @@ func (m *Manager) loadCurrent() {
 		m.status.LastError = "load domain/device rules: " + err.Error()
 		return
 	}
+	library.installedBundleSchema = installedSchema
+	if library.installedBundleSchema == "" {
+		library.installedBundleSchema = "unversioned"
+	}
 	catalogData, _ := os.ReadFile(filepath.Join(base, "multisource-catalog.json"))
 	if len(catalogData) > 0 {
 		provenance, readErr := os.ReadFile(filepath.Join(base, "multisource-provenance.json"))
@@ -633,8 +643,23 @@ func (m *Manager) loadCurrent() {
 		m.status.LastError = err.Error()
 		return
 	}
+	if installedSchema == BundleSchemaVersionV8 {
+		data, readErr := os.ReadFile(filepath.Join(base, "hardware-catalog.json"))
+		provenance, provErr := os.ReadFile(filepath.Join(base, "multisource-provenance.json"))
+		extra, extraErr := os.ReadFile(filepath.Join(base, "hardware-provenance.json"))
+		if readErr != nil || provErr != nil || extraErr != nil {
+			m.status.Status = "degraded"
+			m.status.LastError = "installed hardware catalog missing"
+			return
+		}
+		if err := library.LoadHardwareCatalog(data, provenance, extra); err != nil {
+			m.status.Status = "degraded"
+			m.status.LastError = err.Error()
+			return
+		}
+	}
 	tableFiles := v7SignatureFiles
-	if installedSchema == BundleSchemaVersionV7 {
+	if installedSchema == BundleSchemaVersionV7 || installedSchema == BundleSchemaVersionV8 {
 		tableFiles = make(map[string][]byte, len(v7SignatureFiles))
 		for name := range v7SignatureFiles {
 			payload, readErr := os.ReadFile(filepath.Join(base, name))
@@ -653,7 +678,7 @@ func (m *Manager) loadCurrent() {
 		return
 	}
 	status.SignatureTableCounts = nil
-	if installedSchema == BundleSchemaVersionV7 {
+	if installedSchema == BundleSchemaVersionV7 || installedSchema == BundleSchemaVersionV8 {
 		status.SignatureTableCounts = signatureTableCounts(tables)
 	}
 	SetDefault(library)

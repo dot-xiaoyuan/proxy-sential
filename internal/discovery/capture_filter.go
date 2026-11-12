@@ -14,7 +14,7 @@ func CaptureFilterFor(config CollectionConfig) string {
 		for _, entry := range []struct {
 			name  string
 			ports []int
-		}{{"dns_sd", []int{5353}}, {"ssdp", []int{1900}}, {"ws_discovery", []int{3702}}, {"snmp", []int{161, 162}}, {"dhcpv6", []int{546, 547}}, {"nbns", []int{137}}, {"llmnr", []int{5355}}, {"coap", []int{5683}}, {"bacnet", []int{47808}}} {
+		}{{"dns_sd", []int{5353}}, {"ssdp", []int{1900}}, {"ws_discovery", []int{3702}}, {"sadp", []int{37020}}, {"snmp", []int{161, 162}}, {"dhcpv6", []int{546, 547}}, {"nbns", []int{137}}, {"llmnr", []int{5355}}, {"coap", []int{5683}}, {"bacnet", []int{47808}}} {
 			if config.Enabled(entry.name) {
 				ports = append(ports, entry.ports...)
 			}

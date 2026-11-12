@@ -27,3 +27,13 @@ it('shows SIP and RTSP identity clues', () => {
   expect(screen.getByText('话机标识 Huawei eSpace 7910 V200R003C00')).toBeInTheDocument()
   expect(screen.getByText('服务端标识 Hikvision')).toBeInTheDocument()
 })
+
+it('shows SADP model, attribution, rule and packet reference',()=>{
+ const now=new Date().toISOString()
+ render(<DiscoveryEvidenceSummary observations={[{id:'sadp-1',event_id:'control-sadp-1',origin:'sadp',ip:'10.126.253.1',mac:'08:54:11:13:c1:84',device_type:'access_control',model_name:'DS-K1T6QT-F72M',observed_at:now,valid_until:'2099-01-01T00:00:00Z',explanation:'SADP 自报型号与直接二层来源一致',rule_version:'discovery-test',evidence:{event_id:'control-sadp-1',payload:{product_model:'DS-K1T6QT-F72M',identity_status:'direct_l2',payload_sha256:'abc123'}}} as EvidenceObservation]}/>)
+ fireEvent.click(screen.getByText('SADP 设备自报'))
+ expect(screen.getByText('自报型号 DS-K1T6QT-F72M')).toBeVisible()
+ expect(screen.getByText('规则 discovery-test')).toBeVisible()
+ fireEvent.click(screen.getByText('原始引用（1）'))
+ expect(screen.getByText('报文 SHA256 abc123')).toBeVisible()
+})

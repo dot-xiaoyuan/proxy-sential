@@ -339,7 +339,7 @@ func runRouter(args []string) error {
 		return err
 	}
 	zeekLogs := map[string]string{}
-	for _, kind := range []string{"dhcp", "software", "conn", "dns", "http", "ssl", "x509", "mdns", "nbns", "llmnr", "lldp", "ssdp", "snmp", "ttl"} {
+	for _, kind := range []string{"dhcp", "software", "conn", "dns", "http", "ssl", "x509", "mdns", "nbns", "llmnr", "lldp", "ssdp", "snmp", "bacnet", "modbus", "ttl"} {
 		path := filepath.Join(zeekDir, kind+".log")
 		if _, statErr := os.Stat(path); statErr == nil {
 			zeekLogs[kind] = path
@@ -459,7 +459,9 @@ func runIngest(args []string) error {
 	zeekX509 := fs.String("zeek-x509", "", "Zeek x509.log path")
 	zeekLLDP := fs.String("zeek-lldp", "", "Zeek lldp.log path")
 	zeekSSDP := fs.String("zeek-ssdp", "", "Zeek ssdp.log path")
-	zeekSNMP := fs.String("zeek-snmp", "", "Zeek sanitized snmp.log path")
+	zeekSNMP := fs.String("zeek-snmp", "", "Zeek sanitized per-response snmp_device.log path")
+	zeekBACnet := fs.String("zeek-bacnet", os.Getenv("PROXY_SENTINEL_ZEEK_BACNET_PATH"), "optional passive BACnet device response log path")
+	zeekModbus := fs.String("zeek-modbus", os.Getenv("PROXY_SENTINEL_ZEEK_MODBUS_PATH"), "optional passive Modbus device identification response log path")
 	zeekSIP := fs.String("zeek-sip", os.Getenv("PROXY_SENTINEL_ZEEK_SIP_PATH"), "Zeek sip.log path (device User-Agent evidence)")
 	zeekSIPServer := fs.String("zeek-sip-server", os.Getenv("PROXY_SENTINEL_ZEEK_SIP_SERVER_PATH"), "Zeek sip_server.log path (response Server header evidence)")
 	zeekRTSPDevice := fs.String("zeek-rtsp-device", os.Getenv("PROXY_SENTINEL_ZEEK_RTSP_DEVICE_PATH"), "Zeek rtsp_device.log path (RTSP client/responder identity)")
@@ -516,6 +518,8 @@ func runIngest(args []string) error {
 		{Kind: "zeek-lldp", Path: *zeekLLDP, Optional: true},
 		{Kind: "zeek-ssdp", Path: *zeekSSDP, Optional: true},
 		{Kind: "zeek-snmp", Path: *zeekSNMP},
+		{Kind: "zeek-bacnet", Path: *zeekBACnet, Optional: true},
+		{Kind: "zeek-modbus", Path: *zeekModbus, Optional: true},
 		{Kind: "zeek-sip", Path: *zeekSIP},
 		{Kind: "zeek-sip-server", Path: *zeekSIPServer},
 		{Kind: "zeek-rtsp-device", Path: *zeekRTSPDevice, Optional: true},
@@ -1101,7 +1105,7 @@ func runZeekAdapter(args []string) error {
 	sensorID := fs.String("sensor-id", "", "optional sensor identifier")
 	proxyConfigFile := fs.String("proxy-protocol-config", "", "trusted proxy producer registration file")
 	instanceID := fs.String("collector-instance-id", "", "collector boot identifier")
-	logKind := fs.String("log-kind", "", "optional dhcp, software, conn, dns, http, ssl, x509, lldp, ssdp, snmp, mdns, nbns, llmnr or ttl log kind")
+	logKind := fs.String("log-kind", "", "optional dhcp, software, conn, dns, http, ssl, x509, lldp, ssdp, snmp, bacnet, modbus, mdns, nbns, llmnr or ttl log kind")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -1526,7 +1530,9 @@ func runShadowRun(args []string) error {
 	zeekLLMNR := fs.String("zeek-llmnr", "", "optional Zeek LLMNR log path")
 	zeekLLDP := fs.String("zeek-lldp", "", "optional Zeek lldp.log path")
 	zeekSSDP := fs.String("zeek-ssdp", "", "optional Zeek ssdp.log path")
-	zeekSNMP := fs.String("zeek-snmp", "", "optional sanitized Zeek snmp.log path")
+	zeekSNMP := fs.String("zeek-snmp", "", "optional sanitized Zeek snmp_device.log path")
+	zeekBACnet := fs.String("zeek-bacnet", "", "optional passive BACnet device response log path")
+	zeekModbus := fs.String("zeek-modbus", "", "optional passive Modbus device identification response log path")
 	zeekTTL := fs.String("zeek-ttl", "", "optional Zeek TTL signal log path")
 	state := fs.String("state", "data/shadow/state.json", "shadow offset state path")
 	outDir := fs.String("out-dir", "data/shadow", "shadow output directory")
@@ -1548,7 +1554,7 @@ func runShadowRun(args []string) error {
 		EVEPath:             *eve,
 		ZeekDHCPPath:        *zeekDHCP,
 		ZeekSoftwarePath:    *zeekSoftware,
-		ZeekLogs:            map[string]string{"conn": *zeekConn, "dns": *zeekDNS, "http": *zeekHTTP, "ssl": *zeekSSL, "x509": *zeekX509, "mdns": *zeekMDNS, "nbns": *zeekNBNS, "llmnr": *zeekLLMNR, "lldp": *zeekLLDP, "ssdp": *zeekSSDP, "snmp": *zeekSNMP, "ttl": *zeekTTL},
+		ZeekLogs:            map[string]string{"conn": *zeekConn, "dns": *zeekDNS, "http": *zeekHTTP, "ssl": *zeekSSL, "x509": *zeekX509, "mdns": *zeekMDNS, "nbns": *zeekNBNS, "llmnr": *zeekLLMNR, "lldp": *zeekLLDP, "ssdp": *zeekSSDP, "snmp": *zeekSNMP, "bacnet": *zeekBACnet, "modbus": *zeekModbus, "ttl": *zeekTTL},
 		StatePath:           *state,
 		OutDir:              *outDir,
 		SensorID:            *sensorID,

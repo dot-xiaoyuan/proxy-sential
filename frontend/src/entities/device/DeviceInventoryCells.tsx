@@ -185,6 +185,8 @@ function isEmptyRecognition(value?: string) {
 
 export function deviceTypeLabel(value: string) {
   const normalized = value.toLowerCase()
+  const hardwareLabels: Record<string,string> = {environment_monitor:'环境监测设备',ups:'UPS',pdu:'PDU',recorder:'录像设备',nvr:'录像设备',access_control:'门禁设备'}
+  if(hardwareLabels[normalized])return hardwareLabels[normalized]
   if (/printer/.test(normalized)) return '打印机'
   if (/router/.test(normalized)) return '路由器'
   if (/access_point/.test(normalized)) return '无线接入点'

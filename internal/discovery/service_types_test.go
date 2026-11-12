@@ -35,8 +35,8 @@ func TestParseServiceTypeCatalogRejectsInvalid(t *testing.T) {
 }
 
 func TestProductRulesAreDataDriven(t *testing.T) {
-	if len(campusProductRules) != 8 {
-		t.Fatalf("product rules must keep the migrated eight entries, got %d", len(campusProductRules))
+	if len(campusProductRules) != 12 {
+		t.Fatalf("product rules must include four verified SADP models, got %d", len(campusProductRules))
 	}
 	specs := []struct {
 		input string

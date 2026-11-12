@@ -1,9 +1,13 @@
 {
-  "version": "product-rules-2026-10-27.1",
+  "version": "product-rules-2026-11-11.1",
   "source": "migrated from internal/discovery/product_rules.go",
   "source_url": "internal://proxy-sentinel/product-rules",
   "license": "internal-rule",
   "entries": [
+    {"pattern": "(?i)^DS-7908N-R4\\(C\\)$", "product_kind": "recorder", "manufacturer": "Hikvision"},
+    {"pattern": "(?i)^DS-8832N-R8\\(C\\)$", "product_kind": "recorder", "manufacturer": "Hikvision"},
+    {"pattern": "(?i)^DS-7916N-K4$", "product_kind": "recorder", "manufacturer": "Hikvision"},
+    {"pattern": "(?i)^iDS-2DC3A40BX-DE$", "product_kind": "camera", "manufacturer": "Hikvision"},
     {"pattern": "(?i)\\bDS-2CD[0-9A-Z-]+\\b", "product_kind": "camera", "manufacturer": "Hikvision"},
     {"pattern": "(?i)\\bDS-(?:76|77|96)[0-9A-Z-]*NI[0-9A-Z-]*\\b", "product_kind": "recorder", "manufacturer": "Hikvision"},
     {"pattern": "(?i)\\bDS-K1T[0-9A-Z-]+\\b", "product_kind": "access_control", "manufacturer": "Hikvision"},
