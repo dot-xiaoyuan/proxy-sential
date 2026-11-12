@@ -1,8 +1,9 @@
 -- Device response ownership must retain the full event-time lease semantics.
 -- The observed-at index alone can scan years of expired rows for one address;
 -- this index seeks on valid_until without inventing a maximum historical TTL.
--- Each non-withdrawn ARP/NDP/DHCP fact with a MAC adds one index entry. Updates
--- maintain that entry; withdrawal and the existing history lifecycle remove it.
+-- Each ARP/NDP/DHCP fact with a MAC adds one index entry. Updates maintain
+-- that entry; the existing history lifecycle removes it. The index covers both
+-- readers; only the new ownership query excludes withdrawn positive claims.
 -- The older 096 index remains available for the withdrawal anti-join.
 --
 -- The migration runner is transactional and cannot run CREATE INDEX CONCURRENTLY.
@@ -20,7 +21,7 @@ BEGIN
    ON public.discovery_observations
     ((data->>'node'), (data->>'ip'), valid_until DESC, observed_at DESC, id DESC)
    WHERE origin IN ('dhcp','arp','ndp')
-    AND coalesce(data->>'mac','')<>'' AND NOT withdrawn;
+    AND coalesce(data->>'mac','')<>'';
   index_oid := to_regclass('public.discovery_observation_binding_validity');
  END IF;
  IF NOT EXISTS (
@@ -36,8 +37,8 @@ BEGIN
    AND pg_get_indexdef(index_oid,3,true)='valid_until'
    AND pg_get_indexdef(index_oid,4,true)='observed_at'
    AND pg_get_indexdef(index_oid,5,true)='id'
-   AND pg_get_expr(i.indpred,i.indrelid)=$predicate$((origin = ANY (ARRAY['dhcp'::text, 'arp'::text, 'ndp'::text])) AND (COALESCE((data ->> 'mac'::text), ''::text) <> ''::text) AND (NOT withdrawn))$predicate$
-   AND pg_get_indexdef(index_oid)=$definition$CREATE INDEX discovery_observation_binding_validity ON public.discovery_observations USING btree (((data ->> 'node'::text)), ((data ->> 'ip'::text)), valid_until DESC, observed_at DESC, id DESC) WHERE ((origin = ANY (ARRAY['dhcp'::text, 'arp'::text, 'ndp'::text])) AND (COALESCE((data ->> 'mac'::text), ''::text) <> ''::text) AND (NOT withdrawn))$definition$
+   AND pg_get_expr(i.indpred,i.indrelid)=$predicate$((origin = ANY (ARRAY['dhcp'::text, 'arp'::text, 'ndp'::text])) AND (COALESCE((data ->> 'mac'::text), ''::text) <> ''::text))$predicate$
+   AND pg_get_indexdef(index_oid)=$definition$CREATE INDEX discovery_observation_binding_validity ON public.discovery_observations USING btree (((data ->> 'node'::text)), ((data ->> 'ip'::text)), valid_until DESC, observed_at DESC, id DESC) WHERE ((origin = ANY (ARRAY['dhcp'::text, 'arp'::text, 'ndp'::text])) AND (COALESCE((data ->> 'mac'::text), ''::text) <> ''::text))$definition$
  ) THEN
   RAISE EXCEPTION 'discovery_observation_binding_validity is invalid or differs from migration 246; inspect before retry';
  END IF;
