@@ -15,10 +15,15 @@ import (
 )
 
 type componentHealth struct {
-	Status    string            `json:"status"`
-	Error     string            `json:"error,omitempty"`
-	UpdatedAt string            `json:"updated_at,omitempty"`
-	Signals   []signalFreshness `json:"signals,omitempty"`
+	Status               string            `json:"status"`
+	Error                string            `json:"error,omitempty"`
+	UpdatedAt            string            `json:"updated_at,omitempty"`
+	SourceEpoch          string            `json:"source_epoch,omitempty"`
+	LastProjectedInputAt string            `json:"last_projected_input_at,omitempty"`
+	ProcessedAt          string            `json:"processed_at,omitempty"`
+	ProcessingLagSeconds *float64          `json:"processing_lag_seconds,omitempty"`
+	SourceProgressStatus string            `json:"source_progress_status,omitempty"`
+	Signals              []signalFreshness `json:"signals,omitempty"`
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
@@ -174,6 +179,11 @@ func (s *Server) healthSnapshot(ctx context.Context) (map[string]componentHealth
 		if os.Getenv("PROXY_SENTINEL_DISCOVERY_V2") == "true" {
 			launch("discovery_pipeline", false, func() componentHealth { return s.discoveryPipelineHealth(ctx) })
 		}
+		if passiveStreamCurrentReadEnabled() {
+			launch("passive_stream_capture", false, func() componentHealth {
+				return passiveStreamCaptureHealth(ctx, s.operations.db, s.sensorID)
+			})
+		}
 		launch("inventory_projection", false, func() componentHealth { return inventoryProjectionHealth(ctx, s.operations.db) })
 	}
 	if s.identityIngest != nil && s.identityIngest.db != nil {
@@ -267,6 +277,10 @@ func (s *Server) healthSnapshot(ctx context.Context) (map[string]componentHealth
 		}
 	}
 	return components, ready
+}
+
+func passiveStreamCurrentReadEnabled() bool {
+	return discoveryStreamCurrentReadEnabled() || os.Getenv("PROXY_SENTINEL_ROUTER_ASSET_CURRENT_SOURCE") == "stream"
 }
 
 func (s *Server) handleReadiness(w http.ResponseWriter, r *http.Request) {
