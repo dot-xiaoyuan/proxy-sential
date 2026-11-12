@@ -15,3 +15,5 @@
 指纹包新增 `device-fingerprint-bundle/v8`，在 V7 基包上增加 `hardware-catalog.json` 与 `hardware-provenance.json`，保留已有载荷字节及 V1–V7 加载路径。旧 `IdentifyEvidence` 语义不变；新硬件入口只为 204 独立投影提供判断。规则包必须固定来源版本、原始来源引用与哈希，发生规则变更时更新目录版本并有界重算受影响当前身份。
 
 PG 242 补充声明级撤销及规则版本索引；PG 243 记录固定起点的保留窗回填游标和缺少原文引用的缺口。`PROXY_SENTINEL_HARDWARE_BACKFILL=true` 单独启用每批 100 条的回填，无原文引用的条目跳过并计缺口，不补造历史。回填完成后分析派生表统计信息，再比较影子与现有读取；新读取仍由独立 gate 决定。可用起点为实际可引用数据的最早时间，不能用请求的 30 天边界代替。
+
+回填游标使用 latest 表真实主键五元组 `(device_key,source_id,origin,service_type,port)`，不是可重复的事件 ID。PG 244 记录固定起点后被更新的行；`backfill_complete` 仅表示当前投影遍历完成，`coverage=retained_latest_only` 明确其不等于完整 30 天历史。实时输入和独立规则重算继续分别处理，不把回填遍历结束描述为全校覆盖完成。
