@@ -652,6 +652,26 @@ func passiveRepeatableFactID(o discovery.Observation) string {
 	return "fact-" + hex.EncodeToString(sum[:16])
 }
 
+// HTTP product responses can repeat on every request. Compact only after
+// event-time ownership resolution: the MAC and full capture scope keep an IP
+// reassignment from merging evidence belonging to different devices. Raw
+// request events remain in ClickHouse, and unattributed clues keep their IDs.
+func passiveHTTPContentFactID(o discovery.Observation) string {
+	mac := validPassiveMAC(o.MAC)
+	if o.Origin != "http_device" || mac == "" {
+		return ""
+	}
+	key := strings.Join([]string{
+		o.Origin, o.SourceID, o.Node, o.Site, o.Domain, o.VLAN, o.VRF,
+		mac, o.IP, o.Port, o.Name, o.OriginalName, o.NameEncoding,
+		o.ModelName, o.Manufacturer, o.DeviceType, o.RuleVersion, o.Confidence,
+		passiveString(o.Evidence.Payload, "host"), passiveString(o.Evidence.Payload, "server"),
+		passiveString(o.Evidence.Payload, "title"),
+	}, "\x00")
+	sum := sha256.Sum256([]byte(key))
+	return "http-fact-" + hex.EncodeToString(sum[:16])
+}
+
 func passiveServiceType(name string) string {
 	lower := strings.ToLower(strings.TrimSuffix(name, "."))
 	for _, marker := range []string{"_ipps._tcp", "_ipp._tcp", "_printer._tcp", "_uscan._tcp", "_scanner._tcp", "_airplay._tcp", "_raop._tcp", "_googlecast._tcp", "_device-info._tcp", "_leboremote._tcp"} {
@@ -1166,9 +1186,7 @@ ON CONFLICT(endpoint_id) DO NOTHING`, macs); err != nil {
 			return nil, err
 		}
 	}
-	rows := make([]map[string]any, 0, len(ids))
-	hardwareObservations := make([]discovery.Observation, 0, len(ids))
-	links := make([]passiveLinkRow, 0, len(ids))
+	resolved := make(map[string]discovery.Observation, len(ids))
 	for _, id := range ids {
 		o := pending[id]
 		if o.ValidUntil.IsZero() {
@@ -1195,6 +1213,23 @@ ORDER BY observed_at DESC,id DESC LIMIT 1`, o.Node, o.IP, o.ObservedAt).Scan(&ma
 				return nil, err
 			}
 		}
+		if factID := passiveHTTPContentFactID(o); factID != "" {
+			o.ID = factID
+		}
+		if previous, exists := resolved[o.ID]; !exists || o.ObservedAt.After(previous.ObservedAt) {
+			resolved[o.ID] = o
+		}
+	}
+	ids = ids[:0]
+	for id := range resolved {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	rows := make([]map[string]any, 0, len(ids))
+	hardwareObservations := make([]discovery.Observation, 0, len(ids))
+	links := make([]passiveLinkRow, 0, len(ids))
+	for _, id := range ids {
+		o := resolved[id]
 		link, err := s.passiveObservationLink(ctx, db, o)
 		if err != nil {
 			return nil, err

@@ -387,6 +387,36 @@ func TestPassiveRepeatableFactIDCollapsesWithinHour(t *testing.T) {
 	}
 }
 
+func TestPassiveHTTPContentCompactionRequiresSameOwnedDevice(t *testing.T) {
+	base := discovery.Observation{ID: "event-1", EventID: "event-1", Origin: "http_device", SourceID: "passive:s204:mirror", Node: "s204", Site: "campus", Domain: "mirror", IP: "10.0.0.8", MAC: "00:11:22:33:44:55", Name: "Camera admin", ModelName: "Camera admin", RuleVersion: "rules-1", Evidence: normalized.Event{Payload: map[string]any{"server": "Hikvision-Webs", "title": "Camera admin"}}}
+	repeat := base
+	repeat.ID, repeat.EventID = "event-2", "event-2"
+	repeat.ObservedAt = time.Now().UTC().Add(time.Minute)
+	if passiveHTTPContentFactID(base) == "" || passiveHTTPContentFactID(base) != passiveHTTPContentFactID(repeat) {
+		t.Fatal("same owned HTTP product response should reuse one fact")
+	}
+	changed := repeat
+	changed.MAC = "00:aa:bb:cc:dd:ee"
+	if passiveHTTPContentFactID(changed) == passiveHTTPContentFactID(base) {
+		t.Fatal("IP reassignment merged distinct device identities")
+	}
+	changed = repeat
+	changed.VLAN = "20"
+	if passiveHTTPContentFactID(changed) == passiveHTTPContentFactID(base) {
+		t.Fatal("different capture scopes were merged")
+	}
+	changed = repeat
+	changed.Evidence = normalized.Event{Payload: map[string]any{"server": "nginx", "title": "Camera admin"}}
+	if passiveHTTPContentFactID(changed) == passiveHTTPContentFactID(base) {
+		t.Fatal("different product evidence was merged")
+	}
+	changed = repeat
+	changed.MAC = ""
+	if passiveHTTPContentFactID(changed) != "" {
+		t.Fatal("unattributed IP clue was compacted across possible owners")
+	}
+}
+
 func TestPassiveLinkRefreshIsThrottled(t *testing.T) {
 	for _, path := range []string{"passive_discovery_materializer.go", "passive_arp_batch.go"} {
 		source, err := os.ReadFile(path)
