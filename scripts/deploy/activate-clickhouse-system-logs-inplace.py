@@ -192,7 +192,7 @@ def stop_log_merges(names: list[str]) -> None:
         ch_query(f"SYSTEM STOP MERGES system.{name}")
     deadline = time.monotonic() + 90
     while time.monotonic() < deadline:
-        rows = ch_query("SELECT name FROM system.merges WHERE database='system' AND "
+        rows = ch_query("SELECT table FROM system.merges WHERE database='system' AND "
                         "match(table, '^(query_log|text_log)(_[0-9]{1,6})?$') LIMIT 1 FORMAT JSONEachRow")
         if not rows:
             return

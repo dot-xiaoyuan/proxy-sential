@@ -27,6 +27,18 @@ NEW_UUIDS = {"query_log": "33333333-3333-3333-3333-333333333333",
 
 
 class InPlaceSystemLogTest(unittest.TestCase):
+    def test_stop_merges_reads_clickhouse_table_column(self):
+        queries = []
+
+        def query(sql):
+            queries.append(sql)
+            return []
+
+        with mock.patch.object(maintenance, "ch_query", side_effect=query):
+            maintenance.stop_log_merges(["query_log", "text_log"])
+        self.assertEqual(queries[:2], ["SYSTEM STOP MERGES system.query_log", "SYSTEM STOP MERGES system.text_log"])
+        self.assertIn("SELECT table FROM system.merges", queries[2])
+
     def test_live_ttl_requires_exact_seven_days_and_part_only_setting(self):
         self.assertTrue(maintenance.has_live_ttl(table("query_log", "u", True)["create_table_query"]))
         for ddl in (table("query_log", "u", True)["create_table_query"].replace("toIntervalDay(7)", "toIntervalDay(14)"),
