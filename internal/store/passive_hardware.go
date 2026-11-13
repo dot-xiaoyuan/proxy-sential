@@ -44,20 +44,30 @@ func resolveHardwareOwnership(ctx context.Context, db passiveDiscoveryDB, o disc
 	}
 	var mac sql.NullString
 	var count int
-	err := db.QueryRowContext(ctx, `SELECT CASE WHEN count(DISTINCT mac)=1 AND count(*)<=64 THEN min(mac) ELSE NULL END,count(*) FROM (
- SELECT lower(data->>'mac') mac FROM discovery_observations v
+	// Materialize the valid-time range first. PostgreSQL otherwise prefers the
+	// observed-at index and reads many expired claims for every response while
+	// replay is behind real time. The outer filters retain event-time and full
+	// scope semantics, including later revocations.
+	err := db.QueryRowContext(ctx, `WITH candidates AS MATERIALIZED (
+ SELECT id,origin,observed_at,withdrawn,lower(data->>'mac') mac,
+  coalesce(data->>'site','') site,coalesce(data->>'domain','') domain,
+  coalesce(data->>'vlan','') vlan,coalesce(data->>'vrf','') vrf
+ FROM discovery_observations
  WHERE data->>'node'=$1 AND data->>'ip'=$2 AND origin IN ('arp','ndp','dhcp')
- AND observed_at<=$3 AND valid_until>$3 AND NOT withdrawn AND coalesce(data->>'mac','')<>''
- AND coalesce(data->>'site','')=$4 AND coalesce(data->>'domain','')=$5
- AND coalesce(data->>'vlan','')=$6 AND coalesce(data->>'vrf','')=$7
+  AND coalesce(data->>'mac','')<>'' AND valid_until>$3
+ ORDER BY valid_until DESC,observed_at DESC,id DESC
+)
+SELECT CASE WHEN count(DISTINCT mac)=1 AND count(*)<=64 THEN min(mac) ELSE NULL END,count(*) FROM (
+ SELECT v.mac FROM candidates v
+ WHERE v.observed_at<=$3 AND NOT v.withdrawn AND v.site=$4 AND v.domain=$5 AND v.vlan=$6 AND v.vrf=$7
  AND NOT EXISTS(SELECT 1 FROM discovery_observations revoked WHERE revoked.withdrawn
   AND revoked.origin IN ('arp','ndp','dhcp') AND coalesce(revoked.data->>'mac','')<>''
   AND revoked.origin=v.origin AND revoked.data->>'node'=$1 AND revoked.data->>'ip'=$2
-  AND lower(coalesce(revoked.data->>'mac',''))=lower(v.data->>'mac')
+  AND lower(coalesce(revoked.data->>'mac',''))=v.mac
   AND coalesce(revoked.data->>'site','')=$4 AND coalesce(revoked.data->>'domain','')=$5
   AND coalesce(revoked.data->>'vlan','')=$6 AND coalesce(revoked.data->>'vrf','')=$7
   AND revoked.observed_at>=v.observed_at AND revoked.observed_at<=$3)
- ORDER BY observed_at DESC,id DESC LIMIT 65) binding`, o.Node, o.IP, o.ObservedAt, o.Site, o.Domain, o.VLAN, o.VRF).Scan(&mac, &count)
+ LIMIT 65) binding`, o.Node, o.IP, o.ObservedAt, o.Site, o.Domain, o.VLAN, o.VRF).Scan(&mac, &count)
 	if err != nil {
 		return o, err
 	}
