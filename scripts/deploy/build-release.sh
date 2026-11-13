@@ -74,6 +74,7 @@ JS
   cp deploy/clickhouse/production-system-logs.xml "$release_dir/deploy/clickhouse/production-system-logs.xml"
   cp deploy/clickhouse/production-query-log-retention.xml "$release_dir/deploy/clickhouse/production-query-log-retention.xml"
   cp scripts/deploy/converge-clickhouse-system-logs.py "$release_dir/scripts/converge-clickhouse-system-logs.py"
+  cp scripts/deploy/activate-clickhouse-system-logs-inplace.py "$release_dir/scripts/activate-clickhouse-system-logs-inplace.py"
   cp deploy/logrotate/proxy-sentinel-shared-signals "$release_dir/deploy/logrotate/proxy-sentinel-shared-signals"
   cp deploy/logrotate/proxy-sentinel-router-signals "$release_dir/deploy/logrotate/proxy-sentinel-router-signals"
   cp deploy/logrotate/proxy-sentinel-handshake-signals "$release_dir/deploy/logrotate/proxy-sentinel-handshake-signals"

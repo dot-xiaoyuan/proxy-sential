@@ -160,6 +160,19 @@ def base_log_table(table: str) -> str:
     return match.group(1)
 
 
+def has_exact_seven_day_ttl(ddl: str) -> bool:
+    # An unmounted host policy proves nothing about the active table. Require
+    # the exact live retention rule and part-only cleanup before allowing an
+    # exceptional in-place maintenance pass.
+    engine = re.search(r"\bENGINE\s*=\s*MergeTree\b", ddl, re.IGNORECASE)
+    if engine is None:
+        return False
+    return bool(re.search(
+        r"\bTTL\s+event_date\s*\+\s*(?:toIntervalDay\(7\)|INTERVAL\s+7\s+DAY)(?:\s+DELETE)?(?=\s+(?:SETTINGS|COMMENT)|\s*$)",
+        ddl[engine.end():], re.IGNORECASE,
+    )) and bool(re.search(r"\bttl_only_drop_parts\s*=\s*1\b", ddl[engine.end():], re.IGNORECASE))
+
+
 def template_digest(template: Path) -> str:
     if policy_retention_days(template, "query_log") != 7:
         raise SafetyError(f"query_log retention template is missing or is not seven days: {template}")
@@ -272,6 +285,7 @@ def main(argv: list[str] | None = None, *, query_factory: Callable[[str], Callab
     parser.add_argument("--allow-operations-degraded", action="store_true", help="only for one <=4 GiB fully expired text_log part when operations alone times out")
     parser.add_argument("--stage-query-log-policy", action="store_true", help="stage query_log TTL in the host policy without restarting ClickHouse")
     parser.add_argument("--materialize-staged-policy", action="store_true", help="installer-only: refresh host policy from the release and an existing explicit marker")
+    parser.add_argument("--allow-unmounted-live-ttl", action="store_true", help="allow bounded query_log cleanup after an in-place live TTL ALTER; the staged host policy will take effect only on a future container recreation")
     args = parser.parse_args(argv)
     base_table = base_log_table(args.table)
     query_log_table = base_table == "query_log"
@@ -283,6 +297,11 @@ def main(argv: list[str] | None = None, *, query_factory: Callable[[str], Callab
                                            args.materialize_staged_policy or args.max_parts != 1 or
                                            args.max_bytes > OPERATIONS_DEGRADED_MAX_BYTES):
         parser.error("operations exception allows only text_log, one part and at most 4 GiB")
+    if args.allow_unmounted_live_ttl and (not query_log_table or not args.recovery_independent or
+                                          args.stage_query_log_policy or args.materialize_staged_policy):
+        parser.error("unmounted live TTL exception requires query_log cleanup with --recovery-independent")
+    if args.apply and args.allow_unmounted_live_ttl and (args.max_parts != 1 or args.max_bytes > 4 * 1024**3):
+        parser.error("unmounted live TTL cleanup allows one part and at most 4 GiB per invocation")
     if args.materialize_staged_policy:
         if args.base_policy is None or args.stage_query_log_policy:
             parser.error("--materialize-staged-policy requires --base-policy and cannot stage a new policy")
@@ -340,7 +359,7 @@ def main(argv: list[str] | None = None, *, query_factory: Callable[[str], Callab
 
     query = query_factory(args.container)
     tables = query(
-        "SELECT engine,partition_key,positionCaseInsensitive(create_table_query,' TTL ') AS ttl_position "
+        "SELECT engine,partition_key,create_table_query,positionCaseInsensitive(create_table_query,' TTL ') AS ttl_position "
         f"FROM system.tables WHERE database='system' AND name='{args.table}' FORMAT JSONEachRow"
     )
     if len(tables) != 1 or tables[0]["engine"] != "MergeTree" or tables[0]["partition_key"] != "toYYYYMM(event_date)":
@@ -351,7 +370,7 @@ def main(argv: list[str] | None = None, *, query_factory: Callable[[str], Callab
         # without a TTL of its own. The replacement query_log must already
         # have a live TTL before any former table is eligible for cleanup.
         current_table = query(
-            "SELECT engine,partition_key,positionCaseInsensitive(create_table_query,' TTL ') AS ttl_position "
+            "SELECT engine,partition_key,create_table_query,positionCaseInsensitive(create_table_query,' TTL ') AS ttl_position "
             "FROM system.tables WHERE database='system' AND name='query_log' FORMAT JSONEachRow"
         )
         if len(current_table) != 1 or current_table[0]["engine"] != "MergeTree" or current_table[0]["partition_key"] != "toYYYYMM(event_date)":
@@ -361,8 +380,11 @@ def main(argv: list[str] | None = None, *, query_factory: Callable[[str], Callab
         marker = query_log_marker(args.policy_file)
         if not marker.is_file() or marker.read_text().strip() != template_digest(args.query_log_template):
             raise SafetyError("query_log cleanup requires the explicit staged marker matching this release")
-        if not policy_mounted or not query_log_live_ttl:
+        if not query_log_live_ttl or (not policy_mounted and not args.allow_unmounted_live_ttl):
             raise SafetyError("query_log TTL is not active in the mounted policy and running ClickHouse table; defer cleanup until policy activation is verified")
+        active_query_log_ddl = (tables if args.table == "query_log" else current_table)[0].get("create_table_query", "")
+        if args.allow_unmounted_live_ttl and not policy_mounted and not has_exact_seven_day_ttl(active_query_log_ddl):
+            raise SafetyError("unmounted query_log requires exact live seven-day TTL and ttl_only_drop_parts=1")
     cutoff = dt.datetime.now(dt.timezone.utc).date() - dt.timedelta(days=args.retain_days)
     parts = inspect_parts(query, args.table)
     planned, eligible_bytes, mixed_parts = plan_parts(parts, cutoff, args.max_parts, args.max_bytes)
@@ -378,6 +400,7 @@ def main(argv: list[str] | None = None, *, query_factory: Callable[[str], Callab
         "policy_mounted": policy_mounted,
         "live_table_has_ttl": int(tables[0]["ttl_position"]) > 0,
         "active_query_log_has_ttl": query_log_live_ttl if query_log_table else None,
+        "unmounted_live_ttl_exception": bool(query_log_table and args.allow_unmounted_live_ttl and not policy_mounted),
         "active_parts": len(parts),
         "fully_expired_bytes": eligible_bytes,
         "mixed_age_parts_preserved": mixed_parts,

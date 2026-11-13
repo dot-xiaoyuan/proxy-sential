@@ -357,6 +357,92 @@ class SystemLogCleanupTest(unittest.TestCase):
                 with self.assertRaisesRegex(cleanup.SafetyError, "explicit staged marker"):
                     cleanup.main(["--apply", "--table", "query_log_0", "--recovery-independent", "--policy-file", str(policy), "--query-log-template", str(template)], query_factory=lambda _: query)
 
+    def test_unmounted_live_ttl_requires_exact_seven_days_and_part_only_cleanup(self):
+        valid = "CREATE TABLE system.query_log (event_date Date) ENGINE = MergeTree ORDER BY event_date TTL event_date + toIntervalDay(7) SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1 COMMENT 'system log'"
+        self.assertTrue(cleanup.has_exact_seven_day_ttl(valid))
+        for ddl in (
+            valid.replace("toIntervalDay(7)", "toIntervalDay(14)"),
+            valid.replace("ttl_only_drop_parts = 1", "ttl_only_drop_parts = 0"),
+            valid.replace(", ttl_only_drop_parts = 1", ""),
+            "CREATE TABLE system.query_log (event_date Date COMMENT 'TTL event_date + toIntervalDay(7)') ENGINE = MergeTree ORDER BY event_date SETTINGS ttl_only_drop_parts = 1",
+        ):
+            with self.subTest(ddl=ddl):
+                self.assertFalse(cleanup.has_exact_seven_day_ttl(ddl))
+
+    def test_unmounted_live_ttl_allows_only_bounded_fully_expired_query_log_part(self):
+        with tempfile.TemporaryDirectory() as directory:
+            policy = Path(directory) / "policy.xml"
+            template = Path(directory) / "query-log.xml"
+            policy.write_text("<clickhouse><query_log><ttl>event_date + INTERVAL 7 DAY DELETE</ttl></query_log></clickhouse>")
+            template.write_text(policy.read_text())
+            cleanup.query_log_marker(policy).write_text(cleanup.template_digest(template) + "\n")
+            old = part("202001_1_1_0", "2020-01-01", "2020-01-01", 1024)
+            mixed = part("202611_2_2_0", "2026-11-02", "2026-11-12", 2048)
+            ddl = "CREATE TABLE system.query_log (event_date Date) ENGINE = MergeTree ORDER BY event_date TTL event_date + toIntervalDay(7) SETTINGS ttl_only_drop_parts = 1"
+            queries = []
+
+            def command(args, **_):
+                if "{{.State.Running}}" in args:
+                    return "true"
+                if "{{json .Mounts}}" in args:
+                    return "[]"
+                raise AssertionError(f"unexpected command: {args}")
+
+            def query(sql):
+                queries.append(sql)
+                if "FROM system.tables" in sql:
+                    return [{"engine": "MergeTree", "partition_key": "toYYYYMM(event_date)", "ttl_position": 90, "create_table_query": ddl}]
+                if "FROM system.parts" in sql and "AND name=" in sql:
+                    return [] if any("DROP PART" in item for item in queries) else [old]
+                if "FROM system.parts" in sql:
+                    return [old, mixed]
+                if "DROP PART" in sql:
+                    return []
+                raise AssertionError(f"unexpected SQL: {sql}")
+
+            with mock.patch.object(cleanup, "run_command", side_effect=command), mock.patch.object(cleanup, "server_ready", return_value=(True, "200")):
+                with contextlib.redirect_stdout(io.StringIO()) as result:
+                    cleanup.main(["--apply", "--table", "query_log", "--recovery-independent",
+                                  "--allow-unmounted-live-ttl", "--max-parts", "1", "--max-bytes", "4096",
+                                  "--policy-file", str(policy), "--query-log-template", str(template)],
+                                 query_factory=lambda _: query)
+            self.assertTrue(any("DROP PART '202001_1_1_0'" in item for item in queries))
+            self.assertFalse(any("DROP PART '202611_2_2_0'" in item for item in queries))
+            self.assertIn('"unmounted_live_ttl_exception": true', result.getvalue())
+
+    def test_unmounted_live_ttl_refuses_different_live_rule(self):
+        with tempfile.TemporaryDirectory() as directory:
+            policy = Path(directory) / "policy.xml"
+            template = Path(directory) / "query-log.xml"
+            policy.write_text("<clickhouse><query_log><ttl>event_date + INTERVAL 7 DAY DELETE</ttl></query_log></clickhouse>")
+            template.write_text(policy.read_text())
+            cleanup.query_log_marker(policy).write_text(cleanup.template_digest(template) + "\n")
+            queries = []
+
+            def command(args, **_):
+                return "true" if "{{.State.Running}}" in args else "[]"
+
+            def query(sql):
+                queries.append(sql)
+                if "FROM system.tables" in sql:
+                    return [{"engine": "MergeTree", "partition_key": "toYYYYMM(event_date)", "ttl_position": 90,
+                             "create_table_query": "CREATE TABLE system.query_log (event_date Date) ENGINE = MergeTree ORDER BY event_date TTL event_date + toIntervalDay(14) SETTINGS ttl_only_drop_parts = 1"}]
+                raise AssertionError(f"cleanup reached unsafe SQL: {sql}")
+
+            with mock.patch.object(cleanup, "run_command", side_effect=command), mock.patch.object(cleanup, "server_ready", return_value=(True, "200")):
+                with self.assertRaisesRegex(cleanup.SafetyError, "exact live seven-day TTL"):
+                    cleanup.main(["--apply", "--table", "query_log", "--recovery-independent",
+                                  "--allow-unmounted-live-ttl", "--max-bytes", "4096", "--policy-file", str(policy),
+                                  "--query-log-template", str(template)], query_factory=lambda _: query)
+            self.assertEqual(len(queries), 1)
+            self.assertFalse(any("DROP PART" in item for item in queries))
+
+    def test_unmounted_live_ttl_rejects_unbounded_defaults_before_database_access(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+            cleanup.main(["--apply", "--table", "query_log", "--recovery-independent", "--allow-unmounted-live-ttl"],
+                         query_factory=lambda _: lambda _sql: (_ for _ in ()).throw(AssertionError("SQL must not run")))
+        self.assertEqual(error.exception.code, 2)
+
     def test_apply_rechecks_the_immutable_part_before_dropping(self):
         with tempfile.TemporaryDirectory() as directory:
             policy = Path(directory) / "policy.xml"
