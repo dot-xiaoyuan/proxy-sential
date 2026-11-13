@@ -81,6 +81,24 @@ func (s *operationsState) setHealthError(err error) {
 	s.healthMu.Unlock()
 }
 
+func (s *operationsState) setDueActionHealthError(err error) {
+	if err != nil {
+		err = fmt.Errorf("due action processing: %w", err)
+	}
+	s.healthMu.Lock()
+	s.dueActionHealthErr = err
+	s.healthMu.Unlock()
+}
+
+func (s *operationsState) setOutboundObservationHealthError(err error) {
+	if err != nil {
+		err = fmt.Errorf("outbound observation: %w", err)
+	}
+	s.healthMu.Lock()
+	s.outboundObservationHealthErr = err
+	s.healthMu.Unlock()
+}
+
 func (s *operationsState) setCaseSyncHealthError(err error) {
 	s.healthMu.Lock()
 	s.caseSyncHealthErr = err
@@ -108,6 +126,12 @@ func (s *operationsState) setQueuedBehaviorReportHealthError(err error) {
 func (s *operationsState) health(ctx context.Context) error {
 	s.healthMu.RLock()
 	err := s.healthErr
+	if err == nil {
+		err = s.dueActionHealthErr
+	}
+	if err == nil {
+		err = s.outboundObservationHealthErr
+	}
 	if err == nil {
 		err = s.caseSyncHealthErr
 	}

@@ -182,6 +182,8 @@ type operationsState struct {
 	lockErr                       error
 	healthMu                      sync.RWMutex
 	healthErr                     error
+	dueActionHealthErr            error
+	outboundObservationHealthErr  error
 	caseSyncHealthErr             error
 	queuedNotificationHealthErr   error
 	queuedBehaviorReportHealthErr error

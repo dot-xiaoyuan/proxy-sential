@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"sync/atomic"
@@ -26,9 +27,7 @@ func (s *Server) recordOutboundObservation(ctx context.Context, key, kind, targe
 	_ = json.Unmarshal(payload, &meta)
 	_, err := s.operations.db.ExecContext(ctx, `INSERT INTO violation_observations(observation_key,kind,target,case_id,facts,observed_at)
 		VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(observation_key) DO NOTHING`, key, kind, target, meta.CaseID, payload, time.Now().UTC())
-	if err != nil {
-		s.operations.setHealthError(err)
-	}
+	s.operations.setOutboundObservationHealthError(err)
 }
 
 func (s *Server) blockOutboundAction(id string, revoke bool) {
@@ -40,7 +39,7 @@ func (s *Server) blockOutboundAction(id string, revoke bool) {
 	if s.operations.db != nil && !s.operations.readView {
 		tx, err := s.operations.db.BeginTx(ctx, nil)
 		if err != nil {
-			s.operations.setHealthError(err)
+			s.operations.setOutboundObservationHealthError(err)
 			return
 		}
 		defer tx.Rollback()
@@ -50,18 +49,21 @@ func (s *Server) blockOutboundAction(id string, revoke bool) {
 			WHERE action_id=$1 AND status IN ('pending','running')
 			RETURNING COALESCE(account_id,''),action_type,COALESCE(ruleset_version,''),COALESCE(case_id,''),COALESCE(policy_parameters->>'execution_id',''),evidence_ids`, id).Scan(&target, &actionType, &evidenceVersion, &caseID, &executionID, &evidenceIDs)
 		if err != nil {
+			if err == sql.ErrNoRows {
+				s.operations.setOutboundObservationHealthError(nil)
+			} else {
+				s.operations.setOutboundObservationHealthError(err)
+			}
 			return
 		}
 		payload, _ := json.Marshal(map[string]any{"action_id": id, "revoke": revoke, "case_id": caseID, "policy_execution_id": executionID, "evidence_ids": json.RawMessage(evidenceIDs), "evidence_version": evidenceVersion, "reason": "observation_only"})
 		_, err = tx.ExecContext(ctx, `INSERT INTO violation_observations(observation_key,kind,target,case_id,facts)
 			VALUES($1,$2,$3,$4,$5) ON CONFLICT(observation_key) DO NOTHING`, "action:"+id, "拟"+actionType, target, caseID, payload)
 		if err != nil {
-			s.operations.setHealthError(err)
+			s.operations.setOutboundObservationHealthError(err)
 			return
 		}
-		if err = tx.Commit(); err != nil {
-			s.operations.setHealthError(err)
-		}
+		s.operations.setOutboundObservationHealthError(tx.Commit())
 		return
 	}
 	s.operations.mu.Lock()

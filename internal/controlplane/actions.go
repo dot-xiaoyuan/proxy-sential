@@ -1009,9 +1009,10 @@ func (s *Server) newReleaseAction(parent EnforcementAction, actor string, now ti
 
 func (s *Server) processDueActions(now time.Time) {
 	if s.operations.db != nil && !s.operations.readView {
-		if err := s.processDueActionsPostgres(now); err != nil {
-			s.operations.setHealthError(err)
-		}
+		// The due-action worker recovers independently of synchronous operations.
+		// A later successful scan must clear its earlier transient failure, while
+		// leaving failures from other operations intact.
+		s.operations.setDueActionHealthError(s.processDueActionsPostgres(now))
 		return
 	}
 	type delivery struct {
