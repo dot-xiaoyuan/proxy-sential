@@ -124,7 +124,7 @@ func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []Stre
 		}
 		key := ref.Scope + "\x00" + ref.Key
 		if prior, found := groups[group][key]; found && prior.SHA256 != ref.SHA256 {
-			return nil, streamlog.ErrContentConflict
+			return nil, streamPositionConflict("body.batch_refs", "same_key_different_hash", time.Time{}, prior, ref.Key, ref.SHA256)
 		}
 		groups[group][key] = ref
 	}
@@ -179,8 +179,14 @@ func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []Stre
 			}
 			key := row.Scope + "\x00" + row.Key
 			ref, found := expected[key]
-			if !found || row.Hash != ref.SHA256 || seen[key] >= 100 {
-				return nil, streamlog.ErrContentConflict
+			if !found {
+				return nil, streamPositionConflict("body.metadata", "unrequested_row", time.Time{}, StreamBodyRef{Class: group.class, Month: group.month, BodyLayout: group.layout, Scope: group.scope, Key: row.Key}, row.Key, row.Hash, "requested_key", "unrequested_key")
+			}
+			if row.Hash != ref.SHA256 {
+				return nil, streamPositionConflict("body.metadata", "hash_mismatch", time.Time{}, ref, row.Key, row.Hash)
+			}
+			if seen[key] >= 100 {
+				return nil, streamPositionConflict("body.metadata", "duplicate_overflow", time.Time{}, ref, row.Key, row.Hash)
 			}
 			seen[key]++
 		}
@@ -237,8 +243,14 @@ func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []Stre
 			}
 			key := row.Scope + "\x00" + row.Key
 			ref, found := expected[key]
-			if !found || row.Hash != ref.SHA256 || bodySeen[key] {
-				return nil, streamlog.ErrContentConflict
+			if !found {
+				return nil, streamPositionConflict("body.bytes", "unrequested_row", time.Time{}, StreamBodyRef{Class: group.class, Month: group.month, BodyLayout: group.layout, Scope: group.scope, Key: row.Key}, row.Key, row.Hash, "requested_key", "unrequested_key")
+			}
+			if row.Hash != ref.SHA256 {
+				return nil, streamPositionConflict("body.bytes", "hash_mismatch", time.Time{}, ref, row.Key, row.Hash)
+			}
+			if bodySeen[key] {
+				return nil, streamPositionConflict("body.bytes", "duplicate_row", time.Time{}, ref, row.Key, row.Hash)
 			}
 			body := []byte(row.Body)
 			evidence, err := decodeVerifiedStreamBody(ref, body)
@@ -262,14 +274,14 @@ func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []Stre
 func decodeVerifiedStreamBody(ref StreamBodyRef, body []byte) (StreamEvidence, error) {
 	sum := sha256.Sum256(body)
 	if hex.EncodeToString(sum[:]) != ref.SHA256 {
-		return StreamEvidence{}, streamlog.ErrContentConflict
+		return StreamEvidence{}, streamPositionConflict("body.decode", "bytes_hash_mismatch", time.Time{}, ref, "", hex.EncodeToString(sum[:]))
 	}
 	var event normalized.Event
 	if err := json.Unmarshal(body, &event); err != nil {
 		return StreamEvidence{}, err
 	}
 	if event.EventID == "" {
-		return StreamEvidence{}, streamlog.ErrContentConflict
+		return StreamEvidence{}, streamPositionConflict("body.decode", "event_id_missing", time.Time{}, ref, "", "", "present_event_id", "missing_event_id")
 	}
 	return StreamEvidence{Event: event, Body: body, BodySHA256: ref.SHA256}, nil
 }
@@ -303,7 +315,11 @@ func (s *ClickHouseStore) GetStreamEvidenceByRef(ctx context.Context, ref Stream
 		}
 		sum := sha256.Sum256(raw)
 		if row.Hash != evidence.RawSHA256 || hex.EncodeToString(sum[:]) != evidence.RawSHA256 || (evidence.RawAvailable && !bytes.Equal(evidence.RawSource, raw)) {
-			return StreamEvidence{}, false, streamlog.ErrContentConflict
+			kind := "raw_hash_mismatch"
+			if row.Hash == evidence.RawSHA256 && hex.EncodeToString(sum[:]) == evidence.RawSHA256 {
+				kind = "raw_duplicate_mismatch"
+			}
+			return StreamEvidence{}, false, streamPositionConflict("body.raw", kind, time.Time{}, ref, "", hex.EncodeToString(sum[:]))
 		}
 		evidence.RawSource, evidence.RawAvailable = raw, true
 	}
@@ -334,7 +350,7 @@ func (s *ClickHouseStore) getStreamBody(ctx context.Context, ref StreamBodyRef) 
 		}
 		rows++
 		if rows > 100 {
-			return StreamEvidence{}, false, streamlog.ErrContentConflict
+			return StreamEvidence{}, false, streamPositionConflict("body.single", "duplicate_overflow", time.Time{}, ref, "", "")
 		}
 		var row struct {
 			Hash         string `json:"content_sha256"`
@@ -346,15 +362,18 @@ func (s *ClickHouseStore) getStreamBody(ctx context.Context, ref StreamBodyRef) 
 			return StreamEvidence{}, false, err
 		}
 		sum := sha256.Sum256([]byte(row.Body))
-		if row.Hash != ref.SHA256 || hex.EncodeToString(sum[:]) != ref.SHA256 {
-			return StreamEvidence{}, false, streamlog.ErrContentConflict
+		if row.Hash != ref.SHA256 {
+			return StreamEvidence{}, false, streamPositionConflict("body.single", "metadata_hash_mismatch", time.Time{}, ref, "", row.Hash)
+		}
+		if hex.EncodeToString(sum[:]) != ref.SHA256 {
+			return StreamEvidence{}, false, streamPositionConflict("body.single", "bytes_hash_mismatch", time.Time{}, ref, "", hex.EncodeToString(sum[:]))
 		}
 		var event normalized.Event
 		if err := json.Unmarshal([]byte(row.Body), &event); err != nil {
 			return StreamEvidence{}, false, err
 		}
 		if found && (result.Event.EventID != event.EventID || result.rawSegmentID != row.RawSegmentID || result.RawSHA256 != row.RawSHA256) {
-			return StreamEvidence{}, false, streamlog.ErrContentConflict
+			return StreamEvidence{}, false, streamPositionConflict("body.single", "duplicate_metadata_mismatch", time.Time{}, ref, "", "")
 		}
 		result = StreamEvidence{Event: event, Body: json.RawMessage(row.Body), BodySHA256: ref.SHA256, RawSHA256: row.RawSHA256, rawSegmentID: row.RawSegmentID}
 		found = true

@@ -12,7 +12,6 @@ import (
 
 	"proxy-sentinel/internal/fingerprint"
 	"proxy-sentinel/internal/normalized"
-	"proxy-sentinel/internal/streamlog"
 )
 
 type streamRouterCursor struct {
@@ -143,8 +142,12 @@ func (s *DBStore) streamRouterSignalBatch(ctx context.Context, sensor string, cu
 	unique := make([]StreamRouterSignalRef, 0, len(indexed))
 	for _, item := range indexed {
 		if len(unique) > 0 && item.IndexedAt.Equal(unique[len(unique)-1].IndexedAt) && item.EventKey == unique[len(unique)-1].EventKey {
-			if item.Body != unique[len(unique)-1].Body || !item.ObservedAt.Equal(unique[len(unique)-1].ObservedAt) {
-				return nil, cursor, streamlog.ErrContentConflict
+			prior := unique[len(unique)-1]
+			if item.Body != prior.Body {
+				return nil, cursor, streamPositionConflict("router.duplicate_index", "body_ref_mismatch", item.IndexedAt, prior.Body, item.EventKey, item.Body.SHA256)
+			}
+			if !item.ObservedAt.Equal(prior.ObservedAt) {
+				return nil, cursor, streamPositionConflict("router.duplicate_index", "observed_at_mismatch", item.IndexedAt, prior.Body, item.EventKey, item.Body.SHA256, "same_observed_at", "different_observed_at")
 			}
 			continue
 		}
@@ -159,9 +162,23 @@ func (s *DBStore) streamRouterSignalBatch(ctx context.Context, sensor string, cu
 	for _, item := range unique {
 		event := bodies[item.Body]
 		observed, parseErr := time.Parse(time.RFC3339Nano, event.Timestamp)
-		if parseErr != nil || streamScope(event) != item.Body.Scope || stringFromMap(event.Observer, "sensor_id") != sensor || event.SourceEventType != item.Protocol ||
-			(event.Type != "device" && event.Type != "router") || !observed.UTC().Truncate(time.Microsecond).Equal(item.ObservedAt) {
-			return nil, cursor, streamlog.ErrContentConflict
+		if parseErr != nil {
+			return nil, cursor, streamPositionConflict("router.body_semantics", "timestamp_invalid", item.IndexedAt, item.Body, "", "", "rfc3339_timestamp", "invalid_timestamp")
+		}
+		if streamScope(event) != item.Body.Scope {
+			return nil, cursor, streamPositionConflict("router.body_semantics", "scope_mismatch", item.IndexedAt, item.Body, "", "", "same_scope", "different_scope")
+		}
+		if stringFromMap(event.Observer, "sensor_id") != sensor {
+			return nil, cursor, streamPositionConflict("router.body_semantics", "sensor_mismatch", item.IndexedAt, item.Body, "", "", "same_sensor", "different_sensor")
+		}
+		if event.SourceEventType != item.Protocol {
+			return nil, cursor, streamPositionConflict("router.body_semantics", "protocol_mismatch", item.IndexedAt, item.Body, "", "", item.Protocol, event.SourceEventType)
+		}
+		if event.Type != "device" && event.Type != "router" {
+			return nil, cursor, streamPositionConflict("router.body_semantics", "event_type_mismatch", item.IndexedAt, item.Body, "", "", "device_or_router", event.Type)
+		}
+		if !observed.UTC().Truncate(time.Microsecond).Equal(item.ObservedAt) {
+			return nil, cursor, streamPositionConflict("router.body_semantics", "observed_at_mismatch", item.IndexedAt, item.Body, "", "", "same_observed_at", "different_observed_at")
 		}
 		events = append(events, event)
 	}

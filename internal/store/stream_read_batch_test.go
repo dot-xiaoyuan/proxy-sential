@@ -50,8 +50,8 @@ func TestStreamBodiesBatchReadUsesBoundedPhysicalLocator(t *testing.T) {
 		t.Fatalf("body read did not use narrow metadata and exact body queries: %+v", queries)
 	}
 	rows[1]["content_sha256"] = strings.Repeat("f", 64)
-	if _, err := ch.GetStreamEventsByRefs(context.Background(), refs); !errors.Is(err, streamlog.ErrContentConflict) {
-		t.Fatalf("same key with conflicting body was accepted: %v", err)
+	if _, err := ch.GetStreamEventsByRefs(context.Background(), refs); !errors.Is(err, streamlog.ErrContentConflict) || !strings.Contains(err.Error(), "stage=body.metadata kind=hash_mismatch") || !strings.Contains(err.Error(), "event_key="+refs[1].Key) {
+		t.Fatalf("same key with conflicting body lacked a locator: %v", err)
 	}
 }
 

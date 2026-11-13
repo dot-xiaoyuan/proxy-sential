@@ -3,12 +3,15 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"proxy-sentinel/internal/streamlog"
 )
 
 func TestRouterStreamIndexUsesInsertionCursorAndValidatesBodyRef(t *testing.T) {
@@ -41,7 +44,7 @@ func TestRouterStreamIndexUsesInsertionCursorAndValidatesBodyRef(t *testing.T) {
 		t.Fatalf("fresh cutoff without a prior event key could not start: items=%v err=%v query=%s", items, err, query)
 	}
 	row["content_sha256"] = strings.Repeat("b", 64)
-	if _, err := ch.ListStreamRouterSignalRefs(context.Background(), "sensor-a", after, "fresh:event-1", 50); err == nil {
-		t.Fatal("index reference conflict was accepted")
+	if _, err := ch.ListStreamRouterSignalRefs(context.Background(), "sensor-a", after, "fresh:event-1", 50); !errors.Is(err, streamlog.ErrContentConflict) || !strings.Contains(err.Error(), "stage=router.index kind=ref_hash_mismatch") || !strings.Contains(err.Error(), "source_epoch=fresh") || !strings.Contains(err.Error(), "actual_sha256="+strings.Repeat("b", 64)) {
+		t.Fatalf("index reference conflict lacked a safe locator: %v", err)
 	}
 }

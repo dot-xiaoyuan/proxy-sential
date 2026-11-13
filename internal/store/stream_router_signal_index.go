@@ -7,8 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"proxy-sentinel/internal/streamlog"
 )
 
 type StreamRouterSignalRef struct {
@@ -69,16 +67,35 @@ SETTINGS max_threads=1,max_memory_usage=268435456,max_execution_time=10 FORMAT J
 		if err != nil {
 			return nil, err
 		}
-		if ref.Key != row.EventKey || ref.Scope != row.Scope || ref.SHA256 != row.Hash || ref.Class != row.Class || ref.Month != fmt.Sprint(row.Month) || row.EventKey == "" || row.Protocol == "" || len(result) >= limit {
-			return nil, streamlog.ErrContentConflict
+		kind := ""
+		switch {
+		case ref.Key != row.EventKey:
+			kind = "ref_key_mismatch"
+		case ref.Scope != row.Scope:
+			kind = "ref_scope_mismatch"
+		case ref.SHA256 != row.Hash:
+			kind = "ref_hash_mismatch"
+		case ref.Class != row.Class:
+			kind = "ref_class_mismatch"
+		case ref.Month != fmt.Sprint(row.Month):
+			kind = "ref_month_mismatch"
+		case row.EventKey == "":
+			kind = "empty_event_key"
+		case row.Protocol == "":
+			kind = "empty_protocol"
+		case len(result) >= limit:
+			kind = "limit_overflow"
+		}
+		if kind != "" {
+			return nil, streamPositionConflict("router.index", kind, indexed, ref, row.EventKey, row.Hash)
 		}
 		if !after.IsZero() && (indexed.Before(after) || (indexed.Equal(after) && row.EventKey <= afterKey)) {
-			return nil, streamlog.ErrContentConflict
+			return nil, streamPositionConflict("router.index", "cursor_not_after", indexed, ref, row.EventKey, row.Hash)
 		}
 		if len(result) > 0 {
 			last := result[len(result)-1]
 			if indexed.Before(last.IndexedAt) || (indexed.Equal(last.IndexedAt) && row.EventKey < last.EventKey) {
-				return nil, streamlog.ErrContentConflict
+				return nil, streamPositionConflict("router.index", "order_regressed", indexed, ref, row.EventKey, row.Hash)
 			}
 		}
 		result = append(result, StreamRouterSignalRef{IndexedAt: indexed.UTC(), ObservedAt: observed.UTC(), EventKey: row.EventKey, Protocol: row.Protocol, Body: ref})
