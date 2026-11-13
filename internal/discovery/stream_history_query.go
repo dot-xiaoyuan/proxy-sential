@@ -116,7 +116,16 @@ func (r Repository) streamDiscoveryHistoryAt(ctx context.Context, epoch, key, cu
 			segmentKeys[scope] = append(segmentKeys[scope], event)
 			archiveState = ""
 		} else if !archive.Valid {
-			return nil, fmt.Errorf("stream discovery change %d has no valid receipt: %w", id, streamlog.ErrUnconfirmed)
+			if !strings.HasPrefix(event, epoch+":stream-") || !legacyPresent {
+				return nil, fmt.Errorf("stream discovery change %d has no valid receipt: %w", id, streamlog.ErrUnconfirmed)
+			}
+			var fields map[string]string
+			if err := json.Unmarshal(ref, &fields); err != nil || fields["scope"] == "" {
+				return nil, fmt.Errorf("stream discovery change %d has invalid evidence reference: %w", id, streamlog.ErrContentConflict)
+			}
+			scope := fields["scope"]
+			segmentChanges = append(segmentChanges, segmentChange{index: len(items), id: id, scope: scope, key: event, accepted: accepted, ref: ref})
+			segmentKeys[scope] = append(segmentKeys[scope], event)
 		}
 		items = append(items, map[string]any{"id": id, "event_id": event, "ingested_at": accepted, "observed_at": observed, "kind": kind,
 			"evidence": map[string]any{"before_hash": before, "after_hash": afterHash, "body_ref": ref, "archive_state": archiveState}, "generation": "fresh"})
@@ -130,9 +139,23 @@ func (r Repository) streamDiscoveryHistoryAt(ctx context.Context, epoch, key, cu
 	}
 	segmentReceipts := make(map[string]map[string]map[string]any, len(segmentKeys))
 	for scope, keys := range segmentKeys {
-		receipts, err := r.streamSegmentReceipts(ctx, epoch, scope, keys)
-		if err != nil {
-			return nil, err
+		receipts := make(map[string]map[string]any, len(keys))
+		for start := 0; start < len(keys); start += 50 {
+			batch := keys[start:min(start+50, len(keys))]
+			items, missing, err := r.StreamDiscoveryReceipts(ctx, epoch, scope, batch)
+			if err != nil {
+				return nil, err
+			}
+			if len(missing) != 0 {
+				return nil, streamlog.ErrUnconfirmed
+			}
+			for _, item := range items {
+				key, ok := item["event_key"].(string)
+				if !ok {
+					return nil, streamlog.ErrContentConflict
+				}
+				receipts[key] = item
+			}
 		}
 		segmentReceipts[scope] = receipts
 	}

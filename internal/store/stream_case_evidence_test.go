@@ -106,6 +106,43 @@ func TestReadStreamCaseEvidenceUsesFinalizedManifestWithoutEventReceipt(t *testi
 	}
 }
 
+func TestReadDeviceSignalCaseEvidenceUsesFinalizedLegacyKeyManifest(t *testing.T) {
+	event := normalized.Event{EventID: "stream-old-stable-key", SchemaVersion: "v1", Type: "discovery", Timestamp: "2026-11-13T01:00:00Z"}
+	body, _ := json.Marshal(event)
+	sum := sha256.Sum256(body)
+	ref := StreamBodyRef{Epoch: "fresh", Class: "evidence", Month: "202611", Scope: "scope-a", Key: "fresh:stream-old-stable-key", SHA256: hex.EncodeToString(sum[:])}
+	accepted := time.Date(2026, 11, 13, 1, 0, 0, 0, time.UTC)
+	id := streamlog.SourceSegmentID(streamlog.Segment{Epoch: ref.Epoch, Source: "device-signals", SourcePath: "/signals/device.jsonl", FileID: "file-a", StartOffset: 0, EndOffset: 100})
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectQuery("(?s)FROM jsonb_to_recordset.*JOIN stream_discovery_receipts r").
+		WillReturnRows(sqlmock.NewRows([]string{"epoch", "scope", "key", "sha256", "body_ref"}))
+	mock.ExpectQuery("(?s)jsonb_array_elements_text.*stream_discovery_event_keys k.*stream_discovery_receipts r").
+		WillReturnRows(sqlmock.NewRows([]string{"event_key", "content_sha256", "first_accepted_at", "projected_at", "result", "archive_state", "body_ref"}))
+	mock.ExpectQuery("(?s)stream_discovery_event_keys k.*stream_discovery_segment_receipt_manifests m").
+		WillReturnRows(sqlmock.NewRows([]string{"event_key", "content_sha256", "first_accepted_at", "accepted_month", "receipt_segment_id", "receipt_ordinal", "epoch", "source_kind", "source_path", "archive_receipt_mode", "event_count", "accepted_at", "projected_at", "lanes_finalized_at", "source_file_id", "source_start_offset", "source_end_offset", "source_generation", "archive_month", "body_layout", "key_scheme", "result_count", "result"}).
+			AddRow(ref.Key, ref.SHA256, accepted, accepted, id, 0, ref.Epoch, "device-signals", "/signals/device.jsonl", "manifest", 1, accepted, accepted, accepted.Add(time.Second), "file-a", int64(0), int64(100), int64(0), ref.Month, "", "device-signals", 1, "applied"))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		row, _ := json.Marshal(map[string]string{"scope_id": ref.Scope, "event_key": ref.Key, "content_sha256": ref.SHA256, "body": string(body)})
+		_, _ = w.Write(append(row, '\n'))
+	}))
+	defer server.Close()
+	ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := (&DBStore{pg: &PostgresStore{db: db}, ch: ch}).ReadStreamCaseEvidence(context.Background(), []StreamBodyRef{ref})
+	if err != nil || string(got[ref].Document) != string(body) {
+		t.Fatalf("device case original unavailable: %+v %v", got, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestReadStreamSharedCaseEvidenceNeedsFinalizedReceipt(t *testing.T) {
 	event := normalized.Event{EventID: "event-1", SchemaVersion: "v1", Source: "handshake-sidecar", Type: "device", Timestamp: "2026-10-25T10:00:00Z"}
 	body, _ := json.Marshal(event)

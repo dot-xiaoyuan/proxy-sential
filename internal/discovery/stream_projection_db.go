@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -47,6 +48,9 @@ type StreamDiscoveryProjector struct {
 	SegmentArchiveReceipts bool
 	ReceiptManifestShadow  bool
 	ReceiptManifestWrites  bool
+	// Enabled only after the compatible reader and case trigger are deployed.
+	// The legacy stream- event ID and content hash stay unchanged.
+	DeviceSignalManifestWrites bool
 }
 
 // Expiry is a separate bounded maintenance lane. It never scans event bodies
@@ -252,7 +256,7 @@ func (p StreamDiscoveryProjector) MarkStreamArchiveConfirmed(ctx context.Context
 	if isSegmentKeyedPassiveSegment(segment) {
 		return p.confirmStream3Archive(ctx, id, segment)
 	}
-	if isCompactPassiveSegment(segment) {
+	if isCompactPassiveSegment(segment) || segment.Source == "device-signals" {
 		var mode, epoch, source, path, hash string
 		var file sql.NullString
 		var start, end sql.NullInt64
@@ -365,11 +369,30 @@ func (p StreamDiscoveryProjector) verifyStreamManifestArchive(ctx context.Contex
 	}
 	var month, layout string
 	var results, matched int
+	ledger := "stream_discovery_event_keys_compact"
+	keyHashPredicate := " AND k.key_hash=sentinel_stream_discovery_key_hash($2,v.scope_id,v.event_key)"
+	priorSource := "passive-discovery"
+	manifestScheme := "stream2"
+	extraWitness := ""
+	args := []any{id, segment.Epoch, raw, streamAcceptedMonth(segment.AcceptedAt)}
+	if segment.Source == "device-signals" {
+		if streamlog.SourceSegmentID(segment) != id || segment.FileID == "" || segment.SourcePath == "" ||
+			segment.StartOffset < 0 || segment.EndOffset <= segment.StartOffset || !segment.RawIsStandardEvents {
+			return streamlog.ErrContentConflict
+		}
+		ledger = "stream_discovery_event_keys"
+		keyHashPredicate = ""
+		priorSource = "device-signals"
+		manifestScheme = "device-signals"
+		extraWitness = ` AND EXISTS(SELECT 1 FROM stream_projection_segments current
+  WHERE current.segment_id=m.segment_id AND current.source_generation=$5)`
+		args = append(args, int64(segment.SourceGeneration))
+	}
 	err = p.DB.QueryRowContext(ctx, `SELECT m.archive_month,m.body_layout,jsonb_array_length(m.results),
  (SELECT count(*) FROM jsonb_to_recordset($3::jsonb)
   AS v(scope_id text,event_key text,content_sha256 text,ordinal integer)
-  JOIN stream_discovery_event_keys_compact k
-   ON k.key_hash=sentinel_stream_discovery_key_hash($2,v.scope_id,v.event_key)
+  JOIN `+ledger+` k
+   ON true `+keyHashPredicate+`
    AND k.epoch=$2 AND k.scope_id=v.scope_id AND k.event_key=v.event_key
    AND k.content_sha256=v.content_sha256
   WHERE (k.accepted_month=$4 AND k.receipt_segment_id=m.segment_id AND k.receipt_ordinal=v.ordinal
@@ -388,7 +411,7 @@ func (p StreamDiscoveryProjector) verifyStreamManifestArchive(ctx context.Contex
      OR EXISTS(SELECT 1 FROM stream_projection_segments previous
       JOIN stream_discovery_segment_receipt_manifests prior ON prior.segment_id=previous.segment_id
       WHERE previous.segment_id=k.receipt_segment_id AND previous.epoch=k.epoch
-       AND previous.source_kind='passive-discovery' AND previous.archive_receipt_mode='manifest'
+       AND previous.source_kind='`+priorSource+`' AND previous.archive_receipt_mode='manifest'
        AND previous.source_file_id IS NOT NULL AND previous.source_file_id<>''
        AND previous.source_start_offset IS NOT NULL
        AND previous.source_end_offset>previous.source_start_offset
@@ -399,7 +422,7 @@ func (p StreamDiscoveryProjector) verifyStreamManifestArchive(ctx context.Contex
        AND jsonb_typeof(prior.results->k.receipt_ordinal)='string'
        AND prior.results->>k.receipt_ordinal<>''))))
  FROM stream_discovery_segment_receipt_manifests m
- WHERE m.segment_id=$1`, id, segment.Epoch, raw, streamAcceptedMonth(segment.AcceptedAt)).Scan(&month, &layout, &results, &matched)
+ WHERE m.segment_id=$1 AND m.key_scheme='`+manifestScheme+`'`+extraWitness, args...).Scan(&month, &layout, &results, &matched)
 	if errors.Is(err, sql.ErrNoRows) {
 		return streamlog.ErrUnconfirmed
 	}
@@ -627,8 +650,45 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 		segment.ArchiveMonth == segment.AcceptedAt.UTC().Format("200601") {
 		mode = "manifest"
 	}
+	deviceManifest := false
+	deviceManifestReason := "writer_disabled"
+	legacyDeviceKeys := true
+	for _, item := range prepared {
+		if !strings.HasPrefix(item.Receipt.Key, segment.Epoch+":stream-") {
+			legacyDeviceKeys = false
+			break
+		}
+	}
+	if p.DeviceSignalManifestWrites && segment.Source == "device-signals" {
+		switch {
+		case !segment.RawIsStandardEvents:
+			deviceManifestReason = "raw_not_standard_events"
+		case !legacyDeviceKeys:
+			deviceManifestReason = "event_key_scheme_mismatch"
+		case sourceFile == nil:
+			deviceManifestReason = "source_span_missing"
+		case len(prepared) > streamlog.MaxPassiveSegmentEvents:
+			deviceManifestReason = "segment_event_budget_exceeded"
+		case segment.SourceGeneration > math.MaxInt64:
+			deviceManifestReason = "source_generation_out_of_range"
+		case segment.ArchiveMonth != segment.AcceptedAt.UTC().Format("200601"):
+			deviceManifestReason = "archive_month_mismatch"
+		case streamlog.SourceSegmentID(segment) != id:
+			deviceManifestReason = "source_segment_id_mismatch"
+		default:
+			deviceManifest = true
+			deviceManifestReason = "eligible"
+		}
+	}
+	if deviceManifest {
+		mode = "manifest"
+	}
 	if segmentKeyed {
 		mode = "manifest"
+	}
+	if segment.Source == "device-signals" {
+		log.Printf("stream projection receipt segment=%s source=%s mode=%s reason=%s events=%d projected=%d",
+			id, segment.Source, mode, deviceManifestReason, len(segment.Events), len(prepared))
 	}
 	shadowID := ""
 	if (p.ReceiptManifestShadow && compactPassive && sourceFile != nil) || mode == "manifest" {
@@ -640,6 +700,10 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 	if segmentKeyed {
 		insertSQL = `INSERT INTO stream_projection_segments(segment_id,epoch,source_kind,source_path,content_sha256,accepted_at,event_count,source_file_id,source_start_offset,source_end_offset,archive_receipt_mode,passive_key_scheme,source_generation)
 	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'stream3',$12) ON CONFLICT DO NOTHING`
+		insertArgs = append(insertArgs, int64(segment.SourceGeneration))
+	} else if deviceManifest {
+		insertSQL = `INSERT INTO stream_projection_segments(segment_id,epoch,source_kind,source_path,content_sha256,accepted_at,event_count,source_file_id,source_start_offset,source_end_offset,archive_receipt_mode,passive_key_scheme,source_generation)
+	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'legacy',$12) ON CONFLICT DO NOTHING`
 		insertArgs = append(insertArgs, int64(segment.SourceGeneration))
 	}
 	result, err := tx.ExecContext(ctx, insertSQL, insertArgs...)
@@ -663,6 +727,14 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 			if scheme != "stream3" || generation != int64(segment.SourceGeneration) {
 				return streamlog.ErrContentConflict
 			}
+		} else if segment.Source == "device-signals" && p.DeviceSignalManifestWrites {
+			var persistedMode string
+			if err := tx.QueryRowContext(ctx, `SELECT content_sha256,archive_receipt_mode FROM stream_projection_segments WHERE segment_id=$1 FOR UPDATE`, id).
+				Scan(&prior, &persistedMode); err != nil {
+				return err
+			}
+			log.Printf("stream projection receipt existing segment=%s source=%s persisted_mode=%s candidate_mode=%s",
+				id, segment.Source, persistedMode, mode)
 		} else {
 			if err := tx.QueryRowContext(ctx, `SELECT content_sha256 FROM stream_projection_segments WHERE segment_id=$1 FOR UPDATE`, id).Scan(&prior); err != nil {
 				return err
@@ -682,7 +754,11 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 	} else if compactPassive {
 		freshKeys, err = reserveStreamDiscoveryCompactKeys(ctx, tx, segment.Epoch, month, prepared, !p.CompactOnly, shadowID)
 	} else {
-		freshKeys, err = reserveStreamDiscoveryKeys(ctx, tx, segment.Epoch, month, prepared)
+		if deviceManifest {
+			freshKeys, err = reserveStreamDiscoveryKeys(ctx, tx, segment.Epoch, month, prepared, id)
+		} else {
+			freshKeys, err = reserveStreamDiscoveryKeys(ctx, tx, segment.Epoch, month, prepared)
+		}
 	}
 	if err != nil {
 		return err
@@ -825,11 +901,16 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 	omitted := []streamPreparedDiscovery(nil)
 	receipts := fresh
 	if mode == "manifest" {
-		freshDiagnostics, err := streamManifestFreshDiagnostics(ctx, tx, segment.AcceptedAt)
-		if err != nil {
-			return err
+		if deviceManifest {
+			receipts = nil
+			omitted = fresh
+		} else {
+			freshDiagnostics, err := streamManifestFreshDiagnostics(ctx, tx, segment.AcceptedAt)
+			if err != nil {
+				return err
+			}
+			receipts, omitted = splitStreamManifestReceipts(fresh, freshDiagnostics)
 		}
-		receipts, omitted = splitStreamManifestReceipts(fresh, freshDiagnostics)
 	}
 	if len(receipts) != 0 {
 		mark("write_receipts")
@@ -1085,16 +1166,43 @@ func reserveStreamDiscoveryCompactKeys(ctx context.Context, tx *sql.Tx, epoch st
 // The unique ledger already has to probe these keys to enforce idempotency;
 // RETURNING removes the extra 1,000 random index lookups on the normal path.
 // Only actual conflicts need the prior hash read and can be skipped as replay.
-func reserveStreamDiscoveryKeys(ctx context.Context, tx *sql.Tx, epoch string, month time.Time, items []streamPreparedDiscovery) (map[string]bool, error) {
-	receipts := streamReceiptList(items)
-	raw, err := json.Marshal(receipts)
+func reserveStreamDiscoveryKeys(ctx context.Context, tx *sql.Tx, epoch string, month time.Time, items []streamPreparedDiscovery, receiptSegmentID ...string) (map[string]bool, error) {
+	var input any = streamReceiptList(items)
+	query := `INSERT INTO stream_discovery_event_keys(epoch,scope_id,event_key,content_sha256,accepted_month,first_accepted_at)
+ SELECT $1,v.scope_id,v.event_key,v.content_sha256,$2,v.accepted_at
+ FROM jsonb_to_recordset($3::jsonb) AS v(scope_id text,event_key text,content_sha256 text,accepted_at timestamptz)
+ ON CONFLICT DO NOTHING RETURNING scope_id,event_key,content_sha256`
+	args := []any{epoch, month}
+	if len(receiptSegmentID) != 0 {
+		if len(receiptSegmentID) != 1 || receiptSegmentID[0] == "" {
+			return nil, streamlog.ErrContentConflict
+		}
+		type inputKey struct {
+			Scope    string    `json:"scope_id"`
+			Key      string    `json:"event_key"`
+			Hash     string    `json:"content_sha256"`
+			Accepted time.Time `json:"accepted_at"`
+			Ordinal  int       `json:"ordinal"`
+		}
+		keys := make([]inputKey, 0, len(items))
+		for ordinal, item := range items {
+			keys = append(keys, inputKey{item.Receipt.Scope, item.Receipt.Key, item.Receipt.Hash, item.Receipt.Accepted, ordinal})
+		}
+		input = keys
+		query = `INSERT INTO stream_discovery_event_keys(epoch,scope_id,event_key,content_sha256,accepted_month,first_accepted_at,receipt_segment_id,receipt_ordinal)
+ SELECT $1,v.scope_id,v.event_key,v.content_sha256,$2,v.accepted_at,$4,v.ordinal
+ FROM jsonb_to_recordset($3::jsonb) AS v(scope_id text,event_key text,content_sha256 text,accepted_at timestamptz,ordinal integer)
+ ON CONFLICT DO NOTHING RETURNING scope_id,event_key,content_sha256`
+	}
+	raw, err := json.Marshal(input)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(ctx, `INSERT INTO stream_discovery_event_keys(epoch,scope_id,event_key,content_sha256,accepted_month,first_accepted_at)
- SELECT $1,v.scope_id,v.event_key,v.content_sha256,$2,v.accepted_at
- FROM jsonb_to_recordset($3::jsonb) AS v(scope_id text,event_key text,content_sha256 text,accepted_at timestamptz)
- ON CONFLICT DO NOTHING RETURNING scope_id,event_key,content_sha256`, epoch, month, raw)
+	args = append(args, raw)
+	if len(receiptSegmentID) != 0 {
+		args = append(args, receiptSegmentID[0])
+	}
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1426,6 +1534,15 @@ func writeStreamReceiptManifest(ctx context.Context, tx *sql.Tx, id string, segm
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO stream_discovery_segment_receipt_manifests(segment_id,archive_month,body_layout,results,recognition_summary,key_scheme,scope_id,content_hashes)
 	 VALUES($1,$2,$3,$4::jsonb,$5::jsonb,'stream3',$6,$7)`, id, segment.ArchiveMonth, segment.BodyLayout, raw, summary, scope, hashes)
+		return err
+	}
+	if segment.Source == "device-signals" && omitted != nil {
+		summary, err := json.Marshal(streamRecognitionSummary(omitted))
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO stream_discovery_segment_receipt_manifests(segment_id,archive_month,body_layout,results,recognition_summary,key_scheme)
+ VALUES($1,$2,$3,$4::jsonb,$5::jsonb,'device-signals')`, id, segment.ArchiveMonth, segment.BodyLayout, raw, summary)
 		return err
 	}
 	if omitted == nil {

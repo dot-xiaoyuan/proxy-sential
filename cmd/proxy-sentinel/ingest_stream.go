@@ -147,6 +147,7 @@ func runIngestStream(args []string) error {
 	storeTimeout := fs.Duration("store-timeout", 3*time.Second, "individual storage attempt budget")
 	pending := fs.Int("max-pending-segments", 16, "bounded queued segments")
 	drainOnly := fs.Bool("drain-only", false, "finish only previously accepted journal segments")
+	deviceManifestWrites := fs.Bool("device-signal-manifest-writes", false, "use segment receipt manifests for device-signals after compatible reader release")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -194,6 +195,14 @@ func runIngestStream(args []string) error {
 	db.SetMaxIdleConns(store.PostgresPoolLimit(2))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if *deviceManifestWrites {
+		if *ttlPath == "" && *handshakePath == "" && *routerProbePath == "" {
+			return errors.New("device signal manifest writer requires a device-signals source")
+		}
+		if err := verifyDeviceSignalManifestSchema(ctx, db); err != nil {
+			return err
+		}
+	}
 	if library != nil {
 		go library.WatchInstalled(ctx)
 	}
@@ -257,7 +266,7 @@ WHERE state='active' AND sensor_id=$1 AND (source_kind='zeek-dhcp' OR source_kin
 	if err != nil {
 		return err
 	}
-	projector := discovery.StreamDiscoveryProjector{DB: db}
+	projector := discovery.StreamDiscoveryProjector{DB: db, DeviceSignalManifestWrites: *deviceManifestWrites}
 	writer := store.StreamLaneWriter{ClickHouse: ch, Projector: projector, RiskQueue: projector, SharedQueue: store.StreamSharedJobQueue{DB: db}}
 	archiveWorkers, searchWorkers := 1, 1
 	if *ttlPath != "" || *handshakePath != "" {
@@ -270,4 +279,29 @@ WHERE state='active' AND sensor_id=$1 AND (source_kind='zeek-dhcp' OR source_kin
 		SearchWorkers:      searchWorkers,
 		DrainOnly:          *drainOnly,
 	})
+}
+
+func verifyDeviceSignalManifestSchema(ctx context.Context, db *sql.DB) error {
+	var ready bool
+	err := db.QueryRowContext(ctx, `SELECT
+ EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('stream_discovery_event_keys')
+  AND attname='receipt_segment_id' AND NOT attisdropped)
+ AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('stream_discovery_event_keys')
+  AND attname='receipt_ordinal' AND NOT attisdropped)
+ AND to_regprocedure('sentinel_device_signal_manifest_evidence(jsonb)') IS NOT NULL
+ AND EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('stream_discovery_segment_receipt_manifests')
+  AND conname='stream_discovery_manifest_key_scheme' AND pg_get_constraintdef(oid) LIKE '%device-signals%')
+ AND EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('stream_discovery_event_keys')
+  AND tgname='protect_device_manifest_key' AND tgenabled IN ('O','A'))
+ AND EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('stream_projection_segments')
+  AND tgname='protect_device_manifest_segment' AND tgenabled IN ('O','A'))
+ AND EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('stream_discovery_segment_receipt_manifests')
+  AND tgname='protect_device_manifest_manifest' AND tgenabled IN ('O','A'))`).Scan(&ready)
+	if err != nil {
+		return fmt.Errorf("device signal manifest schema preflight: %w", err)
+	}
+	if !ready {
+		return errors.New("device signal manifest schema PG247 is not installed")
+	}
+	return nil
 }

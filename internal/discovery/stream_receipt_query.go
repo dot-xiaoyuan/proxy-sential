@@ -67,6 +67,16 @@ func (r Repository) StreamDiscoveryReceipt(ctx context.Context, epoch, scope, ev
 	WHERE k.epoch=$1 AND k.scope_id=$2 AND k.event_key=$3`+hashPredicate, epoch, scope, eventKey).Scan(&hash, &accepted, &projected, &result, &archive, &bodyRef)
 	}
 	err := lookup(compact, false)
+	if !compact && strings.HasPrefix(eventKey, epoch+":stream-") && errors.Is(err, sql.ErrNoRows) {
+		manifest, manifestErr := r.streamDeviceManifestReceipts(ctx, epoch, scope, []string{eventKey})
+		if manifestErr != nil {
+			return nil, false, manifestErr
+		}
+		if receipt, found := manifest[eventKey]; found {
+			receipt["read_observed_at"] = time.Now().UTC()
+			return receipt, true, nil
+		}
+	}
 	if compact && errors.Is(err, sql.ErrNoRows) {
 		manifest, manifestErr := r.streamManifestReceipts(ctx, epoch, scope, []string{eventKey})
 		if manifestErr != nil {
@@ -191,6 +201,19 @@ func (r Repository) StreamDiscoveryReceipts(ctx context.Context, epoch, scope st
 		if err := readGroup(groups[compact], compact, false); err != nil {
 			return nil, nil, err
 		}
+	}
+	legacyFallback := make([]string, 0)
+	for _, key := range groups[false] {
+		if _, found := byKey[key]; !found && strings.HasPrefix(key, epoch+":stream-") {
+			legacyFallback = append(legacyFallback, key)
+		}
+	}
+	deviceManifest, err := r.streamDeviceManifestReceipts(ctx, epoch, scope, legacyFallback)
+	if err != nil {
+		return nil, nil, err
+	}
+	for key, item := range deviceManifest {
+		byKey[key] = item
 	}
 	fallback := make([]string, 0)
 	for _, key := range groups[true] {

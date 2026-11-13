@@ -171,6 +171,50 @@ func (s *DBStore) ReadStreamCaseEvidence(ctx context.Context, refs []StreamBodyR
 	if err := s.confirmStream3CaseRefs(ctx, refs, confirmed); err != nil {
 		return nil, err
 	}
+	// Device signals keep the original stream- key and hash. Their reader
+	// proves a missing per-event receipt through the immutable key locator and
+	// segment manifest, then the ClickHouse body is fetched and hashed below.
+	type deviceGroup struct{ epoch, scope string }
+	deviceRefs := make(map[deviceGroup][]StreamBodyRef)
+	for _, ref := range refs {
+		if _, found := confirmed[ref]; !found && strings.HasPrefix(ref.Key, ref.Epoch+":stream-") {
+			group := deviceGroup{ref.Epoch, ref.Scope}
+			deviceRefs[group] = append(deviceRefs[group], ref)
+		}
+	}
+	reader := discovery.Repository{DB: s.pg.db}
+	for group, groupRefs := range deviceRefs {
+		for start := 0; start < len(groupRefs); start += 50 {
+			batch := groupRefs[start:min(start+50, len(groupRefs))]
+			keys := make([]string, len(batch))
+			byKey := make(map[string]StreamBodyRef, len(batch))
+			for i, ref := range batch {
+				keys[i] = ref.Key
+				if previous, exists := byKey[ref.Key]; exists && previous != ref {
+					return nil, streamlog.ErrContentConflict
+				}
+				byKey[ref.Key] = ref
+			}
+			items, missing, err := reader.StreamDiscoveryReceipts(ctx, group.epoch, group.scope, keys)
+			if err != nil {
+				return nil, err
+			}
+			if len(missing) != 0 || len(items) != len(batch) {
+				return nil, streamlog.ErrUnconfirmed
+			}
+			for _, item := range items {
+				key, ok := item["event_key"].(string)
+				ref, found := byKey[key]
+				bodyRef, bodyOK := item["body_ref"].(json.RawMessage)
+				var saved StreamBodyRef
+				if !ok || !found || !bodyOK || item["archive_state"] != "confirmed" || item["content_sha256"] != ref.SHA256 ||
+					json.Unmarshal(bodyRef, &saved) != nil || saved != ref {
+					return nil, streamlog.ErrContentConflict
+				}
+				confirmed[ref] = struct{}{}
+			}
+		}
+	}
 	for _, ref := range refs {
 		if _, ok := confirmed[ref]; !ok {
 			return nil, fmt.Errorf("stream case evidence is not archived: %w", streamlog.ErrUnconfirmed)
