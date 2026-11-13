@@ -108,8 +108,12 @@ func TestIdentityFragmentExportContinuesSearchWithoutSecondCandidateScan(t *test
 		t.Fatal(err)
 	}
 	backend := &DBStore{pg: &PostgresStore{db: db, sensorID: "ncu", identityDerivedAfter: after}, ch: ch}
-	if err := backend.exportIdentityInboxFragment(context.Background()); err != nil || bodyWrites != 1 || searchWrites != 1 {
+	var timing identityExportTiming
+	if err := backend.exportIdentityInboxFragmentMeasured(context.Background(), &timing); err != nil || bodyWrites != 1 || searchWrites != 1 {
 		t.Fatalf("fragment did not finish both receipts: body=%d search=%d err=%v", bodyWrites, searchWrites, err)
+	}
+	if timing.Records != fragment.Count || timing.Total <= 0 || timing.Claim <= 0 || timing.BodyIO <= 0 || timing.BodyReceipt <= 0 || timing.SearchClaim <= 0 || timing.SearchIO <= 0 || timing.SearchReceipt <= 0 {
+		t.Fatalf("completed fragment omitted a durable phase: %+v", timing)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -205,11 +209,19 @@ func TestIdentityFragmentExportAmbiguousSearchKeepsAttemptedUntilVerified(t *tes
 		t.Fatal(err)
 	}
 	backend := &DBStore{pg: &PostgresStore{db: db, sensorID: "ncu", identityDerivedAfter: after}, ch: ch}
-	if err := backend.exportIdentityInboxFragment(context.Background()); err == nil || bodyWrites != 1 || searchWrites != 1 {
+	var attempted identityExportTiming
+	if err := backend.exportIdentityInboxFragmentMeasured(context.Background(), &attempted); err == nil || bodyWrites != 1 || searchWrites != 1 {
 		t.Fatalf("ambiguous search was acknowledged: body=%d search=%d err=%v", bodyWrites, searchWrites, err)
 	}
-	if err := backend.exportIdentityInboxFragment(context.Background()); err != nil || searchWrites != 1 || searchVerifies != 1 {
+	if attempted.Records != 0 {
+		t.Fatalf("ambiguous search counted as export: %+v", attempted)
+	}
+	var verified identityExportTiming
+	if err := backend.exportIdentityInboxFragmentMeasured(context.Background(), &verified); err != nil || searchWrites != 1 || searchVerifies != 1 {
 		t.Fatalf("attempted search was not verified without reinsertion: search=%d verifies=%d err=%v", searchWrites, searchVerifies, err)
+	}
+	if verified.Records != fragment.Count {
+		t.Fatalf("verified search was not counted once: %+v", verified)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

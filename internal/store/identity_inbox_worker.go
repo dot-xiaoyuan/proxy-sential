@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"proxy-sentinel/internal/normalized"
@@ -265,9 +267,66 @@ func (s *DBStore) exportIdentityInboxBatch(ctx context.Context) error {
 	}
 	return tx.Commit()
 }
-func (s *DBStore) runIdentityInboxExport(ctx context.Context) {
+
+// A second exporter overlaps ClickHouse I/O with another fragment's PostgreSQL
+// receipts. Claims use SKIP LOCKED and each fragment has its own fenced lease;
+// the connection pool and worker count remain bounded. The environment switch
+// permits a live deployment to return to one worker if WAL contention rises.
+func identityExportWorkerCount() int {
+	defaultCount := 1
 	if identitySplitProgressEnabled() {
-		lane, close, e := s.identityLane(1)
+		defaultCount = 2
+	}
+	raw := strings.TrimSpace(os.Getenv("PROXY_SENTINEL_IDENTITY_EXPORT_WORKERS"))
+	if raw == "" {
+		return defaultCount
+	}
+	count, err := strconv.Atoi(raw)
+	if err != nil || count < 1 || count > 2 {
+		fmt.Fprintf(os.Stderr, "invalid identity export worker count %q; using %d\n", raw, defaultCount)
+		return defaultCount
+	}
+	return count
+}
+
+type identityExportWindow struct {
+	started                            time.Time
+	completed, records, failures, idle int
+	timing                             identityExportTiming
+	lastError                          string
+}
+
+func (w *identityExportWindow) add(t identityExportTiming, err error) {
+	w.timing.Claim += t.Claim
+	w.timing.BodyIO += t.BodyIO
+	w.timing.BodyReceipt += t.BodyReceipt
+	w.timing.SearchClaim += t.SearchClaim
+	w.timing.SearchIO += t.SearchIO
+	w.timing.SearchReceipt += t.SearchReceipt
+	w.timing.Total += t.Total
+	if err == nil && t.Records > 0 {
+		w.completed++
+		w.records += t.Records
+	} else if errors.Is(err, sql.ErrNoRows) {
+		w.idle++
+	} else if err != nil {
+		w.failures++
+		w.lastError = err.Error()
+	}
+}
+
+func (w *identityExportWindow) log(worker int) {
+	fmt.Fprintf(os.Stderr, "identity export progress: worker=%d elapsed_ms=%d fragments=%d records=%d failures=%d idle=%d claim_ms=%d body_io_ms=%d body_receipt_ms=%d search_claim_ms=%d search_io_ms=%d search_receipt_ms=%d work_ms=%d last_error=%q\n",
+		worker, time.Since(w.started).Milliseconds(), w.completed, w.records, w.failures, w.idle,
+		w.timing.Claim.Milliseconds(), w.timing.BodyIO.Milliseconds(), w.timing.BodyReceipt.Milliseconds(),
+		w.timing.SearchClaim.Milliseconds(), w.timing.SearchIO.Milliseconds(), w.timing.SearchReceipt.Milliseconds(),
+		w.timing.Total.Milliseconds(), w.lastError)
+}
+
+func (s *DBStore) runIdentityInboxExport(ctx context.Context) {
+	workers := identityExportWorkerCount()
+	if identitySplitProgressEnabled() {
+		lane, close, e := s.identityLane(workers)
 		if e != nil {
 			fmt.Fprintf(os.Stderr, "identity export pool: %v\n", e)
 			return
@@ -275,9 +334,27 @@ func (s *DBStore) runIdentityInboxExport(ctx context.Context) {
 		defer close()
 		s = lane
 	}
+	if workers == 1 {
+		s.runIdentityInboxExportWorker(ctx, 1)
+		return
+	}
+	var joined sync.WaitGroup
+	for worker := 1; worker <= workers; worker++ {
+		joined.Add(1)
+		go func(worker int) {
+			defer joined.Done()
+			s.runIdentityInboxExportWorker(ctx, worker)
+		}(worker)
+	}
+	joined.Wait()
+}
+
+func (s *DBStore) runIdentityInboxExportWorker(ctx context.Context, worker int) {
+	window := identityExportWindow{started: time.Now()}
 	for ctx.Err() == nil {
 		work, cancel := context.WithTimeout(ctx, 45*time.Second)
-		err := s.exportIdentityInboxFragment(work)
+		var timing identityExportTiming
+		err := s.exportIdentityInboxFragmentMeasured(work, &timing)
 		if errors.Is(err, sql.ErrNoRows) && s.pg.identityDerivedAfter.IsZero() {
 			// Legacy full-JSON exports remain low priority while current facts
 			// are queued. Fresh fragments archive independently of PG projection.
@@ -288,6 +365,11 @@ func (s *DBStore) runIdentityInboxExport(ctx context.Context) {
 			err = s.exportIdentityInboxBatch(work)
 		}
 		cancel()
+		window.add(timing, err)
+		if time.Since(window.started) >= 30*time.Second {
+			window.log(worker)
+			window = identityExportWindow{started: time.Now()}
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			health, c := context.WithTimeout(ctx, time.Second)
 			heartbeatSQL := `UPDATE identity_pipeline_scopes SET export_heartbeat_at=now() WHERE scope_key IN (SELECT scope_key FROM identity_pipeline_scopes WHERE sensor_id=$1) AND (export_heartbeat_at IS NULL OR export_heartbeat_at<now()-interval '5 seconds')`

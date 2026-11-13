@@ -26,12 +26,35 @@ type identityExportFragment struct {
 	DerivedLeaseEpoch                                     int64
 }
 
+// A worker records wall time spent in each durable export phase. The counters
+// are local to its goroutine, so observing a busy exporter adds no shared lock
+// to the PostgreSQL/ClickHouse hot path.
+type identityExportTiming struct {
+	Claim, BodyIO, BodyReceipt, SearchClaim, SearchIO, SearchReceipt time.Duration
+	Total                                                            time.Duration
+	Records                                                          int
+}
+
 // PostgreSQL is the durable source for HTTP identity input. Each fragment has
 // its own fixed ClickHouse token and separate body/search acknowledgements.
 // An attempted write is verified before any further action; an absent row is
 // left for bounded operator repair rather than blindly sent with a new token.
 func (s *DBStore) exportIdentityInboxFragment(ctx context.Context) error {
+	return s.exportIdentityInboxFragmentMeasured(ctx, nil)
+}
+
+func (s *DBStore) exportIdentityInboxFragmentMeasured(ctx context.Context, timing *identityExportTiming) error {
+	started := time.Now()
+	defer func() {
+		if timing != nil {
+			timing.Total = time.Since(started)
+		}
+	}()
+	phaseStarted := time.Now()
 	fragment, err := s.pg.claimIdentityExportFragment(ctx)
+	if timing != nil {
+		timing.Claim = time.Since(phaseStarted)
+	}
 	if err != nil {
 		return err
 	}
@@ -47,6 +70,7 @@ func (s *DBStore) exportIdentityInboxFragment(ctx context.Context) error {
 		return err
 	}
 	if fragment.BodyState != "completed" {
+		phaseStarted = time.Now()
 		if fragment.BodyState == "attempted" {
 			var confirmed bool
 			confirmed, err = s.ch.VerifyStreamBody(ctx, segment)
@@ -56,10 +80,17 @@ func (s *DBStore) exportIdentityInboxFragment(ctx context.Context) error {
 		} else {
 			err = s.ch.WriteStreamBody(ctx, token, segment)
 		}
+		if timing != nil {
+			timing.BodyIO = time.Since(phaseStarted)
+		}
 		if err != nil {
 			return err
 		}
+		phaseStarted = time.Now()
 		err = s.pg.finishIdentityExportFragment(ctx, fragment, "body")
+		if timing != nil {
+			timing.BodyReceipt = time.Since(phaseStarted)
+		}
 		if err != nil {
 			return err
 		}
@@ -71,7 +102,11 @@ func (s *DBStore) exportIdentityInboxFragment(ctx context.Context) error {
 			return nil
 		}
 		var nextEpoch int64
+		phaseStarted = time.Now()
 		nextEpoch, err = s.pg.claimIdentitySearchAfterBody(ctx, fragment)
+		if timing != nil {
+			timing.SearchClaim = time.Since(phaseStarted)
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			// Another claimant or a changed state owns the next step.
 			err = nil
@@ -82,6 +117,7 @@ func (s *DBStore) exportIdentityInboxFragment(ctx context.Context) error {
 		}
 		fragment.LeaseEpoch = nextEpoch
 	}
+	phaseStarted = time.Now()
 	if fragment.SearchState == "attempted" {
 		var confirmed bool
 		confirmed, err = s.ch.VerifyStreamSearch(ctx, segment)
@@ -91,10 +127,20 @@ func (s *DBStore) exportIdentityInboxFragment(ctx context.Context) error {
 	} else {
 		err = s.ch.WriteStreamSearch(ctx, token, segment)
 	}
+	if timing != nil {
+		timing.SearchIO = time.Since(phaseStarted)
+	}
 	if err != nil {
 		return err
 	}
+	phaseStarted = time.Now()
 	err = s.pg.finishIdentityExportFragment(ctx, fragment, "search")
+	if timing != nil {
+		timing.SearchReceipt = time.Since(phaseStarted)
+		if err == nil {
+			timing.Records = fragment.Count
+		}
+	}
 	return err
 }
 
