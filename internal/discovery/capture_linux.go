@@ -21,7 +21,7 @@ import (
 )
 
 const streamCaptureFlushWindow = 4 * time.Second
-const discoveryCaptureReceiveBufferBytes = 32 << 20
+const discoveryCaptureReceiveBufferBytes = 128 << 20
 
 // Capture spools standard events on a separate goroutine; packet reads never wait on database work.
 func Capture(ctx context.Context, iface, spool string, source Source, allow []netip.Prefix) error {
@@ -127,9 +127,9 @@ func captureConfiguredWithPersist(ctx context.Context, iface, spool string, sour
 	if e = syscall.Bind(fd, &syscall.SockaddrLinklayer{Protocol: htons(3), Ifindex: i.Index}); e != nil {
 		return e
 	}
-	// A mirror burst can fill the default 208 KiB socket before this goroutine
-	// decodes the next frame. Linux clamps the requested 32 MiB by rmem_max;
-	// expose the effective size with the socket-wide loss counters below.
+	// A mirror burst can fill the socket before this goroutine decodes the next
+	// frame. Linux clamps the request by rmem_max; expose the effective size
+	// with the socket-wide loss counters below.
 	if e = syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_RCVBUF, discoveryCaptureReceiveBufferBytes); e != nil {
 		return fmt.Errorf("set passive capture receive buffer: %w", e)
 	}
