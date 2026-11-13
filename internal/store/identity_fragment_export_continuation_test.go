@@ -43,7 +43,13 @@ func continuationIdentityFragment(t *testing.T) (identityExportFragment, time.Ti
 func expectIdentityFragmentClaim(mock sqlmock.Sqlmock, fragment identityExportFragment, after time.Time, bodyState, searchState string, lease int64) {
 	columns := []string{"batch_id", "scope_key", "source", "stream_epoch", "archive_month", "content_sha256", "key_scheme", "first_ordinal", "record_count", "accepted_at", "normalized_events", "body_state", "search_state"}
 	mock.ExpectBegin()
-	if bodyState == "completed" {
+	query, _ := identityExportCandidateQuery("ncu", after)
+	if !strings.Contains(query, "ORDER BY b.accepted_at DESC") {
+		// The 204 work line still uses the ascending candidate order. This
+		// continuation only depends on the claimed fragment and its lease.
+		mock.ExpectQuery("ORDER BY b.accepted_at,f.batch_id").WithArgs("ncu", after).
+			WillReturnRows(sqlmock.NewRows(columns).AddRow(fragment.BatchID, fragment.Scope, fragment.Source, fragment.Epoch, fragment.Month, fragment.Hash, fragment.KeyScheme, fragment.First, fragment.Count, fragment.Accepted, fragment.Payload, bodyState, searchState))
+	} else if bodyState == "completed" {
 		mock.ExpectQuery("f.body_state='completed' AND f.search_state<>'completed'").WithArgs("ncu", after).
 			WillReturnRows(sqlmock.NewRows(columns).AddRow(fragment.BatchID, fragment.Scope, fragment.Source, fragment.Epoch, fragment.Month, fragment.Hash, fragment.KeyScheme, fragment.First, fragment.Count, fragment.Accepted, fragment.Payload, bodyState, searchState))
 	} else {
