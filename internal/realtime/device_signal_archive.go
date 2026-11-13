@@ -27,6 +27,7 @@ type signalFile struct {
 	info       os.FileInfo
 	id         string
 	ordinal    int // 1 is newest rotation, 0 is protected live, -1 is current.
+	chainSeq   int // -1 outside the protected compressed successor chain.
 	protected  bool
 	compressed bool
 }
@@ -147,7 +148,14 @@ func deviceSignalFiles(path string) ([]signalFile, error) {
 		if id == "" {
 			return ErrStreamSourceGap
 		}
-		out = append(out, signalFile{name, info, id, ordinal, protected, compressed})
+		seq := -1
+		if protected && ordinal == 0 {
+			seq = 0
+			if parsed, ok := signalFileChainSequence(filepath.Base(name)); ok {
+				seq = parsed
+			}
+		}
+		out = append(out, signalFile{path: name, info: info, id: id, ordinal: ordinal, chainSeq: seq, protected: protected, compressed: compressed})
 		return nil
 	}
 	if err := add(path, false); err != nil {
@@ -177,6 +185,11 @@ func signalFileOrdinal(source, candidate string, protected bool) (int, bool, boo
 		return -1, false, true
 	}
 	base, name := filepath.Base(source), filepath.Base(candidate)
+	if protected && base == "ttl.jsonl" {
+		if _, ok := signalFileChainSequence(name); ok {
+			return 0, true, true
+		}
+	}
 	if protected && base == "ttl.jsonl" && strings.HasPrefix(name, "ttl-live-") && strings.HasSuffix(name, ".jsonl") {
 		return 0, false, true
 	}
@@ -190,6 +203,24 @@ func signalFileOrdinal(source, candidate string, protected bool) (int, bool, boo
 	}
 	n, err := strconv.Atoi(suffix)
 	return n, compressed, err == nil && n > 0 && n <= 1000
+}
+
+func signalFileChainSequence(name string) (int, bool) {
+	const prefix, suffix = "ttl-chain-", ".jsonl.gz"
+	if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
+		return 0, false
+	}
+	part := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
+	if len(part) != 12 {
+		return 0, false
+	}
+	for _, digit := range part {
+		if digit < '0' || digit > '9' {
+			return 0, false
+		}
+	}
+	seq, err := strconv.Atoi(part)
+	return seq, err == nil && seq >= 0 && seq <= 100000
 }
 
 func validSignalTail(cursor streamlog.SourceCursor) bool {
@@ -472,6 +503,20 @@ func (w *signalLastByte) Write(data []byte) (int, error) {
 // preferred until its live anchor; after that the active directory must
 // still expose the anchor's inode to prove the intervening interval.
 func nextSignalFile(path string, files []signalFile, old signalFile) (signalFile, error) {
+	if old.protected && old.ordinal == 0 {
+		for _, file := range files {
+			if file.protected && file.compressed && file.chainSeq == old.chainSeq+1 {
+				if old.chainSeq == 0 && !old.compressed {
+					// The first compressed link is a duplicate of the live
+					// anchor. Without it, successor numbering proves nothing.
+					if !signalChainStartsAtLive(files, old) {
+						return signalFile{}, ErrStreamSourceGap
+					}
+				}
+				return file, nil
+			}
+		}
+	}
 	if old.ordinal == 0 {
 		matched := false
 		for _, active := range files {
@@ -533,6 +578,22 @@ func nextSignalFile(path string, files []signalFile, old signalFile) (signalFile
 		}
 	}
 	return signalFile{}, ErrStreamSourceGap
+}
+
+func signalChainStartsAtLive(files []signalFile, live signalFile) bool {
+	var first signalFile
+	for _, file := range files {
+		if file.protected && file.compressed && file.chainSeq == 0 {
+			first = file
+			break
+		}
+	}
+	if first.path == "" {
+		return false
+	}
+	liveHash, liveSize, liveOK := hashSignalFile(live, false)
+	firstHash, firstSize, firstOK := hashSignalFile(first, true)
+	return liveOK && firstOK && liveSize == firstSize && liveHash == firstHash
 }
 
 func matchingCompressedSignalFile(old signalFile, files []signalFile) (signalFile, error) {

@@ -88,6 +88,7 @@ JS
   cp scripts/deploy/ncu-identity-sync-rollback.sh "$release_dir/scripts/ncu-identity-sync-rollback.sh"
   cp scripts/deploy/verify-service-expectations.py scripts/deploy/upgrade-application.sh scripts/deploy/manage-frontend-previous.py scripts/deploy/verify-applied-migrations.py scripts/deploy/validate-release-archive.py scripts/deploy/verify-application-runtime.py scripts/deploy/verify-application-cli.py scripts/deploy/retire-releases.py scripts/deploy/retire-acceptance-artifacts.py "$release_dir/scripts/"
   cp scripts/deploy/upgrade-recognition-minute-shadow.sh "$release_dir/scripts/upgrade-recognition-minute-shadow.sh"
+  cp scripts/deploy/protect_device_signal_rotations.py "$release_dir/scripts/protect_device_signal_rotations.py"
 )
 
 commit="$(git -C "$repo_root" rev-parse HEAD)"

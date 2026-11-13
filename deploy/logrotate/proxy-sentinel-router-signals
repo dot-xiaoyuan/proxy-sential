@@ -8,7 +8,7 @@
 # day would collide and be skipped, which is how this file grew to 125 GB.
 /opt/proxy-sentinel/data/device-signals/ttl.jsonl {
   size 1G
-  rotate 4
+  rotate 50
   missingok
   notifempty
   nocreate
