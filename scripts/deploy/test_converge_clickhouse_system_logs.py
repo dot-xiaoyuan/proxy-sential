@@ -81,6 +81,56 @@ class SystemLogCleanupTest(unittest.TestCase):
             self.assertTrue(cleanup.query_log_marker(policy).is_file())
             self.assertEqual(cleanup.stage_query_log_policy(policy, template, apply=True), (False, False))
 
+    def test_staging_policy_is_allowed_while_application_is_degraded(self):
+        # Staging only edits a host file which is not mounted by the running
+        # container. The readiness gate belongs to live DROP PART operations.
+        with tempfile.TemporaryDirectory() as directory:
+            policy = Path(directory) / "policy.xml"
+            template = Path(directory) / "query-log.xml"
+            policy.write_text("<clickhouse><text_log><ttl>event_date + INTERVAL 7 DAY DELETE</ttl></text_log></clickhouse>")
+            template.write_text("<clickhouse><query_log><ttl>event_date + INTERVAL 7 DAY DELETE</ttl></query_log></clickhouse>")
+
+            def command(args, **_):
+                if "{{.State.Running}}" in args:
+                    return "true"
+                if "{{json .Mounts}}" in args:
+                    return "[]"
+                raise AssertionError(f"unexpected command: {args}")
+
+            with mock.patch.object(cleanup, "run_command", side_effect=command), mock.patch.object(cleanup, "server_ready", return_value=(False, "503")):
+                with contextlib.redirect_stdout(io.StringIO()) as result:
+                    status = cleanup.main([
+                        "--apply", "--stage-query-log-policy", "--recovery-independent",
+                        "--policy-file", str(policy), "--query-log-template", str(template),
+                    ], query_factory=lambda _: lambda _sql: (_ for _ in ()).throw(AssertionError("SQL must not run")))
+            self.assertEqual(status, 0)
+            self.assertEqual(cleanup.policy_retention_days(policy, "query_log"), 7)
+            self.assertTrue(cleanup.query_log_marker(policy).is_file())
+            self.assertIn('"query_log_ttl_activated": false', result.getvalue())
+
+    def test_staging_policy_waits_for_readiness_if_file_is_live_mounted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            policy = Path(directory) / "policy.xml"
+            template = Path(directory) / "query-log.xml"
+            policy.write_text("<clickhouse><text_log><ttl>event_date + INTERVAL 7 DAY DELETE</ttl></text_log></clickhouse>")
+            template.write_text("<clickhouse><query_log><ttl>event_date + INTERVAL 7 DAY DELETE</ttl></query_log></clickhouse>")
+
+            def command(args, **_):
+                if "{{.State.Running}}" in args:
+                    return "true"
+                if "{{json .Mounts}}" in args:
+                    return '[{"Type":"bind","Source":"' + str(policy) + '","Destination":"/etc/clickhouse-server/config.d/production-system-logs.xml"}]'
+                raise AssertionError(f"unexpected command: {args}")
+
+            with mock.patch.object(cleanup, "run_command", side_effect=command), mock.patch.object(cleanup, "server_ready", return_value=(False, "503")):
+                with self.assertRaisesRegex(cleanup.SafetyError, "readyz is 503"):
+                    cleanup.main([
+                        "--apply", "--stage-query-log-policy", "--recovery-independent",
+                        "--policy-file", str(policy), "--query-log-template", str(template),
+                    ], query_factory=lambda _: lambda _sql: (_ for _ in ()).throw(AssertionError("SQL must not run")))
+            self.assertIsNone(cleanup.policy_retention_days(policy, "query_log"))
+            self.assertFalse(cleanup.query_log_marker(policy).exists())
+
     def test_installer_only_preserves_query_log_ttl_with_explicit_marker(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

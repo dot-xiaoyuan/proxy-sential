@@ -264,7 +264,11 @@ def main(argv: list[str] | None = None, *, query_factory: Callable[[str], Callab
     if policy_days is not None and args.retain_days < policy_days:
         raise SafetyError(f"requested retention {args.retain_days} days is shorter than staged policy {policy_days} days")
     ready, ready_status = server_ready(args.readyz)
-    if args.apply and not ready:
+    # An unmounted host policy cannot affect the running container until a
+    # separately controlled recreation. Only that reversible preparation may
+    # proceed while the application is degraded. A mounted policy or actual
+    # DROP PART operation retains the full readiness gate.
+    if args.apply and not ready and (not args.stage_query_log_policy or policy_mounted):
         raise SafetyError(f"application /readyz is {ready_status}; defer system-log cleanup until the application is ready")
 
     if args.stage_query_log_policy:
