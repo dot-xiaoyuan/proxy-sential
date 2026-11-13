@@ -8098,13 +8098,27 @@ export interface components {
             status: "initializing" | "ready" | "processing" | "delayed" | "failed";
             lag_seconds: number;
             /** Format: int64 */
-            result_version: number;
+            result_version?: number;
+            source?: string;
             /** Format: date-time */
             oldest_pending_at?: string;
+            /** Format: date-time */
+            cursor_at?: string;
             /** Format: date-time */
             ingested_at?: string;
             /** Format: date-time */
             processed_at?: string;
+            /** Format: date-time */
+            last_success_at?: string;
+            /** Format: int64 */
+            pending_batches?: number;
+            /** Format: int64 */
+            archive_pending_batches?: number;
+            /** Format: date-time */
+            archive_verified_at?: string;
+            /** Format: date-time */
+            archive_oldest_pending_at?: string;
+            archive_lag_seconds?: number;
             error?: string;
         };
         DiscoveryTypeCatalogue: {

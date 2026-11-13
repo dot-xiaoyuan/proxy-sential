@@ -5149,6 +5149,8 @@ pre.wrap-code {
 .discovery-overview-line .discovery-overview-count { height: auto; padding: 0; color: #475569; font-size: 12px; font-weight: 400; }
 .discovery-overview-line .discovery-overview-count:hover { color: #1d4ed8; }
 .discovery-overview-line .discovery-overview-count.is-active { color: #1d4ed8; font-weight: 600; }
+.discovery-batch-progress { display: flex; flex-wrap: wrap; gap: 3px 16px; min-width: 0; font-size: 12px; }
+.discovery-batch-progress .ant-typography { color: #475569; overflow-wrap: anywhere; }
 .discovery-detail-profile-link { margin-left: 10px; padding-inline: 0; }
 .discovery-trend { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .discovery-trend-bars { display: inline-flex; align-items: flex-end; gap: 3px; height: 20px; }

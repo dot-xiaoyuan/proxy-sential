@@ -8514,14 +8514,22 @@ components:
         has_more: { type: boolean }
     DiscoveryFreshness:
       type: object
-      required: [status, lag_seconds, result_version]
+      required: [status, lag_seconds]
       properties:
         status: { type: string, enum: [initializing, ready, processing, delayed, failed] }
         lag_seconds: { type: number }
         result_version: { type: integer, format: int64 }
+        source: { type: string }
         oldest_pending_at: { type: string, format: date-time }
+        cursor_at: { type: string, format: date-time }
         ingested_at: { type: string, format: date-time }
         processed_at: { type: string, format: date-time }
+        last_success_at: { type: string, format: date-time }
+        pending_batches: { type: integer, format: int64 }
+        archive_pending_batches: { type: integer, format: int64 }
+        archive_verified_at: { type: string, format: date-time }
+        archive_oldest_pending_at: { type: string, format: date-time }
+        archive_lag_seconds: { type: number }
         error: { type: string }
     DiscoveryTypeCatalogue:
       type: object

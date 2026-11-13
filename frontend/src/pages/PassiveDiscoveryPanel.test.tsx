@@ -640,3 +640,25 @@ it('shows hardware projection failure instead of inventing zero backlog', async 
   expect(await screen.findByText('硬件分类处理异常：规则包版本尚未就绪')).toBeVisible()
   expect(screen.getByLabelText('硬件分类处理进度')).not.toHaveTextContent('待处理 0')
 })
+
+it('shows ingestion, discovery and archive watermarks for batch discovery', async () => {
+  mockReads()
+  const normalRead=request.getMockImplementation()!
+  request.mockImplementation(async(path:string)=>{
+    const result=await normalRead(path)
+    return path.startsWith('/discovery/devices?')?{...result,freshness:{
+      status:'delayed',source:'passive-discovery-batch-v3',lag_seconds:1800,
+      ingested_at:'2026-11-13T08:00:00Z',processed_at:'2026-11-13T07:30:00Z',
+      archive_verified_at:'2026-11-13T07:00:00Z',pending_batches:3,archive_pending_batches:2,
+      oldest_pending_at:'2026-11-13T07:25:00Z',archive_oldest_pending_at:'2026-11-13T06:50:00Z',
+    }}:result
+  })
+  renderPanel()
+  const progress=await screen.findByLabelText('存储处理进度')
+  expect(progress).toHaveTextContent('采集入库')
+  expect(progress).toHaveTextContent('设备发现')
+  expect(progress).toHaveTextContent('待发现批次 3')
+  expect(progress).toHaveTextContent('证据归档')
+  expect(progress).toHaveTextContent('待归档批次 2')
+  expect(await screen.findByText('设备数据更新延迟')).toBeInTheDocument()
+})
