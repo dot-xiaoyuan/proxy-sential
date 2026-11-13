@@ -68,3 +68,32 @@ func TestCaptureCoverageCheckpointRejectsCorruptionAndPartialOutput(t *testing.T
 		t.Fatalf("partial source record was not rejected: %v", err)
 	}
 }
+
+func TestCaptureCoverageNumericRotationsPreferOneOverTwo(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "ttl.jsonl")
+	start := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	old := sharedaccess.CoverageV2{SchemaVersion: "capture-coverage/v2", From: start, To: start.Add(30 * time.Second), KernelStatsKnown: true}
+	newer := sharedaccess.CoverageV2{SchemaVersion: "capture-coverage/v2", From: old.To, To: old.To.Add(30 * time.Second), KernelStatsKnown: true}
+	if err := writeCaptureCoverage(output+".2", "sensor", "bond0", "instance", "packet-sidecar", nil, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeCaptureCoverage(output+".1", "sensor", "bond0", "instance", "packet-sidecar", nil, newer); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(output+".2", start, start); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(output+".1", start.Add(time.Minute), start.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(output+".3.gz", []byte("not a plain JSONL rotation"), 0640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(output, nil, 0640); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := lastPersistedCaptureCoverage(output, "sensor", "instance")
+	if err != nil || !found || !got.To.Equal(newer.To) {
+		t.Fatalf("numeric rotation lookup = %+v, found=%t err=%v", got, found, err)
+	}
+}

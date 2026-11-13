@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -106,25 +107,40 @@ func validCaptureCoverage(coverage sharedaccess.CoverageV2) bool {
 }
 
 // Search a bounded tail of the live file and, if needed, the two newest plain
-// rotated files. Full raw-chain scans would pause capture for too long.
+// rotated files. Supports both .1 logrotate names and timestamped rotations.
+// Full raw-chain scans would pause capture for too long.
 func lastPersistedCaptureCoverage(output, sensor, instance string) (sharedaccess.CoverageV2, bool, error) {
 	checkpoint, checkpointFound, checkpointErr := loadCaptureCoverageCheckpoint(output, sensor, instance)
 	files := []string{output}
-	rotated, err := filepath.Glob(output + "-*")
-	if err != nil {
-		return sharedaccess.CoverageV2{}, false, err
+	type candidate struct {
+		path string
+		mod  time.Time
 	}
-	sort.Sort(sort.Reverse(sort.StringSlice(rotated)))
-	added := 0
-	for _, path := range rotated {
-		if strings.HasSuffix(path, ".gz") {
-			continue
+	var rotated []candidate
+	for _, pattern := range []string{output + "-[0-9]*", output + ".[0-9]*"} {
+		paths, err := filepath.Glob(pattern)
+		if err != nil {
+			return sharedaccess.CoverageV2{}, false, err
 		}
-		files = append(files, path)
-		added++
-		if added == 2 {
-			break
+		for _, path := range paths {
+			if !plainCaptureRotation(output, path) {
+				continue
+			}
+			info, err := os.Stat(path)
+			if err != nil {
+				return sharedaccess.CoverageV2{}, false, err
+			}
+			rotated = append(rotated, candidate{path: path, mod: info.ModTime()})
 		}
+	}
+	sort.Slice(rotated, func(i, j int) bool {
+		if rotated[i].mod.Equal(rotated[j].mod) {
+			return rotated[i].path > rotated[j].path
+		}
+		return rotated[i].mod.After(rotated[j].mod)
+	})
+	for i := 0; i < len(rotated) && i < 2; i++ {
+		files = append(files, rotated[i].path)
 	}
 	best, found := checkpoint, checkpointFound
 	for _, path := range files {
@@ -143,6 +159,19 @@ func lastPersistedCaptureCoverage(output, sensor, instance string) (sharedaccess
 		return sharedaccess.CoverageV2{}, false, checkpointErr
 	}
 	return best, found, nil
+}
+
+func plainCaptureRotation(output, path string) bool {
+	suffix := strings.TrimPrefix(path, output)
+	if strings.HasPrefix(suffix, ".") && len(suffix) > 1 {
+		_, err := strconv.Atoi(suffix[1:])
+		return err == nil
+	}
+	if strings.HasPrefix(suffix, "-") && len(suffix) == len("-20060102-150405") {
+		_, err := time.Parse("-20060102-150405", suffix)
+		return err == nil
+	}
+	return false
 }
 
 func readCaptureCoverageTail(path, sensor, instance string) (sharedaccess.CoverageV2, bool, error) {

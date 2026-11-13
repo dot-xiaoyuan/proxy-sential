@@ -4,6 +4,7 @@ package devicesignal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -80,20 +81,31 @@ func Run(ctx context.Context, opts Options) error {
 	if len(priorityCIDRs) > 0 && !opts.HandshakeOnly {
 		return fmt.Errorf("handshake priority CIDRs require handshake-only capture")
 	}
+	var routerPrevious sharedaccess.CoverageV2
+	var routerPreviousKnown bool
+	var routerPriorErr error
+	if opts.RouterProtocolsOnly {
+		// Tail lookup can read up to 64 MiB from each of three files. Do it
+		// before the AF_PACKET socket is opened, so startup recovery itself
+		// cannot fill the new socket or lose incoming packets there.
+		routerPrevious, routerPreviousKnown, routerPriorErr = lastPersistedCaptureCoverage(opts.Output, opts.SensorID, opts.CollectorInstanceID)
+		if errors.Is(routerPriorErr, errCaptureOutputIncomplete) {
+			return routerPriorErr
+		}
+	}
 	iface, err := net.InterfaceByName(opts.Interface)
 	if err != nil {
 		return err
 	}
-	fd, err := syscall.Socket(syscall.AF_PACKET, syscall.SOCK_RAW, int(htons(0x0003)))
+	// A zero-protocol packet socket receives nothing until Bind activates the
+	// selected interface and ETH_P_ALL. Configure its buffer and BPF first.
+	fd, err := syscall.Socket(syscall.AF_PACKET, syscall.SOCK_RAW, 0)
 	if err != nil {
 		return fmt.Errorf("open AF_PACKET socket: %w", err)
 	}
 	defer syscall.Close(fd)
-	if err := syscall.Bind(fd, &syscall.SockaddrLinklayer{Protocol: htons(0x0003), Ifindex: iface.Index}); err != nil {
-		return fmt.Errorf("bind %s: %w", opts.Interface, err)
-	}
-	// Router protocol buckets synchronously append and sync their evidence at
-	// each boundary. The socket must hold a short burst while that write runs.
+	// Router protocol buckets have a bounded asynchronous writer, but the
+	// socket still needs room for bursts and writer backpressure.
 	// Linux clamps this request to net.core.rmem_max on each host and reports a
 	// doubled effective size. Keep the other capture modes at the prior bound.
 	requestedBuffer := 32 << 20
@@ -118,9 +130,14 @@ func Run(ctx context.Context, opts Options) error {
 			return fmt.Errorf("attach shared signal BPF: %w", err)
 		}
 	}
+	// Attach the filter before binding. Otherwise an unrestricted mirror burst
+	// can fill the socket during startup before the collector begins reading.
+	if err := syscall.Bind(fd, &syscall.SockaddrLinklayer{Protocol: htons(0x0003), Ifindex: iface.Index}); err != nil {
+		return fmt.Errorf("bind %s: %w", opts.Interface, err)
+	}
 	_ = syscall.SetNonblock(fd, true)
 	if opts.RouterProtocolsOnly {
-		return runRouterCaptureLoop(ctx, opts, fd)
+		return runRouterCaptureLoop(ctx, opts, fd, routerPrevious, routerPreviousKnown, routerPriorErr)
 	}
 	state := newCaptureBucket()
 	state.handshakeEnabled = opts.HandshakeOnly

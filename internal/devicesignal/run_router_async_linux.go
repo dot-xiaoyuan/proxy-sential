@@ -4,7 +4,6 @@ package devicesignal
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"proxy-sentinel/internal/sharedaccess"
@@ -24,7 +23,7 @@ type routerCaptureSnapshot struct {
 	coverage sharedaccess.CoverageV2
 }
 
-func runRouterCaptureLoop(ctx context.Context, opts Options, fd int) (result error) {
+func runRouterCaptureLoop(ctx context.Context, opts Options, fd int, previous sharedaccess.CoverageV2, previousKnown bool, priorErr error) (result error) {
 	state := newCaptureBucket()
 	tracker := newStateChangeTracker[packetBucketKey](opts.StateLiveness)
 	controlTracker := newStateChangeTracker[string](opts.StateLiveness)
@@ -34,21 +33,17 @@ func runRouterCaptureLoop(ctx context.Context, opts Options, fd int) (result err
 		}
 		return saveCaptureCoverageCheckpoint(opts.Output, opts.SensorID, opts.CollectorInstanceID, coverage)
 	}
-	previous, previousKnown, priorErr := lastPersistedCaptureCoverage(opts.Output, opts.SensorID, opts.CollectorInstanceID)
-	if errors.Is(priorErr, errCaptureOutputIncomplete) {
-		return priorErr
-	}
+	setupReceived, setupDropped, setupKnown := packetCaptureStats(fd)
 	coverageFrom := time.Now().UTC()
 	firstCoverageUnknown := !previousKnown || priorErr != nil
 	if priorErr != nil {
-		log.Printf("device signal capture continuity unknown: previous coverage lookup failed: %v", priorErr)
+		log.Printf("device signal capture continuity unknown: previous coverage lookup failed: %v; setup_received=%d setup_dropped=%d setup_stats_known=%t", priorErr, setupReceived, setupDropped, setupKnown)
 	} else if !previousKnown {
-		log.Printf("device signal capture continuity unknown: no previous durable coverage for instance=%s", opts.CollectorInstanceID)
+		log.Printf("device signal capture continuity unknown: no previous durable coverage for instance=%s; setup_received=%d setup_dropped=%d setup_stats_known=%t", opts.CollectorInstanceID, setupReceived, setupDropped, setupKnown)
 	} else if gap, needed := captureCoverageGap(previous, coverageFrom); needed {
-		// The socket is already bound. Include its setup counters in the stopped
-		// interval and reset them before the first live receive bucket.
-		received, dropped, _ := packetCaptureStats(fd)
-		gap.Received, gap.Dropped = uint64(received), uint64(dropped)
+		// The socket is already bound. Its setup counters belong to this
+		// stopped interval, before the first live receive bucket begins.
+		gap.Received, gap.Dropped = uint64(setupReceived), uint64(setupDropped)
 		if err := writeCoverage(gap); err != nil {
 			return fmt.Errorf("persist capture restart gap: %w", err)
 		}
