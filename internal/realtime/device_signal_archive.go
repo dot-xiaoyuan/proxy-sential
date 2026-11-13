@@ -557,7 +557,10 @@ func nextSignalFile(path string, files []signalFile, old signalFile) (signalFile
 	}
 	if old.protected {
 		for _, file := range files {
-			if file.protected && file.ordinal == want {
+			// The chain's first gzip also has ordinal zero, but it is a
+			// duplicate of the protected live anchor, not the successor of
+			// a numbered rotation. Cross the raw anchor first.
+			if file.protected && file.ordinal == want && (want != 0 || !file.compressed) {
 				if want == 0 && !protectedSignalSuccessorProved(files, old, file) {
 					return signalFile{}, ErrStreamSourceGap
 				}
@@ -617,7 +620,45 @@ func protectedSignalSuccessorProved(files []signalFile, old, next signalFile) bo
 			}
 		}
 	}
-	return oldOrdinal > 0 && nextOrdinal == oldOrdinal-1
+	if oldOrdinal > 0 && nextOrdinal == oldOrdinal-1 {
+		return true
+	}
+	// Logrotate replaces both original inodes when it compresses a protected
+	// .1 and the following protected live anchor. The protected raw bytes may
+	// still cross that boundary only when their complete contents match two
+	// adjacent active gzip rotations. The first gzip in the durable chain is
+	// the independent witness for the live anchor; gzip reads check their CRC.
+	if old.ordinal != 1 || next.ordinal != 0 || old.compressed || next.compressed ||
+		!old.protected || !next.protected || !signalChainStartsAtLive(files, next) {
+		return false
+	}
+	compressedOld, err := matchingCompressedSignalFile(old, files)
+	if err != nil || compressedOld.ordinal < 2 {
+		return false
+	}
+	var first signalFile
+	for _, file := range files {
+		if file.protected && file.compressed && file.chainSeq == 0 {
+			if first.path != "" {
+				return false
+			}
+			first = file
+		}
+	}
+	if first.path == "" {
+		return false
+	}
+	matchedNext := false
+	for _, active := range files {
+		if active.protected || !active.compressed || !os.SameFile(active.info, first.info) {
+			continue
+		}
+		if matchedNext || active.ordinal < 2 || compressedOld.ordinal != active.ordinal+1 {
+			return false
+		}
+		matchedNext = true
+	}
+	return matchedNext
 }
 
 func signalChainStartsAtLive(files []signalFile, live signalFile) bool {
