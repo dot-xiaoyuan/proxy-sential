@@ -528,7 +528,54 @@ func TestStreamReconciliationAcceptsIdenticalDuplicateRowsButRejectsConflict(t *
 		t.Fatalf("identical duplicate body row was treated as conflict: found=%t err=%v", found, err)
 	}
 	conflicting = true
-	if found, err := ch.VerifyStreamSearch(context.Background(), segment); !errors.Is(err, streamlog.ErrContentConflict) || found {
+	if found, err := ch.VerifyStreamSearch(context.Background(), segment); !errors.Is(err, streamlog.ErrContentConflict) || found ||
+		!strings.Contains(err.Error(), "stage=legacy.content_sha256 index=0") || !strings.Contains(err.Error(), "expected_sha256="+prepared[0].hash) {
 		t.Fatalf("different search content was accepted: found=%t err=%v", found, err)
+	}
+}
+
+func TestBirthAwareSearchAcceptsISOAndSimpleTimeWithMicrosecondPrecision(t *testing.T) {
+	segment := testStreamSegment()
+	segment.Events[0].Timestamp = "2026-10-24T10:00:00.123456789Z"
+	prepared, err := prepareStreamEvents(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := prepared[0]
+	observed := item.observed.Truncate(time.Microsecond)
+	mode := "iso"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("date_time_output_format"); got != "iso" {
+			t.Errorf("HTTP query did not request ISO dates: %q", got)
+		}
+		rowTime := observed.Format(time.RFC3339Nano)
+		if mode == "simple" {
+			rowTime = observed.Format("2006-01-02 15:04:05.000000")
+		}
+		if mode == "wrong" {
+			rowTime = observed.Add(time.Second).Format(time.RFC3339Nano)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"scope_id": item.scope, "protocol": item.event.Source,
+			"observed_at": rowTime, "event_key": item.key,
+			"content_sha256": item.hash, "archive_month": 202610,
+			"retention_class": item.retention, "body_ref": "",
+		})
+	}))
+	defer server.Close()
+	ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, format := range []string{"iso", "simple"} {
+		mode = format
+		if found, err := ch.verifyBirthAwareStreamSearch(context.Background(), segment); err != nil || !found {
+			t.Fatalf("%s DateTime64 result rejected: found=%t err=%v", format, found, err)
+		}
+	}
+	mode = "wrong"
+	if found, err := ch.verifyBirthAwareStreamSearch(context.Background(), segment); !errors.Is(err, streamlog.ErrContentConflict) || found ||
+		!strings.Contains(err.Error(), "stage=birth.observed_at index=0") || !strings.Contains(err.Error(), "expected_sha256="+item.hash) {
+		t.Fatalf("different observed instant lacked bounded diagnostic: found=%t err=%v", found, err)
 	}
 }

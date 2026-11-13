@@ -460,6 +460,20 @@ func (s *ClickHouseStore) VerifyStreamSearch(ctx context.Context, segment stream
 	return len(missing) == 0, nil
 }
 
+// Keep a conflict tied to its bounded segment ordinal without logging source
+// addresses, body refs or event contents. The caller adds the segment ID.
+func streamSearchVerificationConflict(stage string, index int, expectedHash, actualHash string) error {
+	return fmt.Errorf("stream search verification stage=%s index=%d expected_sha256=%s actual_sha256=%s: %w",
+		stage, index, expectedHash, actualHash, streamlog.ErrContentConflict)
+}
+
+func streamSearchObservedAt(raw string) (time.Time, error) {
+	if observed, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+		return observed, nil
+	}
+	return time.ParseInLocation("2006-01-02 15:04:05.000000", raw, time.UTC)
+}
+
 // A birth-aware file ID and the journal's raw span make the expected search
 // row unique to this source generation. Probe the MergeTree's leading
 // (scope, protocol, observed_at) key in small groups. An incomplete probe
@@ -538,17 +552,42 @@ func (s *ClickHouseStore) verifyBirthAwareStreamSearch(ctx context.Context, segm
 					return false, err
 				}
 				index, found := expected[row.Key]
-				if !found || row.Scope != group.scope || row.Protocol != group.protocol ||
-					row.Observed != prepared[index].observed.Format("2006-01-02 15:04:05.000000") ||
-					row.Hash != prepared[index].hash || fmt.Sprint(row.Month) != segment.ArchiveMonth ||
-					row.Class != prepared[index].retention || seen[row.Key] >= 100 {
-					return false, streamlog.ErrContentConflict
+				if !found {
+					return false, streamSearchVerificationConflict("birth.unexpected_key", -1, "", row.Hash)
+				}
+				item := prepared[index]
+				if row.Scope != group.scope {
+					return false, streamSearchVerificationConflict("birth.scope", index, item.hash, row.Hash)
+				}
+				if row.Protocol != group.protocol {
+					return false, streamSearchVerificationConflict("birth.protocol", index, item.hash, row.Hash)
+				}
+				observed := item.observed.Truncate(time.Microsecond)
+				actualObserved, parseErr := streamSearchObservedAt(row.Observed)
+				if parseErr != nil || !actualObserved.Equal(observed) {
+					return false, fmt.Errorf("stream search verification stage=birth.observed_at index=%d expected_time=%q actual_time=%q expected_sha256=%s actual_sha256=%s: %w",
+						index, observed.Format(time.RFC3339Nano), row.Observed, item.hash, row.Hash, streamlog.ErrContentConflict)
+				}
+				if row.Hash != item.hash {
+					return false, streamSearchVerificationConflict("birth.content_sha256", index, item.hash, row.Hash)
+				}
+				if fmt.Sprint(row.Month) != segment.ArchiveMonth {
+					return false, streamSearchVerificationConflict("birth.archive_month", index, item.hash, row.Hash)
+				}
+				if row.Class != item.retention {
+					return false, streamSearchVerificationConflict("birth.retention_class", index, item.hash, row.Hash)
+				}
+				if seen[row.Key] >= 100 {
+					return false, streamSearchVerificationConflict("birth.duplicate_limit", index, item.hash, row.Hash)
 				}
 				if segment.BodyLayout == "v2" {
 					ref, err := ParseStreamBodyRef(row.Ref)
-					if err != nil || ref.BodyLayout != "v2" || ref.Scope != row.Scope || ref.Key != row.Key ||
+					if err != nil {
+						return false, streamSearchVerificationConflict("birth.body_ref_parse", index, item.hash, "")
+					}
+					if ref.BodyLayout != "v2" || ref.Scope != row.Scope || ref.Key != row.Key ||
 						ref.SHA256 != row.Hash || ref.Month != segment.ArchiveMonth || ref.Class != row.Class {
-						return false, streamlog.ErrContentConflict
+						return false, streamSearchVerificationConflict("birth.body_ref", index, item.hash, ref.SHA256)
 					}
 				}
 				seen[row.Key]++
@@ -636,13 +675,29 @@ func (s *ClickHouseStore) missingStreamSearchEvents(ctx context.Context, segment
 		}
 		key := row.Scope + "\x00" + row.Key
 		index, found := expected[key]
-		if !found || prepared[index].hash != row.Hash || fmt.Sprint(row.Month) != segment.ArchiveMonth || prepared[index].retention != row.Class || seen[key] >= 100 {
-			return nil, streamlog.ErrContentConflict
+		if !found {
+			return nil, streamSearchVerificationConflict("legacy.unexpected_key", -1, "", row.Hash)
+		}
+		item := prepared[index]
+		if item.hash != row.Hash {
+			return nil, streamSearchVerificationConflict("legacy.content_sha256", index, item.hash, row.Hash)
+		}
+		if fmt.Sprint(row.Month) != segment.ArchiveMonth {
+			return nil, streamSearchVerificationConflict("legacy.archive_month", index, item.hash, row.Hash)
+		}
+		if item.retention != row.Class {
+			return nil, streamSearchVerificationConflict("legacy.retention_class", index, item.hash, row.Hash)
+		}
+		if seen[key] >= 100 {
+			return nil, streamSearchVerificationConflict("legacy.duplicate_limit", index, item.hash, row.Hash)
 		}
 		if segment.BodyLayout == "v2" {
 			ref, err := ParseStreamBodyRef(row.Ref)
-			if err != nil || ref.BodyLayout != "v2" || ref.Scope != row.Scope || ref.Key != row.Key || ref.SHA256 != row.Hash || ref.Month != segment.ArchiveMonth || ref.Class != row.Class {
-				return nil, streamlog.ErrContentConflict
+			if err != nil {
+				return nil, streamSearchVerificationConflict("legacy.body_ref_parse", index, item.hash, "")
+			}
+			if ref.BodyLayout != "v2" || ref.Scope != row.Scope || ref.Key != row.Key || ref.SHA256 != row.Hash || ref.Month != segment.ArchiveMonth || ref.Class != row.Class {
+				return nil, streamSearchVerificationConflict("legacy.body_ref", index, item.hash, ref.SHA256)
 			}
 		}
 		seen[key]++
