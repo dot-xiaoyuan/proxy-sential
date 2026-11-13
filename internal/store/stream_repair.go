@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -311,6 +312,73 @@ func (s *ClickHouseStore) RetryProvenUnsentStreamRiskFeatures(ctx context.Contex
 	if err := s.requireQuietStreamRepair(ctx, []string{table}); err != nil {
 		return err
 	}
+	missing, err = s.missingStreamRiskFeatures(ctx, segment)
+	if err != nil {
+		return err
+	}
+	if len(missing) != len(features) {
+		return streamlog.ErrUnconfirmed
+	}
+	if err := s.WriteStreamRiskFeatures(ctx, streamRepairToken(id, table), segment); err != nil {
+		return err
+	}
+	confirmed, err := s.VerifyStreamRiskFeatures(ctx, segment)
+	if err != nil || !confirmed {
+		if err != nil {
+			return err
+		}
+		return streamlog.ErrUnconfirmed
+	}
+	return nil
+}
+
+// ReconcileSettledStreamRiskFeatures is an exceptional repair for a stopped
+// birth-aware packet source whose independently checkpointed feature lane is
+// still attempted. The journal remains attempted; its worker must confirm the
+// ClickHouse feature rows and the PostgreSQL risk wake after restart.
+func (s *ClickHouseStore) ReconcileSettledStreamRiskFeatures(ctx context.Context, id string, segment streamlog.Segment) error {
+	age := time.Since(segment.AcceptedAt)
+	if id == "" || id != streamlog.SourceSegmentID(segment) ||
+		age < time.Hour || age >= 7*24*time.Hour ||
+		segment.Source != "device-signals" || filepath.Base(segment.SourcePath) != "ttl.jsonl" ||
+		!segment.RiskFeaturesRequired || !segment.SplitRiskFeatures ||
+		!birthAwareStandardEventRaw(segment) {
+		return fmt.Errorf("settled packet risk feature proof is incomplete: %w", streamlog.ErrUnconfirmed)
+	}
+	features, err := prepareStreamRiskFeatures(segment)
+	if err != nil {
+		return err
+	}
+	if len(features) == 0 {
+		return fmt.Errorf("settled packet segment has no eligible risk features: %w", streamlog.ErrUnconfirmed)
+	}
+	body, err := s.VerifyStreamBody(ctx, segment)
+	if err != nil || !body {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("settled packet risk feature body is unconfirmed: %w", streamlog.ErrUnconfirmed)
+	}
+	search, err := s.VerifyStreamSearch(ctx, segment)
+	if err != nil || !search {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("settled packet risk feature search is unconfirmed: %w", streamlog.ErrUnconfirmed)
+	}
+	missing, err := s.missingStreamRiskFeatures(ctx, segment)
+	if err != nil || len(missing) == 0 {
+		return err
+	}
+	if len(missing) != len(features) {
+		return fmt.Errorf("partially committed settled packet risk features require manual review: %w", streamlog.ErrUnconfirmed)
+	}
+	const table = "stream_risk_features_v1"
+	if err := s.requireQuietStreamRepair(ctx, []string{table}); err != nil {
+		return err
+	}
+	// Recheck every exact key after the quiet interval; a late original insert
+	// leaves this attempt pending instead of authorizing a second token.
 	missing, err = s.missingStreamRiskFeatures(ctx, segment)
 	if err != nil {
 		return err
