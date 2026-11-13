@@ -347,27 +347,44 @@ func sortedStreamRepairTables(tables map[string]bool) []string {
 }
 
 // requireQuietStreamRepair is only called with a stopped source lease held by
-// the operator command. The two checks include queued async inserts and active
-// INSERT requests; no diagnostic query-log retention is needed.
+// the operator command. Consecutive checks include queued async inserts and
+// active INSERT requests; no diagnostic query-log retention is needed.
 func (s *ClickHouseStore) requireQuietStreamRepair(ctx context.Context, tables []string) error {
-	for check := 0; check < 2; check++ {
+	// Other sources can briefly occupy a shared body table after the repaired
+	// source has stopped. Give that queue a bounded chance to drain, but never
+	// issue a repair insert without two consecutive quiet observations.
+	const maxChecks = 4
+	quietChecks := 0
+	lastBusy := ""
+	for check := 0; check < maxChecks; check++ {
+		busy := ""
 		for _, table := range tables {
 			queued, err := s.streamSystemCount(ctx, "SELECT count() FROM system.asynchronous_inserts WHERE database=currentDatabase() AND table="+chQuote(table))
 			if err != nil {
 				return err
 			}
 			if queued != 0 {
-				return streamlog.ErrUnconfirmed
+				busy = fmt.Sprintf("table=%s asynchronous_insert_batches=%d", table, queued)
+				break
 			}
 			active, err := s.streamSystemCount(ctx, "SELECT count() FROM system.processes WHERE current_database=currentDatabase() AND lower(query_kind)='insert' AND positionCaseInsensitive(query,"+chQuote(table)+")>0")
 			if err != nil {
 				return err
 			}
 			if active != 0 {
-				return streamlog.ErrUnconfirmed
+				return fmt.Errorf("ClickHouse repair observed an active insert (table=%s active_inserts=%d): %w", table, active, streamlog.ErrUnconfirmed)
 			}
 		}
-		if check == 0 {
+		if busy == "" {
+			quietChecks++
+			if quietChecks == 2 {
+				return nil
+			}
+		} else {
+			quietChecks = 0
+			lastBusy = busy
+		}
+		if check+1 < maxChecks {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -375,7 +392,7 @@ func (s *ClickHouseStore) requireQuietStreamRepair(ctx context.Context, tables [
 			}
 		}
 	}
-	return nil
+	return fmt.Errorf("ClickHouse repair did not establish a quiet interval (%s): %w", lastBusy, streamlog.ErrUnconfirmed)
 }
 
 func (s *ClickHouseStore) streamSystemCount(ctx context.Context, sql string) (int, error) {
