@@ -251,12 +251,33 @@ func RequeueHardwareRule(ctx context.Context, db *sql.DB, ruleID, version string
 }
 
 func ProcessHardwareProjection(ctx context.Context, db *sql.DB, sensor string, limit int) (int, error) {
+	return ProcessHardwareProjectionWithin(ctx, db, sensor, limit, 0)
+}
+
+// ProcessHardwareProjectionWithin stops claiming new identities before a
+// worker cycle runs out of time. Each completed identity is already committed,
+// so the remaining dirty rows stay eligible for the next cycle.
+func ProcessHardwareProjectionWithin(ctx context.Context, db *sql.DB, sensor string, limit int, budget time.Duration) (int, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
+	var stopAt time.Time
+	if budget > 0 {
+		stopAt = time.Now().Add(budget)
+	}
 	count := 0
 	for ; count < limit; count++ {
-		processed, key, err := processHardwareIdentity(ctx, db, sensor)
+		identityCtx := ctx
+		cancel := func() {}
+		if !stopAt.IsZero() {
+			remaining := time.Until(stopAt) - time.Second
+			if remaining < 2*time.Second {
+				return count, nil
+			}
+			identityCtx, cancel = context.WithTimeout(ctx, min(remaining, 7*time.Second))
+		}
+		processed, key, err := processHardwareIdentity(identityCtx, db, sensor)
+		cancel()
 		if err != nil {
 			if key != "" {
 				failureCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
@@ -270,6 +291,29 @@ func ProcessHardwareProjection(ctx context.Context, db *sql.DB, sensor string, l
 		}
 	}
 	return count, nil
+}
+
+// A source may be refreshed with a newer observation while depending on the
+// same installed rules. Dependency rows only need to move when that rule set
+// changes; evidence and last-seen changes are kept in the current projection.
+func hardwareRuleDependenciesChanged(before, after []fingerprint.HardwareSource) bool {
+	set := func(sources []fingerprint.HardwareSource) map[string]struct{} {
+		result := make(map[string]struct{}, len(sources))
+		for _, source := range sources {
+			result[source.RuleID+"\x00"+source.RuleVersion] = struct{}{}
+		}
+		return result
+	}
+	a, b := set(before), set(after)
+	if len(a) != len(b) {
+		return true
+	}
+	for key := range a {
+		if _, ok := b[key]; !ok {
+			return true
+		}
+	}
+	return false
 }
 
 func processHardwareIdentity(ctx context.Context, db *sql.DB, sensor string) (bool, string, error) {
@@ -353,18 +397,20 @@ func processHardwareIdentity(ctx context.Context, db *sql.DB, sensor string) (bo
 			return false, key, err
 		}
 	}
-	if _, err = tx.ExecContext(ctx, `DELETE FROM passive_hardware_rule_dependencies WHERE identity_key=$1`, key); err != nil {
-		return false, key, err
-	}
-	deps := map[string]bool{}
-	for _, s := range state.TypeSources {
-		dep := s.RuleID + "\x00" + s.RuleVersion
-		if deps[dep] {
-			continue
-		}
-		deps[dep] = true
-		if _, err = tx.ExecContext(ctx, `INSERT INTO passive_hardware_rule_dependencies(rule_id,rule_version,identity_key) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, s.RuleID, s.RuleVersion, key); err != nil {
+	if previous == nil || hardwareRuleDependenciesChanged(previous.TypeSources, state.TypeSources) {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM passive_hardware_rule_dependencies WHERE identity_key=$1`, key); err != nil {
 			return false, key, err
+		}
+		deps := map[string]bool{}
+		for _, s := range state.TypeSources {
+			dep := s.RuleID + "\x00" + s.RuleVersion
+			if deps[dep] {
+				continue
+			}
+			deps[dep] = true
+			if _, err = tx.ExecContext(ctx, `INSERT INTO passive_hardware_rule_dependencies(rule_id,rule_version,identity_key) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, s.RuleID, s.RuleVersion, key); err != nil {
+				return false, key, err
+			}
 		}
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM passive_hardware_dirty WHERE identity_key=$1`, key); err != nil {

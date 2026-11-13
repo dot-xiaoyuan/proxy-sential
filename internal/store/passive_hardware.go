@@ -272,15 +272,22 @@ func (s *DBStore) runPassiveHardwareProjection(ctx context.Context, sensor strin
 	}
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
+	var lastRuleCheck time.Time
+	var lastRuleVersion string
 	for ctx.Err() == nil {
-		work, cancel := context.WithTimeout(ctx, 10*time.Second)
+		work, cancel := context.WithTimeout(ctx, 12*time.Second)
+		cycleStarted := time.Now()
 		probe := fingerprint.EvaluateHardware(fingerprint.HardwareInput{}, time.Now().UTC())
 		err := hardwareWorkerReadiness(probe)
-		if err == nil {
+		if err == nil && (probe.Version != lastRuleVersion || time.Since(lastRuleCheck) >= 30*time.Second) {
 			_, err = discovery.RequeueHardwareRuleVersion(work, s.pg.db, sensor, probe.Version)
+			if err == nil {
+				lastRuleVersion, lastRuleCheck = probe.Version, time.Now()
+			}
 		}
+		processed := 0
 		if err == nil {
-			_, err = discovery.ProcessHardwareProjection(work, s.pg.db, sensor, 100)
+			processed, err = discovery.ProcessHardwareProjectionWithin(work, s.pg.db, sensor, 16, 8*time.Second)
 		}
 		if err == nil && os.Getenv("PROXY_SENTINEL_HARDWARE_BACKFILL") == "true" {
 			err = s.backfillPassiveHardwareLatest(work, sensor)
@@ -291,12 +298,18 @@ func (s *DBStore) runPassiveHardwareProjection(ctx context.Context, sensor strin
 		}
 		recordCtx, recordCancel := context.WithTimeout(context.WithoutCancel(work), 2*time.Second)
 		_, recordErr := s.pg.db.ExecContext(recordCtx, `INSERT INTO passive_hardware_runtime(sensor_id,last_error,last_success_at) VALUES($1,$2,CASE WHEN $2='' THEN now() ELSE NULL END)
- ON CONFLICT(sensor_id) DO UPDATE SET last_error=EXCLUDED.last_error,last_success_at=CASE WHEN EXCLUDED.last_error='' THEN now() ELSE passive_hardware_runtime.last_success_at END,updated_at=now()`, sensor, message)
+ ON CONFLICT(sensor_id) DO UPDATE SET last_error=EXCLUDED.last_error,last_success_at=CASE WHEN EXCLUDED.last_error='' THEN now() ELSE passive_hardware_runtime.last_success_at END,updated_at=now()
+ WHERE passive_hardware_runtime.last_error IS DISTINCT FROM EXCLUDED.last_error
+    OR passive_hardware_runtime.last_success_at IS NULL
+    OR passive_hardware_runtime.updated_at < now()-interval '10 seconds'`, sensor, message)
 		recordCancel()
 		if err == nil {
 			err = recordErr
 		}
 		cancel()
+		if elapsed := time.Since(cycleStarted); elapsed >= 5*time.Second || err != nil {
+			log.Printf("passive hardware projection cycle: processed=%d elapsed_ms=%d error=%v", processed, elapsed.Milliseconds(), err)
+		}
 		if err != nil && ctx.Err() == nil {
 			log.Printf("passive hardware projection: %v", err)
 		}

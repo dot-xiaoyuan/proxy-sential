@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"proxy-sentinel/internal/fingerprint"
 	"proxy-sentinel/internal/normalized"
 	"strings"
 	"testing"
@@ -26,6 +27,25 @@ func TestHardwareFactsAreScopedAndRequireOwnership(t *testing.T) {
 	o.Evidence.Payload["identity_status"] = "l2_mismatch"
 	if fact, _ := HardwareFactFromObservation(o); fact != nil {
 		t.Fatal("gateway MAC became hardware identity")
+	}
+}
+
+func TestHardwareRuleDependenciesChangeOnlyWithRuleSet(t *testing.T) {
+	earlier := []fingerprint.HardwareSource{
+		{RuleID: "model-a", RuleVersion: "v1", EvidenceID: "first"},
+		{RuleID: "model-b", RuleVersion: "v1", EvidenceID: "second"},
+	}
+	reordered := []fingerprint.HardwareSource{
+		{RuleID: "model-b", RuleVersion: "v1", EvidenceID: "new-evidence"},
+		{RuleID: "model-a", RuleVersion: "v1", EvidenceID: "first"},
+		{RuleID: "model-a", RuleVersion: "v1", EvidenceID: "duplicate"},
+	}
+	if hardwareRuleDependenciesChanged(earlier, reordered) {
+		t.Fatal("evidence refresh rewrote unchanged rule dependencies")
+	}
+	changed := []fingerprint.HardwareSource{{RuleID: "model-a", RuleVersion: "v2"}}
+	if !hardwareRuleDependenciesChanged(earlier, changed) {
+		t.Fatal("rule retraction or version change must refresh dependencies")
 	}
 }
 
