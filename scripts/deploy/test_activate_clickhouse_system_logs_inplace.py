@@ -118,6 +118,7 @@ class InPlaceSystemLogTest(unittest.TestCase):
             self.assertEqual(calls[0][0], "stop")
             self.assertEqual(calls[1][0], "install")
             sql = [call[1] for call in calls if call[0] == "sql"]
+            self.assertEqual(sql[0], "SYSTEM RELOAD CONFIG")
             self.assertEqual(sum("MODIFY TTL" in item for item in sql), 2)
             self.assertTrue(all("materialize_ttl_after_modify = 0" in item for item in sql if "MODIFY TTL" in item))
             self.assertEqual(sum("ttl_only_drop_parts = 1" in item for item in sql), 2)

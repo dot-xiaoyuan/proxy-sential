@@ -268,6 +268,7 @@ def apply(release: dict, policy: dict, container: dict) -> None:
     save_state(state)
     try:
         install_container_policy(policy["sha256"])
+        ch_query("SYSTEM RELOAD CONFIG")
         time.sleep(5)  # Detect a live config reload/rotation before altering.
         if container_identity(container["id"])["started_at"] != container["started_at"]:
             raise SafetyError("ClickHouse restarted while staging the policy")
