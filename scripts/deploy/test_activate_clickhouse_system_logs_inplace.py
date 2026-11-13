@@ -35,6 +35,8 @@ class InPlaceSystemLogTest(unittest.TestCase):
             self.assertFalse(maintenance.has_live_ttl(ddl))
 
     def test_release_identity_checks_commit_checksum_and_recovery_help(self):
+        cli_source = Path(__file__).parents[2] / "cmd/stream-repair/main.go"
+        self.assertIn(maintenance.EXPECTED_HELP, cli_source.read_text())
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             release = root / "releases" / "2026.11.13-abcd1234"
@@ -50,8 +52,9 @@ class InPlaceSystemLogTest(unittest.TestCase):
             with mock.patch.object(maintenance, "ROOT", root), mock.patch.object(maintenance, "CURRENT", root / "current"):
                 with mock.patch.object(maintenance.subprocess, "run", return_value=mock.Mock(stdout="", stderr=maintenance.EXPECTED_HELP)):
                     self.assertEqual(maintenance.release_identity(commit, digest)["repair_sha256"], digest)
-                with mock.patch.object(maintenance.subprocess, "run", return_value=mock.Mock(stdout="", stderr="old help")):
-                    with self.assertRaisesRegex(maintenance.SafetyError, "lacks journal-backed"):
+                old_help = "repair a settled source-backed or journal-backed standard-event archive with scoped row proof"
+                with mock.patch.object(maintenance.subprocess, "run", return_value=mock.Mock(stdout="", stderr=old_help)):
+                    with self.assertRaisesRegex(maintenance.SafetyError, "lacks settled scoped"):
                         maintenance.release_identity(commit, digest)
                 with mock.patch.object(maintenance.subprocess, "run", return_value=mock.Mock(stdout="", stderr=maintenance.EXPECTED_HELP)):
                     with self.assertRaisesRegex(maintenance.SafetyError, "commit changed"):

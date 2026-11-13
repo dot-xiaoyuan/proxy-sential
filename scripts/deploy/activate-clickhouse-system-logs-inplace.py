@@ -34,7 +34,7 @@ CONTAINER_POLICY = "/etc/clickhouse-server/config.d/production-system-logs.xml"
 CONTAINER_POLICY_TMP = CONTAINER_POLICY + ".staged"
 STATE = ROOT / "data/db/clickhouse/system-log-inplace-state.json"
 MIN_FREE = 143 * 1024**3
-EXPECTED_HELP = "journal-backed standard-event archive with scoped row proof"
+EXPECTED_HELP = "repair a settled archive or birth-aware standard-event search with scoped row proof"
 TABLES = ("query_log", "text_log")
 POLICY_LOG_TABLES = (
     "query_log", "text_log", "part_log", "trace_log", "query_views_log",
@@ -92,7 +92,7 @@ def release_identity(expected_commit: str | None, expected_repair_sha256: str | 
         raise SafetyError("stream-repair differs from the release checksum manifest")
     help_result = subprocess.run([str(repair), "--help"], capture_output=True, text=True, timeout=5, check=False)
     if EXPECTED_HELP not in help_result.stdout + help_result.stderr:
-        raise SafetyError("deployed stream-repair lacks journal-backed scoped recovery")
+        raise SafetyError("deployed stream-repair lacks settled scoped recovery")
     if expected_commit is not None and commit != expected_commit:
         raise SafetyError("release commit changed after planning")
     if expected_repair_sha256 is not None and repair_sha != expected_repair_sha256:
