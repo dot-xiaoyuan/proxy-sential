@@ -447,11 +447,118 @@ func (s *ClickHouseStore) missingStreamBodyEvents(ctx context.Context, segment s
 }
 
 func (s *ClickHouseStore) VerifyStreamSearch(ctx context.Context, segment streamlog.Segment) (bool, error) {
+	if birthAwareStandardEventRaw(segment) {
+		confirmed, err := s.verifyBirthAwareStreamSearch(ctx, segment)
+		if err != nil || confirmed {
+			return confirmed, err
+		}
+	}
 	missing, err := s.missingStreamSearchEvents(ctx, segment)
 	if err != nil {
 		return false, err
 	}
 	return len(missing) == 0, nil
+}
+
+// A birth-aware file ID and the journal's raw span make the expected search
+// row unique to this source generation. Probe the MergeTree's leading
+// (scope, protocol, observed_at) key in small groups. An incomplete probe
+// falls back to the broader conflict check before any repair write.
+func (s *ClickHouseStore) verifyBirthAwareStreamSearch(ctx context.Context, segment streamlog.Segment) (bool, error) {
+	prepared, err := prepareStreamEvents(segment)
+	if err != nil {
+		return false, err
+	}
+	type group struct {
+		scope, protocol string
+		indexes         []int
+	}
+	groups := map[string]*group{}
+	for index, item := range prepared {
+		protocol := firstNonEmpty(item.event.SourceEventType, item.event.Source)
+		key := item.scope + "\x00" + protocol
+		if groups[key] == nil {
+			groups[key] = &group{scope: item.scope, protocol: protocol}
+		}
+		groups[key].indexes = append(groups[key].indexes, index)
+	}
+	groupKeys := make([]string, 0, len(groups))
+	for key := range groups {
+		groupKeys = append(groupKeys, key)
+	}
+	sort.Strings(groupKeys)
+	allPresent := true
+	const batchSize = 100
+	for _, groupKey := range groupKeys {
+		group := groups[groupKey]
+		for start := 0; start < len(group.indexes); start += batchSize {
+			end := start + batchSize
+			if end > len(group.indexes) {
+				end = len(group.indexes)
+			}
+			minTime, maxTime := prepared[group.indexes[start]].observed, prepared[group.indexes[start]].observed
+			keys := make([]string, 0, end-start)
+			expected := make(map[string]int, end-start)
+			for _, index := range group.indexes[start:end] {
+				item := prepared[index]
+				keys = append(keys, chQuote(item.key))
+				expected[item.key] = index
+				if item.observed.Before(minTime) {
+					minTime = item.observed
+				}
+				if item.observed.After(maxTime) {
+					maxTime = item.observed
+				}
+			}
+			query := "SELECT scope_id,protocol,observed_at,event_key,content_sha256,archive_month,retention_class,body_ref FROM stream_event_search PREWHERE scope_id=" +
+				chQuote(group.scope) + " AND protocol=" + chQuote(group.protocol) + " AND observed_at >= " +
+				chQuote(minTime.Format("2006-01-02 15:04:05.000000")) + " AND observed_at <= " +
+				chQuote(maxTime.Format("2006-01-02 15:04:05.000000")) + " WHERE event_key IN (" + strings.Join(keys, ",") + ")" +
+				fmt.Sprintf(" LIMIT %d SETTINGS max_threads=1,max_memory_usage=134217728,max_execution_time=10 FORMAT JSONEachRow", 101*len(keys))
+			data, err := s.query(ctx, query)
+			if err != nil {
+				return false, err
+			}
+			seen := make(map[string]int, len(expected))
+			for _, line := range bytes.Split(bytes.TrimSpace(data), []byte{'\n'}) {
+				if len(line) == 0 {
+					continue
+				}
+				var row struct {
+					Scope    string `json:"scope_id"`
+					Protocol string `json:"protocol"`
+					Observed string `json:"observed_at"`
+					Key      string `json:"event_key"`
+					Hash     string `json:"content_sha256"`
+					Month    uint32 `json:"archive_month"`
+					Class    string `json:"retention_class"`
+					Ref      string `json:"body_ref"`
+				}
+				if err := json.Unmarshal(line, &row); err != nil {
+					return false, err
+				}
+				index, found := expected[row.Key]
+				if !found || row.Scope != group.scope || row.Protocol != group.protocol ||
+					row.Observed != prepared[index].observed.Format("2006-01-02 15:04:05.000000") ||
+					row.Hash != prepared[index].hash || fmt.Sprint(row.Month) != segment.ArchiveMonth ||
+					row.Class != prepared[index].retention || seen[row.Key] >= 100 {
+					return false, streamlog.ErrContentConflict
+				}
+				if segment.BodyLayout == "v2" {
+					ref, err := ParseStreamBodyRef(row.Ref)
+					if err != nil || ref.BodyLayout != "v2" || ref.Scope != row.Scope || ref.Key != row.Key ||
+						ref.SHA256 != row.Hash || ref.Month != segment.ArchiveMonth || ref.Class != row.Class {
+						return false, streamlog.ErrContentConflict
+					}
+				}
+				seen[row.Key]++
+			}
+			if len(seen) != len(expected) {
+				allPresent = false
+			}
+		}
+	}
+	return allPresent, nil
 }
 
 func (s *ClickHouseStore) ReconcileStreamSearch(ctx context.Context, segmentID string, segment streamlog.Segment) error {

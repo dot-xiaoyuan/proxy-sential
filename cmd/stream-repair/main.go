@@ -20,7 +20,7 @@ func main() {
 	journalDir := flag.String("journal", "", "durable stream journal directory")
 	id := flag.String("segment-id", "", "exact segment id")
 	laneName := flag.String("lane", "", "archive, search or risk-feature")
-	settledScoped := flag.Bool("settled-scoped", false, "repair a settled source-backed or journal-backed standard-event archive with scoped row proof")
+	settledScoped := flag.Bool("settled-scoped", false, "repair a settled archive or birth-aware standard-event search with scoped row proof")
 	flag.Parse()
 	if err := run(*journalDir, *id, streamlog.Lane(*laneName), *settledScoped); err != nil {
 		fmt.Fprintln(os.Stderr, "stream repair:", err)
@@ -32,8 +32,8 @@ func run(directory, id string, lane streamlog.Lane, settledScoped bool) error {
 	if directory == "" || id == "" || (lane != streamlog.Archive && lane != streamlog.Search && lane != "risk-feature") {
 		return errors.New("journal, segment-id and ClickHouse lane are required")
 	}
-	if settledScoped && lane != streamlog.Archive {
-		return errors.New("settled scoped repair only supports the archive lane")
+	if settledScoped && lane != streamlog.Archive && lane != streamlog.Search {
+		return errors.New("settled scoped repair supports only archive or search")
 	}
 	j, err := streamlog.Open(directory)
 	if err != nil {
@@ -54,6 +54,9 @@ func run(directory, id string, lane streamlog.Lane, settledScoped bool) error {
 	if lane == "risk-feature" && state.Acks[streamlog.Archive] != streamlog.Acked {
 		return errors.New("risk feature repair requires a confirmed authoritative body")
 	}
+	if settledScoped && lane == streamlog.Search && state.Acks[streamlog.Archive] != streamlog.Acked {
+		return errors.New("settled search repair requires a confirmed authoritative body")
+	}
 	if lane == "risk-feature" && !state.Segment.RiskFeaturesRequired {
 		return errors.New("segment has no risk-feature acknowledgement requirement")
 	}
@@ -69,8 +72,10 @@ func run(directory, id string, lane streamlog.Lane, settledScoped bool) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	if settledScoped {
+	if settledScoped && lane == streamlog.Archive {
 		err = ch.ReconcileSettledStreamBody(ctx, id, state.Segment)
+	} else if settledScoped && lane == streamlog.Search {
+		err = ch.ReconcileSettledStreamSearch(ctx, id, state.Segment)
 	} else if lane == "risk-feature" {
 		err = ch.RetryProvenUnsentStreamRiskFeatures(ctx, id, state.Segment)
 	} else {

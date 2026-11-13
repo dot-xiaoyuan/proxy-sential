@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,6 +21,13 @@ import (
 // unconfirmed instead of racing a delayed ClickHouse flush. Device-signal
 // standard-event raw lives in the immutable journal, not stream_source_raw.
 func (s *ClickHouseStore) ReconcileSettledStreamBody(ctx context.Context, id string, segment streamlog.Segment) error {
+	passiveJournal := false
+	if segment.Source == "passive-discovery" {
+		if err := verifySettledPassiveSegment(id, segment); err != nil {
+			return err
+		}
+		passiveJournal = true
+	}
 	standardRaw := segment.RawIsStandardEvents && !segment.SourceBackedRaw &&
 		(segment.Source == "device-signals" || segment.Source == "shared-device-signals") &&
 		segment.EndOffset-segment.StartOffset == int64(len(segment.Raw))
@@ -27,7 +35,7 @@ func (s *ClickHouseStore) ReconcileSettledStreamBody(ctx context.Context, id str
 		sum := sha256.Sum256(segment.Raw)
 		standardRaw = segment.RawSHA256 == hex.EncodeToString(sum[:])
 	}
-	if id == "" || (!segment.SourceBackedRaw && !standardRaw) || len(segment.Raw) == 0 || len(segment.Events) == 0 ||
+	if id == "" || (!segment.SourceBackedRaw && !standardRaw && !passiveJournal) || (!passiveJournal && len(segment.Raw) == 0) || len(segment.Events) == 0 ||
 		segment.AcceptedAt.IsZero() || time.Since(segment.AcceptedAt) < time.Hour {
 		return fmt.Errorf("settled source archive proof is incomplete: %w", streamlog.ErrUnconfirmed)
 	}
@@ -46,6 +54,91 @@ func (s *ClickHouseStore) ReconcileSettledStreamBody(ctx context.Context, id str
 		return err
 	}
 	return s.ReconcileStreamBody(ctx, id, segment)
+}
+
+// ReconcileSettledStreamSearch is limited to birth-aware standard-event
+// sources whose body is already confirmed. The split risk-feature lane remains
+// independently pending and is never acknowledged by repairing search rows.
+func (s *ClickHouseStore) ReconcileSettledStreamSearch(ctx context.Context, id string, segment streamlog.Segment) error {
+	if id == "" || segment.AcceptedAt.IsZero() || time.Since(segment.AcceptedAt) < time.Hour ||
+		!birthAwareStandardEventRaw(segment) || segment.RiskFeaturesRequired && !segment.SplitRiskFeatures {
+		return fmt.Errorf("settled search proof is incomplete: %w", streamlog.ErrUnconfirmed)
+	}
+	if _, err := prepareStreamEvents(segment); err != nil {
+		return err
+	}
+	body, err := s.VerifyStreamBody(ctx, segment)
+	if err != nil {
+		return err
+	}
+	if !body {
+		return fmt.Errorf("settled search requires confirmed body: %w", streamlog.ErrUnconfirmed)
+	}
+	confirmed, err := s.VerifyStreamSearch(ctx, segment)
+	if err != nil || confirmed {
+		return err
+	}
+	if err := s.requireQuietStreamRepair(ctx, []string{"stream_event_search"}); err != nil {
+		return err
+	}
+	// A late insert can arrive during the quiet interval. The scoped repair
+	// rechecks all immutable keys immediately before any distinct write token.
+	return s.ReconcileStreamSearch(ctx, id, segment)
+}
+
+func birthAwareStandardEventRaw(segment streamlog.Segment) bool {
+	if !segment.RawIsStandardEvents || segment.SourceBackedRaw ||
+		segment.Source != "device-signals" && segment.Source != "shared-device-signals" ||
+		!strings.Contains(segment.FileID, ":birth:") || len(segment.Raw) == 0 || len(segment.Events) == 0 ||
+		segment.EndOffset-segment.StartOffset != int64(len(segment.Raw)) {
+		return false
+	}
+	sum := sha256.Sum256(segment.Raw)
+	return segment.RawSHA256 == hex.EncodeToString(sum[:])
+}
+
+// Passive capture has no retained packet bytes. Its immutable journal segment
+// is the evidence for this lane. The operator CLI first loads and hashes that
+// segment under the source lease; this second proof ties every event to the
+// fixed journal interval and the stream3 key scheme before a scoped CH write.
+func verifySettledPassiveSegment(id string, segment streamlog.Segment) error {
+	if id == "" || id != streamlog.SourceSegmentID(segment) ||
+		segment.ParserVersion != "passive-frame-v1" || !strings.HasPrefix(segment.SourcePath, "packet://") ||
+		segment.FileID == "" || segment.PreviousFileID != segment.FileID || segment.PreviousOffset != segment.StartOffset ||
+		segment.StartOffset < 0 || segment.EndOffset <= segment.StartOffset ||
+		segment.ArchiveMonth != segment.AcceptedAt.UTC().Format("200601") || !segment.NeedsProjection ||
+		segment.SourceBackedRaw || segment.RawIsStandardEvents || len(segment.Raw) != 0 || segment.RawSHA256 != "" ||
+		len(segment.Events) == 0 || len(segment.Events) > streamlog.MaxPassiveSegmentEvents {
+		return fmt.Errorf("passive journal interval proof is incomplete: %w", streamlog.ErrUnconfirmed)
+	}
+	for ordinal, event := range segment.Events {
+		offset, offsetOK := passiveJournalInt64(event.RawRef["source_offset"])
+		index, indexOK := passiveJournalInt64(event.RawRef["source_record_ordinal"])
+		producerID, _ := event.RawRef["producer_event_id"].(string)
+		if event.EventID != fmt.Sprintf("stream3-%s-%d", id, ordinal) || event.Source != "passive" ||
+			event.Type != "discovery" || event.RawRef["backend"] != "passive-discovery" || producerID == "" ||
+			!offsetOK || offset != segment.StartOffset || !indexOK || index != int64(ordinal) ||
+			event.RawRef["raw_packet_available"] != false {
+			return fmt.Errorf("passive journal event proof is incomplete: %w", streamlog.ErrUnconfirmed)
+		}
+	}
+	return nil
+}
+
+func passiveJournalInt64(value any) (int64, bool) {
+	switch number := value.(type) {
+	case int:
+		return int64(number), true
+	case int64:
+		return number, true
+	case float64:
+		if number < 0 || number >= 1<<53 || math.Trunc(number) != number {
+			return 0, false
+		}
+		return int64(number), true
+	default:
+		return 0, false
+	}
 }
 
 // RetryProvenUnsentStreamLane is an operator recovery path for a source held by
