@@ -16,9 +16,13 @@ import (
 )
 
 type passiveBatchEventPosition struct {
-	Ordinal  int
-	Hash     string
-	Document string
+	Ordinal         int
+	EventID         string
+	SensorID        string
+	SourceEventType string
+	Timestamp       string
+	Hash            string
+	Document        string
 }
 
 func passiveDiscoveryBatchV3Enabled() bool {
@@ -39,10 +43,10 @@ func passiveDiscoveryBatchV3Selected(event normalized.Event) bool {
 // Hash the original normalized event, then hash the ordered selected manifest.
 // One PostgreSQL row can verify every ClickHouse ordinal without storing a
 // second copy of each event body or a permanent per-event receipt.
-func passiveDiscoveryBatchV3Manifest(events []normalized.Event) (map[string]passiveBatchEventPosition, int, string, error) {
-	positions := make(map[string]passiveBatchEventPosition)
+func passiveDiscoveryBatchV3Manifest(events []normalized.Event) ([]passiveBatchEventPosition, int, string, error) {
+	positions := make([]passiveBatchEventPosition, 0, len(events))
+	seen := make(map[string]string, len(events))
 	manifest := sha256.New()
-	count := 0
 	for _, event := range events {
 		if !passiveDiscoveryBatchV3Selected(event) {
 			continue
@@ -50,28 +54,32 @@ func passiveDiscoveryBatchV3Manifest(events []normalized.Event) (map[string]pass
 		if event.EventID == "" {
 			return nil, 0, "", fmt.Errorf("discovery batch event ID is empty")
 		}
-		if _, exists := positions[event.EventID]; exists {
-			return nil, 0, "", fmt.Errorf("discovery batch event ID is duplicated: %s", event.EventID)
-		}
 		raw, err := json.Marshal(event)
 		if err != nil {
 			return nil, 0, "", err
 		}
 		content := sha256.Sum256(raw)
 		hash := hex.EncodeToString(content[:])
-		positions[event.EventID] = passiveBatchEventPosition{Ordinal: count, Hash: hash, Document: string(raw)}
-		manifest.Write([]byte(strconv.Itoa(count)))
+		if prior, exists := seen[event.EventID]; exists && prior != hash {
+			return nil, 0, "", fmt.Errorf("discovery batch event ID content conflict: %s", event.EventID)
+		}
+		seen[event.EventID] = hash
+		ordinal := len(positions)
+		positions = append(positions, passiveBatchEventPosition{
+			Ordinal: ordinal, EventID: event.EventID, SensorID: stringFromMap(event.Observer, "sensor_id"),
+			SourceEventType: event.SourceEventType, Timestamp: event.Timestamp, Hash: hash, Document: string(raw),
+		})
+		manifest.Write([]byte(strconv.Itoa(ordinal)))
 		manifest.Write([]byte{0})
 		manifest.Write([]byte(event.EventID))
 		manifest.Write([]byte{0})
 		manifest.Write([]byte(hash))
 		manifest.Write([]byte{0})
-		count++
-		if count > 20000 {
+		if len(positions) > 20000 {
 			return nil, 0, "", fmt.Errorf("discovery batch selection exceeds 20000 events")
 		}
 	}
-	return positions, count, hex.EncodeToString(manifest.Sum(nil)), nil
+	return positions, len(positions), hex.EncodeToString(manifest.Sum(nil)), nil
 }
 
 func (s *DBStore) stagePassiveDiscoveryBatchV3(ctx context.Context, batch ingest.Batch, events []normalized.Event) error {
@@ -100,16 +108,11 @@ VALUES($1,$2,$3) ON CONFLICT(batch_id) DO NOTHING`, batch.BatchID, count, hash)
 	body.WriteString("INSERT INTO passive_discovery_events_v3 SETTINGS async_insert=0,date_time_input_format='best_effort' FORMAT JSONEachRow\n")
 	encode := json.NewEncoder(&body)
 	ingested := time.Now().UTC().Format("2006-01-02 15:04:05.000000")
-	for _, event := range events {
-		if !passiveDiscoveryBatchV3Selected(event) {
-			continue
+	for _, position := range positions {
+		if position.SensorID != batch.SensorID {
+			return fmt.Errorf("passive discovery v3 event sensor %q differs from batch sensor %q", position.SensorID, batch.SensorID)
 		}
-		position := positions[event.EventID]
-		sensor := stringFromMap(event.Observer, "sensor_id")
-		if sensor != batch.SensorID {
-			return fmt.Errorf("passive discovery v3 event sensor %q differs from batch sensor %q", sensor, batch.SensorID)
-		}
-		observed, parseErr := time.Parse(time.RFC3339Nano, event.Timestamp)
+		observed, parseErr := time.Parse(time.RFC3339Nano, position.Timestamp)
 		if parseErr != nil {
 			return parseErr
 		}
@@ -117,7 +120,7 @@ VALUES($1,$2,$3) ON CONFLICT(batch_id) DO NOTHING`, batch.BatchID, count, hash)
 			"ingested_at": ingested, "batch_started_at": started.UTC().Format("2006-01-02 15:04:05.000000"),
 			"batch_id": batch.BatchID, "ordinal": position.Ordinal, "event_content_sha256": position.Hash,
 			"event_json": position.Document, "timestamp": observed.UTC().Format("2006-01-02 15:04:05.000000"),
-			"event_id": event.EventID, "sensor_id": sensor, "source_event_type": event.SourceEventType,
+			"event_id": position.EventID, "sensor_id": position.SensorID, "source_event_type": position.SourceEventType,
 		}
 		if err = encode.Encode(row); err != nil {
 			return err

@@ -78,7 +78,7 @@ func TestPassiveDiscoveryV3ManifestRetainsLateInputAndRejectsGaps(t *testing.T) 
 	if err != nil || count != 2 {
 		t.Fatalf("late event was excluded: count=%d err=%v", count, err)
 	}
-	rows := []passiveDiscoveryV3HashRow{{Ordinal: 0, EventID: "late-arp", Hash: positions["late-arp"].Hash}, {Ordinal: 1, EventID: "current-arp", Hash: positions["current-arp"].Hash}}
+	rows := []passiveDiscoveryV3HashRow{{Ordinal: 0, EventID: "late-arp", Hash: positions[0].Hash}, {Ordinal: 1, EventID: "current-arp", Hash: positions[1].Hash}}
 	actual, err := passiveDiscoveryV3ManifestHash(rows, count)
 	if err != nil || actual != expected {
 		t.Fatalf("batch manifest mismatch: actual=%s expected=%s err=%v", actual, expected, err)
@@ -86,6 +86,24 @@ func TestPassiveDiscoveryV3ManifestRetainsLateInputAndRejectsGaps(t *testing.T) 
 	rows[1].Ordinal = 2
 	if _, err := passiveDiscoveryV3ManifestHash(rows, count); err == nil {
 		t.Fatal("a missing ordinal was accepted")
+	}
+}
+
+func TestPassiveDiscoveryV3RetainsRepeatedEventAtSeparateBatchPositions(t *testing.T) {
+	event := normalized.Event{EventID: "replayed-arp", SourceEventType: "arp", Timestamp: time.Now().UTC().Format(time.RFC3339Nano)}
+	positions, count, digest, err := passiveDiscoveryBatchV3Manifest([]normalized.Event{event, event})
+	if err != nil || count != 2 || positions[0].Ordinal != 0 || positions[1].Ordinal != 1 || positions[0].Hash != positions[1].Hash {
+		t.Fatalf("repeated source event lost or changed: positions=%+v count=%d hash=%s err=%v", positions, count, digest, err)
+	}
+	rows := []passiveDiscoveryV3HashRow{{Ordinal: 0, EventID: event.EventID, Hash: positions[0].Hash}, {Ordinal: 1, EventID: event.EventID, Hash: positions[1].Hash}}
+	verified, err := passiveDiscoveryV3ManifestHash(rows, count)
+	if err != nil || verified != digest {
+		t.Fatalf("repeated event positions failed manifest verification: %s %v", verified, err)
+	}
+	changed := event
+	changed.Payload = map[string]any{"message": "changed"}
+	if _, _, _, err := passiveDiscoveryBatchV3Manifest([]normalized.Event{event, changed}); err == nil {
+		t.Fatal("same event ID with changed body was admitted")
 	}
 }
 
