@@ -14,23 +14,45 @@ import (
 )
 
 // streamSegmentReceipts looks up only the requested segment IDs. It remains
-// available when the stream3 producer switch is off, so a compatible rollback
-// release can finish segments accepted by a later producer.
+// available when segment-key producers are off, so a compatible rollback
+// release can finish segments accepted before the switch was disabled.
 func (r Repository) streamSegmentReceipts(ctx context.Context, epoch, scope string, keys []string) (map[string]map[string]any, error) {
+	return r.streamSegmentReceiptsWithChecks(ctx, epoch, scope, keys, true)
+}
+
+// The archive lane already holds the immutable journal segment. For stream4
+// it verifies the marker and whole hash vector without 1,000 random probes
+// into old per-event ledgers. Public reads and case capture still check any
+// contradictory auxiliary rows before returning an exact receipt.
+func (r Repository) streamSegmentReceiptsWithoutAuxiliaryChecks(ctx context.Context, epoch, scope string, keys []string) (map[string]map[string]any, error) {
+	return r.streamSegmentReceiptsWithChecks(ctx, epoch, scope, keys, false)
+}
+
+func (r Repository) streamSegmentReceiptsWithChecks(ctx context.Context, epoch, scope string, keys []string, auxiliaryChecks bool) (map[string]map[string]any, error) {
 	out := make(map[string]map[string]any, len(keys))
 	if len(keys) == 0 {
 		return out, nil
 	}
 	requested := make(map[string]map[int]string, len(keys))
+	schemes := make(map[string]string, len(keys))
 	ids := make([]string, 0, len(keys))
 	for _, key := range keys {
 		id, ordinal, ok := ParsePassiveStream3Key(epoch, key)
+		scheme := "stream3"
 		if !ok {
-			return nil, fmt.Errorf("invalid passive stream3 key")
+			id, ordinal, ok = ParseDeviceStream4Key(epoch, key)
+			scheme = "stream4"
+		}
+		if !ok {
+			return nil, fmt.Errorf("invalid segment-located stream key")
 		}
 		if requested[id] == nil {
 			requested[id] = make(map[int]string)
+			schemes[id] = scheme
 			ids = append(ids, id)
+		}
+		if schemes[id] != scheme || requested[id][ordinal] != "" && requested[id][ordinal] != key {
+			return nil, fmt.Errorf("conflicting segment-located stream key: %w", streamlog.ErrContentConflict)
 		}
 		requested[id][ordinal] = key
 	}
@@ -66,16 +88,21 @@ func (r Repository) streamSegmentReceipts(ctx context.Context, epoch, scope stri
 		if markerEpoch != epoch {
 			return nil, fmt.Errorf("stream segment %s epoch conflicts with key: %w", id, streamlog.ErrContentConflict)
 		}
-		if markerScheme != "stream3" {
+		wantedScheme := schemes[id]
+		if markerScheme != wantedScheme {
 			return nil, fmt.Errorf("stream segment %s has conflicting key scheme: %w", id, streamlog.ErrContentConflict)
 		}
 		if !scheme.Valid {
 			return nil, fmt.Errorf("stream segment %s lacks receipt manifest: %w", id, streamlog.ErrUnconfirmed)
 		}
-		if scheme.String != "stream3" {
+		if scheme.String != wantedScheme {
 			return nil, fmt.Errorf("stream segment %s receipt scheme conflicts with its marker: %w", id, streamlog.ErrContentConflict)
 		}
-		if source != "passive-discovery" || path == "" || mode != "manifest" ||
+		wantedSource := "passive-discovery"
+		if wantedScheme == "stream4" {
+			wantedSource = "device-signals"
+		}
+		if source != wantedSource || path == "" || mode != "manifest" || wantedScheme == "stream4" && eventCount > streamlog.MaxSegmentEvents ||
 			sourceGeneration < 0 || eventCount < 1 || eventCount > streamlog.MaxPassiveSegmentEvents || accepted.IsZero() || projected.IsZero() ||
 			!fileID.Valid || fileID.String == "" || !start.Valid || start.Int64 < 0 || !end.Valid || end.Int64 <= start.Int64 ||
 			!month.Valid || month.String != accepted.UTC().Format("200601") || !layout.Valid || (layout.String != "" && layout.String != "v2") ||
@@ -131,10 +158,49 @@ func (r Repository) streamSegmentReceipts(ctx context.Context, epoch, scope stri
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	if err := r.verifyStream3Diagnostics(ctx, epoch, scope, out); err != nil {
-		return nil, err
+	if auxiliaryChecks {
+		if err := r.verifyStream3Diagnostics(ctx, epoch, scope, out); err != nil {
+			return nil, err
+		}
+		stream4Keys := make([]string, 0)
+		for key := range out {
+			if _, _, ok := ParseDeviceStream4Key(epoch, key); ok {
+				stream4Keys = append(stream4Keys, key)
+			}
+		}
+		if err := r.verifyStream4KeyConflicts(ctx, epoch, scope, stream4Keys); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
+}
+
+// A stream4 locator must never borrow a legacy/compact key row. Such a row
+// would provide a second potentially contradictory identity for the event.
+func (r Repository) verifyStream4KeyConflicts(ctx context.Context, epoch, scope string, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(keys)
+	if err != nil {
+		return err
+	}
+	var conflict bool
+	err = r.DB.QueryRowContext(ctx, `SELECT EXISTS(
+ SELECT 1 FROM jsonb_array_elements_text($3::jsonb) AS v(event_key)
+ JOIN stream_discovery_event_keys k ON k.epoch=$1 AND k.scope_id=$2 AND k.event_key=v.event_key
+ UNION ALL
+ SELECT 1 FROM jsonb_array_elements_text($3::jsonb) AS v(event_key)
+ JOIN stream_discovery_event_keys_compact k
+  ON k.key_hash=sentinel_stream_discovery_key_hash($1,$2,v.event_key)
+  AND k.epoch=$1 AND k.scope_id=$2 AND k.event_key=v.event_key)`, epoch, scope, raw).Scan(&conflict)
+	if err != nil {
+		return err
+	}
+	if conflict {
+		return streamlog.ErrContentConflict
+	}
+	return nil
 }
 
 // A sampled recognition receipt is not a substitute for the segment proof,
@@ -179,6 +245,9 @@ func (r Repository) verifyStream3Diagnostics(ctx context.Context, epoch, scope s
 		}
 		expected, found := receipts[key]
 		id, _, valid := ParsePassiveStream3Key(epoch, key)
+		if !valid {
+			id, _, valid = ParseDeviceStream4Key(epoch, key)
+		}
 		if !found || !valid || !segmentID.Valid || segmentID.String != id ||
 			hash != expected["content_sha256"] || result != expected["result"] ||
 			!streamAcceptedAtMatches(expected["first_accepted_at"].(time.Time), accepted) {

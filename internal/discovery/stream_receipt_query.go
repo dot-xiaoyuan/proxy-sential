@@ -33,7 +33,7 @@ func (r Repository) StreamDiscoveryReceipt(ctx context.Context, epoch, scope, ev
 	if epoch == "" || scope == "" || eventKey == "" || len(epoch) > 128 || len(scope) > 256 || len(eventKey) > 512 {
 		return nil, false, fmt.Errorf("invalid stream discovery receipt key")
 	}
-	if strings.HasPrefix(eventKey, epoch+":stream3-") {
+	if strings.HasPrefix(eventKey, epoch+":stream3-") || strings.HasPrefix(eventKey, epoch+":stream4-") {
 		receipts, err := r.streamSegmentReceipts(ctx, epoch, scope, []string{eventKey})
 		if err != nil {
 			return nil, false, err
@@ -125,7 +125,7 @@ func (r Repository) StreamDiscoveryReceipts(ctx context.Context, epoch, scope st
 	groups := map[bool][]string{false: {}, true: {}}
 	segmentKeys := make([]string, 0)
 	for _, key := range eventKeys {
-		if strings.HasPrefix(key, epoch+":stream3-") {
+		if strings.HasPrefix(key, epoch+":stream3-") || strings.HasPrefix(key, epoch+":stream4-") {
 			segmentKeys = append(segmentKeys, key)
 			continue
 		}
@@ -248,7 +248,7 @@ func (r Repository) StreamDiscoveryReceipts(ctx context.Context, epoch, scope st
 	}
 	legacyMissing := make([]string, 0, len(missing))
 	for _, key := range missing {
-		if !strings.HasPrefix(key, epoch+":stream3-") {
+		if !strings.HasPrefix(key, epoch+":stream3-") && !strings.HasPrefix(key, epoch+":stream4-") {
 			legacyMissing = append(legacyMissing, key)
 		}
 	}

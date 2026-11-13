@@ -148,6 +148,7 @@ func runIngestStream(args []string) error {
 	pending := fs.Int("max-pending-segments", 16, "bounded queued segments")
 	drainOnly := fs.Bool("drain-only", false, "finish only previously accepted journal segments")
 	deviceManifestWrites := fs.Bool("device-signal-manifest-writes", false, "use segment receipt manifests for device-signals after compatible reader release")
+	deviceStream4Keys := fs.Bool("device-signal-stream4-keys", false, "emit segment-located device signal keys only after the PG248 compatible reader is the rollback release")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -200,6 +201,14 @@ func runIngestStream(args []string) error {
 			return errors.New("device signal manifest writer requires a device-signals source")
 		}
 		if err := verifyDeviceSignalManifestSchema(ctx, db); err != nil {
+			return err
+		}
+	}
+	if *deviceStream4Keys {
+		if *ttlPath == "" && *handshakePath == "" && *routerProbePath == "" {
+			return errors.New("device signal stream4 key writer requires a device-signals source")
+		}
+		if err := verifyDeviceSignalStream4Schema(ctx, db); err != nil {
 			return err
 		}
 	}
@@ -273,7 +282,7 @@ WHERE state='active' AND sensor_id=$1 AND (source_kind='zeek-dhcp' OR source_kin
 		archiveWorkers, searchWorkers = 2, 2
 	}
 	return realtime.RunStream(ctx, journal, writer, realtime.StreamRunOptions{
-		Capture:            realtime.Options{SensorID: *sensor, Sources: sources, PollInterval: *poll, MaxBatchBytes: *maxBytes, StoreTimeout: *storeTimeout},
+		Capture:            realtime.Options{SensorID: *sensor, Sources: sources, PollInterval: *poll, MaxBatchBytes: *maxBytes, StoreTimeout: *storeTimeout, DeviceSignalStream4Keys: *deviceStream4Keys},
 		MaxPendingSegments: *pending,
 		ArchiveWorkers:     archiveWorkers,
 		SearchWorkers:      searchWorkers,
@@ -302,6 +311,34 @@ func verifyDeviceSignalManifestSchema(ctx context.Context, db *sql.DB) error {
 	}
 	if !ready {
 		return errors.New("device signal manifest schema PG247 is not installed")
+	}
+	return nil
+}
+
+func verifyDeviceSignalStream4Schema(ctx context.Context, db *sql.DB) error {
+	var ready bool
+	err := db.QueryRowContext(ctx, `SELECT
+ to_regprocedure('sentinel_device_stream4_locator(text,text)') IS NOT NULL
+ AND to_regprocedure('sentinel_device_stream4_evidence(jsonb)') IS NOT NULL
+ AND EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('stream_projection_segments')
+  AND conname='stream_projection_passive_key_scheme' AND pg_get_constraintdef(oid) LIKE '%stream4%')
+ AND EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('stream_projection_segments')
+  AND conname='stream_projection_device_stream4_shape')
+ AND EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('stream_discovery_segment_receipt_manifests')
+  AND conname='stream_discovery_manifest_key_scheme' AND pg_get_constraintdef(oid) LIKE '%stream4%')
+ AND EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('stream_projection_segments')
+  AND tgname='protect_stream4_segment_metadata' AND tgenabled IN ('O','A'))
+ AND EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('stream_discovery_segment_receipt_manifests')
+  AND tgname='protect_stream4_manifest_metadata' AND tgenabled IN ('O','A'))
+ AND EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('stream_projection_segments')
+  AND tgname='protect_stream4_segment_truncate' AND tgenabled IN ('O','A'))
+ AND EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('stream_discovery_segment_receipt_manifests')
+  AND tgname='protect_stream4_manifest_truncate' AND tgenabled IN ('O','A'))`).Scan(&ready)
+	if err != nil {
+		return fmt.Errorf("device signal stream4 schema preflight: %w", err)
+	}
+	if !ready {
+		return errors.New("device signal stream4 schema PG248 is not installed")
 	}
 	return nil
 }

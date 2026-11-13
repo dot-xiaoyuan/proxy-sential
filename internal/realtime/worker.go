@@ -47,10 +47,13 @@ type Options struct {
 	PollInterval  time.Duration
 	MaxBatchBytes int64
 	StoreTimeout  time.Duration
-	AlertWebhook  string
-	Heartbeat     time.Duration
-	AlertLagBytes int64
-	AlertBadRate  float64
+	// DeviceSignalStream4Keys changes only future captures; accepted journal
+	// segments retain their immutable event IDs when this switch changes.
+	DeviceSignalStream4Keys bool
+	AlertWebhook            string
+	Heartbeat               time.Duration
+	AlertLagBytes           int64
+	AlertBadRate            float64
 }
 
 type Backend interface {

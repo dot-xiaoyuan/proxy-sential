@@ -36,7 +36,7 @@ func (s *DBStore) ReadStreamCaseEvidence(ctx context.Context, refs []StreamBodyR
 	}
 	legacyRefs := make([]StreamBodyRef, 0, len(refs))
 	for _, ref := range refs {
-		if !strings.HasPrefix(ref.Key, ref.Epoch+":stream3-") {
+		if !strings.HasPrefix(ref.Key, ref.Epoch+":stream3-") && !strings.HasPrefix(ref.Key, ref.Epoch+":stream4-") {
 			legacyRefs = append(legacyRefs, ref)
 		}
 	}
@@ -168,7 +168,7 @@ func (s *DBStore) ReadStreamCaseEvidence(ctx context.Context, refs []StreamBodyR
 			return nil, err
 		}
 	}
-	if err := s.confirmStream3CaseRefs(ctx, refs, confirmed); err != nil {
+	if err := s.confirmSegmentKeyedCaseRefs(ctx, refs, confirmed); err != nil {
 		return nil, err
 	}
 	// Device signals keep the original stream- key and hash. Their reader
@@ -227,14 +227,18 @@ func (s *DBStore) ReadStreamCaseEvidence(ctx context.Context, refs []StreamBodyR
 // marker, source position, scope and hash vector. Case capture additionally
 // requires finalization and the caller's exact archive reference before the
 // original body is fetched and hashed from ClickHouse.
-func (s *DBStore) confirmStream3CaseRefs(ctx context.Context, refs []StreamBodyRef, confirmed map[StreamBodyRef]struct{}) error {
+func (s *DBStore) confirmSegmentKeyedCaseRefs(ctx context.Context, refs []StreamBodyRef, confirmed map[StreamBodyRef]struct{}) error {
 	type groupKey struct{ epoch, scope string }
 	groups := make(map[groupKey]map[string]StreamBodyRef)
 	for _, ref := range refs {
-		if !strings.HasPrefix(ref.Key, ref.Epoch+":stream3-") {
+		if !strings.HasPrefix(ref.Key, ref.Epoch+":stream3-") && !strings.HasPrefix(ref.Key, ref.Epoch+":stream4-") {
 			continue
 		}
-		if _, _, ok := discovery.ParsePassiveStream3Key(ref.Epoch, ref.Key); !ok {
+		_, _, ok := discovery.ParsePassiveStream3Key(ref.Epoch, ref.Key)
+		if !ok {
+			_, _, ok = discovery.ParseDeviceStream4Key(ref.Epoch, ref.Key)
+		}
+		if !ok {
 			return streamlog.ErrContentConflict
 		}
 		group := groupKey{ref.Epoch, ref.Scope}

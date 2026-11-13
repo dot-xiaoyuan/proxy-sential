@@ -166,6 +166,11 @@ func captureStreamOnceWithReady(ctx context.Context, journal *streamlog.Journal,
 		}
 		segment.RawIsStandardEvents = source.Kind == "device-signals" || source.Kind == "shared-device-signals"
 		segment.SourceBackedRaw = source.Kind == "zeek-dhcp-binding" && journal.HasRawResolver()
+		if source.Kind == "device-signals" && opts.DeviceSignalStream4Keys {
+			if err := assignDeviceStream4Keys(&segment); err != nil {
+				return quarantineStreamChunk(journal, cursor, source, read, chunk, "position_mapping_error", err)
+			}
+		}
 		appendStarted := time.Now()
 		var id string
 		bodyReady := onReady != nil && (segment.RawIsStandardEvents || segment.SourceBackedRaw)
@@ -212,6 +217,33 @@ func captureStreamOnceWithReady(ctx context.Context, journal *streamlog.Journal,
 		}
 		return id, true, nil
 	}
+}
+
+// The source interval already fixes the durable segment ID. Only discovery
+// projection events use stream4 ordinals: a packet sidecar segment may also
+// contain TTL and topology records whose original stream- IDs stay archived.
+func assignDeviceStream4Keys(segment *streamlog.Segment) error {
+	if segment == nil || segment.Source != "device-signals" || segment.Epoch == "" || segment.SourcePath == "" || segment.FileID == "" ||
+		segment.StartOffset < 0 || segment.EndOffset <= segment.StartOffset || !segment.RawIsStandardEvents {
+		return streamlog.ErrContentConflict
+	}
+	id := streamlog.SourceSegmentID(*segment)
+	ordinal, scope := 0, ""
+	for index := range segment.Events {
+		event := &segment.Events[index]
+		if !normalized.IsDiscoveryProjectionEvent(*event) {
+			continue
+		}
+		value, ok := event.Observer["capture_scope_id"].(string)
+		if !ok || value == "" || scope != "" && scope != value || ordinal >= streamlog.MaxPassiveSegmentEvents ||
+			!strings.HasPrefix(event.EventID, "stream-") {
+			return streamlog.ErrContentConflict
+		}
+		scope = value
+		event.EventID = fmt.Sprintf("stream4-%s-%d", id, ordinal)
+		ordinal++
+	}
+	return nil
 }
 
 // A producer-owned device signal already carries its observation scope. The

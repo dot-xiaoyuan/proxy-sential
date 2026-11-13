@@ -37,7 +37,7 @@ func (r Repository) streamDiscoveryHistoryAt(ctx context.Context, epoch, key, cu
 		limit = 20
 	}
 	query := `SELECT c.change_id,c.event_key,c.accepted_at,c.observed_at,c.change_kind,c.before_hash,c.after_hash,c.body_ref,
- CASE WHEN left(c.event_key,char_length(c.epoch)+9)=c.epoch||':stream3-' THEN NULL
+ CASE WHEN left(c.event_key,char_length(c.epoch)+9) IN (c.epoch||':stream3-',c.epoch||':stream4-') THEN NULL
   WHEN r.event_key IS NOT NULL THEN
   CASE WHEN r.archive_state IN ('verified','failed') THEN r.archive_state
    WHEN r.archive_segment_id IS NOT NULL THEN CASE WHEN s.lanes_finalized_at IS NOT NULL THEN 'confirmed' ELSE 'pending' END
@@ -103,9 +103,13 @@ func (r Repository) streamDiscoveryHistoryAt(ctx context.Context, epoch, key, cu
 			return nil, err
 		}
 		archiveState := archive.String
-		if strings.HasPrefix(event, epoch+":stream3-") {
-			if _, _, ok := ParsePassiveStream3Key(epoch, event); !ok || legacyPresent {
-				return nil, fmt.Errorf("stream discovery change %d has conflicting stream3 identity: %w", id, streamlog.ErrContentConflict)
+		if strings.HasPrefix(event, epoch+":stream3-") || strings.HasPrefix(event, epoch+":stream4-") {
+			_, _, ok := ParsePassiveStream3Key(epoch, event)
+			if !ok {
+				_, _, ok = ParseDeviceStream4Key(epoch, event)
+			}
+			if !ok || legacyPresent {
+				return nil, fmt.Errorf("stream discovery change %d has conflicting segment identity: %w", id, streamlog.ErrContentConflict)
 			}
 			var fields map[string]string
 			if err := json.Unmarshal(ref, &fields); err != nil || fields["scope"] == "" {

@@ -256,6 +256,12 @@ func (p StreamDiscoveryProjector) MarkStreamArchiveConfirmed(ctx context.Context
 	if isSegmentKeyedPassiveSegment(segment) {
 		return p.confirmStream3Archive(ctx, id, segment)
 	}
+	if hasSegmentKeyedDeviceEvent(segment) && !isSegmentKeyedDeviceSegment(segment) {
+		return streamlog.ErrContentConflict
+	}
+	if isSegmentKeyedDeviceSegment(segment) {
+		return p.confirmStream4Archive(ctx, id, segment)
+	}
 	if isCompactPassiveSegment(segment) || segment.Source == "device-signals" {
 		var mode, epoch, source, path, hash string
 		var file sql.NullString
@@ -564,6 +570,12 @@ func (p StreamDiscoveryProjector) ReconcileStreamProjection(ctx context.Context,
 	if isSegmentKeyedPassiveSegment(segment) {
 		return p.projectPreparedStreamSegment(ctx, id, segment, prepared)
 	}
+	if hasSegmentKeyedDeviceEvent(segment) && !isSegmentKeyedDeviceSegment(segment) {
+		return streamlog.ErrContentConflict
+	}
+	if isSegmentKeyedDeviceSegment(segment) {
+		return p.projectPreparedStreamSegment(ctx, id, segment, prepared)
+	}
 	// This marker is inserted in the same transaction as the projection. A
 	// visible matching row proves that transaction committed, including the
 	// receipts; a missing row may still race an in-flight transaction, so the
@@ -617,12 +629,19 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 	}
 	defer mark("done")
 
-	segmentKeyed := isSegmentKeyedPassiveSegment(segment)
-	if hasSegmentKeyedPassiveEvent(segment) && !segmentKeyed {
+	passiveSegmentKeyed := isSegmentKeyedPassiveSegment(segment)
+	deviceSegmentKeyed := isSegmentKeyedDeviceSegment(segment)
+	segmentKeyed := passiveSegmentKeyed || deviceSegmentKeyed
+	if hasSegmentKeyedPassiveEvent(segment) && !passiveSegmentKeyed || hasSegmentKeyedDeviceEvent(segment) && !deviceSegmentKeyed {
 		return streamlog.ErrContentConflict
 	}
-	if segmentKeyed {
+	if passiveSegmentKeyed {
 		if err := verifyStream3PreparedSegment(id, segment, prepared); err != nil {
+			return err
+		}
+	}
+	if deviceSegmentKeyed {
+		if err := verifyStream4PreparedSegment(id, segment, prepared); err != nil {
 			return err
 		}
 	}
@@ -698,8 +717,12 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING`
 	insertArgs := []any{id, segment.Epoch, segment.Source, segment.SourcePath, segmentHash, segment.AcceptedAt, len(prepared), sourceFile, sourceStart, sourceEnd, mode}
 	if segmentKeyed {
+		scheme := "stream3"
+		if deviceSegmentKeyed {
+			scheme = "stream4"
+		}
 		insertSQL = `INSERT INTO stream_projection_segments(segment_id,epoch,source_kind,source_path,content_sha256,accepted_at,event_count,source_file_id,source_start_offset,source_end_offset,archive_receipt_mode,passive_key_scheme,source_generation)
-	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'stream3',$12) ON CONFLICT DO NOTHING`
+	 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'` + scheme + `',$12) ON CONFLICT DO NOTHING`
 		insertArgs = append(insertArgs, int64(segment.SourceGeneration))
 	} else if deviceManifest {
 		insertSQL = `INSERT INTO stream_projection_segments(segment_id,epoch,source_kind,source_path,content_sha256,accepted_at,event_count,source_file_id,source_start_offset,source_end_offset,archive_receipt_mode,passive_key_scheme,source_generation)
@@ -724,7 +747,11 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 				Scan(&prior, &scheme, &generation); err != nil {
 				return err
 			}
-			if scheme != "stream3" || generation != int64(segment.SourceGeneration) {
+			want := "stream3"
+			if deviceSegmentKeyed {
+				want = "stream4"
+			}
+			if scheme != want || generation != int64(segment.SourceGeneration) {
 				return streamlog.ErrContentConflict
 			}
 		} else if segment.Source == "device-signals" && p.DeviceSignalManifestWrites {
@@ -901,7 +928,7 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 	omitted := []streamPreparedDiscovery(nil)
 	receipts := fresh
 	if mode == "manifest" {
-		if deviceManifest {
+		if deviceManifest || deviceSegmentKeyed {
 			receipts = nil
 			omitted = fresh
 		} else {
@@ -1515,7 +1542,7 @@ func writeStreamReceiptManifest(ctx context.Context, tx *sql.Tx, id string, segm
 	if err != nil {
 		return err
 	}
-	if isSegmentKeyedPassiveSegment(segment) {
+	if isSegmentKeyedPassiveSegment(segment) || isSegmentKeyedDeviceSegment(segment) {
 		if len(fresh) != len(prepared) || omitted == nil {
 			return streamlog.ErrContentConflict
 		}
@@ -1532,8 +1559,12 @@ func writeStreamReceiptManifest(ctx context.Context, tx *sql.Tx, id string, segm
 		if err != nil {
 			return err
 		}
+		scheme := "stream3"
+		if isSegmentKeyedDeviceSegment(segment) {
+			scheme = "stream4"
+		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO stream_discovery_segment_receipt_manifests(segment_id,archive_month,body_layout,results,recognition_summary,key_scheme,scope_id,content_hashes)
-	 VALUES($1,$2,$3,$4::jsonb,$5::jsonb,'stream3',$6,$7)`, id, segment.ArchiveMonth, segment.BodyLayout, raw, summary, scope, hashes)
+	 VALUES($1,$2,$3,$4::jsonb,$5::jsonb,'`+scheme+`',$6,$7)`, id, segment.ArchiveMonth, segment.BodyLayout, raw, summary, scope, hashes)
 		return err
 	}
 	if segment.Source == "device-signals" && omitted != nil {
