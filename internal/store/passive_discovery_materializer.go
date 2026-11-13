@@ -1235,16 +1235,8 @@ ORDER BY observed_at DESC,id DESC LIMIT 1`, o.Node, o.IP, o.ObservedAt).Scan(&ma
 	sort.Strings(ids)
 	rows := make([]map[string]any, 0, len(ids))
 	hardwareObservations := make([]discovery.Observation, 0, len(ids))
-	links := make([]passiveLinkRow, 0, len(ids))
 	for _, id := range ids {
 		o := resolved[id]
-		link, err := s.passiveObservationLink(ctx, db, o)
-		if err != nil {
-			return nil, err
-		}
-		if link != nil {
-			links = append(links, *link)
-		}
 		hardwareObservations = append(hardwareObservations, o)
 		raw, _ := json.Marshal(o)
 		rows = append(rows, map[string]any{
@@ -1252,6 +1244,10 @@ ORDER BY observed_at DESC,id DESC LIMIT 1`, o.Node, o.IP, o.ObservedAt).Scan(&ma
 			"observed_at": o.ObservedAt, "valid_until": o.ValidUntil, "withdrawn": o.Withdrawn,
 			"data": json.RawMessage(raw), "service_instance": passiveString(o.Evidence.Payload, "service_instance"),
 		})
+	}
+	links, err := s.passiveObservationLinksBatch(ctx, db, hardwareObservations)
+	if err != nil {
+		return nil, err
 	}
 	payload, err := json.Marshal(rows)
 	if err != nil {
@@ -1338,12 +1334,92 @@ func (s *DBStore) passiveObservationLink(ctx context.Context, db passiveDiscover
 			return nil, err
 		}
 	}
+	link := passiveLinkForObservation(o, mac)
+	return &link, nil
+}
+
+// passiveObservationLinksBatch preserves the per-observation event-time lease
+// lookup while doing all independent index probes in one PostgreSQL round trip.
+// A later lease or a different MAC never authorizes an earlier observation.
+func (s *DBStore) passiveObservationLinksBatch(ctx context.Context, db passiveDiscoveryDB, observations []discovery.Observation) ([]passiveLinkRow, error) {
+	type leaseProbe struct {
+		Ordinal    int       `json:"ordinal"`
+		SensorID   string    `json:"sensor_id"`
+		CampusID   string    `json:"campus_id"`
+		IP         string    `json:"ip"`
+		ObservedAt time.Time `json:"observed_at"`
+	}
+	links := make([]passiveLinkRow, 0, len(observations))
+	probes := make([]leaseProbe, 0, len(observations))
+	for ordinal, o := range observations {
+		mac := validPassiveMAC(o.MAC)
+		if mac == "" || (passiveRandomMAC(mac) && o.IP == "") {
+			continue
+		}
+		if o.IP == "" || o.Origin == "arp" || passiveDirectResponderIdentity(o) {
+			links = append(links, passiveLinkForObservation(o, mac))
+			continue
+		}
+		probes = append(probes, leaseProbe{ordinal, o.Node, passiveString(o.Evidence.Subject, "campus_id"), o.IP, o.ObservedAt})
+	}
+	if len(probes) == 0 {
+		return links, nil
+	}
+	raw, err := json.Marshal(probes)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx, `WITH incoming AS MATERIALIZED (
+ SELECT * FROM jsonb_to_recordset($1::jsonb) AS r(ordinal int,sensor_id text,campus_id text,ip text,observed_at timestamptz)
+)
+SELECT i.ordinal,coalesce(lease.endpoint_id,'')
+FROM incoming i LEFT JOIN LATERAL (
+ SELECT endpoint_id FROM device_address_leases
+ WHERE sensor_id=i.sensor_id AND campus_id=i.campus_id AND ip=i.ip::inet
+  AND action='ack' AND observed_at<=i.observed_at AND valid_until>i.observed_at
+ ORDER BY observed_at DESC,event_id DESC LIMIT 1
+) lease ON true ORDER BY i.ordinal`, string(raw))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	seen := make(map[int]bool, len(probes))
+	expected := make(map[int]bool, len(probes))
+	for _, probe := range probes {
+		expected[probe.Ordinal] = true
+	}
+	for rows.Next() {
+		var ordinal int
+		var leaseEndpoint string
+		if err := rows.Scan(&ordinal, &leaseEndpoint); err != nil {
+			return nil, err
+		}
+		if !expected[ordinal] || seen[ordinal] {
+			return nil, fmt.Errorf("invalid batched discovery lease ordinal %d", ordinal)
+		}
+		seen[ordinal] = true
+		o := observations[ordinal]
+		mac := validPassiveMAC(o.MAC)
+		if leaseEndpoint == "mac:"+mac {
+			links = append(links, passiveLinkForObservation(o, mac))
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(seen) != len(probes) {
+		return nil, fmt.Errorf("incomplete batched discovery lease result: %d of %d", len(seen), len(probes))
+	}
+	return links, nil
+}
+
+func passiveLinkForObservation(o discovery.Observation, mac string) passiveLinkRow {
 	kind := "passive_event_time_identity"
 	if o.Origin == "arp" {
 		kind = "passive_arp_sender_identity"
 	}
 	basis, _ := json.Marshal(map[string]any{"kind": kind, "sensor": o.Node, "ip": o.IP, "mac": mac, "origin": o.Origin})
-	return &passiveLinkRow{ObservationID: o.ID, EndpointID: endpointID, ValidUntil: o.ValidUntil, Basis: basis}, nil
+	return passiveLinkRow{ObservationID: o.ID, EndpointID: "mac:" + mac, ValidUntil: o.ValidUntil, Basis: basis}
 }
 
 // insertPassiveLinksBatch writes one batch of identity links in endpoint order.
