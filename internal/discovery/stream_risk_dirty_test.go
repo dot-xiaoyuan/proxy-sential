@@ -51,7 +51,7 @@ func TestRiskSubjectsQueueOnlyOncePerConfirmedSegment(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT pg_advisory_xact_lock`).WithArgs("sensor-a").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`INSERT INTO risk_feature_segment_receipts`).WithArgs("segment-a", sqlmock.AnyArg(), "fresh", now).WillReturnRows(sqlmock.NewRows([]string{"segment_id"}).AddRow("segment-a"))
-	mock.ExpectExec(`INSERT INTO risk_feature_dirty_subjects`).WithArgs(riskSubjectPayload{count: 2}, now).WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec(`WITH candidates AS MATERIALIZED`).WithArgs(riskSubjectPayload{count: 2}, now, "segment-a").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectCommit()
 	if err := projector.MarkStreamRiskSubjectsDirty(context.Background(), "segment-a", segment); err != nil {
 		t.Fatal(err)
@@ -76,5 +76,33 @@ func TestRiskSubjectsQueueOnlyOncePerConfirmedSegment(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRiskDirtySubjectPacketClassificationKeepsMixedAndFreshObservations(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	event := func(source, ip, account string, observed time.Time) normalized.Event {
+		return normalized.Event{Type: "device", Source: source, Timestamp: observed.Format(time.RFC3339Nano),
+			Observer: map[string]any{"sensor_id": "sensor-a"}, Subject: map[string]any{"ip": ip, "account_id": account}}
+	}
+	subjects, err := streamRiskDirtySubjects([]normalized.Event{
+		event("packet-sidecar", "192.0.2.8", "account-a", now.Add(-time.Hour)),
+		event("packet-sidecar", "192.0.2.8", "account-a", now.Add(-time.Minute)),
+		event("zeek", "192.0.2.8", "account-a", now.Add(-time.Hour)),
+		event("packet-sidecar", "192.0.2.9", "account-b", now.Add(-time.Hour)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"sensor-a\x00ip\x00192.0.2.8", "sensor-a\x00account\x00account-a"} {
+		got := subjects[key]
+		if got.PacketOnly || !got.Observed.Equal(now.Add(-time.Minute)) {
+			t.Fatalf("mixed-source subject lost its fresh observation: %+v", got)
+		}
+	}
+	for _, key := range []string{"sensor-a\x00ip\x00192.0.2.9", "sensor-a\x00account\x00account-b"} {
+		if got := subjects[key]; !got.PacketOnly || !got.Observed.Equal(now.Add(-time.Hour)) {
+			t.Fatalf("old packet-only subject was misclassified: %+v", got)
+		}
 	}
 }

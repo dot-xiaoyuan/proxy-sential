@@ -446,30 +446,44 @@ type streamRiskDirtySubject struct {
 	Type     string    `json:"subject_type"`
 	ID       string    `json:"subject_id"`
 	Observed time.Time `json:"observed_at"`
+	// A mixed source or a fresh packet observation must still wake this key.
+	PacketOnly bool `json:"packet_only"`
 }
 
-// A confirmed stream segment wakes only the subjects it touched. Repeating a
-// segment after a crash does not create another dirty generation.
-func (p StreamDiscoveryProjector) MarkStreamRiskSubjectsDirty(ctx context.Context, id string, segment streamlog.Segment) error {
+func streamRiskDirtySubjects(events []normalized.Event) (map[string]streamRiskDirtySubject, error) {
 	subjects := map[string]streamRiskDirtySubject{}
-	for _, event := range segment.Events {
+	for _, event := range events {
 		if !evidence.StreamRiskFeatureEligible(event) {
 			continue
 		}
 		sensor := str(event.Observer, "sensor_id")
 		observed, err := time.Parse(time.RFC3339Nano, event.Timestamp)
 		if sensor == "" || err != nil {
-			return errors.New("risk feature subject lacks sensor or observation time")
+			return nil, errors.New("risk feature subject lacks sensor or observation time")
 		}
-		for _, subject := range []streamRiskDirtySubject{{Sensor: sensor, Type: "ip", ID: str(event.Subject, "ip"), Observed: observed.UTC()}, {Sensor: sensor, Type: "account", ID: str(event.Subject, "account_id"), Observed: observed.UTC()}} {
+		for _, subject := range []streamRiskDirtySubject{{Sensor: sensor, Type: "ip", ID: str(event.Subject, "ip"), Observed: observed.UTC(), PacketOnly: event.Source == "packet-sidecar"}, {Sensor: sensor, Type: "account", ID: str(event.Subject, "account_id"), Observed: observed.UTC(), PacketOnly: event.Source == "packet-sidecar"}} {
 			if subject.ID == "" {
 				continue
 			}
 			key := subject.Sensor + "\x00" + subject.Type + "\x00" + subject.ID
-			if prior, found := subjects[key]; !found || subject.Observed.After(prior.Observed) {
-				subjects[key] = subject
+			if prior, found := subjects[key]; found {
+				subject.PacketOnly = subject.PacketOnly && prior.PacketOnly
+				if prior.Observed.After(subject.Observed) {
+					subject.Observed = prior.Observed
+				}
 			}
+			subjects[key] = subject
 		}
+	}
+	return subjects, nil
+}
+
+// A confirmed stream segment wakes only the subjects it touched. Repeating a
+// segment after a crash does not create another dirty generation.
+func (p StreamDiscoveryProjector) MarkStreamRiskSubjectsDirty(ctx context.Context, id string, segment streamlog.Segment) error {
+	subjects, err := streamRiskDirtySubjects(segment.Events)
+	if err != nil {
+		return err
 	}
 	if len(subjects) == 0 {
 		return nil
@@ -531,17 +545,39 @@ func (p StreamDiscoveryProjector) MarkStreamRiskSubjectsDirty(ctx context.Contex
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO risk_feature_dirty_subjects(sensor_id,subject_type,subject_id,generation,last_observed_at)
+	_, err = tx.ExecContext(ctx, `WITH candidates AS MATERIALIZED (
+ SELECT r.sensor_id,r.subject_type,r.subject_id,r.observed_at,
+        (r.packet_only AND p.sensor_id IS NOT NULL
+         AND (c.sensor_id IS NULL OR $2::timestamptz>=c.accepted_after)
+         AND r.observed_at<statement_timestamp()-make_interval(secs=>p.safe_skip_seconds)
+         AND current_state.subject_id IS NULL) AS skip_old,
+        p.safe_skip_seconds
+ FROM jsonb_to_recordset($1::jsonb) AS r(sensor_id text,subject_type text,subject_id text,observed_at timestamptz,packet_only boolean)
+ LEFT JOIN stream_risk_window_policies p
+   ON p.sensor_id=r.sensor_id AND p.lease_until>statement_timestamp()
+ LEFT JOIN stream_risk_fresh_cutovers c ON c.sensor_id=r.sensor_id
+ LEFT JOIN stream_risk_current current_state
+   ON current_state.sensor_id=r.sensor_id AND current_state.subject_type=r.subject_type
+  AND current_state.subject_id=r.subject_id
+), queued AS (
+ INSERT INTO risk_feature_dirty_subjects(sensor_id,subject_type,subject_id,generation,last_observed_at)
  SELECT r.sensor_id,r.subject_type,r.subject_id,nextval('risk_feature_dirty_generation'),r.observed_at
- FROM jsonb_to_recordset($1::jsonb) AS r(sensor_id text,subject_type text,subject_id text,observed_at timestamptz)
- WHERE NOT EXISTS (SELECT 1 FROM stream_risk_fresh_cutovers c
+ FROM candidates r
+ WHERE NOT r.skip_old
+   AND NOT EXISTS (SELECT 1 FROM stream_risk_fresh_cutovers c
                    WHERE c.sensor_id=r.sensor_id AND $2::timestamptz<c.accepted_after)
  ON CONFLICT(sensor_id,subject_type,subject_id) DO UPDATE
  SET generation=CASE WHEN risk_feature_dirty_subjects.claimed_generation IS NOT NULL
                      THEN nextval('risk_feature_dirty_generation')
                      ELSE risk_feature_dirty_subjects.generation END,
      last_dirty_at=now(),
-     last_observed_at=GREATEST(risk_feature_dirty_subjects.last_observed_at,EXCLUDED.last_observed_at)`, raw, segment.AcceptedAt.UTC())
+     last_observed_at=GREATEST(risk_feature_dirty_subjects.last_observed_at,EXCLUDED.last_observed_at)
+ RETURNING subject_id
+)
+UPDATE risk_feature_segment_receipts
+ SET skipped_old_subjects=(SELECT count(*) FROM candidates WHERE skip_old),
+     skipped_old_max_window_seconds=(SELECT max(safe_skip_seconds) FROM candidates WHERE skip_old)
+ WHERE segment_id=$3 AND EXISTS (SELECT 1 FROM candidates WHERE skip_old)`, raw, segment.AcceptedAt.UTC(), id)
 	if err != nil {
 		return err
 	}

@@ -1311,6 +1311,47 @@ func runRiskMaterialize(args []string) error {
 	defer backend.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	var windowLeaseErrors chan error
+	if *incremental {
+		policyCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		cutoff, cutoffErr := backend.StreamRiskFreshCutoff(policyCtx, *sensorID)
+		if cutoffErr == nil && (cutoff.IsZero() || cutoff.After(time.Now().UTC())) {
+			cutoffErr = errors.New("incremental risk requires an audited fresh cutoff")
+		}
+		if cutoffErr == nil {
+			if *once {
+				cutoffErr = backend.CheckStreamRiskWindow(policyCtx, *sensorID, *window)
+			} else {
+				cutoffErr = backend.RegisterStreamRiskWindow(policyCtx, *sensorID, *window)
+			}
+		}
+		cancel()
+		if cutoffErr != nil {
+			return cutoffErr
+		}
+		if !*once {
+			windowLeaseErrors = make(chan error, 1)
+			go func() {
+				ticker := time.NewTicker(15 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+						leaseCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+						err := backend.RegisterStreamRiskWindow(leaseCtx, *sensorID, *window)
+						cancel()
+						if err != nil {
+							windowLeaseErrors <- fmt.Errorf("renew incremental risk window lease: %w", err)
+							stop()
+							return
+						}
+					}
+				}
+			}()
+		}
+	}
 	if *incremental && !*once {
 		go func() {
 			ticker := time.NewTicker(15 * time.Second)
@@ -1369,6 +1410,13 @@ func runRiskMaterialize(args []string) error {
 			fmt.Fprintf(os.Stderr, "risk materialize failed: %v\n", err)
 		}
 	})
+	if windowLeaseErrors != nil {
+		select {
+		case err := <-windowLeaseErrors:
+			return err
+		default:
+		}
+	}
 	return nil
 }
 

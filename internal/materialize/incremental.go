@@ -63,7 +63,7 @@ func RunIncrementalOnce(ctx context.Context, backend IncrementalStore, opts Incr
 	if opts.FeatureLimit == 0 {
 		opts.FeatureLimit = 20000
 	}
-	if opts.Window <= 0 || opts.Window > 7*24*time.Hour || opts.ClaimLimit < 1 || opts.ClaimLimit > 256 || opts.FeatureLimit < 1 || opts.FeatureLimit > 20000 {
+	if opts.Window <= 0 || opts.Window > store.MaxStreamRiskWindow || opts.ClaimLimit < 1 || opts.ClaimLimit > 256 || opts.FeatureLimit < 1 || opts.FeatureLimit > 20000 {
 		return IncrementalResult{}, errors.New("incremental risk bounds are invalid")
 	}
 	freshCutoff, err := backend.StreamRiskFreshCutoff(ctx, opts.SensorID)
