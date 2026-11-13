@@ -85,6 +85,13 @@ func (s *PostgresStore) CommitIngestBatch(ctx context.Context, item ingest.Batch
 	if _, err := tx.ExecContext(ctx, `UPDATE ingest_batches SET status='committed',event_count=$2,malformed_count=$3,last_error=NULL,committed_at=coalesce(committed_at,$4::timestamptz) WHERE batch_id=$1`, item.BatchID, item.EventCount, item.Malformed, item.CommittedAt); err != nil {
 		return err
 	}
+	if passiveDiscoveryBatchV3Enabled() {
+		if _, err := tx.ExecContext(ctx, `UPDATE passive_discovery_batch_progress p SET first_ingested_at=b.committed_at,
+ completed_at=CASE WHEN p.selected_count=0 THEN b.committed_at ELSE p.completed_at END,updated_at=now()
+ FROM ingest_batches b WHERE p.batch_id=b.batch_id AND p.batch_id=$1 AND p.first_ingested_at IS NULL AND b.committed_at IS NOT NULL`, item.BatchID); err != nil {
+			return err
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO ingest_checkpoints(sensor_id,source_kind,source_path,file_id,committed_offset,last_event_at,updated_at) VALUES($1,$2,$3,$4,$5,NULLIF($6,'')::timestamptz,now()) ON CONFLICT(sensor_id,source_kind,source_path) DO UPDATE SET file_id=EXCLUDED.file_id,committed_offset=EXCLUDED.committed_offset,last_event_at=COALESCE(EXCLUDED.last_event_at,ingest_checkpoints.last_event_at),updated_at=now()`, item.SensorID, item.SourceKind, item.SourcePath, item.FileID, item.EndOffset, lastEventAt); err != nil {
 		return err
 	}

@@ -676,6 +676,21 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 		var protocolCounts, skipCounts json.RawMessage
 		var processed, emitted, skipped int64
 		_ = repo.DB.QueryRowContext(ctx, `SELECT last_success_at,CASE WHEN last_error<>'' THEN 'error' WHEN last_success_at IS NULL THEN 'waiting' WHEN last_success_at<now()-interval '2 minutes' THEN 'lagging' ELSE 'ready' END,last_error,protocol_counts,skip_counts,processed_events,emitted_observations,skipped_events FROM passive_discovery_state ORDER BY updated_at DESC LIMIT 1`).Scan(&lastSuccess, &materializerStatus, &materializerError, &protocolCounts, &skipCounts, &processed, &emitted, &skipped)
+		activeBatch, batchStateErr := repo.PassiveDiscoveryBatchActive(ctx)
+		if batchStateErr != nil {
+			materializerStatus = "error"
+			materializerError = "batch read state unavailable"
+		} else if activeBatch {
+			if fresh := repo.PassiveDiscoveryFreshness(ctx); fresh != nil {
+				if status, ok := fresh["status"].(string); ok {
+					materializerStatus = status
+				}
+				materializerError, _ = fresh["error"].(string)
+				if at, ok := fresh["last_success_at"].(time.Time); ok {
+					lastSuccess = sql.NullTime{Time: at, Valid: true}
+				}
+			}
+		}
 		response := map[string]any{"window": "24h", "infrastructure": infrastructure, "active_responses": active, "pending_association": pending, "passive_devices": passive, "service_devices": services, "linked_endpoints": linked, "active_enabled": enabled, "materializer_status": materializerStatus, "materializer_error": materializerError}
 		if len(protocolCounts) > 0 {
 			response["protocol_counts"] = protocolCounts

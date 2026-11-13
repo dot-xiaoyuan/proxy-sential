@@ -19,6 +19,17 @@ func (r Repository) PassiveDiscoveryFreshness(ctx context.Context) map[string]an
 	if r.DB == nil {
 		return nil
 	}
+	active, stateErr := r.PassiveDiscoveryBatchActive(ctx)
+	if stateErr != nil {
+		return map[string]any{"status": "failed", "source": "passive-discovery-batch-v3", "error": "batch read state unavailable"}
+	}
+	if active {
+		fresh, err := r.PassiveDiscoveryBatchFreshness(ctx)
+		if err != nil {
+			return nil
+		}
+		return fresh
+	}
 	probe, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 	defer cancel()
 	var cursor, success, updated sql.NullTime
@@ -52,4 +63,72 @@ func (r Repository) PassiveDiscoveryFreshness(ctx context.Context) map[string]an
 		result["error"] = lastError.String
 	}
 	return result
+}
+
+func (r Repository) PassiveDiscoveryBatchActive(ctx context.Context) (bool, error) {
+	var active bool
+	err := r.DB.QueryRowContext(ctx, `SELECT COALESCE((state->>'active')::boolean,false) FROM read_model_runtime_state WHERE name='passive-discovery-batch-v3'`).Scan(&active)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return active, err
+}
+
+// PassiveDiscoveryBatchFreshness uses the oldest unfinished source batch,
+// including retry gaps. A completed newer batch cannot make a stale gap look
+// current; classification and archive progress are reported separately.
+func (r Repository) PassiveDiscoveryBatchFreshness(ctx context.Context) (map[string]any, error) {
+	probe, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	var oldest, ingested, processed, archived, archiveOldest sql.NullTime
+	var failure sql.NullString
+	var pending, archivePending int64
+	err := r.DB.QueryRowContext(probe, `SELECT
+ (SELECT min(first_ingested_at) FROM passive_discovery_batch_progress WHERE completed_at IS NULL AND first_ingested_at IS NOT NULL),
+ (SELECT max(first_ingested_at) FROM passive_discovery_batch_progress),
+ (SELECT max(completed_at) FROM passive_discovery_batch_progress),
+ (SELECT max(archive_verified_at) FROM passive_discovery_batch_progress),
+ (SELECT min(first_ingested_at) FROM passive_discovery_batch_progress WHERE archive_verified_at IS NULL AND first_ingested_at IS NOT NULL AND selected_count>0),
+ (SELECT last_error FROM passive_discovery_batch_progress WHERE completed_at IS NULL AND last_error<>'' ORDER BY first_ingested_at,batch_id LIMIT 1),
+ (SELECT count(*) FROM passive_discovery_batch_progress WHERE completed_at IS NULL AND first_ingested_at IS NOT NULL),
+ (SELECT count(*) FROM passive_discovery_batch_progress WHERE archive_verified_at IS NULL AND first_ingested_at IS NOT NULL AND selected_count>0)`).Scan(&oldest, &ingested, &processed, &archived, &archiveOldest, &failure, &pending, &archivePending)
+	if err != nil {
+		return nil, err
+	}
+	result := map[string]any{"status": "ready", "source": "passive-discovery-batch-v3", "pending_batches": pending, "archive_pending_batches": archivePending, "lag_seconds": float64(0)}
+	if !processed.Valid {
+		result["status"] = "initializing"
+	}
+	if oldest.Valid {
+		lag := time.Since(oldest.Time).Seconds()
+		if lag < 0 {
+			lag = 0
+		}
+		result["oldest_pending_at"] = oldest.Time
+		result["lag_seconds"] = lag
+		if lag > passiveDiscoveryDelayThreshold.Seconds() {
+			result["status"] = "delayed"
+		} else {
+			result["status"] = "processing"
+		}
+	}
+	if ingested.Valid {
+		result["ingested_at"] = ingested.Time
+	}
+	if processed.Valid {
+		result["processed_at"] = processed.Time
+		result["last_success_at"] = processed.Time
+	}
+	if archived.Valid {
+		result["archive_verified_at"] = archived.Time
+	}
+	if archiveOldest.Valid {
+		result["archive_oldest_pending_at"] = archiveOldest.Time
+		result["archive_lag_seconds"] = max(0, time.Since(archiveOldest.Time).Seconds())
+	}
+	if failure.Valid && failure.String != "" {
+		result["status"] = "failed"
+		result["error"] = failure.String
+	}
+	return result, nil
 }

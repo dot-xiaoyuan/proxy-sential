@@ -267,6 +267,45 @@ func TestProcessOnceRetriesStableBatchAfterPostEventFailure(t *testing.T) {
 	}
 }
 
+type stagedDiscoveryRecoveryBackend struct {
+	fakeBackend
+	staged []ingest.Batch
+	ids    []string
+}
+
+func (f *stagedDiscoveryRecoveryBackend) StageDiscoveryBatch(_ context.Context, batch ingest.Batch, events []normalized.Event) error {
+	f.staged = append(f.staged, batch)
+	for _, event := range events {
+		f.ids = append(f.ids, event.EventID)
+	}
+	return nil
+}
+
+func TestProcessOnceReplaysStagedDiscoveryAfterCheckpointCommitFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dhcp.log")
+	line := `{"ts":1792890000,"uid":"C-replay","xid":707,"capture_vlan":"42","mac":"02:00:00:00:00:10","assigned_addr":"192.0.2.82","msg_types":"ACK"}` + "\n"
+	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cause := errors.New("checkpoint transaction failed after ClickHouse accepted the event")
+	backend := &stagedDiscoveryRecoveryBackend{fakeBackend: fakeBackend{commitErr: cause}}
+	opts := Options{SensorID: "campus-204", MaxBatchBytes: 1 << 20, StoreTimeout: time.Second}
+	source := Source{Kind: "zeek-dhcp-binding", Path: path}
+	if err := ProcessOnce(context.Background(), backend, opts, source); !errors.Is(err, cause) {
+		t.Fatalf("expected checkpoint failure, got %v", err)
+	}
+	if backend.found || len(backend.staged) != 1 || len(backend.events) != 1 {
+		t.Fatalf("source advanced or discovery was not staged before failure: %+v", backend)
+	}
+	backend.commitErr = nil
+	if err := ProcessOnce(context.Background(), backend, opts, source); err != nil {
+		t.Fatal(err)
+	}
+	if len(backend.staged) != 2 || backend.staged[0].BatchID != backend.staged[1].BatchID || len(backend.ids) != 2 || backend.ids[0] != backend.ids[1] || !backend.found || backend.checkpoint.Offset != int64(len(line)) {
+		t.Fatalf("replay did not preserve source batch and selected event identity: staged=%+v ids=%v checkpoint=%+v", backend.staged, backend.ids, backend.checkpoint)
+	}
+}
+
 func TestProcessOnceKeepsCheckpointWhenEventStorageUnavailable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "eve.json")
 	line := `{"timestamp":"2026-07-22T10:00:00Z","event_type":"dns","src_ip":"10.0.0.2","dest_ip":"1.1.1.1","proto":"UDP","dns":{"rrname":"example.test"}}` + "\n"

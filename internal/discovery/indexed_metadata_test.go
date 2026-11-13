@@ -37,6 +37,7 @@ func TestIndexedMetadataCountsFilteredTrustedIdentitiesWithoutPagination(t *test
 	defer db.Close()
 	at := time.Now().UTC()
 	mock.ExpectQuery(`(?s)identity_key.*GROUP BY identity_key.*matched.*classification_status.*GROUP BY classification_status`).WillReturnRows(sqlmock.NewRows([]string{"status", "type", "count", "as_of"}).AddRow("identified", "access_point", 5, at).AddRow("candidate", "access_point", 2, at).AddRow("conflict", "", 1, at).AddRow("expired", "", 1, at))
+	mock.ExpectQuery(`FROM read_model_runtime_state`).WillReturnRows(sqlmock.NewRows([]string{"active"}).AddRow(false))
 	mock.ExpectQuery(`FROM passive_discovery_state`).WillReturnRows(sqlmock.NewRows([]string{"cursor_timestamp", "last_success_at", "last_error", "updated_at"}).AddRow(at, at, "", at))
 	metadata, err := (Repository{DB: db}).DevicesIndexedMetadata(context.Background(), DeviceQuery{Mode: "passive", DeviceType: "access_point", State: "identified", Cursor: "ignored", Offset: 99, Limit: 1})
 	if err != nil {

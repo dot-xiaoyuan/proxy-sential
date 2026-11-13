@@ -30,20 +30,25 @@ func (s *ClickHouseStore) WriteDiscoveryEvidenceArchive(ctx context.Context, bat
 		hashes[i] = hex.EncodeToString(sum[:])
 	}
 	read := func() (map[int]string, error) {
-		raw, err := s.query(ctx, `SELECT ordinal,content_hash FROM discovery_evidence_archive WHERE batch_id=`+chQuote(batch)+` GROUP BY ordinal,content_hash LIMIT 20001 SETTINGS max_threads=1,max_execution_time=2 FORMAT JSONEachRow`)
+		// Check the readable body as well as the manifest columns. A row with
+		// matching metadata but a missing or corrupt document is not an archive.
+		raw, err := s.query(ctx, `SELECT ordinal,content_hash,event_id,toUnixTimestamp64Micro(accepted_at) accepted_us,lower(hex(SHA256(document))) document_hash FROM discovery_evidence_archive WHERE batch_id=`+chQuote(batch)+` GROUP BY ordinal,content_hash,event_id,accepted_us,document_hash LIMIT 20001 SETTINGS max_threads=1,max_execution_time=20 FORMAT JSONEachRow`)
 		if err != nil {
 			return nil, err
 		}
 		var rows []struct {
-			Ordinal int    `json:"ordinal"`
-			Hash    string `json:"content_hash"`
+			Ordinal      int    `json:"ordinal"`
+			Hash         string `json:"content_hash"`
+			EventID      string `json:"event_id"`
+			AcceptedUS   int64  `json:"accepted_us"`
+			DocumentHash string `json:"document_hash"`
 		}
 		if err = decodeJSONEachRow(raw, &rows); err != nil {
 			return nil, err
 		}
 		found := map[int]string{}
 		for _, row := range rows {
-			if row.Ordinal < 0 || row.Ordinal >= len(events) || row.Hash != hashes[row.Ordinal] {
+			if row.Ordinal < 0 || row.Ordinal >= len(events) || row.Hash != hashes[row.Ordinal] || row.DocumentHash != row.Hash || row.EventID != events[row.Ordinal].EventID || row.AcceptedUS != accepted.UTC().UnixMicro() {
 				return nil, discovery.ErrDiscoveryContentConflict
 			}
 			found[row.Ordinal] = row.Hash

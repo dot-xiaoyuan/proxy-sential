@@ -13,6 +13,21 @@ import (
 // StageDiscoveryBatch links work to the original file batch before export.
 // A pending task is not eligible until that same ledger batch is committed.
 func (s *DBStore) StageDiscoveryBatch(ctx context.Context, batch ingest.Batch, events []normalized.Event) error {
+	if passiveDiscoveryBatchV3Enabled() {
+		if err := s.stagePassiveDiscoveryBatchV3(ctx, batch, events); err != nil {
+			return err
+		}
+	} else {
+		// Once the batch reader is published, a stale ingest configuration
+		// must stop at the source checkpoint instead of silently dropping work.
+		active, err := s.passiveDiscoveryV3Active(ctx)
+		if err != nil {
+			return err
+		}
+		if active {
+			return fmt.Errorf("passive discovery v3 is active but batch staging is disabled")
+		}
+	}
 	if os.Getenv("PROXY_SENTINEL_DISCOVERY_V2") != "true" {
 		return nil
 	}

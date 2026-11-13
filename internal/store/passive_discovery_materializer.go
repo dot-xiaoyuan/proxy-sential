@@ -1488,6 +1488,10 @@ ORDER BY observed_at DESC,id DESC LIMIT 17`, o.IP, o.Node, o.Site, o.Domain, o.V
 }
 
 func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []normalized.Event, scope passiveDiscoveryScope) (passiveDiscoveryBatchStats, error) {
+	return s.processPassiveDiscoveryBatchWithProgress(ctx, events, scope, nil)
+}
+
+func (s *DBStore) processPassiveDiscoveryBatchWithProgress(ctx context.Context, events []normalized.Event, scope passiveDiscoveryScope, advance func(context.Context, *sql.Tx, passiveDiscoveryBatchStats) error) (passiveDiscoveryBatchStats, error) {
 	stats := passiveDiscoveryBatchStats{Protocols: map[string]int{}, Reasons: map[string]int{}}
 	started := time.Now()
 	sections := map[string]time.Duration{}
@@ -1633,6 +1637,11 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 	if err := measure("link_batch", func() error { return s.insertPassiveLinksBatch(ctx, tx, pendingLinks) }); err != nil {
 		return stats, err
 	}
+	if advance != nil {
+		if err := advance(ctx, tx, stats); err != nil {
+			return stats, err
+		}
+	}
 	commitStage := time.Now()
 	err = tx.Commit()
 	sections["commit"] += time.Since(commitStage)
@@ -1703,10 +1712,43 @@ func (s *DBStore) runPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 		}
 	}()
 	defer func() { <-heartbeatDone }()
+	// A published cutover is durable state. Restarting with the old read flag
+	// cannot send this sensor back to the event-time cursor.
+	active, activeErr := s.passiveDiscoveryV3Active(ctx)
+	if activeErr != nil {
+		fmt.Fprintf(os.Stderr, "passive discovery v3 state check: %v\n", activeErr)
+		return
+	}
+	if active {
+		s.runPassiveDiscoveryV3(ctx, sensorID, false)
+		return
+	}
+	if os.Getenv("PROXY_SENTINEL_PASSIVE_DISCOVERY_BATCH_V3_SHADOW") == "true" || os.Getenv("PROXY_SENTINEL_PASSIVE_DISCOVERY_BATCH_V3_READ") == "true" {
+		shadowDone := make(chan struct{})
+		go func() { defer close(shadowDone); s.runPassiveDiscoveryV3(ctx, sensorID, true) }()
+		defer func() { <-shadowDone }()
+	}
 	owner := fmt.Sprintf("passive-discovery-%d", os.Getpid())
 	batchTuner := passiveDiscoveryBatchTuner{limit: passiveDiscoveryBatchSize}
 	for ctx.Err() == nil {
 		workCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+		if os.Getenv("PROXY_SENTINEL_PASSIVE_DISCOVERY_BATCH_V3_READ") == "true" {
+			ready, readyErr := s.passiveDiscoveryV3CutoverReady(workCtx, sensorID)
+			if readyErr != nil {
+				fmt.Fprintf(os.Stderr, "passive discovery v3 cutover check: %v\n", readyErr)
+			}
+			if ready {
+				_, switchErr := s.pg.db.ExecContext(workCtx, `INSERT INTO read_model_runtime_state(name,state,updated_at)
+ VALUES('passive-discovery-batch-v3',jsonb_build_object('active',true,'sensor_id',$1::text,'switched_at',now()),now())
+ ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()`, sensorID)
+				if switchErr == nil {
+					cancel()
+					s.runPassiveDiscoveryV3(ctx, sensorID, false)
+					return
+				}
+				fmt.Fprintf(os.Stderr, "passive discovery v3 cutover publish: %v\n", switchErr)
+			}
+		}
 		requestedLimit := batchTuner.limit
 		scope, err := parsePassiveDiscoveryScope(os.Getenv("PROXY_SENTINEL_DISCOVERY_CIDRS"))
 		claimed := false

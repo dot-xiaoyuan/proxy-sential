@@ -239,6 +239,13 @@ ORDER BY last_seen DESC,device_key LIMIT ` + limit
 	return result, nil
 }
 func (r Repository) DiscoveryFreshness(ctx context.Context) (map[string]any, error) {
+	active, activeErr := r.PassiveDiscoveryBatchActive(ctx)
+	if activeErr != nil {
+		return nil, activeErr
+	}
+	if active {
+		return r.PassiveDiscoveryBatchFreshness(ctx)
+	}
 	var freshActive bool
 	if err := r.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM stream_source_cutovers WHERE state='active')`).Scan(&freshActive); err != nil {
 		return nil, err
