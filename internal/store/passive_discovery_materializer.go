@@ -1186,21 +1186,25 @@ ON CONFLICT(endpoint_id) DO NOTHING`, macs); err != nil {
 			return nil, err
 		}
 	}
-	resolved := make(map[string]discovery.Observation, len(ids))
+	observations := make([]discovery.Observation, 0, len(ids))
 	for _, id := range ids {
 		o := pending[id]
 		if o.ValidUntil.IsZero() {
 			o.ValidUntil = o.ObservedAt.Add(24 * time.Hour)
 		}
-		// Service advertisements usually carry an IP but no MAC. Reuse only an
-		// event-time DHCP/ARP/NDP binding; never manufacture a terminal identity.
-		if discovery.HardwareProjectionEnabled() {
-			var err error
-			o, err = resolveHardwareOwnership(ctx, db, o)
-			if err != nil {
-				return nil, err
+		observations = append(observations, o)
+	}
+	// Service advertisements usually carry an IP but no MAC. Reuse only an
+	// event-time DHCP/ARP/NDP binding; never manufacture a terminal identity.
+	if discovery.HardwareProjectionEnabled() {
+		if err := resolveHardwareOwnershipBatch(ctx, db, observations); err != nil {
+			return nil, err
+		}
+	} else {
+		for i, o := range observations {
+			if o.Origin == "sadp" || o.MAC != "" || o.IP == "" {
+				continue
 			}
-		} else if o.Origin != "sadp" && o.MAC == "" && o.IP != "" {
 			var mac string
 			err := db.QueryRowContext(ctx, `SELECT lower(data->>'mac')
 FROM discovery_observations
@@ -1212,7 +1216,11 @@ ORDER BY observed_at DESC,id DESC LIMIT 1`, o.Node, o.IP, o.ObservedAt).Scan(&ma
 			} else if err != sql.ErrNoRows {
 				return nil, err
 			}
+			observations[i] = o
 		}
+	}
+	resolved := make(map[string]discovery.Observation, len(ids))
+	for _, o := range observations {
 		if factID := passiveHTTPContentFactID(o); factID != "" {
 			o.ID = factID
 		}

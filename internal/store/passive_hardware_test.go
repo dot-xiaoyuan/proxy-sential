@@ -108,6 +108,70 @@ func TestHardwareOwnershipPostgresScopedLeaseRevocation(t *testing.T) {
 	}
 }
 
+func TestHardwareOwnershipBatchClaimsPreserveEventTime(t *testing.T) {
+	at := time.Date(2026, 11, 13, 1, 0, 0, 0, time.UTC)
+	claim := hardwareBindingClaim{origin: "dhcp", observedAt: at, validUntil: at.Add(time.Hour), mac: "00:11:22:33:44:55", site: "campus", domain: "access", vlan: "20", vrf: "prod"}
+	response := discovery.Observation{Origin: "http_device", Node: "sensor", Site: "campus", Domain: "access", VLAN: "20", VRF: "prod", IP: "10.0.0.2", ObservedAt: at.Add(time.Minute), Evidence: normalized.Event{Payload: map[string]any{"server": "camera"}}}
+	got := resolveHardwareOwnershipFromClaims(response, []hardwareBindingClaim{claim}, nil)
+	if got.MAC != claim.mac || got.Evidence.Payload["hardware_identity"] != "unique_binding" {
+		t.Fatalf("unique event-time owner missing: %+v", got)
+	}
+	otherScope := claim
+	otherScope.mac, otherScope.vlan = "00:aa:bb:cc:dd:ee", "21"
+	got = resolveHardwareOwnershipFromClaims(response, []hardwareBindingClaim{claim, otherScope}, nil)
+	if got.MAC != claim.mac {
+		t.Fatalf("cross-scope owner interfered: %+v", got)
+	}
+	release := claim
+	release.withdrawn, release.observedAt = true, at.Add(2*time.Minute)
+	got = resolveHardwareOwnershipFromClaims(response, []hardwareBindingClaim{claim}, []hardwareBindingClaim{release})
+	if got.MAC != claim.mac {
+		t.Fatal("future release invalidated earlier response")
+	}
+	response.ObservedAt = at.Add(3 * time.Minute)
+	got = resolveHardwareOwnershipFromClaims(response, []hardwareBindingClaim{claim}, []hardwareBindingClaim{release})
+	if got.MAC != "" || got.Evidence.Payload["hardware_identity"] != "ambiguous_or_missing" {
+		t.Fatalf("release did not revoke binding: %+v", got)
+	}
+	otherScope.vlan = "20"
+	got = resolveHardwareOwnershipFromClaims(response, []hardwareBindingClaim{claim, otherScope}, nil)
+	if got.MAC != "" {
+		t.Fatalf("ambiguous same-scope owner selected: %+v", got)
+	}
+	response.MAC = "00:aa:bb:cc:dd:ee"
+	got = resolveHardwareOwnershipFromClaims(response, []hardwareBindingClaim{claim}, nil)
+	if got.MAC != "" || got.Evidence.Payload["hardware_identity"] != "conflicting_mac" {
+		t.Fatalf("conflicting direct MAC accepted: %+v", got)
+	}
+}
+
+func TestHardwareOwnershipBatchSharesScopedHistory(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	at := time.Date(2026, 11, 13, 1, 0, 0, 0, time.UTC)
+	first := discovery.Observation{Origin: "http_device", Node: "sensor", Site: "campus", Domain: "access", IP: "10.0.0.2", ObservedAt: at.Add(time.Minute), Evidence: normalized.Event{Payload: map[string]any{"server": "camera"}}}
+	second := first
+	second.ObservedAt = at.Add(3 * time.Minute)
+	columns := []string{"origin", "observed_at", "valid_until", "withdrawn", "mac", "site", "domain", "vlan", "vrf"}
+	mock.ExpectQuery("WITH candidates AS MATERIALIZED").WithArgs("sensor", first.IP, first.ObservedAt, second.ObservedAt).
+		WillReturnRows(sqlmock.NewRows(columns).AddRow("dhcp", at, at.Add(time.Hour), false, "00:11:22:33:44:55", "campus", "access", "", ""))
+	mock.ExpectQuery("SELECT origin,observed_at,valid_until,withdrawn").WithArgs("sensor", first.IP, at, second.ObservedAt).
+		WillReturnRows(sqlmock.NewRows(columns).AddRow("dhcp", at.Add(2*time.Minute), at.Add(2*time.Minute), true, "00:11:22:33:44:55", "campus", "access", "", ""))
+	observations := []discovery.Observation{first, second}
+	if err := resolveHardwareOwnershipBatch(context.Background(), db, observations); err != nil {
+		t.Fatal(err)
+	}
+	if observations[0].MAC != "00:11:22:33:44:55" || observations[1].MAC != "" {
+		t.Fatalf("batch history lost event-time boundary: %+v", observations)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestHardwareBackfillPostgresDuplicateEventIDsAcrossPages(t *testing.T) {
 	dsn := os.Getenv("PROXY_SENTINEL_TEST_POSTGRES_DSN")
 	if dsn == "" {
