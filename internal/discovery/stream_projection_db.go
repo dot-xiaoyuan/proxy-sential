@@ -779,7 +779,7 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 		}
 		if candidate, ok := streamRepeatStateCandidate(priorPtr, item.Fact, decision); ok && !repeatBlocked[item.Fact.Device] {
 			if accumulated, exists := repeatCandidates[item.Fact.Device]; exists {
-				if accumulated.Scope != candidate.Scope {
+				if accumulated.Scope != candidate.Scope || accumulated.IP != candidate.IP {
 					repeatBlocked[item.Fact.Device] = true
 					delete(repeatCandidates, item.Fact.Device)
 				} else {

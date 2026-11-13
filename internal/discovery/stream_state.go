@@ -49,6 +49,7 @@ type streamRepeatStateSkip struct {
 	FirstObserved time.Time
 	LastObserved  time.Time
 	ValidUntil    time.Time
+	IP            string
 }
 
 func streamRepeatStateCandidate(previous *streamDiscoveryFact, next streamDiscoveryFact, decision streamFactDecision) (streamRepeatStateSkip, bool) {
@@ -58,7 +59,7 @@ func streamRepeatStateCandidate(previous *streamDiscoveryFact, next streamDiscov
 		!next.FirstObserved.Equal(previous.FirstObserved) || next.ValidUntil.Before(previous.ValidUntil) {
 		return streamRepeatStateSkip{}, false
 	}
-	return streamRepeatStateSkip{Scope: next.Scope, FirstObserved: next.FirstObserved, LastObserved: next.Observed, ValidUntil: next.ValidUntil}, true
+	return streamRepeatStateSkip{Scope: next.Scope, FirstObserved: next.FirstObserved, LastObserved: next.Observed, ValidUntil: next.ValidUntil, IP: next.IP}, true
 }
 
 func canSkipStreamRepeatState(old streamDiscoveryState, repeat streamRepeatStateSkip, now time.Time) bool {
@@ -66,10 +67,68 @@ func canSkipStreamRepeatState(old streamDiscoveryState, repeat streamRepeatState
 	// durable wake: ExpireStreamDiscoveryStates selects that row when due and
 	// rebuilds it from the already committed fact lease. Keep the five-second
 	// margin so the expiry worker runs before an old summary looks stale.
-	return old.Scope == repeat.Scope && old.Document["current"] == true && old.ExpiresAt != nil &&
+	return streamRepeatObservedIPMatches(old, repeat) &&
+		old.Scope == repeat.Scope && old.Document["current"] == true && old.ExpiresAt != nil &&
 		old.ExpiresAt.After(now.Add(5*time.Second)) && !repeat.FirstObserved.Before(old.FirstSeen) &&
 		!repeat.LastObserved.Before(old.LastSeen) && repeat.LastObserved.Before(old.LastSeen.Add(5*time.Second)) &&
 		!repeat.LastObserved.After(now) && repeat.ValidUntil.After(repeat.LastObserved)
+}
+
+func streamRepeatObservedIPMatches(old streamDiscoveryState, repeat streamRepeatStateSkip) bool {
+	ip, ok := old.Document["last_observed_ip"].(string)
+	return ok && ip == repeat.IP
+}
+
+// The common single-fact heartbeat updates the exact last_seen and lease in
+// one narrow statement after the fact and receipt are durable in this same
+// transaction. Multi-fact devices, state transitions and ambiguous old
+// documents still rebuild from facts so ordering and evidence stay exact.
+type streamRepeatStateDeltaRow struct {
+	Device       string     `json:"device_key"`
+	Scope        string     `json:"scope_id"`
+	LastSeen     time.Time  `json:"last_seen"`
+	LastSeenText string     `json:"last_seen_text"`
+	ExpiresAt    *time.Time `json:"expires_at"`
+	IP           string     `json:"last_observed_ip"`
+	WasCurrent   bool       `json:"was_current"`
+}
+
+func streamRepeatStateDelta(old streamDiscoveryState, repeat streamRepeatStateSkip, now time.Time) (streamRepeatStateDeltaRow, bool) {
+	count, valid := streamDiscoveryEvidenceCount(old.Document)
+	if !valid || count != 1 || !streamRepeatObservedIPMatches(old, repeat) || old.Scope != repeat.Scope ||
+		repeat.FirstObserved.Before(old.FirstSeen) || !repeat.LastObserved.After(old.LastSeen) ||
+		repeat.LastObserved.After(now) || !repeat.ValidUntil.After(repeat.LastObserved) ||
+		repeat.LastObserved.Nanosecond()%1000 != 0 || repeat.ValidUntil.Nanosecond()%1000 != 0 ||
+		repeat.FirstObserved.Nanosecond()%1000 != 0 {
+		return streamRepeatStateDeltaRow{}, false
+	}
+	lastSeenText, ok := old.Document["last_seen"].(string)
+	if !ok {
+		return streamRepeatStateDeltaRow{}, false
+	}
+	documentLastSeen, err := time.Parse(time.RFC3339Nano, lastSeenText)
+	if err != nil || !documentLastSeen.Equal(old.LastSeen) {
+		return streamRepeatStateDeltaRow{}, false
+	}
+	row := streamRepeatStateDeltaRow{Device: old.Device, Scope: old.Scope, LastSeen: repeat.LastObserved,
+		LastSeenText: repeat.LastObserved.UTC().Format(time.RFC3339Nano), IP: repeat.IP}
+	switch old.Document["current"] {
+	case true:
+		if old.ExpiresAt == nil || !old.ExpiresAt.After(now) || !repeat.ValidUntil.After(now) ||
+			repeat.ValidUntil.Before(*old.ExpiresAt) {
+			return streamRepeatStateDeltaRow{}, false
+		}
+		row.WasCurrent = true
+		at := repeat.ValidUntil
+		row.ExpiresAt = &at
+	case false:
+		if old.ExpiresAt != nil || repeat.ValidUntil.After(now) {
+			return streamRepeatStateDeltaRow{}, false
+		}
+	default:
+		return streamRepeatStateDeltaRow{}, false
+	}
+	return row, true
 }
 
 func buildStreamDiscoveryState(epoch, key string, facts []streamDiscoveryFact, previous *streamDiscoveryState, now time.Time) (streamDiscoveryState, error) {
@@ -388,20 +447,27 @@ func publishStreamDiscoveryStatesCountWithRepeats(ctx context.Context, tx *sql.T
 	if err != nil {
 		return err
 	}
+	deltas := make([]streamRepeatStateDeltaRow, 0)
 	if len(repeatCandidates) > 0 {
 		now := time.Now().UTC()
 		remaining := make([]string, 0, len(keys))
 		for _, key := range keys {
 			candidate, repeat := repeatCandidates[key]
 			old, exists := oldStates[key]
-			if repeat && exists && newFactCounts[key] == 0 && canSkipStreamRepeatState(old, candidate, now) {
-				continue
+			if repeat && exists && newFactCounts[key] == 0 {
+				if canSkipStreamRepeatState(old, candidate, now) {
+					continue
+				}
+				if delta, ok := streamRepeatStateDelta(old, candidate, now); ok {
+					deltas = append(deltas, delta)
+					continue
+				}
 			}
 			remaining = append(remaining, key)
 		}
 		keys = remaining
 		if len(keys) == 0 {
-			return nil
+			return publishStreamRepeatStateDeltas(ctx, tx, epoch, deltas, affected)
 		}
 	}
 	factsByDevice := map[string][]streamDiscoveryFact{}
@@ -531,7 +597,7 @@ func publishStreamDiscoveryStatesCountWithRepeats(ctx context.Context, tx *sql.T
 		states = append(states, state)
 	}
 	if len(states) == 0 {
-		return nil
+		return publishStreamRepeatStateDeltas(ctx, tx, epoch, deltas, affected)
 	}
 	raw, err := json.Marshal(states)
 	if err != nil {
@@ -558,7 +624,55 @@ func publishStreamDiscoveryStatesCountWithRepeats(ctx context.Context, tx *sql.T
 	if affected != nil {
 		*affected, err = result.RowsAffected()
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	return writeStreamRepeatStateDeltas(ctx, tx, epoch, deltas, affected)
+}
+
+func publishStreamRepeatStateDeltas(ctx context.Context, tx *sql.Tx, epoch string, deltas []streamRepeatStateDeltaRow, affected *int64) error {
+	if len(deltas) == 0 {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(9184,213)`); err != nil {
+		return err
+	}
+	return writeStreamRepeatStateDeltas(ctx, tx, epoch, deltas, affected)
+}
+
+// The caller holds the result-version transaction lock. The device locks were
+// acquired by the segment projector before facts, receipts and this delta.
+func writeStreamRepeatStateDeltas(ctx context.Context, tx *sql.Tx, epoch string, deltas []streamRepeatStateDeltaRow, affected *int64) error {
+	if len(deltas) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(deltas)
+	if err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE stream_discovery_device_state AS s
+ SET last_seen=v.last_seen,expires_at=v.expires_at,
+ document=jsonb_set(s.document,'{last_seen}',to_jsonb(v.last_seen_text),false),
+ result_version=nextval('stream_discovery_result_version'),updated_at=now()
+ FROM jsonb_to_recordset($2::jsonb) AS v(device_key text,scope_id text,last_seen timestamptz,last_seen_text text,expires_at timestamptz,last_observed_ip text,was_current boolean)
+ WHERE s.epoch=$1 AND s.device_key=v.device_key AND s.scope_id=v.scope_id
+ AND s.last_seen<v.last_seen AND s.document->>'evidence_count'='1'
+ AND s.document->>'last_observed_ip'=v.last_observed_ip
+ AND s.document->>'current'=CASE WHEN v.was_current THEN 'true' ELSE 'false' END`, epoch, raw)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count != int64(len(deltas)) {
+		return fmt.Errorf("repeat state delta updated %d of %d devices", count, len(deltas))
+	}
+	if affected != nil {
+		*affected += count
+	}
+	return nil
 }
 
 func streamDiscoveryEvidenceCount(document map[string]any) (int, bool) {
