@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"proxy-sentinel/internal/discovery"
@@ -287,7 +288,32 @@ func (s *DBStore) runPassiveHardwareProjection(ctx context.Context, sensor strin
 		}
 		processed := 0
 		if err == nil {
-			processed, err = discovery.ProcessHardwareProjectionWithin(work, s.pg.db, sensor, 16, 8*time.Second)
+			// Independent identity transactions can overlap their indexed reads
+			// without sharing a device lock. Keep the whole cycle capped at 16.
+			var wg sync.WaitGroup
+			results := make(chan struct {
+				count int
+				err   error
+			}, 2)
+			for lane := 0; lane < 2; lane++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					count, runErr := discovery.ProcessHardwareProjectionWithin(work, s.pg.db, sensor, 8, 8*time.Second)
+					results <- struct {
+						count int
+						err   error
+					}{count, runErr}
+				}()
+			}
+			wg.Wait()
+			close(results)
+			for result := range results {
+				processed += result.count
+				if err == nil {
+					err = result.err
+				}
+			}
 		}
 		if err == nil && os.Getenv("PROXY_SENTINEL_HARDWARE_BACKFILL") == "true" {
 			err = s.backfillPassiveHardwareLatest(work, sensor)

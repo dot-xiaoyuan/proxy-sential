@@ -209,7 +209,7 @@ func enqueueHardwareFacts(ctx context.Context, db HardwareExecer, facts []Hardwa
  RETURNING identity_key,sensor_id)
  INSERT INTO passive_hardware_dirty(identity_key,sensor_id,reason)
  SELECT DISTINCT identity_key,sensor_id,'observation' FROM changed
- ON CONFLICT(identity_key) DO UPDATE SET generation=passive_hardware_dirty.generation+1,updated_at=now(),next_attempt_at=now(),reason='observation'`, string(raw))
+ ON CONFLICT(identity_key) DO NOTHING`, string(raw))
 	if err != nil {
 		return err
 	}

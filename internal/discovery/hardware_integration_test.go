@@ -293,6 +293,24 @@ func enqueueHardwareTest(t *testing.T, db *sql.DB, obs ...Observation) {
 		t.Fatal(err)
 	}
 }
+
+func TestHardwareDirtyQueueCoalescesRepeatedObservationWithoutLosingLatestFact(t *testing.T) {
+	db := hardwareIntegrationDB(t)
+	first := hardwareTestObservation(time.Now().UTC().Add(-2 * time.Minute))
+	second := hardwareTestObservation(first.ObservedAt.Add(time.Minute))
+	second.ID, second.EventID = "later", "later"
+	enqueueHardwareTest(t, db, first)
+	enqueueHardwareTest(t, db, second)
+	var generation int64
+	if err := db.QueryRow(`SELECT generation FROM passive_hardware_dirty`).Scan(&generation); err != nil || generation != 1 {
+		t.Fatalf("queued identity was rewritten: generation=%d err=%v", generation, err)
+	}
+	processHardwareTest(t, db)
+	var lastSeen time.Time
+	if err := db.QueryRow(`SELECT last_seen FROM passive_hardware_current`).Scan(&lastSeen); err != nil || !lastSeen.Equal(second.ObservedAt) {
+		t.Fatalf("latest fact was lost: last_seen=%s err=%v", lastSeen, err)
+	}
+}
 func processHardwareTest(t *testing.T, db *sql.DB) {
 	t.Helper()
 	if _, err := ProcessHardwareProjection(context.Background(), db, "sensor", 100); err != nil {
