@@ -37,6 +37,23 @@ func TestFileIdentityBirthModeUsesFilesystemCreationTime(t *testing.T) {
 	}
 }
 
+func TestFileIdentityBirthAtKeepsLogicalSourcePath(t *testing.T) {
+	dir := t.TempDir()
+	logical := filepath.Join(dir, "flow-syn.jsonl")
+	protected := filepath.Join(dir, "protected-flow.jsonl")
+	if err := os.WriteFile(protected, []byte("event\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(protected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := FileIdentityBirthAt(logical, protected, info)
+	if got == "" || got == FileIdentityBirth(protected, info) || got != fileIdentityBirthAt(logical, protected, info) {
+		t.Fatalf("physical birth must be bound to logical source: %q", got)
+	}
+}
+
 func TestDeviceSignalCaptureRejectsRewrittenCursorTail(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ttl.jsonl")
 	old := []byte("old\n")

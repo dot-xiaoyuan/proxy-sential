@@ -105,6 +105,128 @@ func TestDeviceSignalCompressedRotationResumesOldCursorAcrossProtectedFiles(t *t
 	read("future")
 }
 
+func TestLegacyHandshakeCursorChangesToBirthIDOnlyAfterVerifiedRotation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "handshake.jsonl")
+	first, unread, next := []byte("first\n"), []byte("unread\n"), []byte("next\n")
+	if err := os.WriteFile(path, append(append([]byte{}, first...), unread...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := fileIdentity(path, info)
+	t.Setenv("PROXY_SENTINEL_STREAM_FILE_BIRTH_ID", "true")
+	firstHash := sha256.Sum256(first)
+	cursor := streamlog.SourceCursor{FileID: legacy, Offset: int64(len(first)), TailBytes: len(first), TailSHA256: hex.EncodeToString(firstHash[:])}
+	read, err := readDeviceSignalChunk(path, cursor, 1<<20)
+	if err != nil || string(read.data) != string(unread) || read.fileID != legacy || read.verifiedRotation {
+		t.Fatalf("legacy live bytes must keep their original identity: %+v %v", read, err)
+	}
+	if err := os.Rename(path, path+".1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, next, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	read, err = readDeviceSignalChunk(path, cursor, 1<<20)
+	if err != nil || string(read.data) != string(unread) || read.fileID != legacy || read.verifiedRotation {
+		t.Fatalf("legacy unread bytes must keep their original identity: %+v %v", read, err)
+	}
+	unreadHash := sha256.Sum256(unread)
+	cursor.Offset = read.end
+	cursor.TailBytes = len(unread)
+	cursor.TailSHA256 = hex.EncodeToString(unreadHash[:])
+	read, err = readDeviceSignalChunk(path, cursor, 1<<20)
+	if err != nil || string(read.data) != string(next) || !read.verifiedRotation || read.fileID != FileIdentityBirth(path, mustStat(t, path)) {
+		t.Fatalf("verified successor must acquire its birth identity: %+v %v", read, err)
+	}
+}
+
+func TestProtectedFlowAnchorsKeepSourceOrder(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "flow-syn.jsonl")
+	recovery := filepath.Join(dir, "protected")
+	if err := os.Mkdir(recovery, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(deviceSignalRecoveryDirEnv, recovery)
+	t.Setenv("PROXY_SENTINEL_STREAM_FILE_BIRTH_ID", "true")
+	old := []byte("accepted\nunread\n")
+	if err := os.WriteFile(path, old, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info := mustStat(t, path)
+	oldID := FileIdentityBirth(path, info)
+	if err := os.Rename(path, path+".1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(path+".1", filepath.Join(recovery, "flow-syn.jsonl.1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("successor\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(path, filepath.Join(recovery, "flow-syn-live-20261113T1800.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256([]byte("accepted\n"))
+	cursor := streamlog.SourceCursor{FileID: oldID, Offset: int64(len("accepted\n")), TailBytes: len("accepted\n"), TailSHA256: hex.EncodeToString(sum[:])}
+	read, err := readDeviceSignalChunk(path, cursor, 1<<20)
+	if err != nil || string(read.data) != "unread\n" || read.fileID != oldID {
+		t.Fatalf("protected old source was not recovered: %+v %v", read, err)
+	}
+	sum = sha256.Sum256(read.data)
+	cursor.Offset, cursor.TailBytes, cursor.TailSHA256 = read.end, len(read.data), hex.EncodeToString(sum[:])
+	read, err = readDeviceSignalChunk(path, cursor, 1<<20)
+	if err != nil || string(read.data) != "successor\n" || !read.verifiedRotation || read.fileID != FileIdentityBirth(path, mustStat(t, path)) {
+		t.Fatalf("protected successor was not recovered: %+v %v", read, err)
+	}
+}
+
+func TestProtectedFlowAnchorRejectsUnprovedSuccessor(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "flow-syn.jsonl")
+	recovery := filepath.Join(dir, "protected")
+	if err := os.Mkdir(recovery, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(deviceSignalRecoveryDirEnv, recovery)
+	t.Setenv("PROXY_SENTINEL_STREAM_FILE_BIRTH_ID", "true")
+	old := []byte("accepted\n")
+	if err := os.WriteFile(path, old, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldID := FileIdentityBirth(path, mustStat(t, path))
+	if err := os.Rename(path, path+".1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(path+".1", filepath.Join(recovery, "flow-syn.jsonl.1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("real-next\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(recovery, "flow-syn-live-unrelated.jsonl"), []byte("wrong-next\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(old)
+	cursor := streamlog.SourceCursor{FileID: oldID, Offset: int64(len(old)), TailBytes: len(old), TailSHA256: hex.EncodeToString(sum[:])}
+	if _, err := readDeviceSignalChunk(path, cursor, 1<<20); !errors.Is(err, ErrStreamSourceGap) {
+		t.Fatalf("unproved protected successor must not be consumed: %v", err)
+	}
+}
+
+func mustStat(t *testing.T, path string) os.FileInfo {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info
+}
+
 func TestDeviceSignalCompressedRotationRejectsBadTailWithoutMovingCursor(t *testing.T) {
 	t.Setenv("PROXY_SENTINEL_STREAM_FILE_BIRTH_ID", "true")
 	dir := t.TempDir()

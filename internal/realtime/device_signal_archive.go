@@ -26,8 +26,9 @@ type signalFile struct {
 	path       string
 	info       os.FileInfo
 	id         string
-	ordinal    int // 1 is newest rotation, 0 is protected live, -1 is current.
-	chainSeq   int // -1 outside the protected compressed successor chain.
+	legacyID   string // Allows a proved old cursor to finish before birth-aware rotation.
+	ordinal    int    // 1 is newest rotation, 0 is protected live, -1 is current.
+	chainSeq   int    // -1 outside the protected compressed successor chain.
 	protected  bool
 	compressed bool
 }
@@ -88,7 +89,8 @@ func readDeviceSignalChunk(path string, cursor streamlog.SourceCursor, maxBytes 
 func matchingSignalCursorFiles(path string, files []signalFile, cursor streamlog.SourceCursor, probe func(string, streamlog.SourceCursor) bool) []signalFile {
 	var matches []signalFile
 	for _, file := range files {
-		if file.id != cursor.FileID {
+		if file.id != cursor.FileID && !(os.Getenv("PROXY_SENTINEL_STREAM_FILE_BIRTH_ID") == "true" &&
+			cursor.Offset > 0 && validSignalTail(cursor) && file.legacyID == cursor.FileID) {
 			continue
 		}
 		if file.compressed && !signalGzipCursorMatches(path, file, cursor) {
@@ -155,7 +157,7 @@ func deviceSignalFiles(path string) ([]signalFile, error) {
 				seq = parsed
 			}
 		}
-		out = append(out, signalFile{path: name, info: info, id: id, ordinal: ordinal, chainSeq: seq, protected: protected, compressed: compressed})
+		out = append(out, signalFile{path: name, info: info, id: id, legacyID: fileIdentityLegacyAt(path, info), ordinal: ordinal, chainSeq: seq, protected: protected, compressed: compressed})
 		return nil
 	}
 	if err := add(path, false); err != nil {
@@ -190,8 +192,12 @@ func signalFileOrdinal(source, candidate string, protected bool) (int, bool, boo
 			return 0, true, true
 		}
 	}
-	if protected && base == "ttl.jsonl" && strings.HasPrefix(name, "ttl-live-") && strings.HasSuffix(name, ".jsonl") {
-		return 0, false, true
+	if protected && strings.HasSuffix(base, ".jsonl") {
+		stem := strings.TrimSuffix(base, ".jsonl")
+		if (stem == "ttl" || stem == "flow-syn" || stem == "handshake") &&
+			strings.HasPrefix(name, stem+"-live-") && strings.HasSuffix(name, ".jsonl") {
+			return 0, false, true
+		}
 	}
 	if !strings.HasPrefix(name, base+".") {
 		return 0, false, false
@@ -278,7 +284,13 @@ func readSignalRaw(source string, file signalFile, cursor streamlog.SourceCursor
 	if err != nil || !os.SameFile(info, file.info) {
 		return sourceChunk{}, ErrStreamSourceGap
 	}
-	read, err := readFileChunk(f, source, info, ingest.Checkpoint{FileID: cursor.FileID, Offset: cursor.Offset}, true, maxBytes, false, file.path)
+	// The retained legacy inode is selected only after its committed tail was
+	// proved above. readFileChunk uses the currently selected identity mode;
+	// preserve the old identity in this one segment until a verified successor.
+	read, err := readFileChunk(f, source, info, ingest.Checkpoint{FileID: file.id, Offset: cursor.Offset}, true, maxBytes, false, file.path)
+	if err == nil && !read.truncated && file.legacyID == cursor.FileID && file.id != cursor.FileID {
+		read.fileID = cursor.FileID
+	}
 	read.archive = file.path != source
 	if err != nil || read.truncated || read.fileID != cursor.FileID {
 		return sourceChunk{}, ErrStreamSourceGap
@@ -546,6 +558,9 @@ func nextSignalFile(path string, files []signalFile, old signalFile) (signalFile
 	if old.protected {
 		for _, file := range files {
 			if file.protected && file.ordinal == want {
+				if want == 0 && !protectedSignalSuccessorProved(files, old, file) {
+					return signalFile{}, ErrStreamSourceGap
+				}
 				return file, nil
 			}
 		}
@@ -578,6 +593,31 @@ func nextSignalFile(path string, files []signalFile, old signalFile) (signalFile
 		}
 	}
 	return signalFile{}, ErrStreamSourceGap
+}
+
+// A recovery directory is operator managed. Even there, an arbitrary live
+// hard link cannot establish that no file lies between a protected rotation
+// and its successor. Require both anchors to remain visible under adjacent
+// active names when crossing into a new file. If either active name has
+// already been compressed or rotated again, stop for a new bounded audit.
+func protectedSignalSuccessorProved(files []signalFile, old, next signalFile) bool {
+	oldOrdinal, nextOrdinal := -1, -1
+	for _, active := range files {
+		if active.protected {
+			continue
+		}
+		if os.SameFile(active.info, old.info) && active.ordinal > 0 {
+			oldOrdinal = active.ordinal
+		}
+		if os.SameFile(active.info, next.info) {
+			if active.ordinal == -1 { // current source follows .1
+				nextOrdinal = 0
+			} else {
+				nextOrdinal = active.ordinal
+			}
+		}
+	}
+	return oldOrdinal > 0 && nextOrdinal == oldOrdinal-1
 }
 
 func signalChainStartsAtLive(files []signalFile, live signalFile) bool {

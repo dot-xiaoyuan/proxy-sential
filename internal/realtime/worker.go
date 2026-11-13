@@ -603,14 +603,15 @@ func fileIdentity(path string, info os.FileInfo) string {
 // Keep the configured source path in the durable ID, but obtain its birth
 // marker from the physical file carrying the bytes after rotation.
 func fileIdentityAt(sourcePath, physicalPath string, info os.FileInfo) string {
-	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-		if os.Getenv("PROXY_SENTINEL_STREAM_FILE_BIRTH_ID") == "true" {
-			return fileIdentityBirthAt(sourcePath, physicalPath, info)
-		}
-		return fmt.Sprintf("%s:%d:%d", filepath.Clean(sourcePath), uint64(stat.Dev), uint64(stat.Ino))
-	}
 	if os.Getenv("PROXY_SENTINEL_STREAM_FILE_BIRTH_ID") == "true" {
-		return ""
+		return fileIdentityBirthAt(sourcePath, physicalPath, info)
+	}
+	return fileIdentityLegacyAt(sourcePath, info)
+}
+
+func fileIdentityLegacyAt(sourcePath string, info os.FileInfo) string {
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		return fmt.Sprintf("%s:%d:%d", filepath.Clean(sourcePath), uint64(stat.Dev), uint64(stat.Ino))
 	}
 	return fmt.Sprintf("%s:%d", filepath.Clean(sourcePath), info.ModTime().UnixNano())
 }
@@ -628,6 +629,13 @@ func formatFileIdentity(path string, device, inode uint64, birth string) string 
 // explicit audited cutover.
 func FileIdentityBirth(path string, info os.FileInfo) string {
 	return fileIdentityBirthAt(path, path, info)
+}
+
+// FileIdentityBirthAt binds a retained physical file's creation marker to the
+// configured source path. A hard link or rotation must not change that path in
+// the event identity used by a durable source cursor.
+func FileIdentityBirthAt(sourcePath, physicalPath string, info os.FileInfo) string {
+	return fileIdentityBirthAt(sourcePath, physicalPath, info)
 }
 
 func fileIdentityBirthAt(sourcePath, physicalPath string, info os.FileInfo) string {
