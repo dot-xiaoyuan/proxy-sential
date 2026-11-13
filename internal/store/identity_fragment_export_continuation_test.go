@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"proxy-sentinel/internal/normalized"
+	"proxy-sentinel/internal/streamlog"
 )
 
 type identityTestSliceConverter struct{}
@@ -70,6 +72,15 @@ func expectIdentityBodyReceipt(mock sqlmock.Sqlmock, fragment identityExportFrag
 	mock.ExpectCommit()
 }
 
+func expectIdentityCombinedBodyReceipt(mock sqlmock.Sqlmock, fragment identityExportFragment, lease int64) {
+	mock.ExpectBegin()
+	mock.ExpectQuery("UPDATE identity_ingest_fragments SET body_state='completed',archived_at=now\\(\\),search_state='attempted'").
+		WithArgs(fragment.BatchID, fragment.First, lease).
+		WillReturnRows(sqlmock.NewRows([]string{"lease_epoch"}).AddRow(lease + 1))
+	mock.ExpectExec("UPDATE identity_ingest_batches SET export_state='pending'").WithArgs(fragment.BatchID).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+}
+
 func expectIdentitySearchReceipt(mock sqlmock.Sqlmock, fragment identityExportFragment, lease int64) {
 	mock.ExpectBegin()
 	mock.ExpectQuery("UPDATE identity_ingest_fragments f SET search_state='completed'").WithArgs(fragment.BatchID, fragment.First, lease).
@@ -89,9 +100,7 @@ func TestIdentityFragmentExportContinuesSearchWithoutSecondCandidateScan(t *test
 	}
 	defer db.Close()
 	expectIdentityFragmentClaim(mock, fragment, after, "pending", "pending", 1)
-	expectIdentityBodyReceipt(mock, fragment, 1)
-	mock.ExpectQuery("UPDATE identity_ingest_fragments SET search_state='attempted'").WithArgs(fragment.BatchID, fragment.First, int64(1)).
-		WillReturnRows(sqlmock.NewRows([]string{"lease_epoch"}).AddRow(2))
+	expectIdentityCombinedBodyReceipt(mock, fragment, 1)
 	expectIdentitySearchReceipt(mock, fragment, 2)
 	var bodyWrites, searchWrites int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -112,7 +121,7 @@ func TestIdentityFragmentExportContinuesSearchWithoutSecondCandidateScan(t *test
 	if err := backend.exportIdentityInboxFragmentMeasured(context.Background(), &timing); err != nil || bodyWrites != 1 || searchWrites != 1 {
 		t.Fatalf("fragment did not finish both receipts: body=%d search=%d err=%v", bodyWrites, searchWrites, err)
 	}
-	if timing.Records != fragment.Count || timing.Total <= 0 || timing.Claim <= 0 || timing.BodyIO <= 0 || timing.BodyReceipt <= 0 || timing.SearchClaim <= 0 || timing.SearchIO <= 0 || timing.SearchReceipt <= 0 {
+	if timing.Records != fragment.Count || timing.Total <= 0 || timing.Claim <= 0 || timing.BodyIO <= 0 || timing.BodyReceipt <= 0 || timing.SearchIO <= 0 || timing.SearchReceipt <= 0 {
 		t.Fatalf("completed fragment omitted a durable phase: %+v", timing)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -178,9 +187,7 @@ func TestIdentityFragmentExportAmbiguousSearchKeepsAttemptedUntilVerified(t *tes
 	}
 	defer db.Close()
 	expectIdentityFragmentClaim(mock, fragment, after, "pending", "pending", 1)
-	expectIdentityBodyReceipt(mock, fragment, 1)
-	mock.ExpectQuery("UPDATE identity_ingest_fragments SET search_state='attempted'").WithArgs(fragment.BatchID, fragment.First, int64(1)).
-		WillReturnRows(sqlmock.NewRows([]string{"lease_epoch"}).AddRow(2))
+	expectIdentityCombinedBodyReceipt(mock, fragment, 1)
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE identity_ingest_fragments SET last_error=").WithArgs(fragment.BatchID, fragment.First, int64(2), "archive_storage_error").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("UPDATE identity_ingest_batches SET export_state='failed'").WithArgs(fragment.BatchID, "archive_storage_error").WillReturnResult(sqlmock.NewResult(0, 1))
@@ -222,6 +229,51 @@ func TestIdentityFragmentExportAmbiguousSearchKeepsAttemptedUntilVerified(t *tes
 	}
 	if verified.Records != fragment.Count {
 		t.Fatalf("verified search was not counted once: %+v", verified)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIdentityCombinedBodyReceiptCrashBeforeSearchDoesNotResend(t *testing.T) {
+	t.Setenv("PROXY_SENTINEL_IDENTITY_SPLIT_PROGRESS", "true")
+	fragment, after := continuationIdentityFragment(t)
+	db, mock, err := sqlmock.New(sqlmock.ValueConverterOption(identityTestSliceConverter{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	expectIdentityCombinedBodyReceipt(mock, fragment, 1)
+	pg := &PostgresStore{db: db, sensorID: "ncu", identityDerivedAfter: after}
+	lease, err := pg.finishIdentityBodyAndClaimSearch(context.Background(), identityExportFragment{BatchID: fragment.BatchID, First: fragment.First, LeaseEpoch: 1})
+	if err != nil || lease != 2 {
+		t.Fatalf("combined receipt not durable before search: lease=%d err=%v", lease, err)
+	}
+	// Model a process crash after the PG commit and before any search INSERT.
+	// The retry must verify the attempted search, then leave it unconfirmed for
+	// repair rather than send a new token after an ambiguous prior attempt.
+	expectIdentityFragmentClaim(mock, fragment, after, "completed", "attempted", 3)
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE identity_ingest_fragments SET last_error=").WithArgs(fragment.BatchID, fragment.First, int64(3), "archive_unconfirmed").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE identity_ingest_batches SET export_state='failed'").WithArgs(fragment.BatchID, "archive_unconfirmed").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	var searchWrites, verifies int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload, _ := io.ReadAll(r.Body)
+		if strings.HasPrefix(string(payload), "INSERT INTO stream_event_search") {
+			searchWrites++
+		} else if strings.Contains(string(payload), "FROM stream_event_search") {
+			verifies++
+		}
+	}))
+	defer server.Close()
+	ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := &DBStore{pg: pg, ch: ch}
+	if err := backend.exportIdentityInboxFragment(context.Background()); !errors.Is(err, streamlog.ErrUnconfirmed) || searchWrites != 0 || verifies != 1 {
+		t.Fatalf("crash retry resent an unconfirmed search: writes=%d verifies=%d err=%v", searchWrites, verifies, err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

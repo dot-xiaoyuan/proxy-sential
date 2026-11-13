@@ -268,15 +268,12 @@ func (s *DBStore) exportIdentityInboxBatch(ctx context.Context) error {
 	return tx.Commit()
 }
 
-// A second exporter overlaps ClickHouse I/O with another fragment's PostgreSQL
-// receipts. Claims use SKIP LOCKED and each fragment has its own fenced lease;
-// the connection pool and worker count remain bounded. The environment switch
-// permits a live deployment to return to one worker if WAL contention rises.
+// A second exporter can overlap ClickHouse I/O with another fragment's
+// PostgreSQL receipts. It is opt-in because the field PostgreSQL already has
+// WAL contention. Claims use SKIP LOCKED and fenced leases; the pool and
+// worker count remain bounded, and one worker is the safe default.
 func identityExportWorkerCount() int {
-	defaultCount := 1
-	if identitySplitProgressEnabled() {
-		defaultCount = 2
-	}
+	const defaultCount = 1
 	raw := strings.TrimSpace(os.Getenv("PROXY_SENTINEL_IDENTITY_EXPORT_WORKERS"))
 	if raw == "" {
 		return defaultCount
@@ -300,7 +297,6 @@ func (w *identityExportWindow) add(t identityExportTiming, err error) {
 	w.timing.Claim += t.Claim
 	w.timing.BodyIO += t.BodyIO
 	w.timing.BodyReceipt += t.BodyReceipt
-	w.timing.SearchClaim += t.SearchClaim
 	w.timing.SearchIO += t.SearchIO
 	w.timing.SearchReceipt += t.SearchReceipt
 	w.timing.Total += t.Total
@@ -316,10 +312,10 @@ func (w *identityExportWindow) add(t identityExportTiming, err error) {
 }
 
 func (w *identityExportWindow) log(worker int) {
-	fmt.Fprintf(os.Stderr, "identity export progress: worker=%d elapsed_ms=%d fragments=%d records=%d failures=%d idle=%d claim_ms=%d body_io_ms=%d body_receipt_ms=%d search_claim_ms=%d search_io_ms=%d search_receipt_ms=%d work_ms=%d last_error=%q\n",
+	fmt.Fprintf(os.Stderr, "identity export progress: worker=%d elapsed_ms=%d fragments=%d records=%d failures=%d idle=%d claim_ms=%d body_io_ms=%d body_receipt_ms=%d search_io_ms=%d search_receipt_ms=%d work_ms=%d last_error=%q\n",
 		worker, time.Since(w.started).Milliseconds(), w.completed, w.records, w.failures, w.idle,
 		w.timing.Claim.Milliseconds(), w.timing.BodyIO.Milliseconds(), w.timing.BodyReceipt.Milliseconds(),
-		w.timing.SearchClaim.Milliseconds(), w.timing.SearchIO.Milliseconds(), w.timing.SearchReceipt.Milliseconds(),
+		w.timing.SearchIO.Milliseconds(), w.timing.SearchReceipt.Milliseconds(),
 		w.timing.Total.Milliseconds(), w.lastError)
 }
 

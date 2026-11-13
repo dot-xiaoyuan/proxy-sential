@@ -30,9 +30,9 @@ type identityExportFragment struct {
 // are local to its goroutine, so observing a busy exporter adds no shared lock
 // to the PostgreSQL/ClickHouse hot path.
 type identityExportTiming struct {
-	Claim, BodyIO, BodyReceipt, SearchClaim, SearchIO, SearchReceipt time.Duration
-	Total                                                            time.Duration
-	Records                                                          int
+	Claim, BodyIO, BodyReceipt, SearchIO, SearchReceipt time.Duration
+	Total                                               time.Duration
+	Records                                             int
 }
 
 // PostgreSQL is the durable source for HTTP identity input. Each fragment has
@@ -86,36 +86,31 @@ func (s *DBStore) exportIdentityInboxFragmentMeasured(ctx context.Context, timin
 		if err != nil {
 			return err
 		}
+		// Once body is confirmed, one short PostgreSQL transaction records
+		// both its receipt and the next search intent. The search write still
+		// starts only after that transaction commits. A crash in between is
+		// recovered through the existing attempted-search verification path.
+		continueSearch := fragment.SearchState == "pending" && identityImmediateSearchBudget(ctx)
 		phaseStarted = time.Now()
-		err = s.pg.finishIdentityExportFragment(ctx, fragment, "body")
+		if continueSearch {
+			var nextEpoch int64
+			nextEpoch, err = s.pg.finishIdentityBodyAndClaimSearch(ctx, fragment)
+			if err == nil {
+				fragment.LeaseEpoch = nextEpoch
+			}
+		} else {
+			err = s.pg.finishIdentityExportFragment(ctx, fragment, "body")
+		}
 		if timing != nil {
 			timing.BodyReceipt = time.Since(phaseStarted)
 		}
 		if err != nil {
 			return err
 		}
-		// The body receipt leaves search pending and releases the lease. If
-		// this worker stops here, the ordinary indexed claim can resume it.
-		// With enough time left, claim this exact fragment's search intent
-		// directly instead of scanning the large export queue a second time.
-		if fragment.SearchState != "pending" || !identityImmediateSearchBudget(ctx) {
+		// With little time left, leave search pending for the ordinary claim.
+		if !continueSearch {
 			return nil
 		}
-		var nextEpoch int64
-		phaseStarted = time.Now()
-		nextEpoch, err = s.pg.claimIdentitySearchAfterBody(ctx, fragment)
-		if timing != nil {
-			timing.SearchClaim = time.Since(phaseStarted)
-		}
-		if errors.Is(err, sql.ErrNoRows) {
-			// Another claimant or a changed state owns the next step.
-			err = nil
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		fragment.LeaseEpoch = nextEpoch
 	}
 	phaseStarted = time.Now()
 	if fragment.SearchState == "attempted" {
@@ -154,16 +149,31 @@ func identityImmediateSearchBudget(ctx context.Context) bool {
 	return !bounded || time.Until(deadline) >= identityImmediateSearchReserve
 }
 
-// A body receipt is already durable before this targeted search claim. The
-// existing attempted-before-send rule is preserved, including the lease and
-// exact content verification on retry. A crash before this statement leaves
-// search pending for the ordinary worker; no ClickHouse I/O holds a PG tx.
-func (s *PostgresStore) claimIdentitySearchAfterBody(ctx context.Context, fragment identityExportFragment) (int64, error) {
+// Body confirmation and the search intent share one short transaction. This
+// removes one fragment UPDATE and fsync while preserving the phase boundary:
+// ClickHouse body is confirmed before this commit; ClickHouse search starts
+// after it. A crash between commit and search leaves an attempted search for
+// verification, exactly as a separate targeted claim did.
+func (s *PostgresStore) finishIdentityBodyAndClaimSearch(ctx context.Context, fragment identityExportFragment) (int64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
 	var leaseEpoch int64
-	err := s.db.QueryRowContext(ctx, `UPDATE identity_ingest_fragments SET search_state='attempted',lease_epoch=lease_epoch+1,lease_until=now()+interval '60 seconds',last_attempt_at=now()
- WHERE batch_id=$1 AND first_ordinal=$2 AND lease_epoch=$3 AND body_state='completed' AND search_state='pending' AND lease_until IS NULL AND released_at IS NULL
+	err = tx.QueryRowContext(ctx, `UPDATE identity_ingest_fragments SET body_state='completed',archived_at=now(),search_state='attempted',lease_epoch=lease_epoch+1,lease_until=now()+interval '60 seconds',last_attempt_at=now(),last_error=''
+ WHERE batch_id=$1 AND first_ordinal=$2 AND lease_epoch=$3 AND body_state='attempted' AND search_state='pending' AND released_at IS NULL
  RETURNING lease_epoch`, fragment.BatchID, fragment.First, fragment.LeaseEpoch).Scan(&leaseEpoch)
-	return leaseEpoch, err
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrIdentityLeaseExpired
+	}
+	if err != nil {
+		return 0, err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE identity_ingest_batches SET export_state='pending',export_error=NULL WHERE batch_id=$1 AND export_state='failed'`, fragment.BatchID); err != nil {
+		return 0, err
+	}
+	return leaseEpoch, tx.Commit()
 }
 
 func (s *PostgresStore) claimIdentityExportFragment(ctx context.Context) (fragment identityExportFragment, err error) {
