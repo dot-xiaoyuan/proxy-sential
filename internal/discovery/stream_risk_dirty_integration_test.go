@@ -34,7 +34,7 @@ func TestRiskDirtyGenerationCoalescesOnlyUnclaimedWork(t *testing.T) {
 		`CREATE TEMP SEQUENCE risk_feature_dirty_generation`,
 		`CREATE TEMP TABLE risk_feature_segment_receipts(segment_id text PRIMARY KEY,segment_sha256 text NOT NULL,source_epoch text NOT NULL,accepted_at timestamptz NOT NULL,skipped_old_subjects integer NOT NULL DEFAULT 0,skipped_old_max_window_seconds integer)`,
 		`CREATE TEMP TABLE risk_feature_dirty_subjects(sensor_id text NOT NULL,subject_type text NOT NULL,subject_id text NOT NULL,generation bigint NOT NULL,first_dirty_at timestamptz NOT NULL DEFAULT now(),last_dirty_at timestamptz NOT NULL DEFAULT now(),last_observed_at timestamptz NOT NULL,claim_until timestamptz,claimed_generation bigint,PRIMARY KEY(sensor_id,subject_type,subject_id))`,
-		`CREATE TEMP TABLE stream_risk_fresh_cutovers(sensor_id text PRIMARY KEY,accepted_after timestamptz NOT NULL)`,
+		`CREATE TEMP TABLE stream_risk_fresh_cutovers(sensor_id text,accepted_after timestamptz NOT NULL,PRIMARY KEY(sensor_id,accepted_after))`,
 		`CREATE TEMP TABLE stream_risk_window_policies(sensor_id text PRIMARY KEY,active_window_seconds integer NOT NULL,safe_skip_seconds integer NOT NULL,lease_until timestamptz NOT NULL)`,
 		`CREATE TEMP TABLE stream_risk_current(sensor_id text NOT NULL,subject_type text NOT NULL,subject_id text NOT NULL,PRIMARY KEY(sensor_id,subject_type,subject_id))`,
 	} {
@@ -44,6 +44,11 @@ func TestRiskDirtyGenerationCoalescesOnlyUnclaimedWork(t *testing.T) {
 	}
 	projector := StreamDiscoveryProjector{DB: db}
 	base := time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC)
+	for _, acceptedAfter := range []time.Time{base.Add(-2 * time.Minute), base.Add(-time.Minute)} {
+		if _, err := db.ExecContext(ctx, `INSERT INTO stream_risk_fresh_cutovers VALUES('sensor-a',$1)`, acceptedAfter); err != nil {
+			t.Fatal(err)
+		}
+	}
 	queue := func(id string, at time.Time) {
 		t.Helper()
 		segment := streamlog.Segment{Epoch: "fresh", AcceptedAt: at, Events: []normalized.Event{{

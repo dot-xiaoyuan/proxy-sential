@@ -548,14 +548,19 @@ func (p StreamDiscoveryProjector) MarkStreamRiskSubjectsDirty(ctx context.Contex
 	_, err = tx.ExecContext(ctx, `WITH candidates AS MATERIALIZED (
  SELECT r.sensor_id,r.subject_type,r.subject_id,r.observed_at,
         (r.packet_only AND p.sensor_id IS NOT NULL
-         AND (c.sensor_id IS NULL OR $2::timestamptz>=c.accepted_after)
+         AND (c.accepted_after IS NULL OR $2::timestamptz>=c.accepted_after)
          AND r.observed_at<statement_timestamp()-make_interval(secs=>p.safe_skip_seconds)
          AND current_state.subject_id IS NULL) AS skip_old,
         p.safe_skip_seconds
  FROM jsonb_to_recordset($1::jsonb) AS r(sensor_id text,subject_type text,subject_id text,observed_at timestamptz,packet_only boolean)
  LEFT JOIN stream_risk_window_policies p
    ON p.sensor_id=r.sensor_id AND p.lease_until>statement_timestamp()
- LEFT JOIN stream_risk_fresh_cutovers c ON c.sensor_id=r.sensor_id
+ -- Fresh cutovers are immutable generations, so a sensor may have many rows.
+ -- Joining all of them duplicates an UPSERT key within this one statement.
+ LEFT JOIN LATERAL (
+   SELECT max(accepted_after) AS accepted_after
+   FROM stream_risk_fresh_cutovers WHERE sensor_id=r.sensor_id
+ ) c ON true
  LEFT JOIN stream_risk_current current_state
    ON current_state.sensor_id=r.sensor_id AND current_state.subject_type=r.subject_type
   AND current_state.subject_id=r.subject_id
