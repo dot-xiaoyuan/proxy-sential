@@ -41,6 +41,7 @@ CONTAINER_NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
 DEFAULT_POLICY = Path("/opt/proxy-sentinel/data/db/clickhouse/config.d/production-system-logs.xml")
 DEFAULT_QUERY_LOG_TEMPLATE = Path("/opt/proxy-sentinel/current/deploy/clickhouse/production-query-log-retention.xml")
 DEFAULT_MAX_BYTES = 16 * 1024**3
+OPERATIONS_DEGRADED_MAX_BYTES = 4 * 1024**3
 
 
 class SafetyError(RuntimeError):
@@ -70,9 +71,51 @@ def server_ready(url: str) -> tuple[bool, str]:
         with urllib.request.urlopen(url, timeout=3) as response:
             return response.status == 200, str(response.status)
     except urllib.error.HTTPError as exc:
+        exc.close()
         return False, str(exc.code)
     except (urllib.error.URLError, TimeoutError) as exc:
         return False, type(exc).__name__
+
+
+def operations_only_degraded_payload(body: Any) -> bool:
+    if not isinstance(body, dict) or body.get("status") != "not_ready":
+        return False
+    components = body.get("components")
+    if not isinstance(components, dict):
+        return False
+    operations = components.get("operations")
+    if not isinstance(operations, dict) or operations.get("status") != "unavailable" or \
+            "timeout" not in str(operations.get("error", "")).lower():
+        return False
+    required = ("storage", "collector", "authentication", "identity_ingest", "discovery_pipeline")
+    if any(not isinstance(components.get(name), dict) or components[name].get("status") != "ready" for name in required):
+        return False
+    for name, item in components.items():
+        if name != "operations" and (not isinstance(item, dict) or item.get("status") not in ("ready", "disabled")):
+            return False
+    return True
+
+
+def operations_only_degraded(url: str) -> bool:
+    try:
+        with urllib.request.urlopen(url, timeout=3):
+            return False
+    except urllib.error.HTTPError as exc:
+        if exc.code != 503:
+            exc.close()
+            return False
+        try:
+            raw = exc.read(65537)
+        finally:
+            exc.close()
+    except (urllib.error.URLError, TimeoutError):
+        return False
+    if len(raw) > 65536:
+        return False
+    try:
+        return operations_only_degraded_payload(json.loads(raw))
+    except (UnicodeDecodeError, ValueError):
+        return False
 
 
 def policy_retention_days(path: Path, table: str) -> int | None:
@@ -226,6 +269,7 @@ def main(argv: list[str] | None = None, *, query_factory: Callable[[str], Callab
     parser.add_argument("--readyz", default="http://127.0.0.1:18080/readyz")
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--recovery-independent", action="store_true", help="assert the running recovery code no longer requires system.query_log")
+    parser.add_argument("--allow-operations-degraded", action="store_true", help="only for one <=4 GiB fully expired text_log part when operations alone times out")
     parser.add_argument("--stage-query-log-policy", action="store_true", help="stage query_log TTL in the host policy without restarting ClickHouse")
     parser.add_argument("--materialize-staged-policy", action="store_true", help="installer-only: refresh host policy from the release and an existing explicit marker")
     args = parser.parse_args(argv)
@@ -235,6 +279,10 @@ def main(argv: list[str] | None = None, *, query_factory: Callable[[str], Callab
         parser.error("retain-days must be >=7, max-parts 1..10, max-bytes 1..64 GiB")
     if not CONTAINER_NAME.fullmatch(args.container):
         parser.error("invalid container name")
+    if args.allow_operations_degraded and (args.table != "text_log" or args.stage_query_log_policy or
+                                           args.materialize_staged_policy or args.max_parts != 1 or
+                                           args.max_bytes > OPERATIONS_DEGRADED_MAX_BYTES):
+        parser.error("operations exception allows only text_log, one part and at most 4 GiB")
     if args.materialize_staged_policy:
         if args.base_policy is None or args.stage_query_log_policy:
             parser.error("--materialize-staged-policy requires --base-policy and cannot stage a new policy")
@@ -264,12 +312,16 @@ def main(argv: list[str] | None = None, *, query_factory: Callable[[str], Callab
     if policy_days is not None and args.retain_days < policy_days:
         raise SafetyError(f"requested retention {args.retain_days} days is shorter than staged policy {policy_days} days")
     ready, ready_status = server_ready(args.readyz)
+    operations_degraded_exception = False
     # An unmounted host policy cannot affect the running container until a
     # separately controlled recreation. Only that reversible preparation may
     # proceed while the application is degraded. A mounted policy or actual
     # DROP PART operation retains the full readiness gate.
     if args.apply and not ready and (not args.stage_query_log_policy or policy_mounted):
-        raise SafetyError(f"application /readyz is {ready_status}; defer system-log cleanup until the application is ready")
+        if args.allow_operations_degraded and operations_only_degraded(args.readyz):
+            operations_degraded_exception = True
+        else:
+            raise SafetyError(f"application /readyz is {ready_status}; defer system-log cleanup until the application is ready")
 
     if args.stage_query_log_policy:
         policy_changed, marker_changed = stage_query_log_policy(args.policy_file, args.query_log_template, apply=args.apply)
@@ -320,6 +372,7 @@ def main(argv: list[str] | None = None, *, query_factory: Callable[[str], Callab
         "retention_days": args.retain_days,
         "cutoff_exclusive": cutoff.isoformat(),
         "application_readyz": ready_status,
+        "operations_degraded_exception": operations_degraded_exception,
         "policy_file_present": args.policy_file.is_file(),
         "policy_retention_days": policy_days,
         "policy_mounted": policy_mounted,
@@ -335,6 +388,10 @@ def main(argv: list[str] | None = None, *, query_factory: Callable[[str], Callab
     if not args.apply:
         return 0
     for part in planned:
+        if operations_degraded_exception:
+            fresh_ready, _ = server_ready(args.readyz)
+            if not fresh_ready and not operations_only_degraded(args.readyz):
+                raise SafetyError("application readiness changed before bounded text_log DROP PART")
         current = query(
             "SELECT name,partition,bytes_on_disk,rows,min_date,max_date FROM system.parts "
             f"WHERE database='system' AND table='{args.table}' AND active=1 AND name='{part['name']}' FORMAT JSONEachRow"

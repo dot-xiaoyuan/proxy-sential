@@ -2,8 +2,10 @@ import contextlib
 import datetime as dt
 import importlib.util
 import io
+import json
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -61,6 +63,120 @@ class SystemLogCleanupTest(unittest.TestCase):
             with mock.patch.object(cleanup, "run_command", side_effect=command), mock.patch.object(cleanup, "server_ready", return_value=(False, "503")):
                 with self.assertRaisesRegex(cleanup.SafetyError, "readyz is 503"):
                     cleanup.main(["--apply", "--policy-file", str(policy)], query_factory=lambda _: lambda _sql: (_ for _ in ()).throw(AssertionError("SQL must not run")))
+
+    def test_operations_exception_needs_only_timeout_and_other_components_ready(self):
+        components = {name: {"status": "ready"} for name in (
+            "storage", "collector", "authentication", "identity_ingest", "identity_pipeline", "inventory_projection", "discovery_pipeline",
+        )}
+        components["authentication_oidc"] = {"status": "disabled"}
+        components["operations"] = {"status": "unavailable", "error": "timeout: context deadline exceeded"}
+        body = {"status": "not_ready", "components": components}
+        self.assertTrue(cleanup.operations_only_degraded_payload(body))
+        for broken in (
+            {**body, "status": "ready"},
+            {**body, "components": {**components, "storage": {"status": "delayed"}}},
+            {**body, "components": {**components, "operations": {"status": "unavailable", "error": "database unavailable"}}},
+            {**body, "components": {name: value for name, value in components.items() if name != "identity_ingest"}},
+        ):
+            with self.subTest(broken=broken):
+                self.assertFalse(cleanup.operations_only_degraded_payload(broken))
+
+    def test_operations_exception_reads_bounded_503_response(self):
+        components = {name: {"status": "ready"} for name in (
+            "storage", "collector", "authentication", "identity_ingest", "discovery_pipeline",
+        )}
+        components["operations"] = {"status": "unavailable", "error": "timeout: context deadline exceeded"}
+        body = json.dumps({"status": "not_ready", "components": components}).encode()
+        response = urllib.error.HTTPError("http://readyz", 503, "Service Unavailable", None, io.BytesIO(body))
+        with mock.patch.object(cleanup.urllib.request, "urlopen", side_effect=response):
+            self.assertTrue(cleanup.operations_only_degraded("http://readyz"))
+        self.assertTrue(response.closed)
+
+    def test_unready_response_is_closed(self):
+        response = urllib.error.HTTPError("http://readyz", 503, "Service Unavailable", None, io.BytesIO(b"{}"))
+        with mock.patch.object(cleanup.urllib.request, "urlopen", side_effect=response):
+            self.assertEqual(cleanup.server_ready("http://readyz"), (False, "503"))
+        self.assertTrue(response.closed)
+
+    def test_operations_exception_drops_one_bounded_expired_text_log_part(self):
+        with tempfile.TemporaryDirectory() as directory:
+            policy = Path(directory) / "policy.xml"
+            policy.write_text("<clickhouse><text_log><ttl>event_date + INTERVAL 7 DAY DELETE</ttl></text_log></clickhouse>")
+            old = part("202610_1_1_0", "2026-10-30", "2026-10-30", 2 * 1024**3)
+            queries = []
+            checks = []
+
+            def command(args, **_):
+                if "{{.State.Running}}" in args:
+                    return "true"
+                if "{{json .Mounts}}" in args:
+                    return "[]"
+                raise AssertionError(f"unexpected command: {args}")
+
+            def query(sql):
+                queries.append(sql)
+                if "FROM system.tables" in sql:
+                    return [{"engine": "MergeTree", "partition_key": "toYYYYMM(event_date)", "ttl_position": 0}]
+                if "FROM system.parts" in sql and "AND name=" in sql:
+                    return [] if any("DROP PART" in item for item in queries) else [old]
+                if "FROM system.parts" in sql:
+                    return [old]
+                if "DROP PART" in sql:
+                    return []
+                raise AssertionError(f"unexpected SQL: {sql}")
+
+            def degraded(_url):
+                checks.append(True)
+                return True
+
+            with mock.patch.object(cleanup, "run_command", side_effect=command), \
+                 mock.patch.object(cleanup, "server_ready", return_value=(False, "503")), \
+                 mock.patch.object(cleanup, "operations_only_degraded", side_effect=degraded):
+                with contextlib.redirect_stdout(io.StringIO()) as result:
+                    status = cleanup.main([
+                        "--apply", "--table", "text_log", "--allow-operations-degraded",
+                        "--max-parts", "1", "--max-bytes", str(4 * 1024**3), "--policy-file", str(policy),
+                    ], query_factory=lambda _: query)
+            self.assertEqual(status, 0)
+            self.assertEqual(len(checks), 2)
+            self.assertEqual(sum("DROP PART" in item for item in queries), 1)
+            self.assertIn('"operations_degraded_exception": true', result.getvalue())
+
+    def test_operations_exception_rechecks_before_drop(self):
+        with tempfile.TemporaryDirectory() as directory:
+            policy = Path(directory) / "policy.xml"
+            policy.write_text("<clickhouse><text_log><ttl>event_date + INTERVAL 7 DAY DELETE</ttl></text_log></clickhouse>")
+            old = part("202610_1_1_0", "2026-10-30", "2026-10-30", 2 * 1024**3)
+
+            def command(args, **_):
+                if "{{.State.Running}}" in args:
+                    return "true"
+                if "{{json .Mounts}}" in args:
+                    return "[]"
+                raise AssertionError(f"unexpected command: {args}")
+
+            def query(sql):
+                if "FROM system.tables" in sql:
+                    return [{"engine": "MergeTree", "partition_key": "toYYYYMM(event_date)", "ttl_position": 0}]
+                if "FROM system.parts" in sql and "AND name=" not in sql:
+                    return [old]
+                raise AssertionError(f"DROP or recheck must not run after health changed: {sql}")
+
+            with mock.patch.object(cleanup, "run_command", side_effect=command), \
+                 mock.patch.object(cleanup, "server_ready", return_value=(False, "503")), \
+                 mock.patch.object(cleanup, "operations_only_degraded", side_effect=[True, False]):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    with self.assertRaisesRegex(cleanup.SafetyError, "readiness changed"):
+                        cleanup.main([
+                            "--apply", "--table", "text_log", "--allow-operations-degraded",
+                            "--max-parts", "1", "--max-bytes", str(4 * 1024**3), "--policy-file", str(policy),
+                        ], query_factory=lambda _: query)
+
+    def test_operations_exception_rejects_other_tables_or_unbounded_work(self):
+        for options in (["--table", "query_log"], ["--max-parts", "2"], ["--max-bytes", str(5 * 1024**3)], ["--stage-query-log-policy"]):
+            with self.subTest(options=options), mock.patch.object(cleanup, "run_command", side_effect=AssertionError("Docker must not be called")):
+                with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                    cleanup.main(["--allow-operations-degraded", *options])
 
     def test_query_log_apply_requires_upgraded_recovery_before_any_access(self):
         with mock.patch.object(cleanup, "run_command", side_effect=AssertionError("Docker must not be called")):
