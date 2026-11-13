@@ -379,6 +379,12 @@ class SystemLogCleanupTest(unittest.TestCase):
             old = part("202001_1_1_0", "2020-01-01", "2020-01-01", 1024)
             mixed = part("202611_2_2_0", "2026-11-02", "2026-11-12", 2048)
             ddl = "CREATE TABLE system.query_log (event_date Date) ENGINE = MergeTree ORDER BY event_date TTL event_date + toIntervalDay(7) SETTINGS ttl_only_drop_parts = 1"
+            state = Path(directory) / "inplace-state.json"
+            digest = cleanup.hashlib.sha256(policy.read_bytes()).hexdigest()
+            state.write_text(json.dumps({"status": "active", "merges": "stopped_pending_cleanup",
+                                         "policy": {"sha256": digest},
+                                         "live_ddl_sha256": {"query_log": cleanup.hashlib.sha256(ddl.encode()).hexdigest()},
+                                         "container": {"id": "a" * 64, "started_at": "2026-11-13T00:00:00Z"}}))
             queries = []
 
             def command(args, **_):
@@ -386,6 +392,10 @@ class SystemLogCleanupTest(unittest.TestCase):
                     return "true"
                 if "{{json .Mounts}}" in args:
                     return "[]"
+                if "{{.Id}} {{.State.StartedAt}}" in args:
+                    return "a" * 64 + " 2026-11-13T00:00:00Z"
+                if args[:3] == ["docker", "exec", "proxy-sentinel-clickhouse"]:
+                    return digest + " " + cleanup.INPLACE_CONTAINER_POLICY
                 raise AssertionError(f"unexpected command: {args}")
 
             def query(sql):
@@ -400,7 +410,7 @@ class SystemLogCleanupTest(unittest.TestCase):
                     return []
                 raise AssertionError(f"unexpected SQL: {sql}")
 
-            with mock.patch.object(cleanup, "run_command", side_effect=command), mock.patch.object(cleanup, "server_ready", return_value=(True, "200")):
+            with mock.patch.object(cleanup, "INPLACE_STATE", state), mock.patch.object(cleanup, "run_command", side_effect=command), mock.patch.object(cleanup, "server_ready", return_value=(True, "200")):
                 with contextlib.redirect_stdout(io.StringIO()) as result:
                     cleanup.main(["--apply", "--table", "query_log", "--recovery-independent",
                                   "--allow-unmounted-live-ttl", "--max-parts", "1", "--max-bytes", "4096",
@@ -442,6 +452,13 @@ class SystemLogCleanupTest(unittest.TestCase):
             cleanup.main(["--apply", "--table", "query_log", "--recovery-independent", "--allow-unmounted-live-ttl"],
                          query_factory=lambda _: lambda _sql: (_ for _ in ()).throw(AssertionError("SQL must not run")))
         self.assertEqual(error.exception.code, 2)
+
+    def test_unmounted_cleanup_requires_the_same_live_activation_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.object(cleanup, "INPLACE_STATE", Path(directory) / "missing.json"), \
+                 mock.patch.object(cleanup, "run_command", side_effect=AssertionError("must not contact Docker")):
+                with self.assertRaisesRegex(cleanup.SafetyError, "activation state is missing"):
+                    cleanup.verify_inplace_activation("proxy-sentinel-clickhouse", Path(directory) / "policy.xml", "DDL")
 
     def test_apply_rechecks_the_immutable_part_before_dropping(self):
         with tempfile.TemporaryDirectory() as directory:

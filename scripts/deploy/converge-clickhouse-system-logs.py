@@ -40,6 +40,8 @@ PART_NAME = re.compile(r"^[0-9]{6}_[0-9]+_[0-9]+_[0-9]+(?:_[0-9]+)?$")
 CONTAINER_NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
 DEFAULT_POLICY = Path("/opt/proxy-sentinel/data/db/clickhouse/config.d/production-system-logs.xml")
 DEFAULT_QUERY_LOG_TEMPLATE = Path("/opt/proxy-sentinel/current/deploy/clickhouse/production-query-log-retention.xml")
+INPLACE_STATE = Path("/opt/proxy-sentinel/data/db/clickhouse/system-log-inplace-state.json")
+INPLACE_CONTAINER_POLICY = "/etc/clickhouse-server/config.d/production-system-logs.xml"
 DEFAULT_MAX_BYTES = 16 * 1024**3
 OPERATIONS_DEGRADED_MAX_BYTES = 4 * 1024**3
 
@@ -171,6 +173,24 @@ def has_exact_seven_day_ttl(ddl: str) -> bool:
         r"\bTTL\s+event_date\s*\+\s*(?:toIntervalDay\(7\)|INTERVAL\s+7\s+DAY)(?:\s+DELETE)?(?=\s+(?:SETTINGS|COMMENT)|\s*$)",
         ddl[engine.end():], re.IGNORECASE,
     )) and bool(re.search(r"\bttl_only_drop_parts\s*=\s*1\b", ddl[engine.end():], re.IGNORECASE))
+
+
+def verify_inplace_activation(container: str, policy: Path, active_query_log_ddl: str) -> None:
+    if not INPLACE_STATE.is_file() or INPLACE_STATE.is_symlink():
+        raise SafetyError("in-place activation state is missing")
+    state = json.loads(INPLACE_STATE.read_text())
+    if state.get("status") != "active" or state.get("merges") != "stopped_pending_cleanup":
+        raise SafetyError("in-place activation is not verified active")
+    expected_policy = hashlib.sha256(policy.read_bytes()).hexdigest()
+    if (state.get("policy", {}).get("sha256") != expected_policy or
+            state.get("live_ddl_sha256", {}).get("query_log") != hashlib.sha256(active_query_log_ddl.encode()).hexdigest()):
+        raise SafetyError("in-place policy or live query_log DDL changed")
+    identity = run_command(["docker", "inspect", "--format", "{{.Id}} {{.State.StartedAt}}", container]).split()
+    if len(identity) != 2 or identity != [state.get("container", {}).get("id"), state.get("container", {}).get("started_at")]:
+        raise SafetyError("ClickHouse restarted or changed after in-place activation")
+    configured = run_command(["docker", "exec", container, "sha256sum", INPLACE_CONTAINER_POLICY]).split()
+    if len(configured) != 2 or configured[0] != expected_policy or configured[1] != INPLACE_CONTAINER_POLICY:
+        raise SafetyError("persistent container policy differs after in-place activation")
 
 
 def template_digest(template: Path) -> str:
@@ -385,6 +405,8 @@ def main(argv: list[str] | None = None, *, query_factory: Callable[[str], Callab
         active_query_log_ddl = (tables if args.table == "query_log" else current_table)[0].get("create_table_query", "")
         if args.allow_unmounted_live_ttl and not policy_mounted and not has_exact_seven_day_ttl(active_query_log_ddl):
             raise SafetyError("unmounted query_log requires exact live seven-day TTL and ttl_only_drop_parts=1")
+        if args.allow_unmounted_live_ttl and not policy_mounted:
+            verify_inplace_activation(args.container, args.policy_file, active_query_log_ddl)
     cutoff = dt.datetime.now(dt.timezone.utc).date() - dt.timedelta(days=args.retain_days)
     parts = inspect_parts(query, args.table)
     planned, eligible_bytes, mixed_parts = plan_parts(parts, cutoff, args.max_parts, args.max_bytes)
