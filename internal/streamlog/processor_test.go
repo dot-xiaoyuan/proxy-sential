@@ -664,7 +664,7 @@ func TestProjectionRetryReceivesIndependentBoundedBudget(t *testing.T) {
 	original.AcceptedAt = time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
 	id := appendCommitted(t, j, original)
 	w := &projectionRetryBudgetWriter{}
-	p := Processor{Journal: j, Writer: w, SinkTimeout: 300 * time.Millisecond, ProjectionRetryTimeout: 800 * time.Millisecond}
+	p := Processor{Journal: j, Writer: w, SinkTimeout: 300 * time.Millisecond, ProjectionWriteTimeout: 900 * time.Millisecond, ProjectionRetryTimeout: 800 * time.Millisecond}
 	if err := p.DrainLane(context.Background(), id, Projection); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("first attempt: %v", err)
 	}
@@ -675,7 +675,7 @@ func TestProjectionRetryReceivesIndependentBoundedBudget(t *testing.T) {
 	if err := p.DrainLane(context.Background(), id, Projection); err != nil {
 		t.Fatal(err)
 	}
-	if w.first < 200*time.Millisecond || w.first > 300*time.Millisecond || w.retry < 700*time.Millisecond || w.retry > 800*time.Millisecond {
+	if w.first < 800*time.Millisecond || w.first > 900*time.Millisecond || w.retry < 700*time.Millisecond || w.retry > 800*time.Millisecond {
 		t.Fatalf("unexpected budgets first=%v retry=%v", w.first, w.retry)
 	}
 	state, err = j.Load(id)

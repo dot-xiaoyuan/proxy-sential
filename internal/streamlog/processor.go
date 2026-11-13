@@ -96,6 +96,9 @@ type Processor struct {
 	// SinkTimeout starts after local source recovery and fsynced attempt state.
 	// A slow journal disk must not consume the database request's own budget.
 	SinkTimeout time.Duration
+	// ProjectionWriteTimeout optionally bounds the first projection request
+	// independently of archive and search. Zero retains SinkTimeout.
+	ProjectionWriteTimeout time.Duration
 	// ProjectionRetryTimeout bounds reconciliation after an ambiguous projection
 	// attempt. Other lanes and the first write retain their normal budget.
 	ProjectionRetryTimeout time.Duration
@@ -386,7 +389,13 @@ func (p Processor) runLane(ctx context.Context, id string, lane Lane, state Stat
 			}
 		}
 		started := time.Now()
-		sinkCtx, cancel := p.sinkContext(ctx)
+		var sinkCtx context.Context
+		var cancel context.CancelFunc
+		if lane == Projection && p.ProjectionWriteTimeout > 0 {
+			sinkCtx, cancel = context.WithTimeout(ctx, p.ProjectionWriteTimeout)
+		} else {
+			sinkCtx, cancel = p.sinkContext(ctx)
+		}
 		err = write(sinkCtx, id, state.Segment)
 		cancel()
 		p.observe(lane, StageWrite, started, err)

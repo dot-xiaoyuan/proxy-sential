@@ -15,6 +15,21 @@ import (
 	"proxy-sentinel/internal/streamlog"
 )
 
+func TestRecoveryProjectionTimeoutOnlyForDeviceSignals(t *testing.T) {
+	device := Source{Kind: "device-signals"}
+	other := Source{Kind: "suricata"}
+	if got := recoveryProjectionTimeout(device); got != 30*time.Second {
+		t.Fatalf("normal device projection timeout = %v", got)
+	}
+	t.Setenv(deviceSignalRecoveryDirEnv, t.TempDir())
+	if got := recoveryProjectionTimeout(device); got != 120*time.Second {
+		t.Fatalf("protected device recovery timeout = %v", got)
+	}
+	if got := recoveryProjectionTimeout(other); got != 30*time.Second {
+		t.Fatalf("unrelated source projection timeout = %v", got)
+	}
+}
+
 type streamRunWriter struct {
 	mu           sync.Mutex
 	completed    chan string

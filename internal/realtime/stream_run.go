@@ -172,7 +172,9 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 	finalize := make(chan string, opts.MaxPendingSegments)
 	permits := make(chan struct{}, opts.MaxPendingSegments)
 	workerErrors := make(chan error, opts.ArchiveWorkers+opts.SearchWorkers+2)
-	processor := streamlog.Processor{Journal: journal, Writer: writer, SinkTimeout: 30 * time.Second, ProjectionRetryTimeout: 30 * time.Second}
+	projectionTimeout := recoveryProjectionTimeout(source)
+	processor := streamlog.Processor{Journal: journal, Writer: writer, SinkTimeout: 30 * time.Second,
+		ProjectionWriteTimeout: projectionTimeout, ProjectionRetryTimeout: projectionTimeout}
 	startWorker := func(queue <-chan string, name string, run func(context.Context, string) error, release bool) {
 		drainWorker.Add(1)
 		go func() {
@@ -425,6 +427,16 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 			return nil
 		}
 	}
+}
+
+func recoveryProjectionTimeout(source Source) time.Duration {
+	// A protected device-signal archive can contain older 1,000-event segments.
+	// Give only that recoverable projection more time when PostgreSQL I/O is
+	// contended; journal permits and source order still bound in-flight work.
+	if source.Kind == "device-signals" && os.Getenv(deviceSignalRecoveryDirEnv) != "" {
+		return 120 * time.Second
+	}
+	return 30 * time.Second
 }
 
 func streamSourceOffersEarlyLanes(kind string) bool {
