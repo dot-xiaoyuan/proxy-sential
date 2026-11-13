@@ -23,7 +23,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 build_root="$(mktemp -d "${TMPDIR:-/tmp}/proxy-sentinel-release.XXXXXX")"
 trap 'rm -rf "$build_root"' EXIT
 release_dir="$build_root/release"
-  mkdir -p "$release_dir/bin" "$release_dir/frontend" "$release_dir/scripts" "$release_dir/deploy/compose" "$release_dir/deploy/clickhouse" "$release_dir/deploy/logrotate" "$release_dir/assets/device-fingerprints" "$release_dir/assets/applications"
+  mkdir -p "$release_dir/bin" "$release_dir/frontend" "$release_dir/scripts" "$release_dir/deploy/compose" "$release_dir/deploy/clickhouse" "$release_dir/deploy/logrotate" "$release_dir/deploy/sysctl" "$release_dir/assets/device-fingerprints" "$release_dir/assets/applications"
 
 (
   cd "$repo_root"
@@ -80,6 +80,7 @@ JS
   cp deploy/logrotate/proxy-sentinel-router-signals "$release_dir/deploy/logrotate/proxy-sentinel-router-signals"
   cp deploy/logrotate/proxy-sentinel-handshake-signals "$release_dir/deploy/logrotate/proxy-sentinel-handshake-signals"
   cp deploy/logrotate/proxy-sentinel-flow-syn-signals "$release_dir/deploy/logrotate/proxy-sentinel-flow-syn-signals"
+  cp deploy/sysctl/90-proxy-sentinel-capture-rmem.conf "$release_dir/deploy/sysctl/90-proxy-sentinel-capture-rmem.conf"
   cp -R deploy/systemd "$release_dir/deploy/systemd"
   cp scripts/deploy/proxy-sentinelctl "$release_dir/scripts/proxy-sentinelctl"
   cp scripts/eventbus-184-health.sh "$release_dir/scripts/eventbus-184-health.sh"
