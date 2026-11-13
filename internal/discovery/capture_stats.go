@@ -50,6 +50,16 @@ type DNSCacheCaptureStats struct {
 	LastMessageSHA256              string              `json:"last_message_sha256,omitempty"`
 }
 
+// PACKET_STATISTICS counts the whole filtered AF_PACKET socket. Its loss
+// cannot be assigned to an individual discovery protocol. The kernel resets
+// both interval counters on every read; these totals span this process only.
+type KernelCaptureStats struct {
+	StatsKnown         bool   `json:"stats_known"`
+	Packets            uint64 `json:"packets"`
+	Dropped            uint64 `json:"dropped"`
+	ReceiveBufferBytes int    `json:"receive_buffer_bytes"`
+}
+
 type CaptureStats struct {
 	DNSRecordEvidenceVersion int                              `json:"dns_record_evidence_version"`
 	EventKeyVersion          int                              `json:"event_key_version"`
@@ -62,6 +72,7 @@ type CaptureStats struct {
 	Coalesced                uint64                           `json:"coalesced"`
 	DNSCache                 DNSCacheCaptureStats             `json:"dns_cache"`
 	Queue                    CaptureQueueStats                `json:"capture_queue"`
+	Kernel                   KernelCaptureStats               `json:"kernel_capture"`
 }
 
 var DiscoveryCaptureProtocols = []string{"dns_sd", "ssdp", "ws_discovery", "snmp", "arp", "ndp", "lldp", "cdp", "ieee1905_client_association", "dhcpv6", "nbns", "llmnr", "bacnet", "coap"}
@@ -111,6 +122,14 @@ func (s *CaptureStats) recordQueue(batches, capacity int, full bool) {
 	}
 	if full {
 		s.Queue.FullCount++
+	}
+}
+
+func (s *CaptureStats) recordKernelPacketWindow(packets, dropped uint32, known bool) {
+	s.Kernel.StatsKnown = known
+	if known {
+		s.Kernel.Packets += uint64(packets)
+		s.Kernel.Dropped += uint64(dropped)
 	}
 }
 

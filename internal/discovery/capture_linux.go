@@ -17,9 +17,11 @@ import (
 	"proxy-sentinel/internal/streamlog"
 	"syscall"
 	"time"
+	"unsafe"
 )
 
 const streamCaptureFlushWindow = 4 * time.Second
+const discoveryCaptureReceiveBufferBytes = 32 << 20
 
 // Capture spools standard events on a separate goroutine; packet reads never wait on database work.
 func Capture(ctx context.Context, iface, spool string, source Source, allow []netip.Prefix) error {
@@ -125,6 +127,16 @@ func captureConfiguredWithPersist(ctx context.Context, iface, spool string, sour
 	if e = syscall.Bind(fd, &syscall.SockaddrLinklayer{Protocol: htons(3), Ifindex: i.Index}); e != nil {
 		return e
 	}
+	// A mirror burst can fill the default 208 KiB socket before this goroutine
+	// decodes the next frame. Linux clamps the requested 32 MiB by rmem_max;
+	// expose the effective size with the socket-wide loss counters below.
+	if e = syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_RCVBUF, discoveryCaptureReceiveBufferBytes); e != nil {
+		return fmt.Errorf("set passive capture receive buffer: %w", e)
+	}
+	receiveBufferBytes, e := syscall.GetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_RCVBUF)
+	if e != nil {
+		return fmt.Errorf("read passive capture receive buffer: %w", e)
+	}
 	_ = syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &syscall.Timeval{Usec: 100000})
 	if e = os.MkdirAll(spool, 0700); e != nil {
 		return e
@@ -142,6 +154,7 @@ func captureConfiguredWithPersist(ctx context.Context, iface, spool string, sour
 	}()
 	decoder := newCaptureFrameDecoder(config.MDNSRecordEvidenceV2, allow...)
 	stats := NewCaptureStats()
+	stats.Kernel.ReceiveBufferBytes = receiveBufferBytes
 	stats.Config = config
 	if config.Stream3PassiveEventKeys {
 		stats.EventKeyVersion = 3
@@ -153,6 +166,8 @@ func captureConfiguredWithPersist(ctx context.Context, iface, spool string, sour
 	}
 	statsWriter := newCaptureStatsWriter(func(snapshot *CaptureStats) error { return snapshot.persistSnapshot(spool) })
 	publishStats := func() error {
+		packets, dropped, known := readDiscoveryPacketStats(fd)
+		stats.recordKernelPacketWindow(packets, dropped, known)
 		stats.FragmentDrops = decoder.FragmentDrops
 		stats.DNSCache = decoder.DNS.captureStats()
 		stats.recordQueue(len(queue), cap(queue), false)
@@ -296,4 +311,14 @@ func htons(v uint16) uint16 {
 	var b [2]byte
 	binary.LittleEndian.PutUint16(b[:], v)
 	return binary.BigEndian.Uint16(b[:])
+}
+
+// This is the sole PACKET_STATISTICS read for the capture socket. Reading it
+// resets both counters, so the capture goroutine accumulates them exactly once
+// in every periodic or final snapshot.
+func readDiscoveryPacketStats(fd int) (uint32, uint32, bool) {
+	var stats struct{ Packets, Drops uint32 }
+	length := uint32(unsafe.Sizeof(stats))
+	_, _, errno := syscall.Syscall6(syscall.SYS_GETSOCKOPT, uintptr(fd), syscall.SOL_PACKET, syscall.PACKET_STATISTICS, uintptr(unsafe.Pointer(&stats)), uintptr(unsafe.Pointer(&length)), 0)
+	return stats.Packets, stats.Drops, errno == 0 && length >= 8
 }
