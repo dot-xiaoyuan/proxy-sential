@@ -237,3 +237,22 @@ func captureCoverageGap(previous sharedaccess.CoverageV2, start time.Time) (shar
 	}
 	return sharedaccess.CoverageV2{SchemaVersion: "capture-coverage/v2", From: previous.To, To: start, KernelStatsKnown: false, Stopped: true}, true
 }
+
+// A failed lookup cannot identify the previous capture boundary. Persist the
+// measurable socket startup interval anyway, including its reset counters.
+// It remains incomplete and does not claim anything about time before bind.
+func routerStartupCoverage(boundAt, start time.Time, previous sharedaccess.CoverageV2, previousKnown bool, priorErr error, received, dropped uint32) (sharedaccess.CoverageV2, bool) {
+	if previousKnown && priorErr == nil {
+		if gap, ok := captureCoverageGap(previous, start); ok {
+			gap.Received, gap.Dropped = uint64(received), uint64(dropped)
+			return gap, true
+		}
+	}
+	if !start.After(boundAt) {
+		boundAt = start.Add(-time.Nanosecond)
+	}
+	return sharedaccess.CoverageV2{
+		SchemaVersion: "capture-coverage/v2", From: boundAt, To: start,
+		KernelStatsKnown: false, Received: uint64(received), Dropped: uint64(dropped), Stopped: true,
+	}, false
+}

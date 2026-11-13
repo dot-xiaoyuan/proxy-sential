@@ -23,7 +23,7 @@ type routerCaptureSnapshot struct {
 	coverage sharedaccess.CoverageV2
 }
 
-func runRouterCaptureLoop(ctx context.Context, opts Options, fd int, previous sharedaccess.CoverageV2, previousKnown bool, priorErr error) (result error) {
+func runRouterCaptureLoop(ctx context.Context, opts Options, fd int, boundAt time.Time, previous sharedaccess.CoverageV2, previousKnown bool, priorErr error) (result error) {
 	state := newCaptureBucket()
 	tracker := newStateChangeTracker[packetBucketKey](opts.StateLiveness)
 	controlTracker := newStateChangeTracker[string](opts.StateLiveness)
@@ -35,21 +35,19 @@ func runRouterCaptureLoop(ctx context.Context, opts Options, fd int, previous sh
 	}
 	setupReceived, setupDropped, setupKnown := packetCaptureStats(fd)
 	coverageFrom := time.Now().UTC()
-	firstCoverageUnknown := !previousKnown || priorErr != nil
+	startup, continuityKnown := routerStartupCoverage(boundAt, coverageFrom, previous, previousKnown, priorErr, setupReceived, setupDropped)
+	firstCoverageUnknown := !continuityKnown
 	if priorErr != nil {
 		log.Printf("device signal capture continuity unknown: previous coverage lookup failed: %v; setup_received=%d setup_dropped=%d setup_stats_known=%t", priorErr, setupReceived, setupDropped, setupKnown)
 	} else if !previousKnown {
 		log.Printf("device signal capture continuity unknown: no previous durable coverage for instance=%s; setup_received=%d setup_dropped=%d setup_stats_known=%t", opts.CollectorInstanceID, setupReceived, setupDropped, setupKnown)
-	} else if gap, needed := captureCoverageGap(previous, coverageFrom); needed {
-		// The socket is already bound. Its setup counters belong to this
-		// stopped interval, before the first live receive bucket begins.
-		gap.Received, gap.Dropped = uint64(setupReceived), uint64(setupDropped)
-		if err := writeCoverage(gap); err != nil {
-			return fmt.Errorf("persist capture restart gap: %w", err)
-		}
-	} else {
-		firstCoverageUnknown = true
+	} else if !continuityKnown {
 		log.Printf("device signal capture continuity unknown: previous coverage ended at or after new start")
+	}
+	// The socket is already bound. Persist setup counters in a stopped interval
+	// whether or not the previous durable coverage could be located.
+	if err := writeCoverage(startup); err != nil {
+		return fmt.Errorf("persist capture restart gap: %w", err)
 	}
 	bucket := coverageFrom.Truncate(opts.Bucket)
 	lastWrittenBucket := bucket

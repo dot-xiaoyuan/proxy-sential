@@ -132,12 +132,13 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	// Attach the filter before binding. Otherwise an unrestricted mirror burst
 	// can fill the socket during startup before the collector begins reading.
+	bindStarted := time.Now().UTC()
 	if err := syscall.Bind(fd, &syscall.SockaddrLinklayer{Protocol: htons(0x0003), Ifindex: iface.Index}); err != nil {
 		return fmt.Errorf("bind %s: %w", opts.Interface, err)
 	}
 	_ = syscall.SetNonblock(fd, true)
 	if opts.RouterProtocolsOnly {
-		return runRouterCaptureLoop(ctx, opts, fd, routerPrevious, routerPreviousKnown, routerPriorErr)
+		return runRouterCaptureLoop(ctx, opts, fd, bindStarted, routerPrevious, routerPreviousKnown, routerPriorErr)
 	}
 	state := newCaptureBucket()
 	state.handshakeEnabled = opts.HandshakeOnly

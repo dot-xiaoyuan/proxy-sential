@@ -97,3 +97,39 @@ func TestCaptureCoverageNumericRotationsPreferOneOverTwo(t *testing.T) {
 		t.Fatalf("numeric rotation lookup = %+v, found=%t err=%v", got, found, err)
 	}
 }
+
+func TestRouterStartupCoveragePersistsFirstStartAndCorruptCheckpointLoss(t *testing.T) {
+	for _, scenario := range []struct {
+		name              string
+		corruptCheckpoint bool
+	}{{name: "first start"}, {name: "corrupt checkpoint", corruptCheckpoint: true}} {
+		t.Run(scenario.name, func(t *testing.T) {
+			output := filepath.Join(t.TempDir(), "ttl.jsonl")
+			if scenario.corruptCheckpoint {
+				if err := os.WriteFile(captureCoverageCheckpointPath(output), []byte("corrupt\n"), 0640); err != nil {
+					t.Fatal(err)
+				}
+			}
+			previous, found, priorErr := lastPersistedCaptureCoverage(output, "sensor", "instance")
+			if found || (priorErr != nil) != scenario.corruptCheckpoint {
+				t.Fatalf("lookup found=%t err=%v", found, priorErr)
+			}
+			bound := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+			start := bound.Add(12 * time.Millisecond)
+			startup, continuityKnown := routerStartupCoverage(bound, start, previous, found, priorErr, 120, 9)
+			if continuityKnown || !startup.From.Equal(bound) || !startup.To.Equal(start) || startup.Received != 120 || startup.Dropped != 9 || startup.KernelStatsKnown || !startup.Stopped || startup.Complete() {
+				t.Fatalf("startup loss was not marked incomplete: %+v known=%t", startup, continuityKnown)
+			}
+			if err := writeCaptureCoverage(output, "sensor", "bond0", "instance", "packet-sidecar", nil, startup); err != nil {
+				t.Fatal(err)
+			}
+			if err := saveCaptureCoverageCheckpoint(output, "sensor", "instance", startup); err != nil {
+				t.Fatal(err)
+			}
+			got, found, err := lastPersistedCaptureCoverage(output, "sensor", "instance")
+			if err != nil || !found || got.Dropped != 9 || !got.Stopped || !got.To.Equal(start) {
+				t.Fatalf("persisted startup loss = %+v found=%t err=%v", got, found, err)
+			}
+		})
+	}
+}
