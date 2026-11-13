@@ -9,8 +9,71 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/jackc/pgx/v5/pgconn"
 	"proxy-sentinel/internal/streamlog"
 )
+
+func TestDeviceSignalManifestFallbackWithoutPG247PreservesMissingReceipt(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		columns    int
+		function   bool
+		wantAbsent bool
+	}{
+		{"migration absent", 0, false, true},
+		{"partial columns", 1, false, false},
+		{"partial function", 0, true, false},
+		{"installed schema other missing column", 2, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			mock.ExpectQuery("SELECT k.event_key,k.content_sha256").WillReturnError(&pgconn.PgError{Code: "42703"})
+			mock.ExpectQuery("FROM pg_attribute").WillReturnRows(
+				sqlmock.NewRows([]string{"locator_columns", "evidence_function"}).AddRow(tc.columns, tc.function))
+			got, err := (Repository{DB: db}).streamDeviceManifestReceipts(context.Background(), "epoch", "scope", []string{"epoch:stream-key"})
+			if tc.wantAbsent {
+				if err != nil || len(got) != 0 {
+					t.Fatalf("missing PG247 should fall through to old receipt semantics: %v %v", got, err)
+				}
+			} else {
+				var pgErr *pgconn.PgError
+				if !errors.As(err, &pgErr) || pgErr.Code != "42703" {
+					t.Fatalf("partial or inconsistent schema was hidden: %v", err)
+				}
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestLegacyStreamReceiptWithoutPG247StillReportsUnconfirmedKey(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	key := "epoch:stream-key"
+	mock.ExpectQuery("FROM stream_discovery_event_keys k").WillReturnRows(
+		sqlmock.NewRows([]string{"content_sha256", "first_accepted_at", "projected_at", "result", "archive_state", "body_ref"}))
+	mock.ExpectQuery("SELECT k.event_key,k.content_sha256").WillReturnError(&pgconn.PgError{Code: "42703"})
+	mock.ExpectQuery("FROM pg_attribute").WillReturnRows(
+		sqlmock.NewRows([]string{"locator_columns", "evidence_function"}).AddRow(0, false))
+	mock.ExpectQuery("SELECT k.event_key FROM jsonb_array_elements_text").WillReturnRows(
+		sqlmock.NewRows([]string{"event_key"}).AddRow(key))
+	_, found, err := (Repository{DB: db}).StreamDiscoveryReceipt(context.Background(), "epoch", "scope", key)
+	if found || !errors.Is(err, streamlog.ErrUnconfirmed) {
+		t.Fatalf("old missing-receipt result changed: found=%t err=%v", found, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestDeviceSignalManifestArchiveConfirmationUsesLegacyLocator(t *testing.T) {
 	segment := finalizationWitnessSegment()

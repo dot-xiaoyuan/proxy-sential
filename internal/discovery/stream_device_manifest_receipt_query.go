@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -35,6 +36,15 @@ func (r Repository) streamDeviceManifestReceipts(ctx context.Context, epoch, sco
  LEFT JOIN stream_projection_segments s ON s.segment_id=k.receipt_segment_id
  LEFT JOIN stream_discovery_segment_receipt_manifests m ON m.segment_id=s.segment_id`, epoch, scope, raw)
 	if err != nil {
+		absent, checkErr := r.deviceManifestSchemaAbsent(ctx, err)
+		if checkErr != nil {
+			return nil, checkErr
+		}
+		if absent {
+			// Older installations have no segment locator and can only use
+			// the per-event receipt. Preserve their missing-receipt result.
+			return out, nil
+		}
 		return nil, err
 	}
 	defer rows.Close()
@@ -85,4 +95,26 @@ func (r Repository) streamDeviceManifestReceipts(ctx context.Context, epoch, sco
 			"result": result.String, "archive_state": archive, "body_ref": json.RawMessage(ref)}
 	}
 	return out, rows.Err()
+}
+
+// A missing column is compatible only when PG247 is wholly absent. A partially
+// installed schema (or an unrelated missing column) remains a hard error.
+// This check runs only after PostgreSQL reports undefined_column on the
+// manifest fallback, so normal reads do not gain a metadata round trip.
+func (r Repository) deviceManifestSchemaAbsent(ctx context.Context, queryErr error) (bool, error) {
+	var state interface{ SQLState() string }
+	if !errors.As(queryErr, &state) || state.SQLState() != "42703" {
+		return false, nil
+	}
+	var locatorColumns int
+	var evidenceFunction bool
+	if err := r.DB.QueryRowContext(ctx, `SELECT
+ (SELECT count(*) FROM pg_attribute
+  WHERE attrelid=to_regclass('stream_discovery_event_keys')
+   AND attname IN ('receipt_segment_id','receipt_ordinal') AND NOT attisdropped),
+ to_regprocedure('sentinel_device_signal_manifest_evidence(jsonb)') IS NOT NULL`).
+		Scan(&locatorColumns, &evidenceFunction); err != nil {
+		return false, err
+	}
+	return locatorColumns == 0 && !evidenceFunction, nil
 }
