@@ -13,6 +13,8 @@ import (
 	"proxy-sentinel/internal/policy"
 	"proxy-sentinel/internal/sharedaccess"
 	"proxy-sentinel/internal/store"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -37,6 +39,10 @@ var sharedObservationEmptyClaims atomic.Int64
 var sharedObservationClaimAttempts atomic.Int64
 
 func (s *Server) startSharedObservationWorker() error {
+	asyncWorkers, err := parseSharedObservationAsyncWorkers(os.Getenv("PROXY_SENTINEL_SHARED_OBSERVATION_ASYNC_WORKERS"))
+	if err != nil {
+		return err
+	}
 	if s.operations.db == nil {
 		return fmt.Errorf("shared observation requires PostgreSQL")
 	}
@@ -149,7 +155,7 @@ func (s *Server) startSharedObservationWorker() error {
 		go func() {
 			for {
 				mode := wakeMode.Load().(string)
-				if !sharedObservationWorkerEnabled(workerIndex, mode, legacyOldWorker) {
+				if !sharedObservationWorkerEnabled(workerIndex, mode, legacyOldWorker, asyncWorkers) {
 					time.Sleep(time.Second)
 					continue
 				}
@@ -194,8 +200,20 @@ func sharedObservationWorkerLane(index int) string {
 	return "realtime_new"
 }
 
-func sharedObservationWorkerEnabled(index int, mode string, legacyOldWorker bool) bool {
-	return index < 2 || mode == "async" || (mode == "legacy" && legacyOldWorker && index == 2)
+func parseSharedObservationAsyncWorkers(raw string) (int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 8, nil
+	}
+	workers, err := strconv.Atoi(raw)
+	if err != nil || workers < 2 || workers > 8 {
+		return 0, fmt.Errorf("PROXY_SENTINEL_SHARED_OBSERVATION_ASYNC_WORKERS must be an integer from 2 to 8")
+	}
+	return workers, nil
+}
+
+func sharedObservationWorkerEnabled(index int, mode string, legacyOldWorker bool, asyncWorkers int) bool {
+	return index < 2 || (mode == "async" && index < asyncWorkers) || (mode == "legacy" && legacyOldWorker && index == 2)
 }
 
 func sharedObservationWorkerLaneForMode(index int, mode string, legacyOldWorker bool) string {

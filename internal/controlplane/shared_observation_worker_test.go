@@ -284,12 +284,49 @@ func TestSharedObservationLegacyOldWorkerGate(t *testing.T) {
 		{2, "async", true, true, "realtime_new"},
 		{3, "legacy", true, false, "realtime_new"},
 	} {
-		if got := sharedObservationWorkerEnabled(tt.index, tt.mode, tt.flag); got != tt.enabled {
+		if got := sharedObservationWorkerEnabled(tt.index, tt.mode, tt.flag, 8); got != tt.enabled {
 			t.Fatalf("index=%d mode=%s flag=%t enabled=%t, want %t", tt.index, tt.mode, tt.flag, got, tt.enabled)
 		}
 		if got := sharedObservationWorkerLaneForMode(tt.index, tt.mode, tt.flag); got != tt.lane {
 			t.Fatalf("index=%d mode=%s flag=%t lane=%s, want %s", tt.index, tt.mode, tt.flag, got, tt.lane)
 		}
+	}
+}
+
+func TestSharedObservationAsyncWorkerLimitKeepsExpiryLane(t *testing.T) {
+	for _, tt := range []struct {
+		configured string
+		want       int
+		valid      bool
+	}{
+		{"", 8, true}, {" 3 ", 3, true}, {"2", 2, true}, {"8", 8, true},
+		{"1", 0, false}, {"9", 0, false}, {"invalid", 0, false},
+	} {
+		workers, err := parseSharedObservationAsyncWorkers(tt.configured)
+		if workers != tt.want || (err == nil) != tt.valid {
+			t.Fatalf("configured=%q workers=%d err=%v, want workers=%d valid=%t", tt.configured, workers, err, tt.want, tt.valid)
+		}
+	}
+	for limit := 2; limit <= 8; limit++ {
+		count := 0
+		for index := 0; index < 8; index++ {
+			enabled := sharedObservationWorkerEnabled(index, "async", false, limit)
+			if enabled {
+				count++
+			}
+			if index == 1 && (!enabled || sharedObservationWorkerLaneForMode(index, "async", false) != "expiry") {
+				t.Fatalf("limit=%d: expiry lane must stay reserved", limit)
+			}
+			if index >= limit && enabled {
+				t.Fatalf("limit=%d index=%d unexpectedly enabled", limit, index)
+			}
+		}
+		if count != limit {
+			t.Fatalf("limit=%d enabled=%d", limit, count)
+		}
+	}
+	if sharedObservationWorkerEnabled(2, "legacy", false, 8) || sharedObservationWorkerEnabled(2, "shadow", false, 8) || !sharedObservationWorkerEnabled(2, "legacy", true, 2) {
+		t.Fatal("async cap changed legacy or shadow worker semantics")
 	}
 }
 

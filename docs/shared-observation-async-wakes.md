@@ -14,16 +14,18 @@ r64 起，`async` 到期工位如果领取到旧模式留下的 5 秒复查任�
 
 仅在已确认旧任务长期饥饿且数据库仍有余量时，可给控制面设置 `PROXY_SENTINEL_SHARED_OBSERVATION_LEGACY_OLD_WORKER=true`，在 `legacy` 模式下临时启用第三个 worker；它仅领取尚未完成版本的任务，按 `dirty_since,job_id` 处理最旧待办。默认关闭，`shadow` 与 `async` 的 worker 数和原有 lane 不变。切换后观察旧待办、近期判定、PostgreSQL 锁等待、ClickHouse 正文读取及发现采集队列；撤销环境变量并重启控制面即可停止新增领取，已领取任务按原租约完成或恢复。
 
+`async` 的并发可在控制面启动前通过 `PROXY_SENTINEL_SHARED_OBSERVATION_ASYNC_WORKERS` 限制为 2–8，未设置时仍为 8。第 2 个 worker 始终负责到期任务，所以设为 2 时只有 1 个实时 worker；需消化实时积压时从 3 开始分阶段核验。此设置不改变 `legacy`、`shadow` 的 worker 数，不切换数据库中的唤醒模式；修改设置需要重启控制面并重新核对采集连续性、任务租约恢复、PostgreSQL 等待与新任务完成速度。当前模式仍会按数据库的 `shared_observation_wake_mode` 决定直接唤醒或持久唤醒，不能用并发设置代替下面的 `shadow` 对账。
+
 ## 现场切换与核验
 
 发布前核对 `schema_migrations` 校验值、`current`、`previous`、服务、磁盘、现场配置和本地未提交改动。迁移包必须传 `--skip-backup`。发布后先检查 API `/readyz` 和所有受影响服务，确认数据库模式仍是 `legacy`。
 
-切换语句：
+切换前记录当前 `mode`、`changed_at` 和最大 `wake_id`。每次切换都确认 `RETURNING` 恰有一行；只更新 `mode` 会使 `changed_at` 停在旧值，误判新输入延迟。切换语句：
 
 ```sql
-UPDATE shared_observation_wake_mode SET mode='shadow',changed_at=clock_timestamp() WHERE singleton;
+UPDATE shared_observation_wake_mode SET mode='shadow',changed_at=clock_timestamp() WHERE singleton AND mode='legacy' RETURNING mode,changed_at;
 -- 至少观察一份完整快照；比较范围记录 matched_jobs、现有任务版本和审计结果。
-UPDATE shared_observation_wake_mode SET mode='async',changed_at=clock_timestamp() WHERE singleton;
+UPDATE shared_observation_wake_mode SET mode='async',changed_at=clock_timestamp() WHERE singleton AND mode='shadow' RETURNING mode,changed_at;
 ```
 
 观察两份在 `async` 切换时刻**之后接收并投影**的完整快照，以及至少 1,000 条依赖时间晚于切换时刻的新任务完成。每次 `async` 判定提交后写一条 `shared_observation_decision` 结构化日志，包含任务版本、依赖时间、延迟、各处理阶段耗时及 `new_dependency` 标记；计数和新输入延迟同时要求 `new_dependency=true`、`dependency_at >= shared_observation_wake_mode.changed_at`。只看切换后写出的日志会把切换前快照集中唤醒留下的旧依赖误算成新输入。自然到期、定期补漏及历史积压另报。`shared_observation_jobs.last_decision_latency_ms` 保留每个 IP 最近一次新依赖的判定延迟，可用于快速看板。日志 `shared_observation_metrics` 提供实时/到期数量和最老年龄、待展开范围、超时租约、入队锁等待及最近一次新依赖延迟的 P99；该滚动窗口在切换初期仍可能含切换前的依赖。核对新旧唤醒、判定/审计数量，并确认握手入队没有快照级长锁等待。快照范围记录在投影事务结束前更新时间戳，以接近依赖可见的时刻；指标仍包含事务最后提交耗时。
@@ -31,7 +33,7 @@ UPDATE shared_observation_wake_mode SET mode='async',changed_at=clock_timestamp(
 失败时先执行：
 
 ```sql
-UPDATE shared_observation_wake_mode SET mode='legacy',changed_at=clock_timestamp() WHERE singleton;
+UPDATE shared_observation_wake_mode SET mode='legacy',changed_at=clock_timestamp() WHERE singleton AND mode IN ('shadow','async') RETURNING mode,changed_at;
 ```
 
 保持新应用运行，等待 `producer_mode='async' AND processed_at IS NULL` 的记录降至零；调度器继续按游标将它们补入任务队列。然后才回退应用至 `previous`，复核服务与审计。迁移不反向删除。
