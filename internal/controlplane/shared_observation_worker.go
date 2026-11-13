@@ -43,6 +43,10 @@ func (s *Server) startSharedObservationWorker() error {
 	if err != nil {
 		return err
 	}
+	asyncOldWorker, err := parseSharedObservationAsyncOldWorker(os.Getenv("PROXY_SENTINEL_SHARED_OBSERVATION_ASYNC_OLD_WORKER"), asyncWorkers)
+	if err != nil {
+		return err
+	}
 	if s.operations.db == nil {
 		return fmt.Errorf("shared observation requires PostgreSQL")
 	}
@@ -146,8 +150,10 @@ func (s *Server) startSharedObservationWorker() error {
 		}
 	}()
 	chSlots := make(chan struct{}, 4)
-	// Keep one expiry worker reserved and allow up to two realtime workers to
-	// borrow expiry work only after their realtime claim finds no ready job.
+	// Keep one expiry worker reserved. Up to two realtime workers can borrow
+	// expiry work after an empty realtime claim. An explicitly enabled fifth
+	// worker claims the oldest pending job while the first three realtime
+	// workers continue to serve fresh input.
 	expiryBorrowSlots := make(chan struct{}, 2)
 	legacyOldWorker := os.Getenv("PROXY_SENTINEL_SHARED_OBSERVATION_LEGACY_OLD_WORKER") == "true"
 	for i := 0; i < 8; i++ {
@@ -159,7 +165,7 @@ func (s *Server) startSharedObservationWorker() error {
 					time.Sleep(time.Second)
 					continue
 				}
-				lane := sharedObservationWorkerLaneForMode(workerIndex, mode, legacyOldWorker)
+				lane := sharedObservationWorkerLaneForMode(workerIndex, mode, legacyOldWorker, asyncOldWorker)
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				did, err := s.processSharedObservationWithLimit(ctx, time.Now().UTC(), chSlots, lane)
 				cancel()
@@ -212,12 +218,29 @@ func parseSharedObservationAsyncWorkers(raw string) (int, error) {
 	return workers, nil
 }
 
+func parseSharedObservationAsyncOldWorker(raw string, workers int) (bool, error) {
+	switch strings.TrimSpace(raw) {
+	case "", "false":
+		return false, nil
+	case "true":
+		if workers >= 5 {
+			return true, nil
+		}
+		return false, fmt.Errorf("PROXY_SENTINEL_SHARED_OBSERVATION_ASYNC_OLD_WORKER requires at least 5 async workers")
+	default:
+		return false, fmt.Errorf("PROXY_SENTINEL_SHARED_OBSERVATION_ASYNC_OLD_WORKER must be true or false")
+	}
+}
+
 func sharedObservationWorkerEnabled(index int, mode string, legacyOldWorker bool, asyncWorkers int) bool {
 	return index < 2 || (mode == "async" && index < asyncWorkers) || (mode == "legacy" && legacyOldWorker && index == 2)
 }
 
-func sharedObservationWorkerLaneForMode(index int, mode string, legacyOldWorker bool) string {
+func sharedObservationWorkerLaneForMode(index int, mode string, legacyOldWorker, asyncOldWorker bool) string {
 	if index == 2 && mode == "legacy" && legacyOldWorker {
+		return "realtime_old"
+	}
+	if index == 4 && mode == "async" && asyncOldWorker {
 		return "realtime_old"
 	}
 	return sharedObservationWorkerLane(index)

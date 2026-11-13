@@ -287,7 +287,7 @@ func TestSharedObservationLegacyOldWorkerGate(t *testing.T) {
 		if got := sharedObservationWorkerEnabled(tt.index, tt.mode, tt.flag, 8); got != tt.enabled {
 			t.Fatalf("index=%d mode=%s flag=%t enabled=%t, want %t", tt.index, tt.mode, tt.flag, got, tt.enabled)
 		}
-		if got := sharedObservationWorkerLaneForMode(tt.index, tt.mode, tt.flag); got != tt.lane {
+		if got := sharedObservationWorkerLaneForMode(tt.index, tt.mode, tt.flag, false); got != tt.lane {
 			t.Fatalf("index=%d mode=%s flag=%t lane=%s, want %s", tt.index, tt.mode, tt.flag, got, tt.lane)
 		}
 	}
@@ -314,7 +314,7 @@ func TestSharedObservationAsyncWorkerLimitKeepsExpiryLane(t *testing.T) {
 			if enabled {
 				count++
 			}
-			if index == 1 && (!enabled || sharedObservationWorkerLaneForMode(index, "async", false) != "expiry") {
+			if index == 1 && (!enabled || sharedObservationWorkerLaneForMode(index, "async", false, false) != "expiry") {
 				t.Fatalf("limit=%d: expiry lane must stay reserved", limit)
 			}
 			if index >= limit && enabled {
@@ -327,6 +327,51 @@ func TestSharedObservationAsyncWorkerLimitKeepsExpiryLane(t *testing.T) {
 	}
 	if sharedObservationWorkerEnabled(2, "legacy", false, 8) || sharedObservationWorkerEnabled(2, "shadow", false, 8) || !sharedObservationWorkerEnabled(2, "legacy", true, 2) {
 		t.Fatal("async cap changed legacy or shadow worker semantics")
+	}
+}
+
+func TestSharedObservationAsyncOldWorkerExplicitGate(t *testing.T) {
+	for _, tc := range []struct {
+		value   string
+		workers int
+		want    bool
+		valid   bool
+	}{
+		{"", 5, false, true},
+		{"false", 5, false, true},
+		{"true", 5, true, true},
+		{"true", 4, false, false},
+		{"TRUE", 5, false, false},
+		{"1", 5, false, false},
+	} {
+		got, err := parseSharedObservationAsyncOldWorker(tc.value, tc.workers)
+		if got != tc.want || (err == nil) != tc.valid {
+			t.Fatalf("value=%q workers=%d got=%t err=%v, want=%t valid=%t", tc.value, tc.workers, got, err, tc.want, tc.valid)
+		}
+	}
+	for index := 0; index < 8; index++ {
+		if got := sharedObservationWorkerEnabled(index, "async", false, 5); got != (index < 5) {
+			t.Fatalf("index=%d enabled=%t", index, got)
+		}
+		want := "realtime_new"
+		if index == 1 {
+			want = "expiry"
+		} else if index == 4 {
+			want = "realtime_old"
+		}
+		if got := sharedObservationWorkerLaneForMode(index, "async", false, true); got != want {
+			t.Fatalf("async index=%d lane=%q want=%q", index, got, want)
+		}
+		if index == 4 {
+			for _, mode := range []string{"legacy", "shadow"} {
+				if got := sharedObservationWorkerLaneForMode(index, mode, false, true); got != "realtime_new" {
+					t.Fatalf("mode=%s unexpectedly used old lane: %s", mode, got)
+				}
+			}
+			if got := sharedObservationWorkerLaneForMode(index, "async", false, false); got != "realtime_new" {
+				t.Fatalf("disabled old lane=%s", got)
+			}
+		}
 	}
 }
 
