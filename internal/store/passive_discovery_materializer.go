@@ -647,7 +647,7 @@ func passiveRepeatableFactID(o discovery.Observation) string {
 	default:
 		return ""
 	}
-	key := strings.Join([]string{o.Origin, o.SourceID, o.MAC, o.IP, o.Name}, "\x00")
+	key := strings.Join([]string{o.Origin, o.SourceID, o.Node, o.Site, o.Domain, o.VLAN, o.VRF, o.MAC, o.IP, o.Name}, "\x00")
 	sum := sha256.Sum256([]byte(key))
 	return "fact-" + hex.EncodeToString(sum[:16])
 }
@@ -1521,15 +1521,16 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 		if len(pendingARP) == 0 {
 			return nil
 		}
-		for _, observation := range pendingARP {
-			affectedKeys[observation.Key()] = true
-		}
 		if err := measure("arp_batch", func() error {
-			if err := s.insertPassiveARPBatch(ctx, tx, pendingARP); err != nil {
+			refreshed, err := s.insertPassiveARPBatch(ctx, tx, pendingARP)
+			if err != nil {
 				return err
 			}
+			for _, observation := range refreshed {
+				affectedKeys[observation.Key()] = true
+			}
 			if discovery.HardwareProjectionEnabled() {
-				return discovery.EnqueueHardwareObservations(ctx, tx, pendingARP)
+				return discovery.EnqueueHardwareObservations(ctx, tx, refreshed)
 			}
 			return nil
 		}); err != nil {

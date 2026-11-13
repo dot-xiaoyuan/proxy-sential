@@ -371,6 +371,8 @@ func TestPassiveRepeatableFactIDCollapsesWithinHour(t *testing.T) {
 	nextHour.ObservedAt = base.Add(2 * time.Hour)
 	otherAddress := fact
 	otherAddress.IP = "10.0.0.9"
+	otherScope := fact
+	otherScope.VLAN = "201"
 
 	first := passiveRepeatableFactID(fact)
 	if first == "" || first != passiveRepeatableFactID(sameHour) {
@@ -381,6 +383,9 @@ func TestPassiveRepeatableFactIDCollapsesWithinHour(t *testing.T) {
 	}
 	if first == passiveRepeatableFactID(otherAddress) {
 		t.Fatal("a different address must be a different fact")
+	}
+	if first == passiveRepeatableFactID(otherScope) {
+		t.Fatal("a different capture scope must be a different fact")
 	}
 	if id := passiveRepeatableFactID(discovery.Observation{Origin: "ssdp", MAC: "00:11:22:33:44:55"}); id != "" {
 		t.Fatalf("non-repeatable origins keep their event id, got %q", id)
