@@ -66,16 +66,13 @@ func captureStreamOnceWithReady(ctx context.Context, journal *streamlog.Journal,
 	var read sourceChunk
 	if source.Kind == "zeek-dhcp-binding" {
 		read, err = readZeekBindingChunk(source.Path, cursor, maxBytes)
+	} else if source.Kind == "device-signals" || source.Kind == "shared-device-signals" {
+		read, err = readDeviceSignalChunk(source.Path, cursor, maxBytes)
 	} else {
 		read, err = readSourceChunk(source.Path, checkpoint, true, maxBytes, strings.HasPrefix(source.Kind, "zeek-"))
 	}
 	if err != nil {
 		return "", false, err
-	}
-	if source.Kind == "device-signals" || source.Kind == "shared-device-signals" {
-		if err := verifyDeviceSignalCursorTail(source.Path, cursor); err != nil {
-			return "", false, err
-		}
 	}
 	if err := validateStreamRead(source.Path, cursor.FileID, cursor.Offset, read, cursor.KeyScheme == "generation-v2"); err != nil {
 		return "", false, err
