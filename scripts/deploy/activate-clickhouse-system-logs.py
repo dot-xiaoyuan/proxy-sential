@@ -129,6 +129,12 @@ def check_source(source: dict, expected_image_id: str | None = None) -> None:
         raise MaintenanceError("pinned ClickHouse image is not local or differs from the running image")
     if set(host.get("Binds") or []) != EXPECTED_BINDS or host.get("Mounts") or host.get("VolumesFrom"):
         raise MaintenanceError("ClickHouse storage binds changed; refusing to rebuild")
+    expected_mounts = {
+        ("/opt/proxy-sentinel/data/db/clickhouse/data", "/var/lib/clickhouse", True),
+        ("/opt/proxy-sentinel/data/db/clickhouse/logs", "/var/log/clickhouse-server", True),
+    }
+    if len(source.get("Mounts") or []) != 2 or {(m["Source"], m["Destination"], m["RW"]) for m in source["Mounts"]} != expected_mounts:
+        raise MaintenanceError("ClickHouse has an unexpected mounted volume")
     if host.get("PortBindings") != EXPECTED_PORTS or host.get("NetworkMode") != "default":
         raise MaintenanceError("ClickHouse ports or network changed")
     if list(source["NetworkSettings"]["Networks"]) != ["bridge"]:
@@ -144,10 +150,15 @@ def check_source(source: dict, expected_image_id: str | None = None) -> None:
     if (host.get("Privileged") or host.get("ReadonlyRootfs") or host.get("CapAdd") or host.get("CapDrop")
             or host.get("SecurityOpt") or host.get("Devices") or host.get("DeviceRequests") or host.get("Tmpfs")
             or host.get("ExtraHosts") or host.get("Links") or host.get("Dns") or host.get("DnsOptions")
-            or host.get("DnsSearch") or host.get("Sysctls") or host.get("PidsLimit") or host.get("Init")):
+            or host.get("DnsSearch") or host.get("Sysctls") or host.get("PidsLimit") or host.get("Init")
+            or host.get("CpuShares") or host.get("CpuQuota") or host.get("CpuPeriod") or host.get("CpusetCpus")
+            or host.get("MemoryReservation") or host.get("PidMode") or host.get("UsernsMode")
+            or host.get("CgroupParent") or host.get("CgroupnsMode") or host.get("OomKillDisable") or host.get("OomScoreAdj")):
         raise MaintenanceError("ClickHouse has unhandled Docker host options")
     if config.get("Entrypoint") != ["/entrypoint.sh"] or config.get("Cmd") is not None or config.get("User") or config.get("WorkingDir"):
         raise MaintenanceError("ClickHouse entrypoint or command changed")
+    if config.get("StopSignal") or config.get("StopTimeout"):
+        raise MaintenanceError("ClickHouse stop behavior changed")
     health = config.get("Healthcheck") or {}
     if health.get("Test", [None])[0] != "CMD-SHELL" or len(health.get("Test", [])) != 2:
         raise MaintenanceError("ClickHouse healthcheck changed")
