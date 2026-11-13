@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
@@ -15,17 +17,28 @@ import (
 // ReconcileSettledStreamBody repairs an old ambiguous archive attempt after
 // its source has been stopped and leased by the operator. A scoped read keeps
 // already archived rows untouched; a non-empty async queue leaves the attempt
-// unconfirmed instead of racing a delayed ClickHouse flush.
+// unconfirmed instead of racing a delayed ClickHouse flush. Device-signal
+// standard-event raw lives in the immutable journal, not stream_source_raw.
 func (s *ClickHouseStore) ReconcileSettledStreamBody(ctx context.Context, id string, segment streamlog.Segment) error {
-	if id == "" || !segment.SourceBackedRaw || len(segment.Raw) == 0 || len(segment.Events) == 0 ||
+	standardRaw := segment.RawIsStandardEvents && !segment.SourceBackedRaw &&
+		(segment.Source == "device-signals" || segment.Source == "shared-device-signals") &&
+		segment.EndOffset-segment.StartOffset == int64(len(segment.Raw))
+	if standardRaw {
+		sum := sha256.Sum256(segment.Raw)
+		standardRaw = segment.RawSHA256 == hex.EncodeToString(sum[:])
+	}
+	if id == "" || (!segment.SourceBackedRaw && !standardRaw) || len(segment.Raw) == 0 || len(segment.Events) == 0 ||
 		segment.AcceptedAt.IsZero() || time.Since(segment.AcceptedAt) < time.Hour {
-		return fmt.Errorf("settled source-backed archive proof is incomplete: %w", streamlog.ErrUnconfirmed)
+		return fmt.Errorf("settled source archive proof is incomplete: %w", streamlog.ErrUnconfirmed)
 	}
 	prepared, err := prepareStreamEvents(segment)
 	if err != nil {
 		return err
 	}
-	tables := map[string]bool{"stream_source_raw": true}
+	tables := map[string]bool{}
+	if streamRawArchiveRequired(segment) {
+		tables["stream_source_raw"] = true
+	}
 	for _, item := range prepared {
 		tables[streamBodyTable(item.retention, segment.BodyLayout)] = true
 	}

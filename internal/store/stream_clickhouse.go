@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -387,50 +388,61 @@ func (s *ClickHouseStore) missingStreamBodyEvents(ctx context.Context, segment s
 		return nil, err
 	}
 	missing := make([]int, 0)
+	// The body tables are ordered by scope and event key. Keep ambiguous
+	// archive verification to small, exact lookups even for a full segment.
+	const verificationBatch = 100
 	for _, retention := range []string{"short", "evidence"} {
-		var keys []string
-		expected := map[string]int{}
-		remaining := map[string]int{}
+		indexes := make([]int, 0, len(prepared))
 		for index, item := range prepared {
-			if item.retention != retention {
-				continue
+			if item.retention == retention {
+				indexes = append(indexes, index)
 			}
-			keys = append(keys, "("+chQuote(item.scope)+","+chQuote(item.key)+")")
-			expected[item.scope+"\x00"+item.key] = index
-			remaining[item.scope+"\x00"+item.key] = index
 		}
-		if len(keys) == 0 {
-			continue
-		}
-		query := "SELECT scope_id,event_key,content_sha256 FROM " + streamBodyTable(retention, segment.BodyLayout) +
-			" WHERE archive_month=" + segment.ArchiveMonth + " AND (scope_id,event_key) IN (" + strings.Join(keys, ",") + ") FORMAT JSONEachRow"
-		data, err := s.query(ctx, query)
-		if err != nil {
-			return nil, err
-		}
-		for _, line := range bytes.Split(bytes.TrimSpace(data), []byte{'\n'}) {
-			if len(line) == 0 {
-				continue
+		for start := 0; start < len(indexes); start += verificationBatch {
+			end := start + verificationBatch
+			if end > len(indexes) {
+				end = len(indexes)
 			}
-			var row struct {
-				Scope string `json:"scope_id"`
-				Key   string `json:"event_key"`
-				Hash  string `json:"content_sha256"`
+			keys := make([]string, 0, end-start)
+			expected := make(map[string]int, end-start)
+			remaining := make(map[string]int, end-start)
+			for _, index := range indexes[start:end] {
+				item := prepared[index]
+				keys = append(keys, "("+chQuote(item.scope)+","+chQuote(item.key)+")")
+				expected[item.scope+"\x00"+item.key] = index
+				remaining[item.scope+"\x00"+item.key] = index
 			}
-			if err := json.Unmarshal(line, &row); err != nil {
+			query := "SELECT scope_id,event_key,content_sha256 FROM " + streamBodyTable(retention, segment.BodyLayout) +
+				" WHERE archive_month=" + segment.ArchiveMonth + " AND (scope_id,event_key) IN (" + strings.Join(keys, ",") + ") FORMAT JSONEachRow"
+			data, err := s.query(ctx, query)
+			if err != nil {
 				return nil, err
 			}
-			key := row.Scope + "\x00" + row.Key
-			index, found := expected[key]
-			if !found || prepared[index].hash != row.Hash {
-				return nil, streamlog.ErrContentConflict
+			for _, line := range bytes.Split(bytes.TrimSpace(data), []byte{'\n'}) {
+				if len(line) == 0 {
+					continue
+				}
+				var row struct {
+					Scope string `json:"scope_id"`
+					Key   string `json:"event_key"`
+					Hash  string `json:"content_sha256"`
+				}
+				if err := json.Unmarshal(line, &row); err != nil {
+					return nil, err
+				}
+				key := row.Scope + "\x00" + row.Key
+				index, found := expected[key]
+				if !found || prepared[index].hash != row.Hash {
+					return nil, streamlog.ErrContentConflict
+				}
+				delete(remaining, key)
 			}
-			delete(remaining, key)
-		}
-		for _, index := range remaining {
-			missing = append(missing, index)
+			for _, index := range remaining {
+				missing = append(missing, index)
+			}
 		}
 	}
+	sort.Ints(missing)
 	return missing, nil
 }
 

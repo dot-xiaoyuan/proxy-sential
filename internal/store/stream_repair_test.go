@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -162,6 +163,109 @@ func TestReconcileSettledStreamBodyRequiresQuietQueueAndWritesOnlyMissingBody(t 
 	}
 	if err := ch.ReconcileSettledStreamBody(context.Background(), "segment-one", segment); err != nil || bodyInserts != 1 {
 		t.Fatalf("present body was duplicated: inserts=%d err=%v", bodyInserts, err)
+	}
+}
+
+func TestReconcileSettledStandardEventRawRepairsOnlyMissingBody(t *testing.T) {
+	segment := testStreamSegment()
+	segment.Source = "device-signals"
+	segment.SourcePath = "/signals/handshake.jsonl"
+	segment.BodyLayout = "v2"
+	segment.RawIsStandardEvents = true
+	segment.AcceptedAt = time.Now().UTC().Add(-2 * time.Hour)
+	segment.Events[0].Source = "handshake-sidecar"
+	second := segment.Events[0]
+	second.EventID = "e2"
+	segment.Events = append(segment.Events, second)
+	firstLine, _ := json.Marshal(segment.Events[0])
+	secondLine, _ := json.Marshal(segment.Events[1])
+	segment.Raw = append(append(append([]byte{}, firstLine...), '\n'), append(secondLine, '\n')...)
+	segment.StartOffset = 100
+	segment.EndOffset = segment.StartOffset + int64(len(segment.Raw))
+	sum := sha256.Sum256(segment.Raw)
+	segment.RawSHA256 = hex.EncodeToString(sum[:])
+	prepared, err := prepareStreamEvents(segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued, present, inserts := true, false, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		query := string(data)
+		switch {
+		case strings.Contains(query, "FROM system.asynchronous_inserts"):
+			if queued {
+				_, _ = io.WriteString(w, "1\n")
+			} else {
+				_, _ = io.WriteString(w, "0\n")
+			}
+		case strings.Contains(query, "FROM system.processes"):
+			_, _ = io.WriteString(w, "0\n")
+		case strings.HasPrefix(query, "SELECT scope_id,event_key,content_sha256"):
+			_ = json.NewEncoder(w).Encode(map[string]string{"scope_id": prepared[0].scope, "event_key": prepared[0].key, "content_sha256": prepared[0].hash})
+			if present {
+				_ = json.NewEncoder(w).Encode(map[string]string{"scope_id": prepared[1].scope, "event_key": prepared[1].key, "content_sha256": prepared[1].hash})
+			}
+		case strings.HasPrefix(query, "INSERT INTO stream_event_body_"):
+			if !strings.Contains(query, `"event_key":"`+prepared[1].key+`"`) || strings.Contains(query, `"event_key":"`+prepared[0].key+`"`) {
+				t.Errorf("repair inserted the wrong body key")
+			}
+			inserts++
+			present = true
+		case strings.Contains(query, "FROM system.query_log") || strings.HasPrefix(query, "INSERT INTO stream_source_raw"):
+			t.Errorf("standard-event repair touched unrelated source or diagnostic table")
+		}
+	}))
+	defer server.Close()
+	ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ch.ReconcileSettledStreamBody(context.Background(), "segment-two", segment); err == nil || inserts != 0 {
+		t.Fatalf("busy body queue was replayed: inserts=%d err=%v", inserts, err)
+	}
+	queued = false
+	if err := ch.ReconcileSettledStreamBody(context.Background(), "segment-two", segment); err != nil || inserts != 1 {
+		t.Fatalf("settled standard-event body repair: inserts=%d err=%v", inserts, err)
+	}
+	if err := ch.ReconcileSettledStreamBody(context.Background(), "segment-two", segment); err != nil || inserts != 1 {
+		t.Fatalf("confirmed standard-event body was duplicated: inserts=%d err=%v", inserts, err)
+	}
+	segment.RawSHA256 = strings.Repeat("0", 64)
+	if err := ch.ReconcileSettledStreamBody(context.Background(), "segment-two", segment); !errors.Is(err, streamlog.ErrUnconfirmed) {
+		t.Fatalf("mutated source was accepted: %v", err)
+	}
+}
+
+func TestMissingStreamBodyEventsReadsBoundedKeyBatches(t *testing.T) {
+	segment := testStreamSegment()
+	segment.BodyLayout = "v2"
+	segment.Events = nil
+	for i := 0; i < 205; i++ {
+		segment.Events = append(segment.Events, testStreamSegment().Events[0])
+		segment.Events[i].EventID = fmt.Sprintf("event-%03d", i)
+	}
+	queries := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		query := string(data)
+		if !strings.HasPrefix(query, "SELECT scope_id,event_key,content_sha256 FROM stream_event_body_evidence_v2") {
+			t.Errorf("unexpected body verification query")
+			return
+		}
+		queries++
+		if keys := strings.Count(query, "'scope'"); keys > 100 {
+			t.Errorf("body verification requested %d keys in one read", keys)
+		}
+	}))
+	defer server.Close()
+	ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing, err := ch.missingStreamBodyEvents(context.Background(), segment)
+	if err != nil || len(missing) != 205 || queries != 3 {
+		t.Fatalf("bounded body lookup failed: missing=%d queries=%d err=%v", len(missing), queries, err)
 	}
 }
 

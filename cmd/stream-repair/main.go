@@ -20,7 +20,7 @@ func main() {
 	journalDir := flag.String("journal", "", "durable stream journal directory")
 	id := flag.String("segment-id", "", "exact segment id")
 	laneName := flag.String("lane", "", "archive, search or risk-feature")
-	settledScoped := flag.Bool("settled-scoped", false, "repair a settled source-backed archive with scoped row proof")
+	settledScoped := flag.Bool("settled-scoped", false, "repair a settled source-backed or journal-backed standard-event archive with scoped row proof")
 	flag.Parse()
 	if err := run(*journalDir, *id, streamlog.Lane(*laneName), *settledScoped); err != nil {
 		fmt.Fprintln(os.Stderr, "stream repair:", err)
