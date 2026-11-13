@@ -323,6 +323,45 @@ func TestDirectPTRLinkDoesNotRequireDHCPLease(t *testing.T) {
 	}
 }
 
+func TestPassiveObservationLinksBatchKeepsEventTimeLeaseBoundary(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	at := time.Now().UTC().Truncate(time.Second)
+	makeObservation := func(id, origin, ip, mac string, offset time.Duration) discovery.Observation {
+		return discovery.Observation{
+			ID: id, Origin: origin, Node: "campus-204", IP: ip, MAC: mac,
+			ObservedAt: at.Add(offset), ValidUntil: at.Add(offset + time.Hour),
+			Evidence: normalized.Event{Subject: map[string]any{"campus_id": "main"}},
+		}
+	}
+	observations := []discovery.Observation{
+		makeObservation("arp-direct", "arp", "192.0.2.1", "02:11:22:33:44:55", 0),
+		makeObservation("ssdp-owned", "ssdp", "192.0.2.2", "02:11:22:33:44:55", time.Minute),
+		makeObservation("ssdp-rebound", "ssdp", "192.0.2.2", "02:11:22:33:44:55", 2*time.Minute),
+		makeObservation("ssdp-unbound", "ssdp", "192.0.2.3", "02:11:22:33:44:55", 3*time.Minute),
+		makeObservation("no-mac", "ssdp", "192.0.2.4", "", 4*time.Minute),
+	}
+	mock.ExpectQuery("WITH incoming AS MATERIALIZED").WithArgs(sqlmock.AnyArg()).WillReturnRows(
+		sqlmock.NewRows([]string{"ordinal", "endpoint_id"}).
+			AddRow(1, "mac:02:11:22:33:44:55").
+			AddRow(2, "mac:02:11:22:33:44:66").
+			AddRow(3, ""),
+	)
+	links, err := (&DBStore{}).passiveObservationLinksBatch(context.Background(), db, observations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(links) != 2 || links[0].ObservationID != "arp-direct" || links[1].ObservationID != "ssdp-owned" {
+		t.Fatalf("batch links crossed a lease or omitted direct ownership: %+v", links)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPassiveHostTokenRequiresStableHexSuffix(t *testing.T) {
 	if token := passiveHostToken("dev5df46c.local"); token != "5df46c" {
 		t.Fatalf("token=%q", token)
