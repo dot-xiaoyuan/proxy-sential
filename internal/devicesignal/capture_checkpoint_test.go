@@ -1,12 +1,14 @@
 package devicesignal
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/sharedaccess"
 )
 
@@ -131,5 +133,38 @@ func TestRouterStartupCoveragePersistsFirstStartAndCorruptCheckpointLoss(t *test
 				t.Fatalf("persisted startup loss = %+v found=%t err=%v", got, found, err)
 			}
 		})
+	}
+}
+
+func TestCaptureCoverageTailRequiresSuccessfulRecoverySync(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "ttl.jsonl")
+	from := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	coverage := sharedaccess.CoverageV2{SchemaVersion: "capture-coverage/v2", From: from, To: from.Add(30 * time.Second), KernelStatsKnown: true}
+	file, err := os.OpenFile(output, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := normalized.Event{
+		SchemaVersion: "v1", EventID: "coverage-unconfirmed", Source: "packet-sidecar", SourceEventType: "capture_coverage", Type: "device",
+		Timestamp: coverage.To.Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": "sensor", "collector_instance_id": "instance"},
+		Subject: map[string]any{}, Payload: map[string]any{"capture_coverage": coverage},
+	}
+	if err := json.NewEncoder(file).Encode(event); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	// This deliberately closes a complete JSONL row without calling Sync,
+	// matching an Encode success followed by a failed writer Sync.
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	syncFailure := errors.New("injected fsync failure")
+	got, found, err := readCaptureCoverageTailWithSync(output, "sensor", "instance", func(*os.File) error { return syncFailure })
+	if !errors.Is(err, syncFailure) || found || !got.To.IsZero() {
+		t.Fatalf("unconfirmed row was trusted: coverage=%+v found=%t err=%v", got, found, err)
+	}
+	got, found, err = readCaptureCoverageTail(output, "sensor", "instance")
+	if err != nil || !found || !got.To.Equal(coverage.To) {
+		t.Fatalf("recovery sync did not confirm row: coverage=%+v found=%t err=%v", got, found, err)
 	}
 }

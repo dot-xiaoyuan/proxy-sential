@@ -175,6 +175,10 @@ func plainCaptureRotation(output, path string) bool {
 }
 
 func readCaptureCoverageTail(path, sensor, instance string) (sharedaccess.CoverageV2, bool, error) {
+	return readCaptureCoverageTailWithSync(path, sensor, instance, (*os.File).Sync)
+}
+
+func readCaptureCoverageTailWithSync(path, sensor, instance string, syncFile func(*os.File) error) (sharedaccess.CoverageV2, bool, error) {
 	file, err := os.Open(path)
 	if os.IsNotExist(err) {
 		return sharedaccess.CoverageV2{}, false, nil
@@ -189,6 +193,13 @@ func readCaptureCoverageTail(path, sensor, instance string) (sharedaccess.Covera
 	}
 	if info.Size() == 0 {
 		return sharedaccess.CoverageV2{}, false, nil
+	}
+	// A complete row can still be only in page cache if the previous writer's
+	// Encode succeeded but Sync failed. Fix the read boundary at the size seen
+	// before this call, then confirm those bytes are durable before accepting a
+	// tail row as the recovery watermark.
+	if err := syncFile(file); err != nil {
+		return sharedaccess.CoverageV2{}, false, fmt.Errorf("sync capture output before recovery tail read %s: %w", path, err)
 	}
 	start := max(int64(0), info.Size()-captureCoverageTailBytes)
 	data := make([]byte, int(info.Size()-start))
