@@ -36,6 +36,10 @@
 
 目标是逐来源迁移到一份可追溯标准正文、紧凑检索索引及 PostgreSQL 业务当前态。旧 `normalized_events` 在原读者切换和证据覆盖核验前保留；同一事件的额外全文副本、逐事件 PostgreSQL 键及影子投影在依赖解除后按来源退役。当前仅用现有磁盘、Redis 和单节点 Redpanda；一年必要证据容量与单机故障保护须实测，容量不足时报告缺口，不缩短保留或删除唯一证据。
 
+新流正文的 v1/v2 是同一权威正文的两种物理布局，不是要求每个事件双写的两份副本。源 journal 在接受段时固定 `body_layout`；写入器按每条事件的必要保留类别只选 `stream_event_body_short`／`stream_event_body_evidence` 中的一张，若布局为 v2 则选对应的 `_v2` 表。`stream_event_search` 只保存结构化检索字段、内容哈希和含布局的 `body_ref`，读者按引用读取并核对正文哈希。不同来源可以同时使用不同布局，不能按表名直接退役 v1 或 v2。`stream_source_raw` 仅为非标准原始段保存源字节；标准化 `device-signals` 段的原始文件及其轮转链另有恢复责任。
+
+当前 `flow-syn-sidecar` 的 `syn_attempt`／`syn_ack_observed` 被归为一年必要证据，且流量可能远大于设备状态变化。其正文保留范围须先按来源核对案件引用、读者和回放所需的最小证据，再测量去重后的净日增与查询水位；不能只因 v1/v2 同时增长就停写其中一表，也不能未经证据审计把已引用的流量正文改为七天短留存。ClickHouse 插入 token 及后台合并不提供跨窗口即时去重；跨库部分成功须由持久 journal 状态、受限范围的键与哈希核对和各落点确认恢复。
+
 新流的首次成功入库时间固定在源 journal 的 `accepted_at`，重试不推进该时间。迁移 075 将正文和原始段的 TTL 改由该字段计算，检索索引新增 `first_ingested_at`；旧检索行只能以原 `indexed_at` 作明示回退。必要证据 30 天热查与一年保留仍需结合分区覆盖和案件引用验证；`normalized_events` 七天表和已轮转 EVE 不具备的历史范围登记为缺口，不能据 TTL 配置推断归档完整。
 
 Redpanda 的可靠投递灰度目前只支持显式启用 `passive-discovery`，本轮尚未在 184 开启。启动预检要求主题已存在、分区有 leader 且副本全部同步、`min.insync.replicas` 可满足、`cleanup.policy=delete`、`retention.ms` 至少七天且有限、`retention.bytes=-1`；可靠生产者禁止自动建主题。单副本主题在节点故障时没有第二份消息副本，journal 和已确认正文仍承担本地恢复，不能把 broker ACK 当作长期证据归档。初始灰度 consumer 使用 `-normalized-only`；完整影子落点须分别验证重放与冲突处理后才可启用。
