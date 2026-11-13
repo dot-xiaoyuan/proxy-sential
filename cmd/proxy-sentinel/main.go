@@ -430,6 +430,9 @@ func runIngest(args []string) error {
 	if len(args) > 0 && args[0] == "stream-prepare" {
 		return runIngestStreamPrepare(args[1:])
 	}
+	if len(args) > 0 && args[0] == "stream-replay-prepare" {
+		return runIngestStreamReplayPrepare(args[1:])
+	}
 	if len(args) > 0 && args[0] == "stream-run" {
 		return runIngestStream(args[1:])
 	}
