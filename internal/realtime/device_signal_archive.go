@@ -39,28 +39,7 @@ func readDeviceSignalChunk(path string, cursor streamlog.SourceCursor, maxBytes 
 	if err != nil {
 		return sourceChunk{}, err
 	}
-	var matches []signalFile
-	for _, file := range files {
-		if file.id != cursor.FileID {
-			continue
-		}
-		if file.compressed && !signalGzipCursorMatches(path, file, cursor) {
-			continue
-		}
-		if !file.compressed && !signalRawCursorMatches(file, cursor) {
-			continue
-		}
-		matches = append(matches, file)
-	}
-	// Compression changes inode. A unique committed tail proves that the
-	// first gzip archive contains the old cursor's original byte stream.
-	if len(matches) == 0 && cursor.Offset > 0 && validSignalTail(cursor) {
-		for _, file := range files {
-			if file.compressed && file.id != cursor.FileID && probeSignalGzipTail(file.path, cursor) {
-				matches = append(matches, file)
-			}
-		}
-	}
+	matches := matchingSignalCursorFiles(path, files, cursor, probeSignalGzipTail)
 	file, ok := uniqueSignalMatch(matches)
 	if !ok {
 		return sourceChunk{}, ErrStreamSourceGap
@@ -103,6 +82,48 @@ func readDeviceSignalChunk(path string, cursor streamlog.SourceCursor, maxBytes 
 	}
 	read.verifiedRotation = true
 	return read, nil
+}
+
+func matchingSignalCursorFiles(path string, files []signalFile, cursor streamlog.SourceCursor, probe func(string, streamlog.SourceCursor) bool) []signalFile {
+	var matches []signalFile
+	for _, file := range files {
+		if file.id != cursor.FileID {
+			continue
+		}
+		if file.compressed && !signalGzipCursorMatches(path, file, cursor) {
+			continue
+		}
+		if !file.compressed && !signalRawCursorMatches(file, cursor) {
+			continue
+		}
+		matches = append(matches, file)
+	}
+	// The first archive still carries the old, uncompressed FileID. Once its
+	// committed tail has been proved and the inflater opened, reuse that proof
+	// while the cursor advances instead of re-inflating the entire prefix of
+	// every archive on every segment.
+	if len(matches) == 0 {
+		signalGzipState.Lock()
+		cached := signalGzipState.bySource[path]
+		if cacheSupportsCursor(cached, cursor) {
+			for _, file := range files {
+				if file.compressed && os.SameFile(file.info, cached.info) {
+					matches = append(matches, file)
+				}
+			}
+		}
+		signalGzipState.Unlock()
+	}
+	// Compression changes inode. A unique committed tail proves that the
+	// first gzip archive contains the old cursor's original byte stream.
+	if len(matches) == 0 && cursor.Offset > 0 && validSignalTail(cursor) {
+		for _, file := range files {
+			if file.compressed && file.id != cursor.FileID && probe(file.path, cursor) {
+				matches = append(matches, file)
+			}
+		}
+	}
+	return matches
 }
 
 func deviceSignalFiles(path string) ([]signalFile, error) {

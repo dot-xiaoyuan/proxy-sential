@@ -298,6 +298,23 @@ func TestDeviceSignalCompressedRotationReusesReaderAcrossProjectionSegments(t *t
 		signalGzipState.Unlock()
 		if index == 0 {
 			firstInflater = inflater
+			cursor, err := j.LoadSource(source.Kind, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			files, err := deviceSignalFiles(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			probeCalls := 0
+			matches := matchingSignalCursorFiles(path, files, cursor, func(string, streamlog.SourceCursor) bool {
+				probeCalls++
+				return false
+			})
+			matched, ok := uniqueSignalMatch(matches)
+			if probeCalls != 0 || !ok || !os.SameFile(matched.info, inflater.info) || matched.id == cursor.FileID {
+				t.Fatalf("committed gzip cursor did not reuse its verified archive: probes=%d match=%+v ok=%t", probeCalls, matched, ok)
+			}
 		} else if index == 1 && inflater != firstInflater {
 			t.Fatal("partial projection segment reinflated the whole archive")
 		}
