@@ -128,3 +128,21 @@ func TestPassiveDiscoveryV3RejectsChangedContentForSameBatchID(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPassiveDiscoveryV3ReadFlagCannotCutWithoutOverlapAudit(t *testing.T) {
+	pg, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pg.Close()
+	mock.ExpectQuery("SELECT COALESCE.*active.*read_model_runtime_state").WillReturnRows(sqlmock.NewRows([]string{"active"}).AddRow(false))
+	mock.ExpectQuery("SELECT COALESCE.*approved.*read_model_runtime_state").WillReturnRows(sqlmock.NewRows([]string{"approved", "overlap_from", "overlap_until", "coverage_sha256"}))
+	backend := &DBStore{pg: &PostgresStore{db: pg}}
+	ready, err := backend.passiveDiscoveryV3CutoverReady(context.Background(), "campus-204")
+	if err != nil || ready {
+		t.Fatalf("read switch bypassed overlap audit: ready=%t err=%v", ready, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

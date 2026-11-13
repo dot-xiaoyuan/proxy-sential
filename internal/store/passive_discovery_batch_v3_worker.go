@@ -47,12 +47,29 @@ func (s *DBStore) passiveDiscoveryV3CutoverReady(ctx context.Context, sensor str
 	if alreadyActive {
 		return true, nil
 	}
+	// A read flag only starts shadow verification. It cannot itself publish a
+	// cutover: the old/new overlap must have a recorded count/hash review.
+	var approved bool
+	var overlapFrom, overlapUntil sql.NullTime
+	var coverageHash sql.NullString
+	err = s.pg.db.QueryRowContext(ctx, `SELECT COALESCE((state->>'approved')::boolean,false),
+ NULLIF(state->>'overlap_from','')::timestamptz,NULLIF(state->>'overlap_until','')::timestamptz,
+ state->>'coverage_sha256' FROM read_model_runtime_state WHERE name='passive-discovery-batch-v3'`).Scan(&approved, &overlapFrom, &overlapUntil, &coverageHash)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !approved || !overlapFrom.Valid || !overlapUntil.Valid || !overlapFrom.Time.Before(overlapUntil.Time) || !coverageHash.Valid || len(coverageHash.String) != 64 {
+		return false, nil
+	}
 	var first, cursor sql.NullTime
 	err = s.pg.db.QueryRowContext(ctx, `SELECT
  (SELECT min(p.first_ingested_at) FROM passive_discovery_batch_progress p JOIN ingest_batches b USING(batch_id)
   WHERE b.sensor_id=$1 AND p.selected_count>0 AND p.first_ingested_at IS NOT NULL),
  (SELECT cursor_timestamp FROM passive_discovery_state WHERE sensor_id=$1)`, sensor).Scan(&first, &cursor)
-	if err != nil || !first.Valid || !cursor.Valid || cursor.Time.Before(first.Time) {
+	if err != nil || !first.Valid || !cursor.Valid || first.Time.Before(overlapFrom.Time) || cursor.Time.Before(overlapUntil.Time) || cursor.Time.Before(first.Time) {
 		return false, err
 	}
 	var gaps int
