@@ -60,7 +60,27 @@ func (s *DBStore) exportIdentityInboxFragment(ctx context.Context) error {
 			return err
 		}
 		err = s.pg.finishIdentityExportFragment(ctx, fragment, "body")
-		return err
+		if err != nil {
+			return err
+		}
+		// The body receipt leaves search pending and releases the lease. If
+		// this worker stops here, the ordinary indexed claim can resume it.
+		// With enough time left, claim this exact fragment's search intent
+		// directly instead of scanning the large export queue a second time.
+		if fragment.SearchState != "pending" || !identityImmediateSearchBudget(ctx) {
+			return nil
+		}
+		var nextEpoch int64
+		nextEpoch, err = s.pg.claimIdentitySearchAfterBody(ctx, fragment)
+		if errors.Is(err, sql.ErrNoRows) {
+			// Another claimant or a changed state owns the next step.
+			err = nil
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		fragment.LeaseEpoch = nextEpoch
 	}
 	if fragment.SearchState == "attempted" {
 		var confirmed bool
@@ -76,6 +96,28 @@ func (s *DBStore) exportIdentityInboxFragment(ctx context.Context) error {
 	}
 	err = s.pg.finishIdentityExportFragment(ctx, fragment, "search")
 	return err
+}
+
+const identityImmediateSearchReserve = 10 * time.Second
+
+func identityImmediateSearchBudget(ctx context.Context) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	deadline, bounded := ctx.Deadline()
+	return !bounded || time.Until(deadline) >= identityImmediateSearchReserve
+}
+
+// A body receipt is already durable before this targeted search claim. The
+// existing attempted-before-send rule is preserved, including the lease and
+// exact content verification on retry. A crash before this statement leaves
+// search pending for the ordinary worker; no ClickHouse I/O holds a PG tx.
+func (s *PostgresStore) claimIdentitySearchAfterBody(ctx context.Context, fragment identityExportFragment) (int64, error) {
+	var leaseEpoch int64
+	err := s.db.QueryRowContext(ctx, `UPDATE identity_ingest_fragments SET search_state='attempted',lease_epoch=lease_epoch+1,lease_until=now()+interval '60 seconds',last_attempt_at=now()
+ WHERE batch_id=$1 AND first_ordinal=$2 AND lease_epoch=$3 AND body_state='completed' AND search_state='pending' AND lease_until IS NULL AND released_at IS NULL
+ RETURNING lease_epoch`, fragment.BatchID, fragment.First, fragment.LeaseEpoch).Scan(&leaseEpoch)
+	return leaseEpoch, err
 }
 
 func (s *PostgresStore) claimIdentityExportFragment(ctx context.Context) (fragment identityExportFragment, err error) {
