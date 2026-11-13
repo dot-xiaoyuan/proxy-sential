@@ -148,7 +148,9 @@ const censusCurrentUpsert = `INSERT INTO passive_census_identifier_current
   last_event_id=CASE WHEN (EXCLUDED.last_seen,EXCLUDED.last_event_id)>(passive_census_identifier_current.last_seen,passive_census_identifier_current.last_event_id) THEN EXCLUDED.last_event_id ELSE passive_census_identifier_current.last_event_id END,
   last_source=CASE WHEN (EXCLUDED.last_seen,EXCLUDED.last_event_id)>(passive_census_identifier_current.last_seen,passive_census_identifier_current.last_event_id) THEN EXCLUDED.last_source ELSE passive_census_identifier_current.last_source END,
   updated_at=now()
- WHERE EXCLUDED.first_seen<passive_census_identifier_current.first_seen OR EXCLUDED.last_seen>passive_census_identifier_current.last_seen OR (EXCLUDED.last_seen=passive_census_identifier_current.last_seen AND EXCLUDED.last_event_id>passive_census_identifier_current.last_event_id)`
+ -- Current presence is refreshed at most once per minute for repeated input.
+ -- The source event remains available with its exact observation time.
+ WHERE EXCLUDED.first_seen<passive_census_identifier_current.first_seen OR EXCLUDED.last_seen>=passive_census_identifier_current.last_seen+interval '60 seconds' OR (EXCLUDED.last_seen=passive_census_identifier_current.last_seen AND EXCLUDED.last_event_id>passive_census_identifier_current.last_event_id)`
 
 const censusBucketUpsert = `INSERT INTO passive_census_identifier_5m(bucket_at,scope_key,kind,value,first_seen,last_seen,last_event_id)
  SELECT v.bucket_at,v.scope_key,v.kind,v.value,v.first_seen,v.last_seen,v.event_id
@@ -157,7 +159,9 @@ const censusBucketUpsert = `INSERT INTO passive_census_identifier_5m(bucket_at,s
   first_seen=least(passive_census_identifier_5m.first_seen,EXCLUDED.first_seen),
   last_seen=greatest(passive_census_identifier_5m.last_seen,EXCLUDED.last_seen),
   last_event_id=CASE WHEN (EXCLUDED.last_seen,EXCLUDED.last_event_id)>(passive_census_identifier_5m.last_seen,passive_census_identifier_5m.last_event_id) THEN EXCLUDED.last_event_id ELSE passive_census_identifier_5m.last_event_id END
- WHERE EXCLUDED.first_seen<passive_census_identifier_5m.first_seen OR EXCLUDED.last_seen>passive_census_identifier_5m.last_seen OR (EXCLUDED.last_seen=passive_census_identifier_5m.last_seen AND EXCLUDED.last_event_id>passive_census_identifier_5m.last_event_id)`
+ -- Five-minute history keeps its first observation and a last observation
+ -- within 60 seconds of the latest source event, without rewriting each hit.
+ WHERE EXCLUDED.first_seen<passive_census_identifier_5m.first_seen OR EXCLUDED.last_seen>=passive_census_identifier_5m.last_seen+interval '60 seconds' OR (EXCLUDED.last_seen=passive_census_identifier_5m.last_seen AND EXCLUDED.last_event_id>passive_census_identifier_5m.last_event_id)`
 
 const censusBindingPriorUpdate = `WITH incoming AS (
  SELECT DISTINCT ON(scope_key,ip) scope_key,ip,mac,observed_at FROM jsonb_to_recordset($1::jsonb)

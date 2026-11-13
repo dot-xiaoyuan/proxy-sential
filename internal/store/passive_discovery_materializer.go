@@ -7,9 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"log"
 	"math"
 	"net"
 	"net/netip"
@@ -1905,68 +1903,10 @@ func (s *DBStore) RunPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 		defer close(liveDone)
 		s.runPassiveLivePTRMaterializer(ctx, sensorID)
 	}()
-	go s.runPassiveObservationRetention(ctx, sensorID)
+	// Discovery observations and their cascaded identity links are evidence.
+	// Do not start the old age-based deletion loop: it has no verified archive
+	// receipt, and DNS-SD rows could be removed after only seven days.
 	s.runPassiveDiscoveryMaterializer(ctx, sensorID)
 	<-liveDone
 	<-censusDone
-}
-
-// runPassiveObservationRetention applies the observation hot-window and folds
-// repeated DNS-SD advertisements into one row. The passive materializer owns
-// discovery_observations, so its process carries the retention; the legacy
-// discovery pipeline that also has a cleanup is not deployed on this sensor.
-func (s *DBStore) runPassiveObservationRetention(ctx context.Context, sensorID string) {
-	if err := s.cleanupPassiveObservations(ctx); err != nil && ctx.Err() == nil {
-		log.Printf("passive observation retention failed: %v", err)
-	}
-	ticker := time.NewTicker(10 * time.Minute)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := s.cleanupPassiveObservations(ctx); err != nil && ctx.Err() == nil {
-				log.Printf("passive observation retention failed: %v", err)
-			}
-		}
-	}
-}
-
-func (s *DBStore) cleanupPassiveObservations(ctx context.Context) error {
-	queries := []string{
-		`DELETE FROM discovery_observations WHERE id IN(SELECT id FROM discovery_observations WHERE observed_at<now()-interval '30 days' LIMIT 5000)`,
-		// Continuously re-observed DNS-SD advertisements keep a shorter hot
-		// window: seven days covers the brand window and the page's service
-		// evidence, while the duplicated history otherwise dominates the table.
-		`DELETE FROM discovery_observations WHERE id IN(SELECT id FROM discovery_observations WHERE origin='dns_sd' AND observed_at<now()-interval '7 days' LIMIT 5000)`,
-		`DELETE FROM discovery_observations WHERE id IN(
-			SELECT o.id FROM discovery_observations o
-			JOIN discovery_observations n ON n.origin='dns_sd' AND n.source_id=o.source_id
-			 AND n.data->>'ip'=o.data->>'ip'
-			 AND n.service_instance=o.service_instance
-			 AND (n.observed_at>o.observed_at OR (n.observed_at=o.observed_at AND n.id>o.id))
-			WHERE o.origin='dns_sd' AND o.observed_at<now()-interval '2 days' LIMIT 5000)`,
-	}
-	if os.Getenv("PROXY_SENTINEL_PASSIVE_CENSUS_ENABLED") == "true" {
-		queries = append(queries, `DELETE FROM passive_census_identifier_5m WHERE (bucket_at,scope_key,kind,value) IN
-		 (SELECT bucket_at,scope_key,kind,value FROM passive_census_identifier_5m WHERE bucket_at<now()-interval '30 days' ORDER BY bucket_at LIMIT 20000)`)
-		queries = append(queries, `DELETE FROM passive_census_pending_batches WHERE id IN
-		 (SELECT id FROM passive_census_pending_batches WHERE processed_at<now()-interval '7 days' ORDER BY processed_at LIMIT 5000)`)
-	}
-	for _, q := range queries {
-		// Bound each retention statement: a plan change can turn the dedup join
-		// into a multi-minute scan on this table, and a runaway delete holds the
-		// row locks the materializer's next batch needs.
-		jobCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-		_, err := s.pg.db.ExecContext(jobCtx, q)
-		cancel()
-		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				continue
-			}
-			return err
-		}
-	}
-	return nil
 }
