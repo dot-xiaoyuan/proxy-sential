@@ -2,7 +2,10 @@
 
 package devicesignal
 
-import "syscall"
+import (
+	"fmt"
+	"syscall"
+)
 
 // routerProtocolSocketFilter is compiled from discovery.DiscoveryCaptureFilter()
 // for the 204 target discovery mode. It keeps ARP, DHCP, DNS-SD, NDP,
@@ -172,5 +175,35 @@ var routerProtocolSocketFilter = []syscall.SockFilter{
 }
 
 func attachRouterProtocolFilter(fd int) error {
-	return syscall.AttachLsf(fd, routerProtocolSocketFilter)
+	filter, err := routerProtocolFilterForARP(arpSignalsEnabled())
+	if err != nil {
+		return err
+	}
+	return syscall.AttachLsf(fd, filter)
+}
+
+// The compiled discovery filter includes ARP for the 204 device-center mode.
+// Router-sidecar does not emit ARP unless its explicit source switch is on.
+// Change only the three ARP accept branches; all other protocol offsets and
+// jumps remain byte-for-byte identical to the reviewed generated filter.
+func routerProtocolFilterForARP(enabled bool) ([]syscall.SockFilter, error) {
+	if enabled {
+		return routerProtocolSocketFilter, nil
+	}
+	filter := append([]syscall.SockFilter(nil), routerProtocolSocketFilter...)
+	branches := 0
+	for i := range filter {
+		if filter[i].Code != syscall.BPF_JMP|syscall.BPF_JEQ|syscall.BPF_K || filter[i].K != 0x0806 {
+			continue
+		}
+		if filter[i].Jf != 0 || filter[i].Jt == 0 {
+			return nil, fmt.Errorf("router ARP filter branch has changed")
+		}
+		filter[i].Jt = 0
+		branches++
+	}
+	if branches != 3 {
+		return nil, fmt.Errorf("router ARP filter has %d branches, want 3", branches)
+	}
+	return filter, nil
 }

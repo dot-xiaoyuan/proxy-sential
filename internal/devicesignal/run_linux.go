@@ -92,11 +92,19 @@ func Run(ctx context.Context, opts Options) error {
 	if err := syscall.Bind(fd, &syscall.SockaddrLinklayer{Protocol: htons(0x0003), Ifindex: iface.Index}); err != nil {
 		return fmt.Errorf("bind %s: %w", opts.Interface, err)
 	}
-	// Mirror ports can deliver short bursts much faster than a 30-second bucket
-	// flush. Linux clamps this request to net.core.rmem_max on each host.
-	if err := syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_RCVBUF, 32<<20); err != nil {
-		return fmt.Errorf("set capture receive buffer: %w", err)
+	// Router protocol buckets synchronously append and sync their evidence at
+	// each boundary. The socket must hold a short burst while that write runs.
+	// Linux clamps this request to net.core.rmem_max on each host and reports a
+	// doubled effective size. Keep the other capture modes at the prior bound.
+	requestedBuffer := 32 << 20
+	if opts.RouterProtocolsOnly {
+		requestedBuffer = 128 << 20
 	}
+	effectiveBuffer, err := setCaptureReceiveBuffer(fd, requestedBuffer)
+	if err != nil {
+		return err
+	}
+	log.Printf("device signal receive buffer: requested=%d effective=%d router_protocols_only=%t", requestedBuffer, effectiveBuffer, opts.RouterProtocolsOnly)
 	if opts.HandshakeOnly {
 		if err := attachHandshakeFilter(fd); err != nil {
 			return fmt.Errorf("attach handshake BPF: %w", err)
@@ -275,6 +283,17 @@ func Run(ctx context.Context, opts Options) error {
 			}
 		}
 	}
+}
+
+func setCaptureReceiveBuffer(fd, requested int) (int, error) {
+	if err := syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_RCVBUF, requested); err != nil {
+		return 0, fmt.Errorf("set capture receive buffer: %w", err)
+	}
+	effective, err := syscall.GetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_RCVBUF)
+	if err != nil {
+		return 0, fmt.Errorf("read capture receive buffer: %w", err)
+	}
+	return effective, nil
 }
 
 func htons(value uint16) uint16 { return value<<8 | value>>8 }
