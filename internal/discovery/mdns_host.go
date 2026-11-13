@@ -46,12 +46,21 @@ func validateMDNSHostAnnouncement(event normalized.Event) error {
 // Evidence-specific transport details remain in the authoritative event, but
 // do not turn an unchanged host/name fact into new semantic content.
 func discoveryPayloadFieldIsEvidenceOnly(event normalized.Event, field string) bool {
-	if str(event.Payload, "origin") != "dns_sd" {
-		return false
-	}
-	switch field {
-	case "dns_message_sha256", "dns_message_id", "dns_record_ttl", "dns_message_coverage":
-		return true
+	switch str(event.Payload, "origin") {
+	case "dns_sd":
+		switch field {
+		case "dns_message_sha256", "dns_message_id", "dns_record_ttl", "dns_message_coverage":
+			return true
+		}
+	case "ndp":
+		// Packet-sidecar NDP uses the source IP/MAC as the observed device.
+		// A solicitation's target is the queried neighbor, while an
+		// advertisement's target repeats the sender's address. Neither field
+		// changes the projected device or its binding; both remain in the
+		// immutable event for evidence and replay.
+		if event.Source == "packet-sidecar" && event.Payload["address_binding"] != true {
+			return field == "message" || field == "target"
+		}
 	}
 	return false
 }
