@@ -119,6 +119,9 @@ func Run(ctx context.Context, opts Options) error {
 		}
 	}
 	_ = syscall.SetNonblock(fd, true)
+	if opts.RouterProtocolsOnly {
+		return runRouterCaptureLoop(ctx, opts, fd)
+	}
 	state := newCaptureBucket()
 	state.handshakeEnabled = opts.HandshakeOnly
 	packetSource := "packet-sidecar"

@@ -214,13 +214,20 @@ func writeBucketWithSource(path, sensorID, interfaceName, instance, source strin
 		return err
 	}
 	defer file.Close()
-	keys := make([]bucketKey, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
+	type orderedBucketKey struct {
+		key  bucketKey
+		text string
 	}
-	sort.Slice(keys, func(i, j int) bool { return fmt.Sprint(keys[i]) < fmt.Sprint(keys[j]) })
+	keys := make([]orderedBucketKey, 0, len(values))
+	for key := range values {
+		keys = append(keys, orderedBucketKey{key: key, text: fmt.Sprint(key)})
+	}
+	// Keep the existing deterministic order without formatting both keys for
+	// every sort comparison in this high-volume bucket writer.
+	sort.Slice(keys, func(i, j int) bool { return keys[i].text < keys[j].text })
 	encoder := json.NewEncoder(file)
-	for _, key := range keys {
+	for _, ordered := range keys {
+		key := ordered.key
 		identity := fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%d\x00%s\x00%s\x00%s", sensorID, key.IP, key.Direction, key.Version, key.TTL, key.TCPStack, bucket.UTC().Format(time.RFC3339), key.TrafficScope)
 		if source != "packet-sidecar" {
 			identity += "\x00" + source
