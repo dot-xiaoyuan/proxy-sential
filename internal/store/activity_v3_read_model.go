@@ -237,6 +237,8 @@ func activitySuccessfulNotBefore(model string, now time.Time) time.Time {
 	switch model {
 	case activityV3FiveMinuteModel:
 		return now.Add(30 * time.Second)
+	case activityV4FiveMinuteModel:
+		return now.Add(time.Minute)
 	case activityV3HourModel:
 		return now.Add(10 * time.Minute)
 	case activityV3DayModel:
@@ -306,6 +308,16 @@ func (s *DBStore) materializeActivityV3FiveMinuteAt(ctx context.Context, job rea
 	finalized := !now.Before(to.Add(90 * time.Second))
 	if err = s.publishActivityV3Version(ctx, "5m", from, job.SensorID, job.CampusID, revision, sourceAsOf, finalized); err != nil {
 		return err
+	}
+	if os.Getenv("PROXY_SENTINEL_ACTIVITY_V4_SHADOW") == "true" {
+		_, err = s.pg.db.ExecContext(ctx, `INSERT INTO read_model_jobs(model,bucket_start,sensor_id,campus_id,not_before)
+VALUES($1,$2,$3,$4,now()) ON CONFLICT(model,bucket_start,sensor_id,campus_id) DO UPDATE SET
+dirty_generation=GREATEST(read_model_jobs.dirty_generation,read_model_jobs.processed_generation)+1,
+status=CASE WHEN read_model_jobs.status='running' THEN 'running' ELSE 'pending' END,
+not_before=LEAST(read_model_jobs.not_before,now()),updated_at=now()`, activityV4FiveMinuteModel, from, job.SensorID, job.CampusID)
+		if err != nil {
+			return err
+		}
 	}
 	if !finalized {
 		// A quiet bucket receives no more dirty receipts. Keep one pending
@@ -506,6 +518,23 @@ func (s *DBStore) RunActivityV3Realtime(ctx context.Context) {
 			}
 		}
 		cancel()
+		if !found && claimErr == nil && os.Getenv("PROXY_SENTINEL_ACTIVITY_V4_SHADOW") == "true" {
+			shadowCtx, shadowCancel := context.WithTimeout(ctx, 70*time.Second)
+			shadowJob, shadowFound, shadowErr := s.claimReadModelJob(shadowCtx, []string{activityV4FiveMinuteModel}, worker)
+			if shadowErr == nil && shadowFound {
+				shadowErr = s.materializeActivityV4FiveMinute(shadowCtx, shadowJob)
+				finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(shadowCtx), 5*time.Second)
+				finishErr := s.finishReadModelJob(finishCtx, shadowJob, shadowErr)
+				finishCancel()
+				if shadowErr == nil {
+					shadowErr = finishErr
+				}
+			}
+			shadowCancel()
+			if shadowErr != nil {
+				fmt.Fprintf(os.Stderr, "activity v4 shadow failed: %v\n", shadowErr)
+			}
+		}
 		if ctx.Err() == nil {
 			healthCtx, healthCancel := context.WithTimeout(ctx, 5*time.Second)
 			if err := s.recordActivityV3RealtimeHealth(healthCtx, runErr, time.Now().UTC()); err != nil {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,6 +24,13 @@ type applicationDB struct {
 
 func (s *DBStore) ApplicationBackend() appdomain.DatabaseBackend { return &applicationDB{store: s} }
 
+func applicationLatestTable() string {
+	if os.Getenv("PROXY_SENTINEL_APPLICATION_LATEST_V2_READ") == "true" {
+		return "application_latest_observations_v2"
+	}
+	return "application_latest_observations"
+}
+
 // FINAL resolves every version even before background merges. The read model
 // orders by immutable standard-event timestamp/key and encodes revision plus
 // lower-batch tie precedence without an HTTP-time argMax over retained history.
@@ -38,7 +46,7 @@ func appLatestFrom(q appdomain.Query, from time.Time, columns ...string) string 
 	if q.SensorID != "" {
 		where += " AND sensor_id=" + chQuote(q.SensorID)
 	}
-	return "WITH latest AS (SELECT " + strings.Join(fields, ",") + " FROM application_latest_observations FINAL WHERE " + where + ")"
+	return "WITH latest AS (SELECT " + strings.Join(fields, ",") + " FROM " + applicationLatestTable() + " FINAL WHERE " + where + ")"
 }
 func appActive(q appdomain.Query) string {
 	w := "timestamp >= parseDateTime64BestEffort(" + chQuote(q.From.Format(time.RFC3339Nano)) + ",9)"
@@ -247,8 +255,24 @@ func (d *applicationDB) Page(ctx context.Context, q appdomain.Query, p appdomain
 			sliced.From = q.From
 		}
 		sliced.To = end
-		selected := appLatestWindow(sliced, "target_id", "target_type") + fmt.Sprintf(", selected AS (SELECT timestamp,sensor_id,event_id FROM latest WHERE %s ORDER BY timestamp DESC,sensor_id,event_id LIMIT %d OFFSET %d) ", where, p.Limit+1, p.Offset)
-		raw, err = d.readQuery(ctx, selected+"SELECT observation_json FROM application_latest_observations FINAL PREWHERE timestamp>=parseDateTime64BestEffort("+chQuote(sliced.From.Format(time.RFC3339Nano))+",9) AND timestamp<parseDateTime64BestEffort("+chQuote(end.Format(time.RFC3339Nano))+",9) AND (timestamp,sensor_id,event_id) IN (SELECT timestamp,sensor_id,event_id FROM selected) ORDER BY timestamp DESC,sensor_id,event_id"+appQuerySettings)
+		locator := "timestamp,sensor_id,event_id"
+		source := "application_latest_observations FINAL"
+		selectedFields := "target_id,target_type"
+		if applicationLatestTable() == "application_latest_observations_v2" {
+			locator += ",classification_revision,batch_id"
+			selectedFields += ",classification_revision,batch_id"
+			source = "application_observations"
+		}
+		selected := appLatestWindow(sliced, strings.Split(selectedFields, ",")...) + fmt.Sprintf(", selected AS (SELECT %s FROM latest WHERE %s ORDER BY timestamp DESC,sensor_id,event_id LIMIT %d OFFSET %d) ", locator, where, p.Limit+1, p.Offset)
+		boundary := "timestamp>=parseDateTime64BestEffort(" + chQuote(sliced.From.Format(time.RFC3339Nano)) + ",9) AND timestamp<parseDateTime64BestEffort(" + chQuote(end.Format(time.RFC3339Nano)) + ",9)"
+		bodySQL := selected + "SELECT observation_json FROM " + source + " PREWHERE " + boundary + " AND (" + locator + ") IN (SELECT " + locator + " FROM selected) ORDER BY timestamp DESC,sensor_id,event_id" + appQuerySettings
+		if source == "application_observations" {
+			// The compact row points to one exact revision. LEFT ANY JOIN
+			// preserves a selected key even if the source body is missing, so
+			// a broken reference fails visibly instead of shrinking the page.
+			bodySQL = selected + "SELECT o.observation_json FROM selected s LEFT ANY JOIN (SELECT " + locator + ",observation_json FROM application_observations PREWHERE " + boundary + " AND (" + locator + ") IN (SELECT " + locator + " FROM selected)) o ON s.timestamp=o.timestamp AND s.sensor_id=o.sensor_id AND s.event_id=o.event_id AND s.classification_revision=o.classification_revision AND s.batch_id=o.batch_id ORDER BY s.timestamp DESC,s.sensor_id,s.event_id" + appQuerySettings
+		}
+		raw, err = d.readQuery(ctx, bodySQL)
 		if err != nil {
 			return r, err
 		}
@@ -263,6 +287,9 @@ func (d *applicationDB) Page(ctx context.Context, q appdomain.Query, p appdomain
 	}
 
 	for _, row := range rows {
+		if row.JSON == "" {
+			return r, fmt.Errorf("application observation body is missing for a compact latest reference")
+		}
 		var o appdomain.Observation
 		if err = json.Unmarshal([]byte(row.JSON), &o); err != nil {
 			return r, err

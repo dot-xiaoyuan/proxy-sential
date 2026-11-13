@@ -133,6 +133,26 @@ func activityChartFactRowsV3SQL(query ActivityQuery, window time.Duration, dimen
 			return
 		}
 		startSQL, endSQL := stamp(start), stamp(end)
+		if granularity == "5m" && os.Getenv("PROXY_SENTINEL_ACTIVITY_V4_READ") == "true" {
+			published := fmt.Sprintf(`SELECT p.bucket_start,p.sensor_id,p.campus_id,p.slot FROM
+ (SELECT bucket_start,sensor_id,campus_id,argMax(slot,published_at) slot,argMax(source_revision,published_at) source_revision
+  FROM activity_chart_bucket_versions_v4 WHERE bucket_start>=%s AND bucket_start<%s AND %s GROUP BY bucket_start,sensor_id,campus_id) p
+ INNER JOIN (SELECT bucket_start,sensor_id,campus_id,argMax(revision,published_at) revision
+  FROM activity_chart_bucket_versions_v3 WHERE granularity='5m' AND bucket_start>=%s AND bucket_start<%s AND %s GROUP BY bucket_start,sensor_id,campus_id) v
+ USING(bucket_start,sensor_id,campus_id) WHERE p.source_revision=v.revision`, startSQL, endSQL, scope("", false), startSQL, endSQL, scope("", false))
+			v4 := fmt.Sprintf(`SELECT dimension,value,state.1 event_count,state.2 first_seen,state.3 last_seen FROM (
+ SELECT f.bucket_start,f.sensor_id,f.campus_id,f.dimension,f.value,argMax(tuple(f.event_count,f.first_seen,f.last_seen,f.deleted),f.version) state
+ FROM activity_chart_facts_5m_v4 f WHERE f.bucket_start>=%s AND f.bucket_start<%s AND %s
+ AND (f.bucket_start,f.sensor_id,f.campus_id,f.slot) IN(%s)
+ GROUP BY f.bucket_start,f.sensor_id,f.campus_id,f.dimension,f.value HAVING state.4=0)`, startSQL, endSQL, scope("f", true), published)
+			// A not-yet-built bucket stays on its verified v3 revision. The v4
+			// reader can be enabled before bounded historical backfill finishes.
+			fallback := fmt.Sprintf(`SELECT f.dimension,f.value,f.event_count,f.first_seen,f.last_seen FROM activity_chart_facts_5m_v3 f WHERE f.bucket_start>=%s AND f.bucket_start<%s AND %s
+ AND (f.bucket_start,f.sensor_id,f.campus_id) NOT IN(SELECT bucket_start,sensor_id,campus_id FROM (%s))
+ AND (f.bucket_start,f.sensor_id,f.campus_id,f.revision) IN(SELECT bucket_start,sensor_id,campus_id,argMax(revision,published_at) revision FROM activity_chart_bucket_versions_v3 WHERE granularity='5m' AND bucket_start>=%s AND bucket_start<%s AND %s GROUP BY bucket_start,sensor_id,campus_id)`, startSQL, endSQL, scope("f", true), published, startSQL, endSQL, scope("", false))
+			pieces = append(pieces, v4, fallback)
+			return
+		}
 		// An explicit tuple IN lets ClickHouse apply the published revision set to
 		// the primary key. A JOIN scans every superseded revision in the bucket,
 		// which is catastrophic when late traffic repeatedly rebuilds old buckets.

@@ -53,6 +53,21 @@ func TestActivityV3ThirtyDayQueryUsesPublishedHierarchy(t *testing.T) {
 	}
 }
 
+func TestActivityV4ReadKeepsUnpublishedBucketsOnV3(t *testing.T) {
+	t.Setenv("PROXY_SENTINEL_ACTIVITY_READ_MODEL_V3", "true")
+	t.Setenv("PROXY_SENTINEL_ACTIVITY_V4_READ", "true")
+	t.Setenv("PROXY_SENTINEL_ACTIVITY_V3_CUTOVER", "2026-09-01T00:00:00Z")
+	query, err := activityChartFactRowsSQL(ActivityQuery{SensorID: "sensor-a", AsOf: "2026-09-28T06:07:00Z"}, time.Hour, []string{"type"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"activity_chart_facts_5m_v4", "activity_chart_bucket_versions_v4", "argMax(slot,published_at)", "activity_chart_facts_5m_v3", "p.source_revision=v.revision", "NOT IN(SELECT bucket_start,sensor_id,campus_id FROM (", "HAVING state.4=0"} {
+		if !strings.Contains(query, required) {
+			t.Fatalf("v4 query omitted %q: %s", required, query)
+		}
+	}
+}
+
 func TestActivityV3CoarseMaterializerPrunesSupersededRevisions(t *testing.T) {
 	query, granularity, _, err := activityV3CoarseMaterializeSQL(readModelJob{
 		Model:       activityV3HourModel,

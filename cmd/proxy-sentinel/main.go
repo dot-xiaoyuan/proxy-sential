@@ -167,8 +167,47 @@ func runApplicationLibrary(args []string) error {
 }
 
 func runReadModel(args []string) error {
+	if len(args) > 0 && args[0] == "backfill-activity-v4" {
+		fs := flag.NewFlagSet("read-model backfill-activity-v4", flag.ContinueOnError)
+		postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN")
+		clickhouseDSN := fs.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP DSN")
+		from := fs.String("from", "", "fixed inclusive five-minute-aligned UTC start")
+		until := fs.String("until", "", "fixed exclusive five-minute-aligned UTC end")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *postgresDSN == "" || *clickhouseDSN == "" || *from == "" || *until == "" {
+			return fmt.Errorf("--postgres-dsn, --clickhouse-dsn, --from and --until are required")
+		}
+		start, err := time.Parse(time.RFC3339Nano, *from)
+		if err != nil {
+			return err
+		}
+		end, err := time.Parse(time.RFC3339Nano, *until)
+		if err != nil {
+			return err
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return store.EnqueueActivityV4Backfill(ctx, *postgresDSN, *clickhouseDSN, start, end)
+	}
+	if len(args) > 0 && args[0] == "backfill-application-latest-v2" {
+		fs := flag.NewFlagSet("read-model backfill-application-latest-v2", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN")
+		clickhouseDSN := fs.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP DSN")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *postgresDSN == "" || *clickhouseDSN == "" {
+			return fmt.Errorf("--postgres-dsn and --clickhouse-dsn are required")
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return store.BackfillApplicationLatestV2(ctx, *postgresDSN, *clickhouseDSN)
+	}
 	if len(args) < 1 || args[0] != "run" {
-		return fmt.Errorf("usage: proxy-sentinel read-model run --lane realtime|coarse|recognition|application|identity|inventory|inventory-backfill --postgres-dsn <dsn> --clickhouse-dsn <dsn>")
+		return fmt.Errorf("usage: proxy-sentinel read-model run --lane realtime|coarse|recognition|application|identity|inventory|inventory-backfill | backfill-activity-v4 --from <UTC> --until <UTC> | backfill-application-latest-v2")
 	}
 	fs := flag.NewFlagSet("read-model run", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)

@@ -47,7 +47,7 @@ func applicationObservationFactsSQL(q appdomain.Query, pageCounts bool) string {
 		raw = "SELECT count() AS event_count,maxOrNull(timestamp) AS last_seen FROM application_latest_observations FINAL WHERE " + boundary + " AND " + scoped
 	}
 	if q.IP != "" {
-		return raw
+		return strings.ReplaceAll(raw, "application_latest_observations", applicationLatestTable())
 	}
 	columns := "bundle_version,event_type,target_type,target_id,unknown_domain,missing_connection,event_count,name,category,last_seen,terminals"
 	if pageCounts {
@@ -77,7 +77,7 @@ func applicationObservationFactsSQL(q appdomain.Query, pageCounts bool) string {
 	} {
 		parts = append(parts, "SELECT "+columns+" FROM "+tier.table+" FINAL WHERE "+inRange(tier.from, tier.to)+tier.exclude+" AND event_count>0 AND "+scoped)
 	}
-	return strings.Join(parts, " UNION ALL ") + " UNION ALL " + raw
+	return strings.Join(parts, " UNION ALL ") + " UNION ALL " + strings.ReplaceAll(raw, "application_latest_observations", applicationLatestTable())
 }
 
 func (d *applicationDB) observationModelTimestamp(ctx context.Context) (time.Time, error) {

@@ -96,7 +96,7 @@ func (s *DBStore) updateApplicationObservationReadModel(ctx context.Context) (bo
 	query := fmt.Sprintf(`INSERT INTO application_observation_bucket_facts_v2 SELECT window_start,sensor_id,campus_id,bundle_version,event_type,target_type,target_id,unknown_domain,missing_connection,toUInt64(0),name,category,last_seen,terminals,toUInt64(%d) FROM application_observation_bucket_facts_v2 FINAL WHERE %s SETTINGS max_threads=1,max_memory_usage=268435456,async_insert=0`, revision*2, oldWhere)
 	tombstones := strings.Split(query, " SETTINGS ")[0]
 	query = fmt.Sprintf(`SELECT toStartOfFiveMinutes(timestamp) AS window_start,sensor_id,campus_id,bundle_version,event_type,target_type,target_id,toUInt8(domain!='' AND target_id='') AS unknown_domain,toUInt8(event_type!='dns' AND connection_id='') AS missing_connection,count() AS event_count,argMax(application_latest_observations.name,timestamp) AS name,argMax(application_latest_observations.category,timestamp) AS category,max(timestamp) AS last_seen,groupUniqArrayIf(tuple(campus_id,ip),ip!='') AS terminals,toUInt64(%d) AS revision FROM application_latest_observations FINAL WHERE %s GROUP BY window_start,sensor_id,campus_id,bundle_version,event_type,target_type,target_id,unknown_domain,missing_connection SETTINGS max_threads=1,max_block_size=2048,min_insert_block_size_rows=65536,min_insert_block_size_bytes=8388608,max_memory_usage=268435456,max_bytes_before_external_group_by=134217728,max_execution_time=20,async_insert=0`, revision*2+1, sourceWhere)
-	if err = s.ch.exec(ctx, tombstones+" UNION ALL "+query); err != nil {
+	if err = s.ch.exec(ctx, tombstones+" UNION ALL "+strings.ReplaceAll(query, "application_latest_observations", applicationLatestTable())); err != nil {
 		return false, err
 	}
 
@@ -168,7 +168,7 @@ func BackfillApplicationObservationKeys(ctx context.Context, db *sql.DB, ch *Cli
 		}
 		to := minTime(from.Add(time.Hour), until)
 		query := fmt.Sprintf(`INSERT INTO application_observation_dirty_log SELECT now64(9),toStartOfFiveMinutes(timestamp) AS window_start,sensor_id,campus_id FROM application_latest_observations FINAL WHERE timestamp>=parseDateTime64BestEffort(%s,6) AND timestamp<parseDateTime64BestEffort(%s,6) GROUP BY window_start,sensor_id,campus_id SETTINGS max_threads=1,max_block_size=2048,min_insert_block_size_rows=65536,min_insert_block_size_bytes=8388608,max_memory_usage=268435456,max_execution_time=20,async_insert=0`, chQuote(from.Format(time.RFC3339Nano)), chQuote(to.Format(time.RFC3339Nano)))
-		if err = ch.exec(ctx, query); err != nil {
+		if err = ch.exec(ctx, strings.ReplaceAll(query, "application_latest_observations", applicationLatestTable())); err != nil {
 			tx.Rollback()
 			return err
 		}
