@@ -18,7 +18,10 @@ import (
 	"proxy-sentinel/internal/sharedaccess"
 )
 
-const captureCoverageTailBytes = 64 << 20
+const (
+	captureCoverageProbeBytes = 8 << 10
+	captureCoverageTailBytes  = 64 << 20
+)
 
 var errCaptureOutputIncomplete = errors.New("capture output ends in an incomplete JSONL record")
 
@@ -201,24 +204,51 @@ func readCaptureCoverageTailWithSync(path, sensor, instance string, syncFile fun
 	if err := syncFile(file); err != nil {
 		return sharedaccess.CoverageV2{}, false, fmt.Errorf("sync capture output before recovery tail read %s: %w", path, err)
 	}
-	start := max(int64(0), info.Size()-captureCoverageTailBytes)
-	data := make([]byte, int(info.Size()-start))
-	if _, err := file.ReadAt(data, start); err != nil && err != io.EOF {
+	start := max(int64(0), info.Size()-captureCoverageProbeBytes)
+	probe := make([]byte, info.Size()-start)
+	if err := readCaptureTailBytes(file, probe, start); err != nil {
 		return sharedaccess.CoverageV2{}, false, err
 	}
-	if data[len(data)-1] != '\n' {
+	if probe[len(probe)-1] != '\n' {
 		return sharedaccess.CoverageV2{}, false, fmt.Errorf("%w: %s", errCaptureOutputIncomplete, path)
 	}
-	if start > 0 {
-		firstNewline := bytes.IndexByte(data, '\n')
-		if firstNewline < 0 {
-			return sharedaccess.CoverageV2{}, false, nil
-		}
-		data = data[firstNewline+1:]
+	coverage, found := findCaptureCoverageInTail(probe, start > 0, sensor, instance)
+	if found || start == 0 {
+		return coverage, found, nil
 	}
-	lines := bytes.Split(data, []byte{'\n'})
-	for i := len(lines) - 1; i >= 0; i-- {
-		if !bytes.Contains(lines[i], []byte(`"source_event_type":"capture_coverage"`)) {
+	// A stopped or failed writer may leave evidence rows after the last
+	// coverage record. Read the rest of the bounded tail without rereading the
+	// probe, so rows crossing the probe boundary can be decoded in full.
+	start = max(int64(0), info.Size()-captureCoverageTailBytes)
+	data := make([]byte, info.Size()-start)
+	prefix := data[:len(data)-len(probe)]
+	if err := readCaptureTailBytes(file, prefix, start); err != nil {
+		return sharedaccess.CoverageV2{}, false, err
+	}
+	copy(data[len(prefix):], probe)
+	coverage, found = findCaptureCoverageInTail(data, start > 0, sensor, instance)
+	return coverage, found, nil
+}
+
+func readCaptureTailBytes(file *os.File, data []byte, offset int64) error {
+	_, err := file.ReadAt(data, offset)
+	if err == io.EOF {
+		return fmt.Errorf("%w: %s shortened during recovery", errCaptureOutputIncomplete, file.Name())
+	}
+	return err
+}
+
+// Iterate backwards without allocating a slice for every record. A bounded
+// tail may start in the middle of a row, so skip its leading fragment.
+func findCaptureCoverageInTail(data []byte, skipFirstLine bool, sensor, instance string) (sharedaccess.CoverageV2, bool) {
+	for end := len(data) - 1; end >= 0; {
+		separator := bytes.LastIndexByte(data[:end], '\n')
+		if separator < 0 && skipFirstLine {
+			break
+		}
+		line := data[separator+1 : end]
+		end = separator
+		if !bytes.Contains(line, []byte(`"source_event_type":"capture_coverage"`)) {
 			continue
 		}
 		var row struct {
@@ -232,14 +262,14 @@ func readCaptureCoverageTailWithSync(path, sensor, instance string, syncFile fun
 				Coverage sharedaccess.CoverageV2 `json:"capture_coverage"`
 			} `json:"payload"`
 		}
-		if err := json.Unmarshal(lines[i], &row); err != nil {
+		if err := json.Unmarshal(line, &row); err != nil {
 			continue
 		}
 		if row.Source == "packet-sidecar" && row.SourceEventType == "capture_coverage" && row.Observer.Sensor == sensor && row.Observer.Instance == instance && validCaptureCoverage(row.Payload.Coverage) {
-			return row.Payload.Coverage, true, nil
+			return row.Payload.Coverage, true
 		}
 	}
-	return sharedaccess.CoverageV2{}, false, nil
+	return sharedaccess.CoverageV2{}, false
 }
 
 func captureCoverageGap(previous sharedaccess.CoverageV2, start time.Time) (sharedaccess.CoverageV2, bool) {

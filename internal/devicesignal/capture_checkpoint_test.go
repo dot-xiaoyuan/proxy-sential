@@ -1,10 +1,12 @@
 package devicesignal
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -166,5 +168,79 @@ func TestCaptureCoverageTailRequiresSuccessfulRecoverySync(t *testing.T) {
 	got, found, err = readCaptureCoverageTail(output, "sensor", "instance")
 	if err != nil || !found || !got.To.Equal(coverage.To) {
 		t.Fatalf("recovery sync did not confirm row: coverage=%+v found=%t err=%v", got, found, err)
+	}
+}
+
+func TestCaptureCoverageTailRecoversAcrossProbeBoundary(t *testing.T) {
+	for _, scenario := range []struct {
+		name    string
+		padding int
+	}{{name: "coverage crosses boundary", padding: captureCoverageProbeBytes - 150}, {name: "coverage precedes probe", padding: 32 << 10}} {
+		t.Run(scenario.name, func(t *testing.T) {
+			output := filepath.Join(t.TempDir(), "ttl.jsonl")
+			from := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+			coverage := sharedaccess.CoverageV2{SchemaVersion: "capture-coverage/v2", From: from, To: from.Add(30 * time.Second), KernelStatsKnown: true}
+			if err := writeCaptureCoverage(output, "sensor", "bond0", "instance", "packet-sidecar", nil, coverage); err != nil {
+				t.Fatal(err)
+			}
+			trailingRow := []byte(`{"source_event_type":"ieee1905_client_snapshot","payload":{"padding":"` + strings.Repeat("x", scenario.padding) + "\"}}\n")
+			file, err := os.OpenFile(output, os.O_WRONLY|os.O_APPEND, 0640)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := file.Write(trailingRow); err != nil {
+				file.Close()
+				t.Fatal(err)
+			}
+			if err := file.Close(); err != nil {
+				t.Fatal(err)
+			}
+			got, found, err := readCaptureCoverageTail(output, "sensor", "instance")
+			if err != nil || !found || got != coverage {
+				t.Fatalf("coverage=%+v found=%t err=%v", got, found, err)
+			}
+		})
+	}
+}
+
+func TestCaptureCoverageTailRejectsTruncationDuringRecovery(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "ttl.jsonl")
+	if err := os.WriteFile(output, bytes.Repeat([]byte("{}\n"), 4000), 0640); err != nil {
+		t.Fatal(err)
+	}
+	_, found, err := readCaptureCoverageTailWithSync(output, "sensor", "instance", func(file *os.File) error {
+		return os.Truncate(file.Name(), 0)
+	})
+	if found || !errors.Is(err, errCaptureOutputIncomplete) {
+		t.Fatalf("truncated output accepted: found=%t err=%v", found, err)
+	}
+}
+
+func BenchmarkCaptureCoverageTailAtEnd(b *testing.B) {
+	output := filepath.Join(b.TempDir(), "ttl.jsonl")
+	file, err := os.Create(output)
+	if err != nil {
+		b.Fatal(err)
+	}
+	// Recovery only needs a line boundary and the final record on this path.
+	if _, err := file.WriteAt([]byte{'\n'}, captureCoverageTailBytes-1); err != nil {
+		file.Close()
+		b.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		b.Fatal(err)
+	}
+	from := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	coverage := sharedaccess.CoverageV2{SchemaVersion: "capture-coverage/v2", From: from, To: from.Add(30 * time.Second), KernelStatsKnown: true}
+	if err := writeCaptureCoverage(output, "sensor", "bond0", "instance", "packet-sidecar", nil, coverage); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		got, found, err := readCaptureCoverageTail(output, "sensor", "instance")
+		if err != nil || !found || !got.To.Equal(coverage.To) {
+			b.Fatalf("coverage=%+v found=%t err=%v", got, found, err)
+		}
 	}
 }

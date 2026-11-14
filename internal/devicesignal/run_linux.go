@@ -85,9 +85,8 @@ func Run(ctx context.Context, opts Options) error {
 	var routerPreviousKnown bool
 	var routerPriorErr error
 	if opts.RouterProtocolsOnly {
-		// Tail lookup can read up to 64 MiB from each of three files. Do it
-		// before the AF_PACKET socket is opened, so startup recovery itself
-		// cannot fill the new socket or lose incoming packets there.
+		// Complete the durable tail lookup before opening the packet socket,
+		// so a slow sync or an extended scan cannot fill the new socket.
 		routerPrevious, routerPreviousKnown, routerPriorErr = lastPersistedCaptureCoverage(opts.Output, opts.SensorID, opts.CollectorInstanceID)
 		if errors.Is(routerPriorErr, errCaptureOutputIncomplete) {
 			return routerPriorErr
