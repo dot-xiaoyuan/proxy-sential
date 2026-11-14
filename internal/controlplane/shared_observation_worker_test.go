@@ -143,8 +143,8 @@ func TestSharedObservationCommitsOnlyRecordsAndRetriesFailedTransaction(t *testi
 			expectation.WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectExec("INSERT INTO enforcement_actions").WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectExec("INSERT INTO behavior_report_outbox").WillReturnResult(sqlmock.NewResult(0, 1))
-			mock.ExpectQuery("SELECT mode FROM shared_observation_wake_mode").WillReturnRows(sqlmock.NewRows([]string{"mode"}).AddRow("async"))
-			mock.ExpectQuery("SELECT revision,lease_token").WillReturnRows(sqlmock.NewRows([]string{"revision", "lease_token", "generation_id", "canceled_epoch"}).AddRow(1, "test-lease", "", ""))
+
+			mock.ExpectQuery("(?s)SELECT j.revision,j.lease_token.*FOR UPDATE OF j").WillReturnRows(sqlmock.NewRows([]string{"revision", "lease_token", "generation_id", "canceled_epoch", "mode"}).AddRow(1, "test-lease", "", "", "async"))
 			mock.ExpectExec("UPDATE shared_observation_jobs SET completed_revision").WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectCommit()
 		}
@@ -198,8 +198,8 @@ func TestSharedObservationNewRevisionRejectsOldResult(t *testing.T) {
 	mock.ExpectExec("INSERT INTO shared_device_profile_jobs").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("UPDATE shared_observation_executions").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO policy_decision_records").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectQuery("SELECT mode FROM shared_observation_wake_mode").WillReturnRows(sqlmock.NewRows([]string{"mode"}).AddRow("async"))
-	mock.ExpectQuery("SELECT revision,lease_token").WillReturnRows(sqlmock.NewRows([]string{"revision", "lease_token", "generation_id", "canceled_epoch"}).AddRow(2, "new-lease", "", ""))
+
+	mock.ExpectQuery("(?s)SELECT j.revision,j.lease_token.*FOR UPDATE OF j").WillReturnRows(sqlmock.NewRows([]string{"revision", "lease_token", "generation_id", "canceled_epoch", "mode"}).AddRow(2, "new-lease", "", "", "async"))
 	mock.ExpectRollback()
 	did, err := s.processSharedObservation(context.Background(), now)
 	if err != nil || !did {
@@ -400,8 +400,8 @@ func TestSharedObservationExpiryUsesStoredEvidence(t *testing.T) {
 	mock.ExpectExec("INSERT INTO shared_device_profile_jobs").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("UPDATE shared_observation_executions").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO policy_decision_records").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectQuery("SELECT mode FROM shared_observation_wake_mode").WillReturnRows(sqlmock.NewRows([]string{"mode"}).AddRow("async"))
-	mock.ExpectQuery("SELECT revision,lease_token").WillReturnRows(sqlmock.NewRows([]string{"revision", "lease_token", "generation_id", "canceled_epoch"}).AddRow(1, "expiry-lease", "", ""))
+
+	mock.ExpectQuery("(?s)SELECT j.revision,j.lease_token.*FOR UPDATE OF j").WillReturnRows(sqlmock.NewRows([]string{"revision", "lease_token", "generation_id", "canceled_epoch", "mode"}).AddRow(1, "expiry-lease", "", "", "async"))
 	mock.ExpectExec("UPDATE shared_observation_jobs SET completed_revision").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	did, err := s.processSharedObservationWithLimit(context.Background(), now, nil, "expiry")
@@ -482,8 +482,8 @@ func TestSharedObservationLostLeaseRejectsSameRevision(t *testing.T) {
 	mock.ExpectExec("INSERT INTO shared_device_profile_jobs").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("UPDATE shared_observation_executions").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO policy_decision_records").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectQuery("SELECT mode FROM shared_observation_wake_mode").WillReturnRows(sqlmock.NewRows([]string{"mode"}).AddRow("async"))
-	mock.ExpectQuery("SELECT revision,lease_token").WillReturnRows(sqlmock.NewRows([]string{"revision", "lease_token", "generation_id", "canceled_epoch"}).AddRow(1, "replacement-lease", "", ""))
+
+	mock.ExpectQuery("(?s)SELECT j.revision,j.lease_token.*FOR UPDATE OF j").WillReturnRows(sqlmock.NewRows([]string{"revision", "lease_token", "generation_id", "canceled_epoch", "mode"}).AddRow(1, "replacement-lease", "", "", "async"))
 	mock.ExpectRollback()
 	did, err := s.processSharedObservation(context.Background(), now)
 	if err != nil || !did {

@@ -184,7 +184,7 @@ func (s *PostgresStore) claimIdentityExportFragment(ctx context.Context) (fragme
 	defer tx.Rollback()
 	query, args := identityExportCandidateQuery(s.sensorID, s.identityDerivedAfter)
 	claim := func(candidate string) error {
-		return tx.QueryRowContext(ctx, candidate, args...).Scan(&fragment.BatchID, &fragment.Scope, &fragment.Source, &fragment.Epoch, &fragment.Month, &fragment.Hash, &fragment.KeyScheme, &fragment.First, &fragment.Count, &fragment.Accepted, &fragment.Payload, &fragment.BodyState, &fragment.SearchState)
+		return tx.QueryRowContext(ctx, candidate, args...).Scan(&fragment.BatchID, &fragment.Scope, &fragment.Source, &fragment.Epoch, &fragment.Month, &fragment.Hash, &fragment.KeyScheme, &fragment.First, &fragment.Count, &fragment.Accepted, &fragment.Payload, &fragment.BodyState, &fragment.SearchState, &fragment.LeaseEpoch)
 	}
 	if !s.identityDerivedAfter.IsZero() {
 		// Completing the second archive receipt frees durable inbox capacity.
@@ -202,15 +202,25 @@ func (s *PostgresStore) claimIdentityExportFragment(ctx context.Context) (fragme
 	if fragment.BodyState != "pending" && fragment.BodyState != "attempted" && fragment.BodyState != "completed" || fragment.SearchState != "pending" && fragment.SearchState != "attempted" && fragment.SearchState != "completed" {
 		return fragment, fmt.Errorf("identity fragment has invalid archive state")
 	}
-	err = tx.QueryRowContext(ctx, `UPDATE identity_ingest_fragments SET lease_epoch=lease_epoch+1,lease_until=now()+interval '60 seconds',last_attempt_at=now(),body_state=CASE WHEN body_state='pending' THEN 'attempted' ELSE body_state END,search_state=CASE WHEN body_state='completed' AND search_state='pending' THEN 'attempted' ELSE search_state END WHERE batch_id=$1 AND first_ordinal=$2 RETURNING lease_epoch`, fragment.BatchID, fragment.First).Scan(&fragment.LeaseEpoch)
-	if err != nil {
-		return fragment, err
-	}
 	return fragment, tx.Commit()
 }
 
 func identityExportCandidateQuery(sensor string, after time.Time) (string, []any) {
-	query := `SELECT f.batch_id,b.scope_key,b.source,b.stream_epoch,f.archive_month,f.content_sha256,f.key_scheme,f.first_ordinal,f.record_count,b.accepted_at,f.normalized_events,f.body_state,f.search_state FROM identity_ingest_fragments f JOIN identity_ingest_batches b USING(batch_id) WHERE b.protocol_version=2 AND b.sensor_id=$1 AND b.payload_format='fragments' AND b.export_state<>'completed' AND f.body_state IN ('pending','attempted','completed') AND f.search_state IN ('pending','attempted','completed') AND (f.body_state<>'completed' OR f.search_state<>'completed') AND (f.lease_until IS NULL OR f.lease_until<now()) ORDER BY b.accepted_at,f.batch_id,f.first_ordinal LIMIT 1 FOR UPDATE OF f SKIP LOCKED`
+	// Return pre-claim states so the worker can distinguish a new durable
+	// intent from an earlier attempt that requires ClickHouse verification.
+	query := `WITH candidate AS MATERIALIZED (
+ SELECT f.batch_id,b.scope_key,b.source,b.stream_epoch,f.archive_month,f.content_sha256,f.key_scheme,f.first_ordinal,f.record_count,b.accepted_at,f.body_state,f.search_state
+ FROM identity_ingest_fragments f JOIN identity_ingest_batches b USING(batch_id)
+ WHERE b.protocol_version=2 AND b.sensor_id=$1 AND b.payload_format='fragments' AND b.export_state<>'completed'
+ AND f.body_state IN ('pending','attempted','completed') AND f.search_state IN ('pending','attempted','completed')
+ AND (f.body_state<>'completed' OR f.search_state<>'completed') AND (f.lease_until IS NULL OR f.lease_until<now())
+ ORDER BY b.accepted_at,f.batch_id,f.first_ordinal LIMIT 1 FOR UPDATE OF f SKIP LOCKED
+ ) UPDATE identity_ingest_fragments f
+ SET lease_epoch=f.lease_epoch+1,lease_until=now()+interval '60 seconds',last_attempt_at=now(),
+ body_state=CASE WHEN c.body_state='pending' THEN 'attempted' ELSE c.body_state END,
+ search_state=CASE WHEN c.body_state='completed' AND c.search_state='pending' THEN 'attempted' ELSE c.search_state END
+ FROM candidate c WHERE f.batch_id=c.batch_id AND f.first_ordinal=c.first_ordinal
+ RETURNING c.batch_id,c.scope_key,c.source,c.stream_epoch,c.archive_month,c.content_sha256,c.key_scheme,c.first_ordinal,c.record_count,c.accepted_at,f.normalized_events,c.body_state,c.search_state,f.lease_epoch`
 	args := []any{sensor}
 	if !after.IsZero() {
 		query = strings.Replace(query, "b.sensor_id=$1", "b.sensor_id=$1 AND b.accepted_at >= $2", 1)

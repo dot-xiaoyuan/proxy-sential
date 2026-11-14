@@ -493,16 +493,14 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 	}
 	next := decision.EvidenceExpiresAt
 	var wakeMode string
-	if err = tx.QueryRowContext(ctx, `SELECT mode FROM shared_observation_wake_mode WHERE singleton`).Scan(&wakeMode); err != nil {
-		_ = tx.Rollback()
-		return failure(err)
-	}
 	// Take the job lock only after the potentially slow evidence and audit writes.
 	// A concurrent enqueue may advance the revision meanwhile; rolling this
 	// transaction back then removes every stale observation and decision write.
 	var currentRevision int64
 	var currentToken, currentGeneration, canceledEpoch string
-	if err = tx.QueryRowContext(ctx, `SELECT revision,lease_token,generation_id,canceled_epoch FROM shared_observation_jobs WHERE job_id=$1 FOR UPDATE`, id).Scan(&currentRevision, &currentToken, &currentGeneration, &canceledEpoch); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT j.revision,j.lease_token,j.generation_id,j.canceled_epoch,m.mode
+ FROM shared_observation_jobs j CROSS JOIN shared_observation_wake_mode m
+ WHERE j.job_id=$1 AND m.singleton FOR UPDATE OF j`, id).Scan(&currentRevision, &currentToken, &currentGeneration, &canceledEpoch, &wakeMode); err != nil {
 		_ = tx.Rollback()
 		return failure(err)
 	}
@@ -534,6 +532,7 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 		_ = tx.Rollback()
 		return failure(err)
 	}
+	commitStarted := time.Now()
 	if err = tx.Commit(); err != nil {
 		sharedObservationFailures.Add(1)
 		return true, err
@@ -546,7 +545,7 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 		if newTask {
 			sharedDecisionLatencies.record(time.Now(), latency)
 		}
-		log.Printf("shared_observation_decision job_id=%s revision=%d lane=%s result=%s new_dependency=%t dependency_at=%s latency_ms=%d claim_ms=%d read_ms=%d identity_ms=%d persist_ms=%d", id, revision, lane, decision.Result, newTask, dependencyAt.UTC().Format(time.RFC3339Nano), latency.Milliseconds(), claimDuration.Milliseconds(), readDuration.Milliseconds(), identityDuration.Milliseconds(), time.Since(persistStarted).Milliseconds())
+		log.Printf("shared_observation_decision job_id=%s revision=%d lane=%s result=%s new_dependency=%t dependency_at=%s latency_ms=%d claim_ms=%d read_ms=%d identity_ms=%d persist_ms=%d persist_before_commit_ms=%d commit_ms=%d", id, revision, lane, decision.Result, newTask, dependencyAt.UTC().Format(time.RFC3339Nano), latency.Milliseconds(), claimDuration.Milliseconds(), readDuration.Milliseconds(), identityDuration.Milliseconds(), time.Since(persistStarted).Milliseconds(), commitStarted.Sub(persistStarted).Milliseconds(), time.Since(commitStarted).Milliseconds())
 	}
 	return true, nil
 }

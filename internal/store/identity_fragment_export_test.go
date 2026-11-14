@@ -22,10 +22,8 @@ func TestFreshIdentityExportFinishesIndexedFragmentBeforeNewBody(t *testing.T) {
 	accepted := after.Add(time.Hour)
 	mock.ExpectBegin()
 	mock.ExpectQuery("f.body_state='completed' AND f.search_state<>'completed'").WithArgs("ncu", after).
-		WillReturnRows(sqlmock.NewRows([]string{"batch_id", "scope_key", "source", "stream_epoch", "archive_month", "content_sha256", "key_scheme", "first_ordinal", "record_count", "accepted_at", "normalized_events", "body_state", "search_state"}).
-			AddRow("batch", "scope", "identity-http", "fresh", "202610", "hash", "source_position_v1", 0, 8, accepted, []byte("[]"), "completed", "pending"))
-	mock.ExpectQuery("UPDATE identity_ingest_fragments SET lease_epoch").WithArgs("batch", 0).
-		WillReturnRows(sqlmock.NewRows([]string{"lease_epoch"}).AddRow(2))
+		WillReturnRows(sqlmock.NewRows([]string{"batch_id", "scope_key", "source", "stream_epoch", "archive_month", "content_sha256", "key_scheme", "first_ordinal", "record_count", "accepted_at", "normalized_events", "body_state", "search_state", "lease_epoch"}).
+			AddRow("batch", "scope", "identity-http", "fresh", "202610", "hash", "source_position_v1", 0, 8, accepted, []byte("[]"), "completed", "pending", 2))
 	mock.ExpectCommit()
 	fragment, err := (&PostgresStore{db: db, sensorID: "ncu", identityDerivedAfter: after}).claimIdentityExportFragment(context.Background())
 	if err != nil || fragment.BatchID != "batch" || fragment.SearchState != "pending" || fragment.LeaseEpoch != 2 {
@@ -46,11 +44,9 @@ func TestFreshIdentityExportFallsBackToUnfinishedBody(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectQuery("f.body_state='completed' AND f.search_state<>'completed'").WithArgs("ncu", after).
 		WillReturnRows(sqlmock.NewRows([]string{"batch_id"}))
-	mock.ExpectQuery("ORDER BY b.accepted_at DESC").WithArgs("ncu", after).
-		WillReturnRows(sqlmock.NewRows([]string{"batch_id", "scope_key", "source", "stream_epoch", "archive_month", "content_sha256", "key_scheme", "first_ordinal", "record_count", "accepted_at", "normalized_events", "body_state", "search_state"}).
-			AddRow("new-batch", "scope", "identity-http", "fresh", "202610", "hash", "source_position_v1", 0, 5, after.Add(time.Hour), []byte("[]"), "pending", "pending"))
-	mock.ExpectQuery("UPDATE identity_ingest_fragments SET lease_epoch").WithArgs("new-batch", 0).
-		WillReturnRows(sqlmock.NewRows([]string{"lease_epoch"}).AddRow(1))
+	mock.ExpectQuery("(?s)ORDER BY b.accepted_at DESC.*FOR UPDATE OF f SKIP LOCKED.*UPDATE identity_ingest_fragments").WithArgs("ncu", after).
+		WillReturnRows(sqlmock.NewRows([]string{"batch_id", "scope_key", "source", "stream_epoch", "archive_month", "content_sha256", "key_scheme", "first_ordinal", "record_count", "accepted_at", "normalized_events", "body_state", "search_state", "lease_epoch"}).
+			AddRow("new-batch", "scope", "identity-http", "fresh", "202610", "hash", "source_position_v1", 0, 5, after.Add(time.Hour), []byte("[]"), "pending", "pending", 1))
 	mock.ExpectCommit()
 	fragment, err := (&PostgresStore{db: db, sensorID: "ncu", identityDerivedAfter: after}).claimIdentityExportFragment(context.Background())
 	if err != nil || fragment.BatchID != "new-batch" || fragment.BodyState != "pending" {
