@@ -23,238 +23,133 @@ func passiveScopeField(e normalized.Event, key string) string {
 	return passiveString(e.Subject, key)
 }
 
-// A frame/claim MAC is not sufficient for routed responses. The new projection
-// admits only parser-verified direct ownership or a unique event-time binding
-// in every scope dimension. Legacy link lookup remains behind the old reader.
 func resolveHardwareOwnership(ctx context.Context, db passiveDiscoveryDB, o discovery.Observation) (discovery.Observation, error) {
-	if o.Evidence.Payload["endpoint_identity_unverified"] == true {
-		return o, nil
-	}
-	if o.Origin == "snmp" && (o.Evidence.Payload["is_response"] != true || passiveString(o.Evidence.Payload, "response_source_ip") != o.IP) {
-		o.MAC = ""
-		return o, nil
-	}
-	if o.Origin == "arp" || o.Origin == "ndp" || o.Origin == "dhcp" || passiveDirectResponderIdentity(o) {
-		return o, nil
-	}
-	if o.Origin == "sadp" {
-		return o, nil
-	} // SADP already has its stricter claimed-MAC verifier.
-	if o.IP == "" || o.Node == "" || o.Site == "" || o.Domain == "" {
-		return o, nil
-	}
-	var mac sql.NullString
-	var count int
-	// Materialize the valid-time range first. PostgreSQL otherwise prefers the
-	// observed-at index and reads many expired claims for every response while
-	// replay is behind real time. The outer filters retain event-time and full
-	// scope semantics, including later revocations.
-	err := db.QueryRowContext(ctx, `WITH candidates AS MATERIALIZED (
- SELECT id,origin,observed_at,withdrawn,lower(data->>'mac') mac,
-  coalesce(data->>'site','') site,coalesce(data->>'domain','') domain,
-  coalesce(data->>'vlan','') vlan,coalesce(data->>'vrf','') vrf
- FROM discovery_observations
- WHERE data->>'node'=$1 AND data->>'ip'=$2 AND origin IN ('arp','ndp','dhcp')
-  AND coalesce(data->>'mac','')<>'' AND valid_until>$3
- ORDER BY valid_until DESC,observed_at DESC,id DESC
+	observations := []discovery.Observation{o}
+	err := resolveHardwareOwnershipBatch(ctx, db, observations)
+	return observations[0], err
+}
+
+type hardwareBindingProbe struct {
+	Ordinal    int       `json:"ordinal"`
+	Node       string    `json:"node"`
+	IP         string    `json:"ip"`
+	ObservedAt time.Time `json:"observed_at"`
+	Site       string    `json:"site"`
+	Domain     string    `json:"domain"`
+	VLAN       string    `json:"vlan"`
+	VRF        string    `json:"vrf"`
+}
+
+// Isolate the valid-time range so PostgreSQL uses the validity index for
+// candidates and the observed-at index for revocations.
+const hardwareBindingQuery = `WITH incoming AS MATERIALIZED (
+ SELECT * FROM jsonb_to_recordset($1::jsonb) AS r(ordinal int,node text,ip text,observed_at timestamptz,site text,domain text,vlan text,vrf text)
 )
-SELECT CASE WHEN count(DISTINCT mac)=1 AND count(*)<=64 THEN min(mac) ELSE NULL END,count(*) FROM (
- SELECT v.mac FROM candidates v
- WHERE v.observed_at<=$3 AND NOT v.withdrawn AND v.site=$4 AND v.domain=$5 AND v.vlan=$6 AND v.vrf=$7
- AND NOT EXISTS(SELECT 1 FROM discovery_observations revoked WHERE revoked.withdrawn
-  AND revoked.origin IN ('arp','ndp','dhcp') AND coalesce(revoked.data->>'mac','')<>''
-  AND revoked.origin=v.origin AND revoked.data->>'node'=$1 AND revoked.data->>'ip'=$2
-  AND lower(coalesce(revoked.data->>'mac',''))=v.mac
-  AND coalesce(revoked.data->>'site','')=$4 AND coalesce(revoked.data->>'domain','')=$5
-  AND coalesce(revoked.data->>'vlan','')=$6 AND coalesce(revoked.data->>'vrf','')=$7
-  AND revoked.observed_at>=v.observed_at AND revoked.observed_at<=$3)
- LIMIT 65) binding`, o.Node, o.IP, o.ObservedAt, o.Site, o.Domain, o.VLAN, o.VRF).Scan(&mac, &count)
-	if err != nil {
-		return o, err
-	}
-	p := make(map[string]any, len(o.Evidence.Payload)+1)
-	for k, v := range o.Evidence.Payload {
-		p[k] = v
-	}
-	o.Evidence.Payload = p
-	if !mac.Valid || validPassiveMAC(mac.String) == "" {
-		o.MAC = ""
-		p["hardware_identity"] = "ambiguous_or_missing"
-		return o, nil
-	}
-	if o.MAC != "" && !strings.EqualFold(o.MAC, mac.String) {
-		o.MAC = ""
-		p["hardware_identity"] = "conflicting_mac"
-		return o, nil
-	}
-	o.MAC = validPassiveMAC(mac.String)
-	p["hardware_identity"] = "unique_binding"
-	return o, nil
-}
+SELECT i.ordinal, binding.mac
+FROM incoming i CROSS JOIN LATERAL (
+ WITH candidates AS MATERIALIZED (
+  SELECT id,origin,observed_at,withdrawn,lower(data->>'mac') mac,
+   coalesce(data->>'site','') site,coalesce(data->>'domain','') domain,
+   coalesce(data->>'vlan','') vlan,coalesce(data->>'vrf','') vrf
+  FROM discovery_observations
+  WHERE data->>'node'=i.node AND data->>'ip'=i.ip AND origin IN ('arp','ndp','dhcp')
+   AND coalesce(data->>'mac','')<>'' AND valid_until>i.observed_at
+  ORDER BY valid_until DESC,observed_at DESC,id DESC
+ )
+ SELECT CASE WHEN count(DISTINCT mac)=1 AND count(*)<=64 THEN min(mac) END AS mac FROM (
+  SELECT v.mac FROM candidates v
+  WHERE v.observed_at<=i.observed_at AND NOT v.withdrawn
+   AND v.site=i.site AND v.domain=i.domain AND v.vlan=i.vlan AND v.vrf=i.vrf
+   AND NOT EXISTS (
+    SELECT 1 FROM discovery_observations revoked WHERE revoked.withdrawn
+     AND revoked.origin IN ('arp','ndp','dhcp') AND coalesce(revoked.data->>'mac','')<>''
+     AND revoked.origin=v.origin AND revoked.data->>'node'=i.node AND revoked.data->>'ip'=i.ip
+     AND lower(coalesce(revoked.data->>'mac',''))=v.mac
+     AND coalesce(revoked.data->>'site','')=i.site AND coalesce(revoked.data->>'domain','')=i.domain
+     AND coalesce(revoked.data->>'vlan','')=i.vlan AND coalesce(revoked.data->>'vrf','')=i.vrf
+     AND revoked.observed_at>=v.observed_at AND revoked.observed_at<=i.observed_at
+   )
+  LIMIT 65
+ ) claims
+) binding
+ORDER BY i.ordinal`
 
-type hardwareBindingClaim struct {
-	origin, mac, site, domain, vlan, vrf string
-	observedAt, validUntil               time.Time
-	withdrawn                            bool
-}
-
-// Most response events in one batch revisit the same IP. Read that IP's
-// bounded claim and withdrawal history once, then apply the same event-time
-// predicates as resolveHardwareOwnership to each response. Oversized histories
-// use the individual indexed lookup so the batch remains bounded.
+// Probe event-time bindings in bounded groups, including responses to distinct
+// IPs. PostgreSQL returns at most one MAC per response. Revocations and scope
+// checks run before the 65-row ambiguity cutoff.
 func resolveHardwareOwnershipBatch(ctx context.Context, db passiveDiscoveryDB, observations []discovery.Observation) error {
-	groups := map[string][]int{}
-	for i, o := range observations {
-		if !hardwareOwnershipNeedsLookup(o) {
-			resolved, err := resolveHardwareOwnership(ctx, db, o)
-			if err != nil {
-				return err
-			}
-			observations[i] = resolved
+	const maxProbes = 128
+	probes := make([]hardwareBindingProbe, 0, min(maxProbes, len(observations)))
+	for ordinal, o := range observations {
+		switch {
+		case o.Evidence.Payload["endpoint_identity_unverified"] == true:
 			continue
-		}
-		groups[o.Node+"\x00"+o.IP] = append(groups[o.Node+"\x00"+o.IP], i)
-	}
-	for _, indices := range groups {
-		if len(indices) == 1 {
-			resolved, err := resolveHardwareOwnership(ctx, db, observations[indices[0]])
-			if err != nil {
-				return err
-			}
-			observations[indices[0]] = resolved
+		case o.Origin == "snmp" && (o.Evidence.Payload["is_response"] != true || passiveString(o.Evidence.Payload, "response_source_ip") != o.IP):
+			observations[ordinal].MAC = ""
+		case o.Origin == "arp" || o.Origin == "ndp" || o.Origin == "dhcp" || o.Origin == "sadp" || passiveDirectResponderIdentity(o):
 			continue
-		}
-		first := observations[indices[0]]
-		minimum, maximum := first.ObservedAt, first.ObservedAt
-		for _, i := range indices[1:] {
-			at := observations[i].ObservedAt
-			if at.Before(minimum) {
-				minimum = at
-			}
-			if at.After(maximum) {
-				maximum = at
-			}
-		}
-		claims, revocations, bounded, err := loadHardwareBindingClaims(ctx, db, first.Node, first.IP, minimum, maximum)
-		if err != nil {
-			return err
-		}
-		if len(claims)*max(1, len(revocations))*len(indices) > 2_000_000 {
-			bounded = false
-		}
-		for _, i := range indices {
-			if bounded {
-				observations[i] = resolveHardwareOwnershipFromClaims(observations[i], claims, revocations)
-			} else {
-				resolved, err := resolveHardwareOwnership(ctx, db, observations[i])
-				if err != nil {
+		case o.IP != "" && o.Node != "" && o.Site != "" && o.Domain != "":
+			probes = append(probes, hardwareBindingProbe{ordinal, o.Node, o.IP, o.ObservedAt, o.Site, o.Domain, o.VLAN, o.VRF})
+			if len(probes) == maxProbes {
+				if err := applyHardwareBindings(ctx, db, observations, probes); err != nil {
 					return err
 				}
-				observations[i] = resolved
+				probes = probes[:0]
 			}
 		}
 	}
-	return nil
+	if len(probes) == 0 {
+		return nil
+	}
+	return applyHardwareBindings(ctx, db, observations, probes)
 }
 
-func hardwareOwnershipNeedsLookup(o discovery.Observation) bool {
-	if o.Evidence.Payload["endpoint_identity_unverified"] == true || o.Origin == "arp" || o.Origin == "ndp" || o.Origin == "dhcp" || o.Origin == "sadp" || passiveDirectResponderIdentity(o) {
-		return false
+func applyHardwareBindings(ctx context.Context, db passiveDiscoveryDB, observations []discovery.Observation, probes []hardwareBindingProbe) error {
+	raw, err := json.Marshal(probes)
+	if err != nil {
+		return err
 	}
-	if o.Origin == "snmp" && (o.Evidence.Payload["is_response"] != true || passiveString(o.Evidence.Payload, "response_source_ip") != o.IP) {
-		return false
+	rows, err := db.QueryContext(ctx, hardwareBindingQuery, string(raw))
+	if err != nil {
+		return err
 	}
-	return o.IP != "" && o.Node != "" && o.Site != "" && o.Domain != ""
-}
-
-func loadHardwareBindingClaims(ctx context.Context, db passiveDiscoveryDB, node, ip string, minimum, maximum time.Time) ([]hardwareBindingClaim, []hardwareBindingClaim, bool, error) {
-	const maxClaims = 4096
-	read := func(query string, args ...any) ([]hardwareBindingClaim, bool, error) {
-		rows, err := db.QueryContext(ctx, query, args...)
-		if err != nil {
-			return nil, false, err
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var ordinal int
+		var mac sql.NullString
+		if err := rows.Scan(&ordinal, &mac); err != nil {
+			return err
 		}
-		defer rows.Close()
-		claims := make([]hardwareBindingClaim, 0, 16)
-		for rows.Next() {
-			var claim hardwareBindingClaim
-			if err := rows.Scan(&claim.origin, &claim.observedAt, &claim.validUntil, &claim.withdrawn, &claim.mac, &claim.site, &claim.domain, &claim.vlan, &claim.vrf); err != nil {
-				return nil, false, err
-			}
-			claims = append(claims, claim)
+		if count >= len(probes) || ordinal != probes[count].Ordinal {
+			return fmt.Errorf("unexpected hardware binding ordinal %d", ordinal)
 		}
-		if err := rows.Err(); err != nil {
-			return nil, false, err
+		o := &observations[ordinal]
+		payload := make(map[string]any, len(o.Evidence.Payload)+1)
+		for k, v := range o.Evidence.Payload {
+			payload[k] = v
 		}
-		return claims, len(claims) <= maxClaims, nil
-	}
-	const fields = `origin,observed_at,valid_until,withdrawn,lower(data->>'mac'),coalesce(data->>'site',''),coalesce(data->>'domain',''),coalesce(data->>'vlan',''),coalesce(data->>'vrf','')`
-	claims, bounded, err := read(`WITH candidates AS MATERIALIZED (
- SELECT `+fields+` FROM discovery_observations
- WHERE data->>'node'=$1 AND data->>'ip'=$2 AND origin IN ('arp','ndp','dhcp')
-  AND coalesce(data->>'mac','')<>'' AND valid_until>$3
- ORDER BY valid_until DESC,observed_at DESC,id DESC
-)
-SELECT * FROM candidates WHERE observed_at<=$4 LIMIT 4097`, node, ip, minimum, maximum)
-	if err != nil || !bounded || len(claims) == 0 {
-		return claims, nil, bounded, err
-	}
-	oldest := claims[0].observedAt
-	for _, claim := range claims[1:] {
-		if claim.observedAt.Before(oldest) {
-			oldest = claim.observedAt
-		}
-	}
-	revocations, bounded, err := read(`SELECT `+fields+` FROM discovery_observations
-WHERE data->>'node'=$1 AND data->>'ip'=$2 AND origin IN ('arp','ndp','dhcp')
- AND coalesce(data->>'mac','')<>'' AND withdrawn AND observed_at>=$3 AND observed_at<=$4
-ORDER BY observed_at,id LIMIT 4097`, node, ip, oldest, maximum)
-	return claims, revocations, bounded, err
-}
-
-func resolveHardwareOwnershipFromClaims(o discovery.Observation, claims, revocations []hardwareBindingClaim) discovery.Observation {
-	var mac string
-	count, ambiguous := 0, false
-	for _, claim := range claims {
-		if claim.withdrawn || claim.observedAt.After(o.ObservedAt) || !claim.validUntil.After(o.ObservedAt) || claim.site != o.Site || claim.domain != o.Domain || claim.vlan != o.VLAN || claim.vrf != o.VRF {
-			continue
-		}
-		revoked := false
-		for _, withdrawal := range revocations {
-			if withdrawal.origin == claim.origin && withdrawal.mac == claim.mac && withdrawal.site == claim.site && withdrawal.domain == claim.domain && withdrawal.vlan == claim.vlan && withdrawal.vrf == claim.vrf && !withdrawal.observedAt.Before(claim.observedAt) && !withdrawal.observedAt.After(o.ObservedAt) {
-				revoked = true
-				break
-			}
-		}
-		if revoked {
-			continue
+		o.Evidence.Payload = payload
+		switch resolved := validPassiveMAC(mac.String); {
+		case !mac.Valid || resolved == "":
+			o.MAC = ""
+			payload["hardware_identity"] = "ambiguous_or_missing"
+		case o.MAC != "" && !strings.EqualFold(o.MAC, mac.String):
+			o.MAC = ""
+			payload["hardware_identity"] = "conflicting_mac"
+		default:
+			o.MAC = resolved
+			payload["hardware_identity"] = "unique_binding"
 		}
 		count++
-		if mac != "" && mac != claim.mac {
-			ambiguous = true
-		}
-		mac = claim.mac
-		if count > 64 {
-			ambiguous = true
-			break
-		}
 	}
-	p := make(map[string]any, len(o.Evidence.Payload)+1)
-	for key, value := range o.Evidence.Payload {
-		p[key] = value
+	if err := rows.Err(); err != nil {
+		return err
 	}
-	o.Evidence.Payload = p
-	if count == 0 || ambiguous || validPassiveMAC(mac) == "" {
-		o.MAC = ""
-		p["hardware_identity"] = "ambiguous_or_missing"
-	} else if o.MAC != "" && !strings.EqualFold(o.MAC, mac) {
-		o.MAC = ""
-		p["hardware_identity"] = "conflicting_mac"
-	} else {
-		o.MAC = validPassiveMAC(mac)
-		p["hardware_identity"] = "unique_binding"
+	if count != len(probes) {
+		return fmt.Errorf("incomplete hardware binding result: %d of %d", count, len(probes))
 	}
-	return o
+	return nil
 }
 
 func passiveSNMPVarbindsPresent(v any) bool {

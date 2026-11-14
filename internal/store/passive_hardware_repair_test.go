@@ -107,7 +107,12 @@ func TestHardwareRepairUsesEventTimeAndEveryScopeDimension(t *testing.T) {
 	m.ExpectBegin()
 	m.ExpectExec("SET LOCAL lock_timeout").WillReturnResult(sqlmock.NewResult(0, 0))
 	m.ExpectExec("SET LOCAL statement_timeout").WillReturnResult(sqlmock.NewResult(0, 0))
-	m.ExpectQuery("SELECT CASE WHEN count\\(DISTINCT mac\\)").WithArgs(o.Node, o.IP, o.ObservedAt, o.Site, o.Domain, o.VLAN, o.VRF).WillReturnRows(sqlmock.NewRows([]string{"mac", "count"}).AddRow(nil, 2))
+	probe, err := json.Marshal([]hardwareBindingProbe{{0, o.Node, o.IP, o.ObservedAt, o.Site, o.Domain, o.VLAN, o.VRF}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.ExpectQuery("WITH incoming AS MATERIALIZED").WithArgs(string(probe)).
+		WillReturnRows(sqlmock.NewRows([]string{"ordinal", "mac"}).AddRow(0, nil))
 	m.ExpectCommit()
 	out, err := ApplyHardwareRepairBatch(context.Background(), db, repairManifest(o), 0, 25)
 	if err != nil || len(out) != 1 || out[0].Status != "excluded" || out[0].Reason != "identity_or_protocol_not_verified" {
