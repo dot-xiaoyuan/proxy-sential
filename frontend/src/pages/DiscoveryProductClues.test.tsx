@@ -24,3 +24,10 @@ it('retains the matching failure rather than showing an empty type placeholder',
   expect(screen.getByText('现有产品字段尚无类型规则命中')).toBeInTheDocument()
   expect(screen.getByText('Ruijie')).toBeInTheDocument()
 })
+
+it('distinguishes a phone requester self-report from a server response', () => {
+  render(<DiscoveryProductClues clues={[{ ...clue, type: 'voip_phone', manufacturer: 'Huawei', model: 'eSpace 7910', attribution: 'request_ip' }]} />)
+  expect(screen.getByText('来源：请求端自报')).toBeInTheDocument()
+  expect(screen.queryByText('来源：响应端自报')).not.toBeInTheDocument()
+  expect(screen.getByText(/物理设备归属按独立的地址绑定证据核实/)).toBeInTheDocument()
+})

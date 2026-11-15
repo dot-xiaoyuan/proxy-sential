@@ -1082,6 +1082,26 @@
         "S5120-52C-PWR-EI-OTHER",
         "Manual for S5120-52C-PWR-EI"
       ]
+    },
+    {
+      "id": "huawei-espace-7910-sip",
+      "version": "device-product-review-2026-11-15.1",
+      "field": "sip_user_agent",
+      "pattern": "(?i)^Huawei eSpace 7910 V[0-9A-Z.]+$",
+      "type": "voip_phone",
+      "model": "eSpace 7910",
+      "manufacturer": "Huawei",
+      "source_url": "https://enterprise.huawei.com/nla/products/coll-communication/union-comuni/ip-phone/hw-356860.htm",
+      "rationale": "Exact manufacturer documented 7910 IP phone self-report in a device-owned SIP request; not generic Huawei, softphone, server header or browser UA.",
+      "positive": [
+        "Huawei eSpace 7910 V200R003C00"
+      ],
+      "negative": [
+        "Huawei",
+        "Huawei eSpace U1981 V200R003C00",
+        "Mozilla Huawei eSpace 7910 V200R003C00",
+        "Huawei eSpace 79100 V200R003C00"
+      ]
     }
   ]
 }

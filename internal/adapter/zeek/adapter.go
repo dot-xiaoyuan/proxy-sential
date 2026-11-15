@@ -87,6 +87,16 @@ func Convert(r io.Reader, w io.Writer, opts Options) (Stats, error) {
 			}
 			event.Observer["collector_instance_id"] = opts.CollectorInstanceID
 		}
+		// Proxy transactions are already signed over RawRef. Keep that 184
+		// producer contract intact; its event ID already carries the digest.
+		if event.Type != "proxy_transaction" {
+			if event.RawRef == nil {
+				event.RawRef = map[string]any{}
+			}
+			lineHash := sha256.Sum256([]byte(rawLine))
+			event.RawRef["content_sha256"] = hex.EncodeToString(lineHash[:])
+			event.RawRef["content_hash_scope"] = "log_record_without_line_ending"
+		}
 		if opts.ControlledInterface != "" {
 			if event.Observer == nil {
 				event.Observer = map[string]any{}
@@ -164,6 +174,9 @@ func (p logParser) convertLine(raw []byte, lineOffset int, opts Options) (normal
 			fields[key] = unescapeIdentityTSV(value)
 		}
 	}
+	if err := retainConnectionVLAN(fields); err != nil {
+		return normalized.Event{}, err
+	}
 	if opts.LogKind == "proxy" {
 		return proxyEvent(raw, fields, opts)
 	}
@@ -184,7 +197,7 @@ func (p logParser) convertLine(raw []byte, lineOffset int, opts Options) (normal
 	case "bacnet", "modbus":
 		return industrialResponseEvent(raw, fields, lineOffset, opts)
 	case "sip":
-		return sipDiscoveryEventFromFields(fields, lineOffset, opts)
+		return sipDiscoveryEventFromFields(raw, fields, lineOffset, opts)
 	case "sip-server":
 		return sipServerEventFromFields(raw, fields, lineOffset, opts)
 	case "rtsp-device":
@@ -256,6 +269,7 @@ func rtspDeviceEventFromFields(raw []byte, fields map[string]string, lineOffset 
 		return normalized.Event{}, fmt.Errorf("missing Zeek RTSP device fields")
 	}
 	payload := map[string]any{"origin": "rtsp"}
+	copyPayload(payload, fields, "vlan", "vlan")
 	if direction == "client" {
 		payload["user_agent"] = value
 	} else {
@@ -290,6 +304,7 @@ func sipServerEventFromFields(raw []byte, fields map[string]string, lineOffset i
 		return normalized.Event{}, fmt.Errorf("missing Zeek SIP server fields")
 	}
 	payload := map[string]any{"origin": "sip", "server": server}
+	copyPayload(payload, fields, "vlan", "vlan")
 	flow := map[string]any{"src_ip": origIP, "dst_ip": respIP, "proto": "udp", "direction": "server"}
 	if port := zeekPort(first(fields, "orig_p")); port > 0 {
 		flow["src_port"] = port
@@ -305,7 +320,7 @@ func sipServerEventFromFields(raw []byte, fields map[string]string, lineOffset i
 	event.Confidence = 0.85
 	return event, nil
 }
-func sipDiscoveryEventFromFields(fields map[string]string, lineOffset int, opts Options) (normalized.Event, error) {
+func sipDiscoveryEventFromFields(raw []byte, fields map[string]string, lineOffset int, opts Options) (normalized.Event, error) {
 	timestamp := normalizeTimestamp(first(fields, "ts", "timestamp"))
 	origIP, respIP := first(fields, "id.orig_h", "src_ip"), first(fields, "id.resp_h", "dst_ip")
 	method, userAgent := first(fields, "method"), first(fields, "user_agent")
@@ -326,7 +341,7 @@ func sipDiscoveryEventFromFields(fields map[string]string, lineOffset int, opts 
 	copyPayload(payload, fields, "vlan", "vlan")
 	flow := zeekFlow(fields, origIP, respIP)
 	flow["direction"] = "client"
-	event := zeekNetworkEvent(nil, fields, lineOffset, opts, "device", "sip", timestamp, origIP, respIP, flow, payload)
+	event := zeekNetworkEvent(raw, fields, lineOffset, opts, "device", "sip", timestamp, origIP, respIP, flow, payload)
 	event.Subject = map[string]any{"ip": origIP, "entity_role": "endpoint"}
 	event.Confidence = 0.85
 	return event, nil
@@ -361,10 +376,9 @@ func protocolEventFromFields(raw []byte, fields map[string]string, lineOffset in
 	if dstIP == "" {
 		dstIP = srcIP
 	}
-	// The http-device log describes the response served by a LAN device, so the
-	// server address is the subject of the evidence.
-	if opts.LogKind == "http-device" {
-		srcIP, dstIP = dstIP, srcIP
+	// Keep the transport direction even when the device subject is the responder.
+	if opts.LogKind == "http-device" && first(fields, "id.resp_h", "dst_ip", "resp_h") == "" {
+		return normalized.Event{}, fmt.Errorf("HTTP device response requires responder address")
 	}
 	kind := opts.LogKind
 	eventType := kind
@@ -383,7 +397,7 @@ func protocolEventFromFields(raw []byte, fields map[string]string, lineOffset in
 			copyPayload(payload, fields, pair[0], pair[1])
 		}
 	case "ssl", "tls", "x509":
-		for _, pair := range [][2]string{{"server_name", "sni"}, {"version", "version"}, {"cipher", "cipher"}, {"subject", "certificate_subject"}, {"certificate.subject", "certificate_subject"}, {"issuer", "certificate_issuer"}, {"certificate.issuer", "certificate_issuer"}, {"san.dns", "certificate_san"}, {"san", "certificate_san"}, {"ja3", "ja3"}, {"ja4", "ja4"}} {
+		for _, pair := range [][2]string{{"server_name", "sni"}, {"version", "version"}, {"cipher", "cipher"}, {"subject", "certificate_subject"}, {"certificate.subject", "certificate_subject"}, {"issuer", "certificate_issuer"}, {"certificate.issuer", "certificate_issuer"}, {"san.dns", "certificate_san"}, {"san", "certificate_san"}, {"ja3", "ja3"}, {"ja4", "ja4"}, {"ja3s", "ja3s"}, {"ja4s", "ja4s"}, {"cert_chain_fps", "certificate_chain_fps"}, {"cert_chain_fuids", "certificate_chain_fuids"}, {"client_cert_chain_fps", "client_certificate_chain_fps"}, {"client_cert_chain_fuids", "client_certificate_chain_fuids"}, {"fingerprint", "certificate_fingerprint"}, {"id", "certificate_file_id"}} {
 			copyPayload(payload, fields, pair[0], pair[1])
 		}
 	}
@@ -393,7 +407,16 @@ func protocolEventFromFields(raw []byte, fields map[string]string, lineOffset in
 		payload["certificate_owner_ip"] = first(fields, "host")
 	}
 	copyPayload(payload, fields, "vlan", "vlan")
-	return zeekNetworkEvent(raw, fields, lineOffset, opts, eventType, kind, timestamp, srcIP, dstIP, zeekFlow(fields, srcIP, dstIP), payload), nil
+	event := zeekNetworkEvent(raw, fields, lineOffset, opts, eventType, kind, timestamp, srcIP, dstIP, zeekFlow(fields, srcIP, dstIP), payload)
+	if kind == "http-device" {
+		event.Subject = map[string]any{"ip": dstIP}
+		// orig_l2_addr belongs to the requester; a routed resp_l2_addr is not
+		// proof of the server MAC either. Resolve a same-scope binding later.
+		payload["attribution_side"] = "server"
+		payload["response_source_ip"] = dstIP
+		payload["is_response"] = true
+	}
+	return event, nil
 }
 
 func infrastructureDiscoveryEventFromFields(raw []byte, fields map[string]string, lineOffset int, opts Options) (normalized.Event, error) {

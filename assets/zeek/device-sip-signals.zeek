@@ -1,3 +1,4 @@
+@load ./device-capture-scope
 # SIP Server header evidence: a phone or PBX names its stack in responses.
 @load base/protocols/sip
 
@@ -8,6 +9,7 @@ export {
 
     type SIPServerInfo: record {
         ts: time &log;
+        capture_vlan: string &log &optional;
         uid: string &log;
         orig_h: addr &log;
         orig_p: port &log;
@@ -31,7 +33,7 @@ event sip_header(c: connection, is_request: bool, name: string, value: string) &
         return;
     if ( to_lower(name) != "server" )
         return;
-    Log::write(ProxySentinel::LOG_SIP_SERVER, ProxySentinel::SIPServerInfo($ts=network_time(),
+    Log::write(ProxySentinel::LOG_SIP_SERVER, ProxySentinel::SIPServerInfo($ts=network_time(), $capture_vlan=ProxySentinel::device_capture_vlan(c),
         $uid=c$uid, $orig_h=c$id$orig_h, $orig_p=c$id$orig_p, $resp_h=c$id$resp_h,
         $resp_p=c$id$resp_p, $server=value));
     }

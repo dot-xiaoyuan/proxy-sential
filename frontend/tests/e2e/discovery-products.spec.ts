@@ -31,11 +31,12 @@ test('IP product evidence stays separate from physical confirmation at three vie
     await page.screenshot({ path: `test-results/product-sources-${viewport.width}.png`, animations: 'disabled' })
     const probe = await page.evaluate(() => ({
       overflow: document.documentElement.scrollWidth > innerWidth + 2,
+      typeFiltersWrap: [...document.querySelectorAll('.discovery-overview-types')].every(element => getComputedStyle(element).flexWrap === 'wrap'),
       productOverflow: [...document.querySelectorAll('.discovery-product-clues article')].some(element => element.scrollWidth > element.clientWidth + 2),
       badButtons: [...document.querySelectorAll('.ant-btn')].filter(button => { const style = getComputedStyle(button); return style.whiteSpace !== 'nowrap' || style.flexShrink !== '0' }).length,
     }))
     await writeFile(`test-results/product-${viewport.width}.dom.json`, JSON.stringify(probe, null, 2))
-    expect(probe).toEqual({ overflow: false, productOverflow: false, badButtons: 0 })
+    expect(probe).toEqual({ overflow: false, typeFiltersWrap: true, productOverflow: false, badButtons: 0 })
     await dialog.getByRole('button', { name: 'Close', exact: true }).click()
   }
   expect(errors).toEqual([])

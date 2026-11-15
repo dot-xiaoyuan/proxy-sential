@@ -531,7 +531,7 @@ func parseSSDP(ethernet ethernetFrame, source, destination string, payload []byt
 		}
 		key, value := strings.ToLower(strings.TrimSpace(parts[0])), strings.TrimSpace(parts[1])
 		switch key {
-		case "st", "nt", "usn", "server", "location":
+		case "st", "nt", "nts", "usn", "server", "location":
 			if value != "" {
 				signal.Payload[key] = value
 			}
@@ -539,6 +539,11 @@ func parseSSDP(ethernet ethernetFrame, source, destination string, payload []byt
 	}
 	if len(signal.Payload) == 1 || len(signal.Payload) == 2 && signal.Payload["vlan"] != nil {
 		return controlSignal{}, false
+	}
+	signal.Payload["is_response"] = strings.HasPrefix(start, "HTTP/1.")
+	signal.Payload["is_announcement"] = strings.HasPrefix(start, "NOTIFY ")
+	if strings.EqualFold(fmt.Sprint(signal.Payload["nts"]), "ssdp:byebye") {
+		signal.Payload["withdrawn"] = true
 	}
 	return signal, true
 }
@@ -691,6 +696,8 @@ func parseWSDiscovery(ethernet ethernetFrame, source, destination string, payloa
 	}
 	signal := baseControlSignal("ws_discovery", ethernet, source, destination)
 	signal.Payload["message"] = kind
+	signal.Payload["is_response"] = kind == "probe_matches" || kind == "resolve_matches"
+	signal.Payload["is_announcement"] = kind == "hello" || kind == "bye"
 	signal.Payload["withdrawn"] = withdrawn
 	for _, field := range []struct{ start, end, key string }{
 		{"<wsa:address>", "</wsa:address>", "endpoint_reference"},

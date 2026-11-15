@@ -53,6 +53,23 @@
         "Ruijie AP5528-SF (802.11a/n/ac/ax and 802.11b/g/n/ax) By Ruijie Networks.",
         "Ruijie Switch(AM5528-SF) By Ruijie Networks"
       ]
+    },
+    {
+      "id": "h3c-s3100v2-winet-sysdescr",
+      "name": "H3C S3100V2-26TP-WiNet",
+      "type": "switch",
+      "manufacturer": "H3C",
+      "pattern": "(?s)^H3C Comware Platform Software, Software Version [^\\r\\n]+\\r?\\nH3C (?P<hardware>S3100V2-26TP-WiNet)\\r?\\nCopyright[^\\r\\n]+$",
+      "source_url": "https://www.h3c.com/cn/d_201607/939998_30005_0.htm",
+      "rationale": "Exact switch model on the product line of a verified SNMP response; mixed-case WiNet suffix was absent from existing hardware extraction. No enterprise-OID-only inference.",
+      "positive": [
+        "H3C Comware Platform Software, Software Version 5.20 Release 5203P13\r\nH3C S3100V2-26TP-WiNet\r\nCopyright (c) 2004-2015 Hangzhou H3C Tech. Co., Ltd. All rights reserved."
+      ],
+      "negative": [
+        "H3C S3100V2-26TP-WiNet",
+        "H3C Comware Platform Software",
+        "Browser H3C S3100V2-26TP-WiNet"
+      ]
     }
   ]
 }

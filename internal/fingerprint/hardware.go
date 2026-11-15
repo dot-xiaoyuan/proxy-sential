@@ -246,7 +246,7 @@ func ParseHardwareCatalog(data, provenance []byte, extra ...[]byte) (*HardwareCa
 		if err := verifyRaw(r.RawRef, r.RawSHA256); err != nil {
 			return nil, err
 		}
-		if r.Field != "" && r.Field != "dhcp_product_model" {
+		if r.Field != "" && r.Field != "dhcp_product_model" && r.Field != "sip_user_agent" {
 			return nil, fmt.Errorf("model %s has unsupported model field %q", r.ID, r.Field)
 		}
 		add(r.Source, true)
@@ -503,6 +503,8 @@ func CanonicalHardwareType(value string) string {
 
 func hardwareEvidenceDirection(s EvidenceSignal) (string, bool) {
 	switch s.Field {
+	case "sip_user_agent":
+		return "client", s.Protocol == "sip"
 	case "dhcp_product_model":
 		return "device", s.Protocol == "dhcp"
 	case "sadp_model":
@@ -669,7 +671,7 @@ func (h *HardwareCatalog) Evaluate(input HardwareInput, now time.Time) HardwareR
 		if hardwareModelField(s.Field) {
 			for _, r := range h.models {
 				// The DHCP model field only uses rules reviewed for a client self-report.
-				if r.Field != s.Field && (r.Field != "" || s.Field == "dhcp_product_model") {
+				if r.Field != s.Field && (r.Field != "" || s.Field == "dhcp_product_model" || s.Field == "sip_user_agent") {
 					continue
 				}
 				report := reports[r.Source]
@@ -830,7 +832,7 @@ func (h *HardwareCatalog) Evaluate(input HardwareInput, now time.Time) HardwareR
 
 func hardwareModelField(field string) bool {
 	switch field {
-	case "dhcp_product_model", "sadp_model", "snmp_model", "ssdp_model", "dns_sd_model", "mdns_model", "printer_make_and_model", "onvif_model", "wsd_model", "bacnet_model", "cdp_platform":
+	case "sip_user_agent", "dhcp_product_model", "sadp_model", "snmp_model", "ssdp_model", "dns_sd_model", "mdns_model", "printer_make_and_model", "onvif_model", "wsd_model", "bacnet_model", "cdp_platform":
 		return true
 	}
 	return false

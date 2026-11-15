@@ -35,3 +35,30 @@ func TestIPProductDoesNotInventPhysicalIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestSIPIPProductRequiresClientOwnershipAndUniqueSource(t *testing.T) {
+	now := time.Now().UTC()
+	o := hardwareTestObservation(now.Add(-time.Minute))
+	o.Origin, o.MAC = "sip", ""
+	o.EventID = "zeek-aaaaaaaaaaaaaaaaaaaaaaaa"
+	o.Evidence.EventID, o.Evidence.Source = o.EventID, "zeek"
+	o.Evidence.Payload = map[string]any{"method": "REGISTER", "user_agent": "Huawei eSpace 7910 V200R003C00"}
+	o.Evidence.Flow = map[string]any{"src_ip": o.IP, "dst_ip": "10.0.0.8", "direction": "client"}
+	o.Evidence.RawRef = map[string]any{"content_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	c, err := BuildIPProductClue(o, now)
+	if err != nil || c == nil || c.Type != "voip_phone" || c.Attribution != "request_ip" {
+		t.Fatalf("valid phone self-report lost: %+v %v", c, err)
+	}
+	if f, _ := HardwareFactFromObservation(o); f != nil {
+		t.Fatal("phone IP self-report became hardware identity")
+	}
+	o.Evidence.Flow["src_ip"] = "10.0.0.9"
+	if c, _ := BuildIPProductClue(o, now); c != nil {
+		t.Fatal("remote UA attributed to phone IP")
+	}
+	o.Evidence.Flow["src_ip"] = o.IP
+	o.EventID = "zeek-e3b0c44298fc1c149afbf4c8"
+	if c, _ := BuildIPProductClue(o, now); c != nil {
+		t.Fatal("legacy nonunique SIP reference accepted")
+	}
+}

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-var hardwareBundleSource = BundleSource{Name: "Proxy Sentinel hardware adjudication", Version: "hardware-catalog-2026-11-15.2", URL: "internal://proxy-sentinel/hardware-catalog", License: "internal-rule; upstream rules retain individual licenses"}
+var hardwareBundleSource = BundleSource{Name: "Proxy Sentinel hardware adjudication", Version: "hardware-catalog-2026-11-15.3", URL: "internal://proxy-sentinel/hardware-catalog", License: "internal-rule; upstream rules retain individual licenses"}
 var nativeRecogSource = BundleSource{Name: "recog-go native matcher", Version: "v0.1.1-0.20230801014443-aa6fe9074750", URL: "https://github.com/runZeroInc/recog-go", License: "BSD-2-Clause"}
 
 func verifyV8Hardware(manifest BundleManifest, files map[string][]byte) error {

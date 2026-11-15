@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -39,12 +40,12 @@ type IPProductClue struct {
 // never in the list reader. Current endpoint attribution is intentionally
 // separate from the physical-MAC gate in HardwareFactFromObservation.
 func BuildIPProductClue(o Observation, now time.Time) (*IPProductClue, error) {
-	if o.Origin != "snmp" || o.Withdrawn || net.ParseIP(o.IP) == nil || o.Node == "" || o.Site == "" || o.Domain == "" ||
+	attribution := IPProductAttribution(o)
+	if attribution == "" || o.Withdrawn || net.ParseIP(o.IP) == nil || o.Node == "" || o.Site == "" || o.Domain == "" ||
 		o.ObservedAt.IsZero() || o.ObservedAt.After(now) || o.EventID == "" ||
 		(o.Evidence.EventID != "" && o.Evidence.EventID != o.EventID) ||
 		(str(o.Evidence.Payload, "vlan") != "" && str(o.Evidence.Payload, "vlan") != o.VLAN) ||
-		str(o.Evidence.Observer, "capture_scope_issue") != "" ||
-		o.Evidence.Payload["is_response"] != true || str(o.Evidence.Payload, "response_source_ip") != o.IP {
+		str(o.Evidence.Observer, "capture_scope_issue") != "" {
 		return nil, nil
 	}
 	signals, err := hardwareObservationSignals(o)
@@ -60,7 +61,7 @@ func BuildIPProductClue(o Observation, now time.Time) (*IPProductClue, error) {
 	}
 	clue := &IPProductClue{IP: o.IP, SensorID: o.Node, Site: o.Site, Domain: o.Domain, VLAN: o.VLAN, VRF: o.VRF,
 		Type: result.Type, Manufacturer: result.Manufacturer, Model: result.Model, ProductStatus: result.TypeStatus,
-		Attribution: "response_ip", ObservedAt: o.ObservedAt, EventID: o.EventID, RuleVersion: result.Version,
+		Attribution: attribution, ObservedAt: o.ObservedAt, EventID: o.EventID, RuleVersion: result.Version,
 		Sources: result.Sources, RawRef: o.Evidence.RawRef, ConflictingTypes: result.ConflictingTypes, ConflictingModels: result.ConflictingModels}
 	if clue.ProductStatus == "" || clue.ProductStatus == "candidate" {
 		clue.ProductStatus = "no_type_match"
@@ -68,6 +69,9 @@ func BuildIPProductClue(o Observation, now time.Time) (*IPProductClue, error) {
 	if len(signals) == 0 {
 		clue.ProductStatus = "missing_product_fields"
 		clue.MissingFields = []string{"system_object_id", "system_description", "product_model"}
+		if o.Origin == "sip" {
+			clue.MissingFields = []string{"user_agent"}
+		}
 	}
 	if clue.Manufacturer == "" {
 		oid := str(o.Evidence.Payload, "system_object_id")
@@ -82,4 +86,23 @@ func BuildIPProductClue(o Observation, now time.Time) (*IPProductClue, error) {
 		return nil, fmt.Errorf("IP product result exceeds 16 KiB bound")
 	}
 	return clue, nil
+}
+
+// IPProductAttribution verifies which protocol endpoint owns the product
+// field. A SIP client self-report proves neither its MAC nor an address lease.
+func IPProductAttribution(o Observation) string {
+	p := o.Evidence.Payload
+	if o.Origin == "snmp" && p["is_response"] == true && str(p, "response_source_ip") == o.IP {
+		return "response_ip"
+	}
+	if o.Origin != "sip" || o.IP == "" || o.IP != str(o.Evidence.Flow, "src_ip") ||
+		str(o.Evidence.Flow, "direction") != "client" || str(p, "method") == "" || str(p, "user_agent") == "" ||
+		o.EventID == "zeek-e3b0c44298fc1c149afbf4c8" {
+		return ""
+	}
+	digest, err := hex.DecodeString(str(o.Evidence.RawRef, "content_sha256"))
+	if err != nil || len(digest) != 32 || o.Evidence.Source != "zeek" || o.EventID != "zeek-"+hex.EncodeToString(digest)[:24] {
+		return ""
+	}
+	return "request_ip"
 }

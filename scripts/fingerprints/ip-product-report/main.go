@@ -17,6 +17,7 @@ import (
 func run() error {
 	input := flag.String("input", "", "JSONL scoped discovery observations")
 	output := flag.String("output", "", "audit JSONL output")
+	allProtocols := flag.Bool("all-protocols", false, "also audit hardware fields and attribution for each protocol; offline only")
 	cutoff := flag.String("as-of", "", "required fixed RFC3339 cutoff")
 	flag.Parse()
 	now, err := time.Parse(time.RFC3339Nano, *cutoff)
@@ -65,6 +66,17 @@ func run() error {
 		}
 		hash := sha256.Sum256(s.Bytes())
 		row := map[string]any{"input_kind": "offline_scoped_observation_replay", "as_of": now, "ip": o.IP, "vlan": o.VLAN, "event_id": o.EventID, "input_sha256": hex.EncodeToString(hash[:]), "status": status, "reason": reason, "product_clue": clue, "physical_identity_confirmed": false}
+		if *allProtocols {
+			audit, err := discovery.AuditHardwareObservation(o, now)
+			if err != nil {
+				return fmt.Errorf("row %d: %w", count, err)
+			}
+			row["hardware_audit"] = audit
+			row["origin"] = o.Origin
+			row["mac"] = o.MAC
+			row["sensor"] = o.Node
+			row["domain"] = o.Domain
+		}
 		if err = enc.Encode(row); err != nil {
 			return err
 		}

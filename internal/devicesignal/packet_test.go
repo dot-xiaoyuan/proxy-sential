@@ -199,7 +199,7 @@ func TestParseSSDPResponseButNotClientSearch(t *testing.T) {
 	}
 	response := "HTTP/1.1 200 OK\r\nST: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\nSERVER: OpenWrt UPnP\r\n\r\n"
 	signal, ok := parseControlFrame(build(response))
-	if !ok || signal.Kind != "ssdp" || signal.Payload["st"] == nil || signal.Payload["server"] != "OpenWrt UPnP" {
+	if !ok || signal.Kind != "ssdp" || signal.Payload["st"] == nil || signal.Payload["server"] != "OpenWrt UPnP" || signal.Payload["is_response"] != true {
 		t.Fatalf("unexpected SSDP signal: ok=%t signal=%+v", ok, signal)
 	}
 	if _, ok = parseControlFrame(build("M-SEARCH * HTTP/1.1\r\nST: ssdp:all\r\n\r\n")); ok {
@@ -257,7 +257,7 @@ func TestParseWSDiscoveryResponseButNotProbe(t *testing.T) {
 	}
 	response := `<s:Envelope><s:Body><d:ProbeMatches><d:ProbeMatch><d:Types>dn:NetworkVideoTransmitter</d:Types><d:XAddrs>http://192.168.0.60/onvif/device_service</d:XAddrs></d:ProbeMatch></d:ProbeMatches></s:Body></s:Envelope>`
 	signal, ok := parseControlFrame(build(response))
-	if !ok || signal.Kind != "ws_discovery" || signal.Payload["message"] != "probe_matches" {
+	if !ok || signal.Kind != "ws_discovery" || signal.Payload["message"] != "probe_matches" || signal.Payload["is_response"] != true {
 		t.Fatalf("unexpected WS-Discovery signal: %+v", signal)
 	}
 	if _, ok = parseControlFrame(build(`<s:Envelope><s:Body><d:Probe/></s:Body></s:Envelope>`)); ok {

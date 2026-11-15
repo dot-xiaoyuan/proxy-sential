@@ -205,6 +205,23 @@ func processOnce(ctx context.Context, backend Backend, opts Options, source Sour
 	batchID := stableID(opts.SensorID, source.Kind, source.Path, fileID, fmt.Sprint(start), fmt.Sprint(end), checksum)
 	now := time.Now().UTC()
 	batch := ingest.Batch{BatchID: batchID, SensorID: opts.SensorID, SourceKind: source.Kind, SourcePath: source.Path, FileID: fileID, StartOffset: start, EndOffset: end, Checksum: checksum, Status: "started", StartedAt: now.Format(time.RFC3339Nano)}
+	if strings.HasPrefix(source.Kind, "zeek-") {
+		for i := range events {
+			if events[i].Type == "proxy_transaction" {
+				continue
+			}
+			if events[i].RawRef == nil {
+				events[i].RawRef = map[string]any{}
+			}
+			// The parser's line_offset is relative to a header-prefixed chunk,
+			// not a file position. Keep the durable batch range alongside the
+			// record digest so original evidence can be resolved after restart.
+			events[i].RawRef["ingest_source_ref"] = map[string]any{
+				"batch_id": batchID, "source": source.Path, "file_id": fileID,
+				"start_offset": start, "end_offset": end, "content_sha256": checksum,
+			}
+		}
+	}
 	if err := backend.BeginIngestBatch(ctx, batch); err != nil {
 		return false, err
 	}

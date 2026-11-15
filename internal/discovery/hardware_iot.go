@@ -6,7 +6,7 @@ import "strings"
 // identity. Require its stored endpoint, event and full scope to match the row.
 const indexedValidProductTypeSQL = `CASE WHEN l.valid_until>now()
  AND l.data->'product_clue'->>'product_status'='identified'
- AND l.data->'product_clue'->>'attribution'='response_ip'
+ AND l.data->'product_clue'->>'attribution' IN ('response_ip','request_ip')
  AND l.data->'product_clue'->>'event_id'=l.data->>'event_id'
  AND l.data->'product_clue'->>'ip'=l.data->>'ip'
  AND l.data->'product_clue'->>'sensor_id'=l.data->>'node'

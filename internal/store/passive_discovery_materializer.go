@@ -412,6 +412,12 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 		// Device-side TLS: the certificate the server (device) presented. The
 		// event subject is the client, so the server address is the device.
 		serverIP := passiveString(event.Flow, "dst_ip")
+		if owner := passiveString(event.Payload, "certificate_owner_ip"); owner != "" {
+			serverIP = owner
+		}
+		// The normalized subject MAC belongs to the requester. Resolve the
+		// certificate endpoint independently in the full capture scope.
+		o.MAC = ""
 		subject := discovery.CleanReportedText(passiveString(event.Payload, "certificate_subject"))
 		issuer := discovery.CleanReportedText(passiveString(event.Payload, "certificate_issuer"))
 		if serverIP == "" || subject == "" || !scope.allows(serverIP) {
@@ -569,6 +575,9 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 		}
 		service := strings.ToLower(passiveString(event.Payload, "st") + " " + passiveString(event.Payload, "nt"))
 		o.Origin, o.Explanation, o.ValidUntil = "ssdp", "SSDP 设备响应或公告", at.Add(30*time.Minute)
+		if event.Payload["withdrawn"] == true {
+			o.Withdrawn, o.ValidUntil = true, at
+		}
 		// A description-enriched advertisement carries the device's own
 		// manufacturer and model. Keep them as self-report evidence; they do not
 		// confirm a whole-device type on their own.
@@ -629,14 +638,16 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 	}
 	discovery.NormalizeObservationClassification(&o)
 	discovery.NormalizeObservationName(&o)
-	if discovery.HardwareProjectionEnabled() && o.Origin == "snmp" {
-		o.LatestPartition = discovery.SNMPProductPartition(o)
+	if discovery.HardwareProjectionEnabled() && (o.Origin == "snmp" || o.Origin == "sip") {
+		if o.Origin == "snmp" {
+			o.LatestPartition = discovery.SNMPProductPartition(o)
+		}
 		clue, err := discovery.BuildIPProductClue(o, time.Now().UTC())
 		if err != nil {
 			// Preserve the original observation even if product matching fails.
 			// This explicit gap can be retried by the controlled repair path.
 			clue = &discovery.IPProductClue{IP: o.IP, SensorID: o.Node, Site: o.Site, Domain: o.Domain, VLAN: o.VLAN, VRF: o.VRF,
-				ProductStatus: "evaluation_failed", Attribution: "response_ip", ObservedAt: o.ObservedAt, EventID: o.EventID,
+				ProductStatus: "evaluation_failed", Attribution: discovery.IPProductAttribution(o), ObservedAt: o.ObservedAt, EventID: o.EventID,
 				RawRef: o.Evidence.RawRef, EvaluationError: err.Error()}
 		}
 		o.ProductClue = clue

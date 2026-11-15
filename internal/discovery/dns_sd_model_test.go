@@ -22,6 +22,9 @@ func TestDNSSDModelFromTXT(t *testing.T) {
 		{"airplay", "deviceid=5a:62:cf:42:03:7a features=0x527FFFF7,0x1E srcvers=220.68 vv=2 model=AppleTV3,1 flags=0x4 pw=0", "AppleTV3,1"},
 		{"space separated", "model=MacBookPro18,3 flags=0x4", "MacBookPro18,3"},
 		{"value with spaces", "ty=HP LaserJet Pro features=x", "HP LaserJet Pro"},
+		{"raop metadata", "cn=0,1 md=0,1,2 am=AppleTV3,1 sf=0x44", "AppleTV3,1"},
+		{"raop metadata only", "md=0,1,2", ""},
+		{"raop mac model", "md=0,1,2 am=Mac15,12", "Mac15,12"},
 		{"empty", "", ""},
 	}
 	for _, tc := range cases {

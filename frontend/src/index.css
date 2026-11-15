@@ -5186,7 +5186,7 @@ pre.wrap-code {
 .discovery-list-actions .terminal-page-summary strong { font-size: 13px; }
 @media (max-width: 560px) {
   .discovery-overview-strip .discovery-overview-caption { display: none; }
-  .discovery-overview-strip .discovery-overview-types { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
+  .discovery-overview-strip .discovery-overview-types { flex-wrap: wrap; overflow-x: visible; }
   .discovery-overview-strip .discovery-overview-types > .ant-typography { flex-shrink: 0; }
   .discovery-overview-strip .discovery-overview-candidates { flex-wrap: wrap; overflow-x: visible; }
 }

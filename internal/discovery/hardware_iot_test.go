@@ -30,7 +30,7 @@ func TestHardwarePostgresIoTListMetadataExportAgree(t *testing.T) {
 	db := hardwareIntegrationDB(t)
 	ctx := context.Background()
 	at := time.Now().UTC().Add(-time.Minute)
-	names := []string{"door", "camera", "ap", "router", "printer_clue", "old_printer", "switch_product", "sensor_product", "wrong_product_scope"}
+	names := []string{"door", "camera", "ap", "router", "printer_clue", "old_printer", "switch_product", "sensor_product", "wrong_product_scope", "phone_product"}
 	for i, name := range names {
 		o := hardwareTestObservation(at)
 		o.ID = name
@@ -78,6 +78,10 @@ func TestHardwarePostgresIoTListMetadataExportAgree(t *testing.T) {
 				kind = "environment_monitor"
 			}
 			o.ProductClue = &IPProductClue{IP: o.IP, SensorID: o.Node, Site: o.Site, Domain: o.Domain, VLAN: o.VLAN, VRF: o.VRF, EventID: o.EventID, Type: kind, ProductStatus: "identified", ObservedAt: at, Attribution: "response_ip"}
+			if name == "phone_product" {
+				o.Origin = "sip"
+				o.ProductClue.Type, o.ProductClue.Attribution = "voip_phone", "request_ip"
+			}
 			if name == "wrong_product_scope" {
 				o.ProductClue.VLAN = "999"
 			}
@@ -106,17 +110,17 @@ func TestHardwarePostgresIoTListMetadataExportAgree(t *testing.T) {
 			t.Fatal(err)
 		}
 		items := page["items"].([]DeviceView)
-		if len(items) != 4 || meta.Total != 4 || meta.Identified != 2 || meta.Candidate != 2 {
+		if len(items) != 5 || meta.Total != 5 || meta.Identified != 2 || meta.Candidate != 3 {
 			t.Fatalf("q=%+v metadata=%+v items=%d", q, meta, len(items))
 		}
 	}
-	for _, kind := range []string{"access_point", "router", "switch", "environment_monitor"} {
+	for _, kind := range []string{"access_point", "router", "switch", "environment_monitor", "voip_phone"} {
 		q := DeviceQuery{Mode: "passive", DeviceType: kind}
 		meta, err := repo.DevicesIndexedMetadataSnapshot(ctx, tx, q)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if (kind == "switch" || kind == "environment_monitor") && (len(meta.IPProductTypes) != 1 || meta.IPProductTypes[0].Count != 1) {
+		if (kind == "switch" || kind == "environment_monitor" || kind == "voip_phone") && (len(meta.IPProductTypes) != 1 || meta.IPProductTypes[0].Count != 1) {
 			t.Fatalf("product clue counts lost: %+v", meta)
 		}
 		if meta.Total != 1 || meta.Identified != 0 {

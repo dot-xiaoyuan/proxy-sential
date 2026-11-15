@@ -94,11 +94,13 @@ func parseProductRules(data []byte) ([]productRule, error) {
 
 // dnsdModelKeys are the TXT keys that name a product or model. A firmware or
 // capability announcement must never become a model.
-var dnsdModelKeys = regexp.MustCompile(`(?i)\s+(model|md|product|ty|usb_mdl)\s*=`)
+var dnsdModelKeys = regexp.MustCompile(`(?i)\s+(model|am|md|product|ty|usb_mdl)\s*=`)
 
 // nextTXTKey marks where a value ends and the following key begins. A value may
 // contain spaces (printer models do), so only a token that looks like
 // " key=" terminates it.
+var numericTXTCapabilities = regexp.MustCompile(`^[0-9]+(?:,[0-9]+)*$`)
+
 var nextTXTKey = regexp.MustCompile(`\s+[a-z][a-z0-9_]*\s*=`)
 
 // DNSSDModelFromTXT returns the first product/model value advertised in a
@@ -112,11 +114,16 @@ func DNSSDModelFromTXT(text string) string {
 			continue
 		}
 		switch strings.ToLower(strings.TrimSpace(key)) {
-		case "model", "md", "product", "ty", "usb_mdl":
+		case "model", "am", "md", "product", "ty", "usb_mdl":
 			if cut := nextTXTKey.FindStringIndex(value); cut != nil {
 				value = value[:cut[0]]
 			}
 			model := cleanDescriptionText(strings.TrimSpace(strings.Trim(strings.TrimSpace(value), "()")))
+			// RAOP md is a metadata capability list; am is its model. Keep
+			// Chromecast's textual md while rejecting numeric capability lists.
+			if strings.EqualFold(strings.TrimSpace(key), "md") && numericTXTCapabilities.MatchString(model) {
+				continue
+			}
 			if model != "" {
 				return model
 			}
@@ -141,16 +148,7 @@ func applyProductRules(o *Observation) {
 	}
 	if o.Origin == "dns_sd" {
 		txt := protocolText(p["txt"])
-		for _, entry := range strings.FieldsFunc(txt, func(r rune) bool { return r == ';' || r == '\n' }) {
-			key, value, ok := strings.Cut(entry, "=")
-			if !ok {
-				continue
-			}
-			switch strings.ToLower(strings.TrimSpace(key)) {
-			case "model", "md", "product", "ty", "usb_mdl":
-				fields = append(fields, value)
-			}
-		}
+		fields = append(fields, DNSSDModelFromTXT(txt))
 		if o.ModelName == "" {
 			o.ModelName = DNSSDModelFromTXT(txt)
 		}

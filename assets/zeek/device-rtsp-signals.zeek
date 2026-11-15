@@ -1,3 +1,4 @@
+@load ./device-capture-scope
 # RTSP device evidence: Zeek parses RTSP as HTTP on the camera ports; this
 # stream keeps only the client User-Agent and responder Server headers.
 @load base/protocols/http
@@ -9,6 +10,7 @@ export {
 
     type RTSPDeviceInfo: record {
         ts: time &log;
+        capture_vlan: string &log &optional;
         uid: string &log;
         src_h: addr &log;
         src_p: port &log;
@@ -56,7 +58,7 @@ event http_header(c: connection, is_orig: bool, name: string, value: string) &pr
         direction = "server";
     if ( direction == "" )
         return;
-    local info = ProxySentinel::RTSPDeviceInfo($ts=network_time(), $uid=c$uid,
+    local info = ProxySentinel::RTSPDeviceInfo($ts=network_time(), $capture_vlan=ProxySentinel::device_capture_vlan(c), $uid=c$uid,
         $src_h=c$id$orig_h, $src_p=c$id$orig_p, $dst_h=c$id$resp_h, $dst_p=c$id$resp_p,
         $direction=direction, $value=value);
     if ( c$uid in rtsp_methods )

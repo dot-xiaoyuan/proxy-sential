@@ -1,3 +1,4 @@
+@load ./device-capture-scope
 # HTTP response evidence for device identification: the Server header of a
 # response served by a LAN device (printer/router/camera web UI) and the first
 # HTML <title>. Only the response side is logged; the request is linked by the
@@ -8,6 +9,8 @@ export {
     redef enum Log::ID += { LOG_HTTP_DEVICE };
     type HTTPDeviceInfo: record {
         ts: time &log;
+        capture_vlan: string &log &optional;
+        uid: string &log;
         orig_h: addr &log;
         resp_h: addr &log;
         host: string &log &optional;
@@ -89,7 +92,7 @@ event http_message_done(c: connection, is_orig: bool, stat: http_message_stat)
     {
     if ( is_orig )
         return;
-    local item = HTTPDeviceInfo($ts=network_time(), $orig_h=c$id$orig_h, $resp_h=c$id$resp_h);
+    local item = HTTPDeviceInfo($ts=network_time(), $capture_vlan=ProxySentinel::device_capture_vlan(c), $uid=c$uid, $orig_h=c$id$orig_h, $resp_h=c$id$resp_h);
     if ( c?$http )
         {
         if ( c$http?$host )

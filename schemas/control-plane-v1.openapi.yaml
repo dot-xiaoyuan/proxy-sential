@@ -8793,7 +8793,7 @@ components:
         manufacturer: { type: string }
         model: { type: string }
         product_status: { type: string }
-        attribution: { type: string, enum: [response_ip] }
+        attribution: { type: string, enum: [response_ip, request_ip] }
         observed_at: { type: string, format: date-time }
         event_id: { type: string }
         rule_version: { type: string }

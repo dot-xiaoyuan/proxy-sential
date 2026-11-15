@@ -8346,7 +8346,7 @@ export interface components {
             model?: string;
             product_status: string;
             /** @enum {string} */
-            attribution: "response_ip";
+            attribution: "response_ip" | "request_ip";
             /** Format: date-time */
             observed_at: string;
             event_id: string;

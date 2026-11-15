@@ -1,3 +1,4 @@
+@load ./device-capture-scope
 @load ./device-dhcp
 @load ./device-sip-signals
 @load ./device-rtsp-signals
@@ -11,6 +12,7 @@ export {
     redef enum Log::ID += { LOG_MDNS, LOG_NBNS, LOG_LLMNR };
     type Info: record {
         ts: time &log;
+        capture_vlan: string &log &optional;
         src_ip: addr &log;
         dst_ip: addr &log;
         # Only set for a multicast answer when the responder's frame had L2 data.
@@ -44,7 +46,7 @@ event zeek_init()
 
 event dns_request(c: connection, msg: dns_msg, query: string, qtype: count, qclass: count)
     {
-    local item = Info($ts=network_time(), $src_ip=c$id$orig_h, $dst_ip=c$id$resp_h, $query=query);
+    local item = Info($ts=network_time(), $capture_vlan=ProxySentinel::device_capture_vlan(c), $src_ip=c$id$orig_h, $dst_ip=c$id$resp_h, $query=query);
     if ( c$id$resp_p == 5353/udp )
         Log::write(LOG_MDNS, item);
     else if ( c$id$resp_p == 137/udp )
@@ -77,7 +79,7 @@ function mdns_multicast_response_mac(c: connection): string
 function log_mdns_address(c: connection, msg: dns_msg, ans: dns_answer, a: addr, kind: string)
     {
     if ( ! msg$QR || (c$id$resp_p != 5353/udp && c$id$orig_p != 5353/udp) ) return;
-    Log::write(LOG_MDNS, [$ts=network_time(), $src_ip=mdns_response_source(c), $dst_ip=mdns_response_destination(c),
+    Log::write(LOG_MDNS, [$ts=network_time(), $capture_vlan=ProxySentinel::device_capture_vlan(c), $src_ip=mdns_response_source(c), $dst_ip=mdns_response_destination(c),
         $is_response=T, $record_type=kind, $record_name=ans$query,
         $record_address=a, $record_ttl=double_to_count(interval_to_double(ans$TTL)),
         $src_mac=mdns_multicast_response_mac(c)]);
@@ -89,21 +91,21 @@ event dns_AAAA_reply(c: connection, msg: dns_msg, ans: dns_answer, a: addr)
 event dns_SRV_reply(c: connection, msg: dns_msg, ans: dns_answer, target: string, priority: count, weight: count, p: count)
     {
     if ( ! msg$QR || (c$id$resp_p != 5353/udp && c$id$orig_p != 5353/udp) ) return;
-    Log::write(LOG_MDNS, [$ts=network_time(), $src_ip=mdns_response_source(c), $dst_ip=mdns_response_destination(c),
+    Log::write(LOG_MDNS, [$ts=network_time(), $capture_vlan=ProxySentinel::device_capture_vlan(c), $src_ip=mdns_response_source(c), $dst_ip=mdns_response_destination(c),
         $is_response=T, $record_type="SRV", $record_name=ans$query, $service_target=target,
         $record_ttl=double_to_count(interval_to_double(ans$TTL)), $src_mac=mdns_multicast_response_mac(c)]);
     }
 event dns_PTR_reply(c: connection, msg: dns_msg, ans: dns_answer, name: string)
     {
     if ( ! msg$QR || (c$id$resp_p != 5353/udp && c$id$orig_p != 5353/udp) ) return;
-    Log::write(LOG_MDNS, [$ts=network_time(), $src_ip=mdns_response_source(c), $dst_ip=mdns_response_destination(c),
+    Log::write(LOG_MDNS, [$ts=network_time(), $capture_vlan=ProxySentinel::device_capture_vlan(c), $src_ip=mdns_response_source(c), $dst_ip=mdns_response_destination(c),
         $is_response=T, $record_type="PTR", $record_name=ans$query, $service_target=name,
         $record_ttl=double_to_count(interval_to_double(ans$TTL)), $src_mac=mdns_multicast_response_mac(c)]);
     }
 event dns_TXT_reply(c: connection, msg: dns_msg, ans: dns_answer, txt: string_vec)
     {
     if ( ! msg$QR || (c$id$resp_p != 5353/udp && c$id$orig_p != 5353/udp) ) return;
-    Log::write(LOG_MDNS, [$ts=network_time(), $src_ip=mdns_response_source(c), $dst_ip=mdns_response_destination(c),
+    Log::write(LOG_MDNS, [$ts=network_time(), $capture_vlan=ProxySentinel::device_capture_vlan(c), $src_ip=mdns_response_source(c), $dst_ip=mdns_response_destination(c),
         $is_response=T, $record_type="TXT", $record_name=ans$query, $record_text=join_string_vec(txt, " "),
         $record_ttl=double_to_count(interval_to_double(ans$TTL)), $src_mac=mdns_multicast_response_mac(c)]);
     }

@@ -173,13 +173,22 @@ func dhcpACKProductModel(o Observation) string {
 // HardwareFactFromObservation never promotes legacy classifications: it adapts
 // the attributed original product fields and lets the unified catalog decide.
 func HardwareFactFromObservation(o Observation) (*HardwareFact, error) {
+	// Older SIP adapters hashed an empty record. Such an ID cannot identify
+	// the source evidence; only a replay of the verified original may fix it.
+	if o.Origin == "sip" && o.EventID == "zeek-e3b0c44298fc1c149afbf4c8" {
+		return nil, nil
+	}
 	mac, err := net.ParseMAC(o.MAC)
 	if err != nil || len(mac) != 6 || mac[0]&1 != 0 || mac.String() == "00:00:00:00:00:00" || o.Node == "" || o.Site == "" || o.Domain == "" || o.ObservedAt.IsZero() || !hardwareDirectOwnership(o) {
 		return nil, nil
 	}
 	p := o.Evidence.Payload
 	switch o.Origin {
-	case "snmp", "bacnet", "modbus", "ssdp", "ws_discovery", "ipp", "onvif", "rtsp", "http_device":
+	case "ssdp", "ws_discovery":
+		if p["is_response"] != true && p["is_announcement"] != true {
+			return nil, nil
+		}
+	case "snmp", "bacnet", "modbus", "ipp", "onvif", "rtsp", "http_device":
 		if p["is_response"] != true {
 			return nil, nil
 		}
@@ -253,10 +262,16 @@ func hardwareObservationSignals(o Observation) ([]StoredHardwareSignal, error) {
 		fields["http_server"] = str(p, "server")
 		fields["http_title"] = str(p, "title")
 	case "sip":
-		fields["sip_server"] = str(p, "server")
+		if o.IP == str(o.Evidence.Flow, "src_ip") && (str(p, "attribution_side") == "client" || str(o.Evidence.Flow, "direction") == "client") {
+			fields["sip_user_agent"] = str(p, "user_agent")
+		}
+		if o.IP == str(o.Evidence.Flow, "dst_ip") && (str(p, "attribution_side") == "server" || str(o.Evidence.Flow, "direction") == "server") {
+			fields["sip_server"] = str(p, "server")
+		}
 	case "tls_device":
 		fields["tls_subject"] = str(p, "certificate_subject")
 		fields["tls_issuer"] = str(p, "certificate_issuer")
+		fields["tls_san"] = str(p, "certificate_san")
 	}
 	signals := []StoredHardwareSignal{}
 	keys := make([]string, 0, len(fields))
@@ -295,7 +310,9 @@ func (f HardwareFact) Evidence() []fingerprint.EvidenceSignal {
 			protocol = "tls"
 		}
 		switch s.Field {
-		case "http_server", "http_title", "sip_server", "tls_subject", "tls_issuer":
+		case "sip_user_agent":
+			direction = "client"
+		case "http_server", "http_title", "sip_server", "tls_subject", "tls_issuer", "tls_san":
 			direction = "server"
 		}
 		out = append(out, fingerprint.EvidenceSignal{Protocol: protocol, Field: s.Field, Value: s.Value, Direction: direction, Association: "direct", SourceFamily: s.Protocol, EventID: f.EvidenceID, ObservedAt: f.ObservedAt})
