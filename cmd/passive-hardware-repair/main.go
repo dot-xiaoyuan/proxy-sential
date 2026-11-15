@@ -1,6 +1,7 @@
 // passive-hardware-repair is an explicit one-off retained-latest repair. It
 // never installs an application, changes gates, advances the bootstrap cursor,
-// modifies source observations, or claims to recover overwritten/late history.
+// modifies immutable source observations, or claims to recover overwritten history.
+// Verified DHCP correction also updates the derived latest index atomically.
 package main
 
 import (
@@ -159,7 +160,9 @@ func validateCheckpoint(s repairCheckpoint, m store.HardwareRepairManifest) erro
 	return nil
 }
 func run(ctx context.Context) error {
-	mode := flag.String("mode", "", "snapshot (read-only) or apply (facts/dirty only)")
+	mode := flag.String("mode", "", "snapshot, prepare-dhcp (local proof validation), or apply")
+	sourceManifest := flag.String("source-manifest", "", "frozen snapshot input for prepare-dhcp")
+	dhcpRecords := flag.String("dhcp-records", "", "bounded original Zeek record proofs for prepare-dhcp")
 	sensor := flag.String("sensor", "", "exact sensor for snapshot")
 	from := flag.String("from", "", "inclusive event-time RFC3339")
 	until := flag.String("until", "", "exclusive event-time RFC3339")
@@ -168,8 +171,11 @@ func run(ctx context.Context) error {
 	batch := flag.Int("batch-size", 25, "apply batch rows, 1..50")
 	pause := flag.Duration("pause", 500*time.Millisecond, "minimum pause between batches, at least 250ms")
 	flag.Parse()
-	if (*mode != "snapshot" && *mode != "apply") || *manifestPath == "" || *batch < 1 || *batch > 50 || *pause < 250*time.Millisecond {
+	if (*mode != "snapshot" && *mode != "apply" && *mode != "prepare-dhcp") || *manifestPath == "" || *batch < 1 || *batch > 50 || *pause < 250*time.Millisecond {
 		return fmt.Errorf("specify mode, manifest and bounded batch/pause")
+	}
+	if *mode == "prepare-dhcp" {
+		return prepareDHCPRecovery(*sourceManifest, *dhcpRecords, *manifestPath)
 	}
 	dsn := os.Getenv("PROXY_SENTINEL_POSTGRES_DSN")
 	if dsn == "" {

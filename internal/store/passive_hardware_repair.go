@@ -47,6 +47,7 @@ type HardwareRepairEntry struct {
 	InputSHA256    string                 `json:"input_sha256,omitempty"`
 	ExcludedReason string                 `json:"excluded_reason,omitempty"`
 	Observation    *discovery.Observation `json:"observation,omitempty"`
+	DHCPRecovery   *HardwareDHCPRecovery  `json:"dhcp_recovery,omitempty"`
 }
 type HardwareRepairOutcome struct {
 	Index         int    `json:"index"`
@@ -101,6 +102,9 @@ func (m HardwareRepairManifest) Validate() error {
 		}
 		seen[e.Key] = true
 		if e.Observation == nil {
+			if e.DHCPRecovery != nil {
+				return fmt.Errorf("recovery requires a frozen observation")
+			}
 			if e.ExcludedReason == "" {
 				return fmt.Errorf("frozen entry has neither input nor exclusion")
 			}
@@ -110,6 +114,11 @@ func (m HardwareRepairManifest) Validate() error {
 		b, err := json.Marshal(o)
 		if err != nil || len(b) > HardwareRepairMaxRowBytes || repairHash(b) != e.InputSHA256 || o.Node != m.Window.Sensor || o.SourceID != e.Key[1] || o.Origin != e.Key[2] || o.ID != e.ObservationID || o.EventID != e.EventID || !o.ObservedAt.Equal(e.ObservedAt) || o.EventID == "" || len(o.Evidence.RawRef) == 0 || e.ExcludedReason != "" {
 			return fmt.Errorf("frozen source input changed or exceeds bound")
+		}
+		if e.DHCPRecovery != nil {
+			if _, err := RecoverHardwareDHCPObservation(*o, *e.DHCPRecovery); err != nil {
+				return err
+			}
 		}
 		expected := makeHardwareRepairEntry(e.Key, b, *o)
 		if expected.ExcludedReason != "" {
@@ -245,6 +254,23 @@ func ApplyHardwareRepairBatch(ctx context.Context, db HardwareRepairTxStarter, m
 		r := HardwareRepairOutcome{Index: index, ObservationID: e.ObservationID, EventID: e.EventID, SourceSHA256: e.SourceSHA256, Status: "excluded", Reason: e.ExcludedReason}
 		if e.Observation != nil {
 			o := *e.Observation
+			if e.DHCPRecovery != nil {
+				restored, recoveryErr := RecoverHardwareDHCPObservation(o, *e.DHCPRecovery)
+				if recoveryErr != nil {
+					return nil, recoveryErr
+				}
+				accepted, reason, recoveryErr := applyHardwareDHCPCorrection(work, tx, e, restored)
+				if recoveryErr != nil {
+					return nil, recoveryErr
+				}
+				if !accepted {
+					r.Reason = reason
+					outcomes = append(outcomes, r)
+					continue
+				}
+				o = restored
+				r.Reason = reason
+			}
 			o, err = resolveHardwareOwnership(work, tx, o)
 			if err != nil {
 				return nil, err
@@ -257,7 +283,9 @@ func ApplyHardwareRepairBatch(ctx context.Context, db HardwareRepairTxStarter, m
 				r.Reason = "identity_or_protocol_not_verified"
 			} else {
 				r.Status = "admitted"
-				r.Reason = "enqueued_or_already_present"
+				if r.Reason == "" {
+					r.Reason = "enqueued_or_already_present"
+				}
 				r.IdentityKey = f.IdentityKey
 				r.FactKey = f.FactKey
 				observations = append(observations, o)
