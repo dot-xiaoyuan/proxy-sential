@@ -13,6 +13,7 @@ import (
 	"net/netip"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,6 +42,7 @@ type ethernetFrame struct {
 	source, destination [6]byte
 	etherType           uint16
 	vlan                int
+	vlanScope           string
 	payload             []byte
 }
 
@@ -53,16 +55,20 @@ func parseEthernetFrame(frame []byte) (ethernetFrame, bool) {
 	copy(result.source[:], frame[6:12])
 	result.etherType = binary.BigEndian.Uint16(frame[12:14])
 	offset := 14
+	tags := []string{}
 	for result.etherType == 0x8100 || result.etherType == 0x88a8 {
-		if len(frame) < offset+4 {
+		if len(frame) < offset+4 || len(tags) == 2 {
 			return ethernetFrame{}, false
 		}
-		if result.vlan == 0 {
-			result.vlan = int(binary.BigEndian.Uint16(frame[offset:offset+2]) & 0x0fff)
+		vid := int(binary.BigEndian.Uint16(frame[offset:offset+2]) & 0x0fff)
+		if len(tags) == 0 {
+			result.vlan = vid
 		}
+		tags = append(tags, strconv.Itoa(vid))
 		result.etherType = binary.BigEndian.Uint16(frame[offset+2 : offset+4])
 		offset += 4
 	}
+	result.vlanScope = strings.Join(tags, "/")
 	result.payload = frame[offset:]
 	return result, true
 }
@@ -255,8 +261,8 @@ func parseIEEE1905(ethernet ethernetFrame) []controlSignal {
 	if vendorOUI != "" {
 		base["vendor_oui"] = vendorOUI
 	}
-	if ethernet.vlan > 0 {
-		base["vlan"] = ethernet.vlan
+	if ethernet.vlanScope != "" {
+		base["vlan"] = ethernet.vlanScope
 	}
 	signals := []controlSignal{}
 	if messageType == 0x0000 {
@@ -320,10 +326,14 @@ func parseIEEE1905AssociatedClients(value []byte) ([]ieee1905ClientAssociation, 
 }
 
 func baseControlSignal(kind string, ethernet ethernetFrame, ip, destination string) controlSignal {
+	payload := map[string]any{"origin": kind}
+	if ethernet.vlanScope != "" {
+		payload["vlan"] = ethernet.vlanScope
+	}
 	return controlSignal{
 		Kind: kind, IP: ip, Destination: destination,
 		MAC: net.HardwareAddr(ethernet.source[:]).String(), VLAN: ethernet.vlan,
-		Payload: map[string]any{"origin": kind},
+		Payload: payload,
 	}
 }
 
@@ -361,11 +371,8 @@ func parseLLDP(ethernet ethernetFrame) (controlSignal, bool) {
 			}
 		}
 	}
-	if len(signal.Payload) == 1 {
+	if len(signal.Payload) == 1 || len(signal.Payload) == 2 && signal.Payload["vlan"] != nil {
 		return controlSignal{}, false
-	}
-	if signal.VLAN > 0 {
-		signal.Payload["vlan"] = signal.VLAN
 	}
 	return signal, true
 }
@@ -456,11 +463,8 @@ func parseCDP(ethernet ethernetFrame) (controlSignal, bool) {
 			setPrintable(signal.Payload, "platform", value)
 		}
 	}
-	if len(signal.Payload) == 1 {
+	if len(signal.Payload) == 1 || len(signal.Payload) == 2 && signal.Payload["vlan"] != nil {
 		return controlSignal{}, false
-	}
-	if signal.VLAN > 0 {
-		signal.Payload["vlan"] = signal.VLAN
 	}
 	return signal, true
 }
@@ -479,9 +483,6 @@ func parseVRRP(ethernet ethernetFrame, source, destination string, payload []byt
 	} else {
 		signal.Payload["state"] = "advertisement"
 	}
-	if signal.VLAN > 0 {
-		signal.Payload["vlan"] = signal.VLAN
-	}
 	return signal, true
 }
 
@@ -499,9 +500,6 @@ func parseHSRP(ethernet ethernetFrame, source, destination string, sourcePort, d
 	signal.Payload["opcode"] = int(payload[1])
 	signal.Payload["state"] = int(payload[2])
 	signal.Payload["group"] = int(payload[6])
-	if signal.VLAN > 0 {
-		signal.Payload["vlan"] = signal.VLAN
-	}
 	return signal, true
 }
 
@@ -539,11 +537,8 @@ func parseSSDP(ethernet ethernetFrame, source, destination string, payload []byt
 			}
 		}
 	}
-	if len(signal.Payload) == 1 {
+	if len(signal.Payload) == 1 || len(signal.Payload) == 2 && signal.Payload["vlan"] != nil {
 		return controlSignal{}, false
-	}
-	if signal.VLAN > 0 {
-		signal.Payload["vlan"] = signal.VLAN
 	}
 	return signal, true
 }
@@ -803,8 +798,5 @@ func parseSADP(ethernet ethernetFrame, source, destination string, payload []byt
 	signal.Payload["is_response"] = true
 	signal.Payload["payload_sha256"] = hex.EncodeToString(digest[:])
 	signal.Payload["ttl"] = 1800
-	if signal.VLAN > 0 {
-		signal.Payload["vlan"] = signal.VLAN
-	}
 	return signal, true
 }

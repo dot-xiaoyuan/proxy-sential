@@ -20,7 +20,7 @@ type sadpFragmentKey struct {
 	source, destination [4]byte
 	id                  uint16
 	mac                 [6]byte
-	vlan                int
+	vlan                string
 }
 
 type sadpAssembly struct {
@@ -57,7 +57,7 @@ func (b *captureBucket) acceptSADPFragment(frame []byte) ([]controlSignal, bool)
 	copy(key.source[:], ip[12:16])
 	copy(key.destination[:], ip[16:20])
 	key.id = binary.BigEndian.Uint16(ip[4:6])
-	key.mac, key.vlan = ethernet.source, ethernet.vlan
+	key.mac, key.vlan = ethernet.source, ethernet.vlanScope
 	now := time.Now()
 	if now.Sub(b.lastSADPFragmentSweep) >= time.Second {
 		for pending, assembly := range b.sadpFragments {

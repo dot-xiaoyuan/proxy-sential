@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 type Options struct {
@@ -89,6 +91,13 @@ func Run(ctx context.Context, opts Options) error {
 		return fmt.Errorf("open AF_PACKET socket: %w", err)
 	}
 	defer syscall.Close(fd)
+	// Discovery bindings must retain the same VLAN scope as Zeek/libpcap.
+	// Keep the separate shared-access and handshake collectors unchanged.
+	if opts.RouterProtocolsOnly {
+		if err := unix.SetsockoptInt(fd, unix.SOL_PACKET, unix.PACKET_AUXDATA, 1); err != nil {
+			return fmt.Errorf("enable discovery VLAN metadata: %w", err)
+		}
+	}
 	if err := syscall.Bind(fd, &syscall.SockaddrLinklayer{Protocol: htons(0x0003), Ifindex: iface.Index}); err != nil {
 		return fmt.Errorf("bind %s: %w", opts.Interface, err)
 	}
@@ -190,13 +199,22 @@ func Run(ctx context.Context, opts Options) error {
 	ticker := time.NewTicker(opts.Bucket)
 	defer ticker.Stop()
 	buffer := make([]byte, 65536)
+	ancillary := make([]byte, unix.CmsgSpace(20))
+	restoredBuffer := make([]byte, len(buffer)+4)
+	droppedScopeFrames := 0
 	for {
 		processed := 0
 		// A saturated mirror interface may always have another frame ready.
 		// Bound each receive burst so the bucket ticker cannot be starved and
 		// observations do not grow in memory indefinitely.
 		for processed < 4096 {
-			n, _, recvErr := syscall.Recvfrom(fd, buffer, 0)
+			var n, oobn, flags int
+			var recvErr error
+			if opts.RouterProtocolsOnly {
+				n, oobn, flags, _, recvErr = unix.Recvmsg(fd, buffer, ancillary, 0)
+			} else {
+				n, _, recvErr = syscall.Recvfrom(fd, buffer, 0)
+			}
 			if recvErr == syscall.EAGAIN || recvErr == syscall.EWOULDBLOCK {
 				break
 			}
@@ -204,7 +222,19 @@ func Run(ctx context.Context, opts Options) error {
 				return recvErr
 			}
 			processed++
-			state.addFrame(buffer[:n], opts.CaptureScope)
+			if flags&(unix.MSG_CTRUNC|unix.MSG_TRUNC) != 0 || n > len(buffer) {
+				droppedScopeFrames++
+				continue
+			}
+			frame := buffer[:n]
+			if opts.RouterProtocolsOnly {
+				frame, recvErr = restoreControlVLAN(frame, ancillary[:oobn], restoredBuffer)
+				if recvErr != nil {
+					droppedScopeFrames++
+					continue
+				}
+			}
+			state.addFrame(frame, opts.CaptureScope)
 		}
 		select {
 		case <-ctx.Done():
@@ -219,6 +249,10 @@ func Run(ctx context.Context, opts Options) error {
 			}
 			return flushControls(bucket, state.controls)
 		case now := <-ticker.C:
+			if droppedScopeFrames > 0 {
+				log.Printf("device discovery dropped truncated frames or invalid VLAN metadata: count=%d", droppedScopeFrames)
+				droppedScopeFrames = 0
+			}
 			if state.droppedPacketKeys > 0 {
 				log.Printf("device signal bucket reached key limit; dropped_new_keys=%d limit=%d", state.droppedPacketKeys, maxPacketBucketKeys)
 			}
