@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -102,6 +104,9 @@ func hardwareHash(v any) string {
 }
 
 func hardwareDirectOwnership(o Observation) bool {
+	if str(o.Evidence.Observer, "capture_scope_issue") != "" {
+		return false
+	}
 	p := o.Evidence.Payload
 	for _, key := range []string{"vlan", "vrf"} {
 		a, b := str(p, key), str(o.Evidence.Subject, key)
@@ -112,7 +117,7 @@ func hardwareDirectOwnership(o Observation) bool {
 	if p["endpoint_identity_unverified"] == true {
 		return false
 	}
-	if str(p, "hardware_identity") == "unique_binding" {
+	if str(p, "hardware_identity") == "unique_binding" && o.MAC != "" {
 		return true
 	}
 	switch o.Origin {
@@ -126,14 +131,48 @@ func hardwareDirectOwnership(o Observation) bool {
 	return false
 }
 
+// MarkUnattributedSNMPClue keeps saved product evidence available when the
+// response cannot establish a hardware identity in its capture scope.
+func (o *Observation) MarkUnattributedSNMPClue() {
+	if o.Origin != "snmp" {
+		return
+	}
+	p := o.Evidence.Payload
+	if p["is_response"] == true && o.IP != "" && str(p, "response_source_ip") == o.IP &&
+		o.Node != "" && o.Site != "" && o.Domain != "" && canonicalEndpointMAC("mac:"+strings.ToLower(o.MAC)) != "" &&
+		hardwareDirectOwnership(*o) {
+		return
+	}
+	o.Confidence = "clue"
+	o.DeviceType = ""
+	o.Explanation = "SNMP 产品信息，设备归属待核实"
+}
+
+var dhcpProductClass = regexp.MustCompile(`(?i)^(?:H3C\. H3C (WA[0-9][A-Z0-9-]{1,30})|HUAWEI:router:((?:AX|WS)[0-9][A-Z0-9-]{1,30}):[0-9A-Z.:_-]{1,40})$`)
+
+func dhcpACKProductModel(o Observation) string {
+	p := o.Evidence.Payload
+	if o.Withdrawn || !o.ValidUntil.After(o.ObservedAt) || o.IP == "" ||
+		o.IP != str(p, "assigned_addr") || p["discovery_scope_conflict"] == true || p["request_only"] == true {
+		return ""
+	}
+	if vlan := str(p, "dhcp_capture_vlan"); vlan != "" && vlan != o.VLAN {
+		return ""
+	}
+	actions := strings.FieldsFunc(strings.ToUpper(str(p, "msg_types")), func(r rune) bool { return r == ',' || r == ' ' })
+	if !slices.Contains(actions, "ACK") || slices.Contains(actions, "NAK") || slices.Contains(actions, "RELEASE") {
+		return ""
+	}
+	match := dhcpProductClass.FindStringSubmatch(strings.TrimSpace(str(p, "vendor_class")))
+	if match == nil {
+		return ""
+	}
+	return strings.ToUpper(firstText(match[1], match[2]))
+}
+
 // HardwareFactFromObservation never promotes legacy classifications: it adapts
 // the attributed original product fields and lets the unified catalog decide.
 func HardwareFactFromObservation(o Observation) (*HardwareFact, error) {
-	// Explicit scope failures must not become trusted hardware through a
-	// legacy display-site fallback. The source event remains unchanged.
-	if str(o.Evidence.Observer, "capture_scope_issue") != "" {
-		return nil, nil
-	}
 	mac, err := net.ParseMAC(o.MAC)
 	if err != nil || len(mac) != 6 || mac[0]&1 != 0 || mac.String() == "00:00:00:00:00:00" || o.Node == "" || o.Site == "" || o.Domain == "" || o.ObservedAt.IsZero() || !hardwareDirectOwnership(o) {
 		return nil, nil
@@ -150,6 +189,8 @@ func HardwareFactFromObservation(o Observation) (*HardwareFact, error) {
 	f.ClaimKey = hardwareHash([]string{o.SourceID, o.Origin, str(p, "service_instance"), str(p, "usn"), str(p, "bacnet_device_id"), str(p, "modbus_unit_id")})
 	fields := map[string]string{}
 	switch o.Origin {
+	case "dhcp":
+		fields["dhcp_product_model"] = dhcpACKProductModel(o)
 	case "sadp":
 		fields["sadp_model"] = str(p, "product_model")
 	case "dns_sd":

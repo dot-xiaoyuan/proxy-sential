@@ -1,12 +1,15 @@
 package store
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"proxy-sentinel/internal/adapter/zeek"
 	"proxy-sentinel/internal/discovery"
 	"proxy-sentinel/internal/normalized"
 
@@ -198,6 +201,44 @@ func TestPassiveDiscoveryRequiresDHCPACK(t *testing.T) {
 	}
 }
 
+func TestPassiveDHCPModelReplayKeepsCaptureVLAN(t *testing.T) {
+	const raw = `{"ts":1794710000.0,"uid":"sample","capture_vlan":"2702/15","mac":"00:11:22:33:44:55","assigned_addr":"192.168.0.63","lease_time":"3600","msg_types":"REQUEST,ACK","vendor_class":"H3C. H3C WA5320H"}`
+	var output bytes.Buffer
+	if _, err := zeek.Convert(strings.NewReader(raw+"\n"), &output, zeek.Options{SensorID: "sensor", LogKind: "dhcp"}); err != nil {
+		t.Fatal(err)
+	}
+	var event normalized.Event
+	if err := json.NewDecoder(&output).Decode(&event); err != nil {
+		t.Fatal(err)
+	}
+	if event.Subject["vlan"] != "2702/15" {
+		t.Fatalf("standard subject lost the captured VLAN: %+v", event.Subject)
+	}
+	// The passive stream rebuilds the subject from its compact columns.
+	delete(event.Subject, "vlan")
+	event.Observer["interface"] = "mirror"
+	scope, _ := parsePassiveDiscoveryScope("192.168.0.0/24")
+	t.Setenv("PROXY_SENTINEL_HARDWARE_V2", "false")
+	t.Setenv("PROXY_SENTINEL_HARDWARE_SHADOW", "false")
+	legacy, reason := passiveObservation(event, scope)
+	if reason != "" || legacy.VLAN != "" || legacy.DeviceType != "" {
+		t.Fatalf("legacy DHCP discovery changed: reason=%q observation=%+v", reason, legacy)
+	}
+	t.Setenv("PROXY_SENTINEL_HARDWARE_V2", "true")
+	o, reason := passiveObservation(event, scope)
+	if reason != "" || o.VLAN != "2702/15" {
+		t.Fatalf("DHCP VLAN lost after compact projection: reason=%q observation=%+v", reason, o)
+	}
+	fact, err := discovery.HardwareFactFromObservation(o)
+	if err != nil || fact == nil || fact.VLAN != o.VLAN {
+		t.Fatalf("fact=%+v err=%v", fact, err)
+	}
+	state, err := discovery.EvaluateHardwareFacts([]discovery.HardwareFact{*fact}, nil, o.ObservedAt.Add(time.Minute))
+	if err != nil || state.HardwareType != "access_point" || state.HardwareModel != "WA5320H" {
+		t.Fatalf("state=%+v err=%v", state, err)
+	}
+}
+
 func TestPassiveDiscoveryRetainsOriginalNormalizedDeviceName(t *testing.T) {
 	scope, _ := parsePassiveDiscoveryScope("192.168.0.0/24")
 	event := passiveTestEvent("dhcp", "192.168.0.6", "50:2b:73:d9:70:34", map[string]any{
@@ -238,6 +279,24 @@ func TestPassiveDiscoveryProtocolClassification(t *testing.T) {
 				t.Fatalf("capabilities=%v", observation.Capabilities)
 			}
 		})
+	}
+}
+
+func TestPassiveDiscoveryARPRequestKeepsOnlySenderAddressEvidence(t *testing.T) {
+	scope, _ := parsePassiveDiscoveryScope("10.161.0.0/16")
+	event := passiveTestEvent("arp", "10.161.11.1", "00:74:9c:26:98:61", map[string]any{"message": "request"})
+	event.Flow = map[string]any{"src_ip": "10.161.11.1", "dst_ip": "10.161.11.22"}
+	observation, reason := passiveObservation(event, scope)
+	if reason != "" || observation.IP != "10.161.11.1" || observation.DeviceType != "" ||
+		observation.Evidence.Flow["dst_ip"] != "10.161.11.22" {
+		t.Fatalf("ARP target must remain an inquiry in the sender's evidence: %s %+v", reason, observation)
+	}
+	older := observation
+	event.Subject["ip"] = "10.161.12.1"
+	event.Flow = map[string]any{"src_ip": "10.161.12.1", "dst_ip": "10.161.12.22"}
+	observation, reason = passiveObservation(event, scope)
+	if reason != "" || observation.ID == older.ID || observation.Key() != older.Key() {
+		t.Fatalf("shared sender MAC needs distinct address facts under one scoped identity: %s %+v", reason, observation)
 	}
 }
 

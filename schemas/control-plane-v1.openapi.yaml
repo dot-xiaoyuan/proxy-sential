@@ -8836,6 +8836,7 @@ components:
       required: [id, observations, category, identity_kind, capabilities, protocols, first_seen, last_seen, current, evidence_count]
       properties:
         hardware_type: { type: string, description: "可信作用域身份的持久硬件类型；服务 TTL 到期不清除" }
+        candidate_device_type: { type: string, description: A scoped candidate device type supported by a recent endpoint profile. This field does not confirm a hardware type. }
         hardware_type_status: { type: string, enum: [identified, candidate, conflict, revoked] }
         hardware_model: { type: string }
         hardware_model_status: { type: string }
@@ -8903,6 +8904,15 @@ components:
         types:
           type: array
           description: Counts by current identified device type only; candidate clues are included in candidate, not in this array.
+          items:
+            type: object
+            required: [device_type, count]
+            properties:
+              device_type: { type: string }
+              count: { type: integer, format: int64, minimum: 0 }
+        candidate_types:
+          type: array
+          description: Counts by current candidate type from endpoint profile clues.
           items:
             type: object
             required: [device_type, count]

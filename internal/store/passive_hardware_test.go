@@ -149,6 +149,54 @@ func TestHardwareOwnershipBatchUsesOneScopedQuery(t *testing.T) {
 	}
 }
 
+func TestSNMPProductResponseWithoutScopedOwnerRemainsTraceableClue(t *testing.T) {
+	t.Setenv("PROXY_SENTINEL_HARDWARE_V2", "true")
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	scope, _ := parsePassiveDiscoveryScope("10.131.253.0/24")
+	event := passiveTestEvent("snmp", "10.131.253.254", "", map[string]any{
+		"is_response": true, "response_source_ip": "10.131.253.254", "vlan": "4005",
+		"system_description": "Core Routing Switch", "system_object_id": "1.3.6.1.4.1.4881.1.1.10.1.607",
+	})
+	event.RawRef = map[string]any{"log": "snmp_device", "line_offset": 42}
+	observation, reason := passiveObservation(event, scope)
+	if reason != "" {
+		t.Fatal(reason)
+	}
+	mock.ExpectQuery("WITH incoming AS MATERIALIZED").WillReturnRows(sqlmock.NewRows([]string{"ordinal", "mac"}).AddRow(0, nil))
+	got, err := resolveHardwareOwnership(context.Background(), db, observation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Confidence != "clue" || got.DeviceType != "" || got.MAC != "" {
+		t.Fatalf("unattributed SNMP response promoted: confidence=%q type=%q mac=%q", got.Confidence, got.DeviceType, got.MAC)
+	}
+	if got.Evidence.EventID != event.EventID || got.Evidence.RawRef["log"] != "snmp_device" ||
+		got.Evidence.Payload["system_object_id"] != event.Payload["system_object_id"] || got.ModelName != observation.ModelName {
+		t.Fatalf("unattributed response lost evidence: %+v", got)
+	}
+	if fact, err := discovery.HardwareFactFromObservation(got); err != nil || fact != nil {
+		t.Fatalf("unattributed response produced hardware fact: %+v, %v", fact, err)
+	}
+
+	// A bounded replay can admit the original response once a valid binding is available.
+	mock.ExpectQuery("WITH incoming AS MATERIALIZED").WillReturnRows(sqlmock.NewRows([]string{"ordinal", "mac"}).AddRow(0, "00:11:22:33:44:55"))
+	resolved, err := resolveHardwareOwnership(context.Background(), db, got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fact, err := discovery.HardwareFactFromObservation(resolved)
+	if err != nil || fact == nil || fact.VLAN != "4005" || len(fact.Signals) != 2 {
+		t.Fatalf("same-scope replay lost SNMP product evidence: %+v, %v", fact, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestHardwareOwnershipBatchRejectsIncompleteResult(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

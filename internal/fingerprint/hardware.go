@@ -102,6 +102,7 @@ type hardwareModelRule struct {
 	Source       string   `json:"source"`
 	Version      string   `json:"version"`
 	Pattern      string   `json:"pattern"`
+	Field        string   `json:"field,omitempty"`
 	Type         string   `json:"type"`
 	Model        string   `json:"model"`
 	Manufacturer string   `json:"manufacturer"`
@@ -243,6 +244,9 @@ func ParseHardwareCatalog(data, provenance []byte, extra ...[]byte) (*HardwareCa
 		}
 		if err := verifyRaw(r.RawRef, r.RawSHA256); err != nil {
 			return nil, err
+		}
+		if r.Field != "" && r.Field != "dhcp_product_model" {
+			return nil, fmt.Errorf("model %s has unsupported model field %q", r.ID, r.Field)
 		}
 		add(r.Source, true)
 		var err error
@@ -496,6 +500,19 @@ func CanonicalHardwareType(value string) string {
 	return ""
 }
 
+func hardwareEvidenceDirection(s EvidenceSignal) (string, bool) {
+	switch s.Field {
+	case "dhcp_product_model":
+		return "device", s.Protocol == "dhcp"
+	case "sadp_model":
+		return "device", s.Protocol == "sadp"
+	case "snmp_oid_values":
+		return "device", s.Protocol == "snmp"
+	}
+	want, ok := physicalEvidenceFields[s.Field]
+	return want, ok && s.Protocol != "sadp" && evidenceProtocolAllowsField(s.Protocol, s.Field)
+}
+
 func hardwareEvidenceAccepted(s EvidenceSignal, now time.Time) bool {
 	if s.EventID == "" || s.ObservedAt.IsZero() || s.ObservedAt.After(now) || len(s.Value) > 65536 {
 		return false
@@ -503,14 +520,8 @@ func hardwareEvidenceAccepted(s EvidenceSignal, now time.Time) bool {
 	if s.Association != "direct" && s.Association != "mac" && s.Association != "unique_lease" && s.Association != "unique_stream_binding" {
 		return false
 	}
-	if s.Protocol == "sadp" {
-		return s.Field == "sadp_model" && s.Direction == "device" && len(s.Value) <= 512
-	}
-	if s.Field == "snmp_oid_values" {
-		return s.Protocol == "snmp" && s.Direction == "device"
-	}
-	want, ok := physicalEvidenceFields[s.Field]
-	return ok && s.Direction == want && evidenceProtocolAllowsField(s.Protocol, s.Field) && len(s.Value) <= 16384
+	want, ok := hardwareEvidenceDirection(s)
+	return ok && s.Direction == want && (s.Field == "snmp_oid_values" || len(s.Value) <= 16384)
 }
 
 func hardwareRejectedReason(s EvidenceSignal, now time.Time) string {
@@ -523,18 +534,8 @@ func hardwareRejectedReason(s EvidenceSignal, now time.Time) string {
 	if s.Association != "direct" && s.Association != "mac" && s.Association != "unique_lease" && s.Association != "unique_stream_binding" {
 		return "untrusted_association"
 	}
-	if s.Protocol == "sadp" {
-		if s.Field != "sadp_model" {
-			return "unsupported_protocol_field"
-		}
-		return "wrong_direction"
-	}
-	want, ok := physicalEvidenceFields[s.Field]
-	if s.Field == "snmp_oid_values" {
-		want = "device"
-		ok = s.Protocol == "snmp"
-	}
-	if !ok || !evidenceProtocolAllowsField(s.Protocol, s.Field) {
+	want, ok := hardwareEvidenceDirection(s)
+	if !ok {
 		return "unsupported_protocol_field"
 	}
 	if want != s.Direction {
@@ -666,6 +667,10 @@ func (h *HardwareCatalog) Evaluate(input HardwareInput, now time.Time) HardwareR
 		}
 		if hardwareModelField(s.Field) {
 			for _, r := range h.models {
+				// The DHCP model field only uses rules reviewed for a client self-report.
+				if r.Field != s.Field && (r.Field != "" || s.Field == "dhcp_product_model") {
+					continue
+				}
 				report := reports[r.Source]
 				report.InputAvailable++
 				reports[r.Source] = report
@@ -695,7 +700,7 @@ func (h *HardwareCatalog) Evaluate(input HardwareInput, now time.Time) HardwareR
 			kind := m.Values["hw.device"]
 			model := m.Values["hw.product"]
 			brand := m.Values["hw.vendor"]
-			// TLS issuer/subject, DHCP and shared vendor web servers do not prove chassis type.
+			// TLS certificates and generic DHCP classes only supply native matcher clues.
 			if strings.HasPrefix(s.Field, "tls_") || strings.HasPrefix(s.Field, "dhcp_") {
 				kind = ""
 				model = ""
@@ -765,7 +770,7 @@ func (h *HardwareCatalog) Evaluate(input HardwareInput, now time.Time) HardwareR
 			// An extracted hardware model uses the same reviewed model catalog.
 			if model != "" {
 				for _, mr := range h.models {
-					if mr.compiled.MatchString(model) {
+					if mr.Field == "" && mr.compiled.MatchString(model) {
 						record(mr.Source, mr.ID, mr.Version, mr.Type, model, mr.Manufacturer, s, nil)
 						for _, c := range mr.Capabilities {
 							caps[c] = true
@@ -824,7 +829,7 @@ func (h *HardwareCatalog) Evaluate(input HardwareInput, now time.Time) HardwareR
 
 func hardwareModelField(field string) bool {
 	switch field {
-	case "sadp_model", "snmp_model", "ssdp_model", "dns_sd_model", "mdns_model", "printer_make_and_model", "onvif_model", "wsd_model", "bacnet_model", "cdp_platform":
+	case "dhcp_product_model", "sadp_model", "snmp_model", "ssdp_model", "dns_sd_model", "mdns_model", "printer_make_and_model", "onvif_model", "wsd_model", "bacnet_model", "cdp_platform":
 		return true
 	}
 	return false

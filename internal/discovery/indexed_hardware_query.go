@@ -2,6 +2,11 @@ package discovery
 
 import "strings"
 
+func hardwareProfileCandidateSQL(role, confidence, conflict, seen string) string {
+	return "CASE WHEN l.profile_identity_verified AND l.valid_until>now() AND " + seen + ">=$1 AND " +
+		seen + "<=now() AND " + confidence + ">=0.4 AND NOT " + conflict + " THEN coalesce(" + role + ",'') ELSE '' END"
+}
+
 // Hardware classification already has an incremental authoritative projection.
 // Keep only scalar search/identity fields before pagination; the same statement
 // fetches the selected original rows by their MVCC tuple locator afterward.
@@ -31,16 +36,17 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 	if query.OSFamily != "" {
 		profileOS = "coalesce(rec.os_family,'')"
 	}
-	pageProfiles := query.Search == "" && query.Category == "" && query.OSFamily == ""
-	recognitionSource := `SELECT rec.endpoint_id,coalesce(rec.role,'') role,coalesce(rec.os_family,'') os_family,
+	filterCandidates := query.State != "identified" && (query.DeviceType != "" || query.includeCandidateTypes)
+	pageProfiles := query.Search == "" && query.Category == "" && query.OSFamily == "" && !filterCandidates
+	recognitionSource := `SELECT rec.endpoint_id,coalesce(rec.role,'') role,coalesce(rec.os_family,'') os_family,rec.last_seen profile_seen,
  ` + indexedProfileConfidenceSQL("rec") + ` profile_confidence,
  ` + indexedProfileConflictSQL("rec") + ` profile_conflict
  FROM endpoint_recognition_summary rec
  JOIN (SELECT DISTINCT recognition_endpoint COLLATE "C" recognition_endpoint FROM seed_rows) relevant ON relevant.recognition_endpoint=rec.endpoint_id`
 	if pageProfiles {
-		// These clues do not select identities for this query. Parse them only
-		// for the selected page; metadata only counts hardware states/types.
-		recognitionSource = `SELECT ''::text endpoint_id,''::text role,''::text os_family,0::double precision profile_confidence,false profile_conflict WHERE false`
+		// Display-only clues can be joined after the page limit.
+		recognitionSource = `SELECT ''::text endpoint_id,''::text role,''::text os_family,
+ NULL::timestamptz profile_seen,0::double precision profile_confidence,false profile_conflict WHERE false`
 	}
 	statement := `WITH trusted_address AS MATERIALIZED (
  SELECT m.id observation_id,t.mac FROM discovery_observation_latest m
@@ -69,6 +75,7 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
  coalesce(l.data->>'node','') sensor_id,coalesce(l.data->>'site','') site_id,
  coalesce(l.data->>'domain','') access_domain,coalesce(l.data->>'vlan','') vlan,coalesce(l.data->>'vrf','') vrf,
  coalesce(l.data->>'mac','') raw_mac,coalesce(l.data->>'ip','') raw_ip,
+ coalesce(l.data->'evidence'->'observer'->>'capture_scope_issue','')='' capture_scope_valid,
  coalesce(l.data->'evidence'->'subject'->>'campus_id','') source_campus,
  ` + searchIP + ` search_ip,lower(coalesce(l.data->>'mac','')) search_mac,
  ` + searchName + ` search_name,` + searchType + ` search_device_type,
@@ -93,6 +100,9 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
  SELECT l.observation_tid,l.id,l.device_key,l.origin,l.observed_at,l.valid_until,
  l.search_ip,l.search_mac,l.search_name,l.search_device_type,l.search_manufacturer,l.search_model,
  ` + identitySQL + ` identity_key,l.observation_capabilities,
+ (l.capture_scope_valid AND l.sensor_id<>'' AND l.site_id<>'' AND l.access_domain<>''
+  AND lower(l.raw_mac) ~ '^[0-9a-f][02468ace](:[0-9a-f]{2}){5}$' AND lower(l.raw_mac)<>'00:00:00:00:00:00'
+  AND (coalesce(l.display_endpoint,'')='' OR lower(l.display_endpoint)='mac:'||lower(l.raw_mac))) profile_identity_verified,
  coalesce(l.display_endpoint,'') linked_endpoint,
  coalesce(l.display_endpoint,'mac:'||lower(l.raw_mac)) recognition_endpoint
  FROM display_links l
@@ -101,11 +111,11 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 ), candidate_rows AS MATERIALIZED (
  SELECT l.observation_tid,l.id,l.device_key,l.origin,l.observed_at,l.valid_until,
  l.search_ip,l.search_mac,l.search_name,l.search_device_type,l.search_manufacturer,l.search_model,
- l.identity_key,l.observation_capabilities,l.linked_endpoint,l.recognition_endpoint,
+ l.identity_key,l.observation_capabilities,l.linked_endpoint,l.recognition_endpoint,l.profile_identity_verified,
  coalesce(rec.role,'') profile_role,coalesce(rec.profile_confidence,0) profile_confidence,
  ` + profileOS + ` profile_os,` + profileType + ` profile_type,
  coalesce(rec.profile_conflict,false) AND coalesce(rec.role,'')<>'' profile_conflict,
- CASE WHEN NOT coalesce(rec.profile_conflict,false) AND coalesce(rec.profile_confidence,0)>=0.4 AND coalesce(rec.profile_confidence,0)<0.8 THEN coalesce(rec.role,'') ELSE '' END profile_candidate_role
+ ` + hardwareProfileCandidateSQL("rec.role", "coalesce(rec.profile_confidence,0)", "coalesce(rec.profile_conflict,false)", "rec.profile_seen") + ` profile_candidate_role
  FROM seed_rows l LEFT JOIN recognition rec ON rec.endpoint_id=l.recognition_endpoint
 ), candidate_grouped AS (
  SELECT identity_key COLLATE "C" identity_key,coalesce(min(device_key COLLATE "C") FILTER (WHERE search_mac<>''),min(device_key COLLATE "C")) device_key,
@@ -133,10 +143,12 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 // coalesced in seed_rows: the legacy page_link CASE fallback was unreachable,
 // so probing the historical link table here would only add random disk reads.
 func buildHardwareIndexedPage(selection indexedDeviceSelection, positionWhere, limitParameter string) string {
-	profiles := "l.profile_role,l.profile_confidence,l.profile_conflict"
+	profiles := "l.profile_role,l.profile_confidence,l.profile_conflict,l.profile_candidate_role"
 	profileJoin := ""
 	if selection.PageProfiles {
-		profiles = "coalesce(page_rec.role,'')," + indexedProfileConfidenceSQL("page_rec") + ",(" + indexedProfileConflictSQL("page_rec") + ") AND coalesce(page_rec.role,'')<>''"
+		confidence, conflict := indexedProfileConfidenceSQL("page_rec"), indexedProfileConflictSQL("page_rec")
+		profiles = "coalesce(page_rec.role,'')," + confidence + ",(" + conflict + ") AND coalesce(page_rec.role,'')<>''," +
+			hardwareProfileCandidateSQL("page_rec.role", confidence, "("+conflict+")", "page_rec.last_seen")
 		profileJoin = "LEFT JOIN endpoint_recognition_summary page_rec ON page_rec.endpoint_id=l.recognition_endpoint\n"
 	}
 	return selection.CTE + `, candidates AS (

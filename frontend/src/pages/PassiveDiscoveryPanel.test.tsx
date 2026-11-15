@@ -283,6 +283,29 @@ it('switches shortcut types atomically and clears the dumb capability filter', a
   })
 })
 
+it('keeps V8 profile type clues visible without counting them as hardware confirmations', async () => {
+  mockReads()
+  const read = request.getMockImplementation()!
+  request.mockImplementation((path: string) => {
+    if (path.startsWith('/discovery/devices/metadata?')) return Promise.resolve({
+      total: 1, identified: 0, candidate: 1, conflict: 0, expired: 0,
+      classification_version: 'passive-hardware/v2', types: [], candidate_types: [{ device_type: 'mobile', count: 1 }],
+    })
+    if (path.startsWith('/discovery/devices?')) return Promise.resolve({
+      items: [{ ...device, hardware_type_status: 'candidate', candidate_device_type: 'mobile' }],
+      has_more: false,
+    })
+    return read(path)
+  })
+  renderPanel()
+  const overview = await screen.findByLabelText('发现设备总览')
+  expect(await screen.findByText('手机 · 画像线索')).toBeVisible()
+  expect(overview).toHaveTextContent('已确认硬件类型（合计 0）')
+  fireEvent.click(within(screen.getByLabelText('画像类型线索')).getByRole('button', { name: /手机/ }))
+  await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).startsWith('/discovery/devices?') &&
+    String(path).includes('type=mobile') && String(path).includes('state=candidate'))).toBe(true))
+})
+
 it('does not count expired or conflicting recognition as an explicit current type', async()=>{
   mockReads({items:{}},{...device,classification_status:'expired',recognition:{device_type:'access_point',confidence:.95}})
   renderPanel()

@@ -44,11 +44,82 @@ func hardwareIntegrationDB(t *testing.T) *sql.DB {
 	_, err = db.Exec(`CREATE TABLE discovery_observation_latest(id text PRIMARY KEY,device_key text,origin text,observed_at timestamptz,valid_until timestamptz,withdrawn boolean,data jsonb);
  CREATE TABLE discovery_identity_links(observation_id text,endpoint_id text,basis jsonb);
  CREATE TABLE device_address_leases(event_id text,action text,sensor_id text,ip inet,campus_id text,endpoint_id text);
- CREATE TABLE endpoint_recognition_summary(endpoint_id text,role text,os_family text,summary jsonb,confidence double precision,conflict boolean);`)
+ CREATE TABLE endpoint_recognition_summary(endpoint_id text,role text,os_family text,summary jsonb,confidence double precision,conflict boolean,last_seen timestamptz);`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return db
+}
+
+func TestHardwarePostgresProfileCandidatesUseScopedCurrentEvidence(t *testing.T) {
+	db := hardwareIntegrationDB(t)
+	ctx := context.Background()
+	at := time.Now().UTC().Add(-time.Minute)
+	for i, name := range []string{"recent", "old_profile", "expired_observation", "wrong_scope", "conflict", "confirmed_hardware"} {
+		o := hardwareTestObservation(at)
+		o.ID, o.EventID = name, name
+		o.MAC = fmt.Sprintf("02:11:22:33:44:%02x", i)
+		o.IP = fmt.Sprintf("10.0.0.%d", i+2)
+		o.ValidUntil = at.Add(time.Hour)
+		profileSeen := at
+		if name != "confirmed_hardware" {
+			o.Origin = "arp"
+			o.Evidence.Payload = nil
+		}
+		switch name {
+		case "old_profile":
+			profileSeen = at.Add(-48 * time.Hour)
+		case "expired_observation":
+			o.ValidUntil = at
+		case "wrong_scope":
+			o.Domain = ""
+		case "confirmed_hardware":
+			o.Evidence.Payload["claimed_ip"] = o.IP
+			o.Evidence.Payload["claimed_mac"] = o.MAC
+			o.Evidence.Payload["l2_source_mac"] = o.MAC
+			enqueueHardwareTest(t, db, o)
+			processHardwareTest(t, db)
+		}
+		raw, err := json.Marshal(o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec("INSERT INTO discovery_observation_latest VALUES($1,$2,$3,$4,$5,false,$6)", o.ID, o.Key(), o.Origin, o.ObservedAt, o.ValidUntil, raw); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec("INSERT INTO endpoint_recognition_summary VALUES($1,'mobile','Android','{}',0.95,$2,$3)", "mac:"+o.MAC, name == "conflict", profileSeen); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	repo := Repository{DB: db, HardwareV2: true}
+	q := DeviceQuery{Mode: "passive"}
+	meta, err := repo.DevicesIndexedMetadataSnapshot(ctx, tx, q)
+	if err != nil || meta.Total != 6 || meta.Identified != 1 || meta.Candidate != 5 || len(meta.Types) != 1 ||
+		meta.Types[0] != (IndexedDeviceTypeCount{DeviceType: "access_control", Count: 1}) ||
+		len(meta.CandidateTypes) != 1 || meta.CandidateTypes[0] != (IndexedDeviceTypeCount{DeviceType: "mobile", Count: 1}) {
+		t.Fatalf("metadata=%+v err=%v", meta, err)
+	}
+	for _, query := range []DeviceQuery{q, {Mode: "passive", DeviceType: "mobile", Export: true}} {
+		page, err := repo.DevicesIndexedSnapshot(ctx, tx, query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		items := page["items"].([]DeviceView)
+		candidates := 0
+		for _, item := range items {
+			if item.CandidateDeviceType == "mobile" && item.ClassificationStatus == "candidate" && item.DeviceType == "" {
+				candidates++
+			}
+		}
+		if candidates != 1 || (query.DeviceType != "" && len(items) != 1) {
+			t.Fatalf("query=%+v items=%+v", query, items)
+		}
+	}
 }
 
 func TestHardwareProjectionPostgresConflictsRuleRetractionAndRecovery(t *testing.T) {

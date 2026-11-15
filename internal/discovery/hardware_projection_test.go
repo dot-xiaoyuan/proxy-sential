@@ -30,6 +30,52 @@ func TestHardwareFactsAreScopedAndRequireOwnership(t *testing.T) {
 	}
 }
 
+func TestHardwareDHCPModelUsesOnlyAttributedACK(t *testing.T) {
+	at := time.Date(2026, 11, 15, 2, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name, vendorClass, wantType, wantModel string
+		change                                 func(*Observation)
+	}{
+		{name: "H3C AP", vendorClass: "H3C. H3C WA5320H", wantType: "access_point", wantModel: "WA5320H"},
+		{name: "Huawei router", vendorClass: "HUAWEI:router:WS7000-12:4.2", wantType: "router", wantModel: "WS7000-12"},
+		{name: "generic stack", vendorClass: "udhcp 1.24.2"},
+		{name: "unreviewed model", vendorClass: "H3C. H3C WA9999"},
+		{name: "model lookalike", vendorClass: "H3C. H3C WA5320H-extra"},
+		{name: "hostname alone", change: func(o *Observation) { o.Name = "H3C. H3C WA5320H" }},
+		{name: "request only", vendorClass: "H3C. H3C WA5320H", change: func(o *Observation) {
+			o.Evidence.Payload["msg_types"] = "REQUEST"
+			o.Evidence.Payload["request_only"] = true
+		}},
+		{name: "negative ACK", vendorClass: "H3C. H3C WA5320H", change: func(o *Observation) { o.Evidence.Payload["msg_types"] = "NACK" }},
+		{name: "address mismatch", vendorClass: "H3C. H3C WA5320H", change: func(o *Observation) { o.Evidence.Payload["assigned_addr"] = "10.0.0.3" }},
+		{name: "scope conflict", vendorClass: "H3C. H3C WA5320H", change: func(o *Observation) { o.Evidence.Payload["discovery_scope_conflict"] = true }},
+		{name: "VLAN mismatch", vendorClass: "H3C. H3C WA5320H", change: func(o *Observation) { o.Evidence.Payload["dhcp_capture_vlan"] = "21" }},
+		{name: "withdrawal", vendorClass: "H3C. H3C WA5320H", change: func(o *Observation) { o.Withdrawn = true }},
+		{name: "no positive lease window", vendorClass: "H3C. H3C WA5320H", change: func(o *Observation) { o.ValidUntil = o.ObservedAt }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := hardwareTestObservation(at)
+			o.Origin = "dhcp"
+			o.Evidence.Payload = map[string]any{"msg_types": "REQUEST,ACK", "assigned_addr": o.IP, "vendor_class": tc.vendorClass}
+			if tc.change != nil {
+				tc.change(&o)
+			}
+			fact, err := HardwareFactFromObservation(o)
+			if err != nil || fact == nil {
+				t.Fatalf("fact=%+v err=%v", fact, err)
+			}
+			state, err := EvaluateHardwareFacts([]HardwareFact{*fact}, nil, at.Add(time.Second))
+			if err != nil || state.HardwareType != tc.wantType || state.HardwareModel != tc.wantModel {
+				t.Fatalf("type=%q model=%q want=%q/%q err=%v", state.HardwareType, state.HardwareModel, tc.wantType, tc.wantModel, err)
+			}
+			if tc.wantType != "" && (state.HardwareTypeStatus != "identified" || len(state.TypeSources) != 1 ||
+				state.TypeSources[0].EvidenceID != o.EventID || state.ActiveUntil != o.ValidUntil) {
+				t.Fatalf("lost lease window or evidence: %+v", state)
+			}
+		})
+	}
+}
+
 func TestHardwareRuleDependenciesChangeOnlyWithRuleSet(t *testing.T) {
 	earlier := []fingerprint.HardwareSource{
 		{RuleID: "model-a", RuleVersion: "v1", EvidenceID: "first"},

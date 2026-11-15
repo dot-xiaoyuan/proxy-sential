@@ -75,6 +75,29 @@ func TestV8BundlePreservesV7AndNativeSources(t *testing.T) {
 	if reloaded.Status().Status != "ready" || Default().hardware == nil {
 		t.Fatalf("V8 reload: %+v", reloaded.Status())
 	}
+	refresh := filepath.Join(dir, "v8-refreshed.tar.gz")
+	if _, err := BuildV8Bundle(b, refresh, pack.Manifest.Version, now); err == nil {
+		t.Fatal("V8 update reused the installed version")
+	}
+	if _, err := BuildV8Bundle(b, refresh, "fixture-v8-refreshed", now); err != nil {
+		t.Fatal(err)
+	}
+	refreshData, err := os.ReadFile(refresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := VerifyBundleBytes(refreshData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Manifest.Version != "fixture-v8-refreshed" || len(updated.Manifest.Sources) != len(pack.Manifest.Sources) {
+		t.Fatal("V8 update lost the version or duplicated sources")
+	}
+	for name, value := range old.Files {
+		if name != "manifest.json" && string(updated.Files[name]) != string(value) {
+			t.Fatalf("V8 update changed legacy file: %s", name)
+		}
+	}
 	pack.Files["hardware-catalog.json"] = []byte(`{}`)
 	corrupt, _ := encodeBundle(pack.Manifest, pack.Files)
 	if _, err := VerifyBundleBytes(corrupt); err == nil {

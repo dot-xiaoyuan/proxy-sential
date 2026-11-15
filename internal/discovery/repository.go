@@ -234,6 +234,7 @@ func (r Repository) Finish(ctx context.Context, t Task, s Snapshot, runErr error
 
 type DeviceQuery struct {
 	HardwareV2                    bool
+	includeCandidateTypes         bool
 	Protocol, State, Domain, VLAN string
 	ReviewReason                  string
 	View                          string
@@ -289,6 +290,7 @@ type DeviceView struct {
 	MAC                  string              `json:"mac,omitempty"`
 	Name                 string              `json:"name,omitempty"`
 	DeviceType           string              `json:"device_type,omitempty"`
+	CandidateDeviceType  string              `json:"candidate_device_type,omitempty"`
 	Category             string              `json:"category"`
 	IdentityKind         string              `json:"identity_kind"`
 	Capabilities         []string            `json:"capabilities"`
@@ -316,6 +318,7 @@ type deviceObservationRow struct {
 	ProfileDeviceType     string
 	ProfileTypeConfidence float64
 	ProfileConflict       bool
+	ProfileCandidateRole  string
 	Observation           Observation
 }
 

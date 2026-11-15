@@ -3,8 +3,26 @@ package discovery
 import (
 	"strings"
 	"testing"
-	"time"
 )
+
+func TestHardwareTypeFilterKeepsAttributedProfileCandidates(t *testing.T) {
+	query := DeviceQuery{HardwareV2: true, Mode: "passive", DeviceType: "mobile"}
+	selection, err := buildIndexedDeviceSelection(query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{
+		"classification_status='candidate' AND candidate_role",
+		"l.profile_identity_verified",
+		"l.valid_until>now()",
+		"rec.profile_seen>=$1",
+		"FROM endpoint_recognition_summary",
+	} {
+		if !strings.Contains(selection.CTE, fragment) {
+			t.Errorf("type filter lost %q", fragment)
+		}
+	}
+}
 
 func TestHardwareSelectionKeepsOnlyCompactCandidateProjection(t *testing.T) {
 	q := DeviceQuery{HardwareV2: true, Mode: "passive"}
@@ -92,23 +110,16 @@ func TestHardwareDefaultDefersProfilesWithoutDroppingPageClues(t *testing.T) {
 			t.Fatal("a profile filter was moved after pagination")
 		}
 	}
-	now := time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC)
-	row := func(key, role string, confidence float64, conflict bool, until time.Time) deviceObservationRow {
-		return deviceObservationRow{IndexedIdentityKey: key, ProfileDeviceType: role, ProfileTypeConfidence: confidence, ProfileConflict: conflict, Observation: Observation{ValidUntil: until}}
+	row := func(key, role string) deviceObservationRow {
+		return deviceObservationRow{IndexedIdentityKey: key, ProfileCandidateRole: role}
 	}
 	rows := []deviceObservationRow{
-		row("one", "switch", .6, false, now.Add(time.Minute)), row("one", "switch", .6, false, now.Add(time.Minute)),
-		row("different", "router", .6, false, now.Add(time.Minute)), row("different", "switch", .6, false, now.Add(time.Minute)),
-		row("expired", "printer", .6, false, now), row("conflict", "camera", .6, true, now.Add(time.Minute)),
-		row("strong", "switch", .8, false, now.Add(time.Minute)), row("weak", "switch", .39, false, now.Add(time.Minute)),
+		row("one", "switch"), row("one", "switch"),
+		row("different", "router"), row("different", "switch"),
+		row("expired", ""),
 	}
-	got := indexedPageCandidateCategories(rows, now)
-	for _, key := range []string{"different", "expired", "conflict", "strong", "weak"} {
-		if got[key] != "identity_only" {
-			t.Errorf("%s=%s", key, got[key])
-		}
-	}
-	if got["one"] != "network" {
+	got := indexedPageCandidateTypes(rows)
+	if got["one"] != "switch" || got["different"] != "" || got["expired"] != "" {
 		t.Fatalf("single current candidate lost: %v", got)
 	}
 }

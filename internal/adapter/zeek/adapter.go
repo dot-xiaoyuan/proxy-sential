@@ -720,6 +720,8 @@ func softwareEventFromFields(raw []byte, fields map[string]string, lineOffset in
 
 func dhcpPayload(fields map[string]string) map[string]any {
 	payload := map[string]any{"origin": "dhcp"}
+	// The passive response stream stores DHCP payload but projects a compact subject.
+	copyPayload(payload, fields, "capture_vlan", "dhcp_capture_vlan")
 	if first(fields, "discovery_scope_conflict") == "T" || first(fields, "discovery_scope_conflict") == "true" {
 		payload["discovery_scope_conflict"] = true
 	}

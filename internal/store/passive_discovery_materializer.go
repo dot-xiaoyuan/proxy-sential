@@ -375,6 +375,9 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 	}
 	switch kind {
 	case "dhcp":
+		if o.VLAN == "" && discovery.HardwareProjectionEnabled() {
+			o.VLAN = passiveString(event.Payload, "dhcp_capture_vlan")
+		}
 		action := strings.ToUpper(passiveString(event.Payload, "msg_types") + " " + passiveString(event.Payload, "message_type") + " " + passiveString(event.Payload, "action"))
 		if discovery.HardwareProjectionEnabled() && (strings.Contains(action, "RELEASE") || strings.Contains(action, "NAK")) && mac != "" && scope.allows(ip) {
 			o.Origin, o.Withdrawn, o.ValidUntil, o.Confidence, o.Explanation = "dhcp", true, at, "confirmed", "DHCP 地址声明撤销"

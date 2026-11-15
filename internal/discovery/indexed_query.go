@@ -117,7 +117,7 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 		args = append(args, query.DeviceType)
 		match := "= ANY(string_to_array($" + fmt.Sprint(len(args)) + ", ','))"
 		if query.HardwareV2 {
-			classifiedWhere = append(classifiedWhere, "projection_type"+match)
+			classifiedWhere = append(classifiedWhere, "(projection_type"+match+" OR (classification_status='candidate' AND candidate_role"+match+"))")
 		} else {
 			classifiedWhere = append(classifiedWhere, "((classification_status='identified' AND effective_types[1]"+match+") OR (classification_status='expired' AND historical_type"+match+") OR (classification_status='candidate' AND candidate_role"+match+"))")
 		}

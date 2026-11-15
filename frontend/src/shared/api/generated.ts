@@ -8385,6 +8385,8 @@ export interface components {
         DiscoveryDevice: {
             /** @description 可信作用域身份的持久硬件类型；服务 TTL 到期不清除 */
             hardware_type?: string;
+            /** @description A scoped candidate device type supported by a recent endpoint profile. This field does not confirm a hardware type. */
+            candidate_device_type?: string;
             /** @enum {string} */
             hardware_type_status?: "identified" | "candidate" | "conflict" | "revoked";
             hardware_model?: string;
@@ -8470,6 +8472,12 @@ export interface components {
             expired: number;
             /** @description Counts by current identified device type only; candidate clues are included in candidate, not in this array. */
             types: {
+                device_type: string;
+                /** Format: int64 */
+                count: number;
+            }[];
+            /** @description Counts by current candidate type from endpoint profile clues. */
+            candidate_types?: {
                 device_type: string;
                 /** Format: int64 */
                 count: number;

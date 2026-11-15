@@ -22,6 +22,21 @@ V2 的已知硬件类型在服务 TTL 到期后持续保留；明确撤销、更
 
 后续样本沿用该表字段，另外记录 VLAN/VRF、报文时间、首次入库时间、来源事件 ID、原文归档引用、有效截止时间与反例列表。一个设备跨作用域出现时分别记录，不用 IP 相同合并身份。校方导出表格核对后再补核实依据；存在台账与实物冲突时保持待核实。
 
+## 一卡通定位与补证
+
+一卡通是业务范围。资产核查区分独立入网的门禁、考勤、消费终端，联网控制器或网关，以及控制器下挂的读卡器。IP 终端可用可信的厂商发现响应、明确型号的管理响应或管理平台设备清单确认。周期心跳、访问同一卡通服务器、协议栈指纹和通用 Web 响应可供归组。设备当前用作门禁、考勤还是消费，以台账或现场为准。通过 OSDP/RS-485 或 Wiegand 接入控制器、没有独立 IP 的读卡器，由控制器或资产台账补充。 [SIA OSDP](https://www.securityindustry.org/industry-standards/open-supervised-device-protocol/) · [LibOSDP](https://doc.osdp.dev/index) · [海康门禁手册](https://assets.hikvision.com/prd/public/all/doc/m000056572/UD26241B-B_Baseline_DS-K1T6QT-F72-Series-Face-Recognition-Terminal_User-Manual_V1.0_20230928.PDF)
+
+| 核查步骤 | 判定依据 | 对应处理 |
+| --- | --- | --- |
+| 选定可核实样本 | 从两个网段各选覆盖不同角色的已知样本，记录设备或控制器 IP、MAC、VLAN、型号、实际用途、接入交换机或平台记录 | 以这批有独立真值的样本为分母，另记非 IP 下挂设备 |
+| 验证镜像覆盖 | 在正常业务动作或已有心跳时，用同一时间窗对照接入侧、控制器平台和 204。核对 VLAN 标签、双向包、报文来源和对应窗口的采集丢包 | 接入侧有而 204 无时，修正镜像源、方向或位置；控制器以下无独立 IP 时，从管理平台补证 |
+| 复核采集和归属 | 从同一原始报文依次核对协议字段、标准事件、同作用域 IP–MAC 和分类结果 | 有产品字段但未提取时补解析；已提取但未入库、归属或规则的，修正对应环节并回放正反例 |
+| 补齐确定类型 | 同网段厂商发现、控制器已有台账或经授权的厂商只读管理接口可提供型号、地址和序列号 | 优先导出已有清单。产品型号与业务用途分别对账；加密或私有协议缺可见产品字段时，从设备管理端获取型号 |
+
+报告逐样本列出镜像可见、协议能解析、设备可归属、硬件可定型四列及卡点。汇总按同一批已核实设备为分母分别报各阶段命中数；观察窗口、对照样本和未覆盖方向一同记录。业务标签、历史观测 IP 和物理设备数分别表达。只提取定位问题需要的协议字段与引用，管理平台清单仅包含资产字段。
+
+对常见哑终端优先找明确的设备自报。打印机用 IPP `printer-make-and-model` 或 DNS-SD TXT，摄像机和录像设备用 SADP 或 ONVIF 厂商/型号，交换机用 SNMP 完整产品 OID 或产品描述，AP 用明确 DHCP 型号或 CAPWAP WTP Board Data，话机用明确产品的 SIP 标头或 LLDP-MED。DHCP 参数列表、HTTP Host、TLS SNI、JA3/JA4、MAC 厂商和流量行为作为辅助。PacketFence/Fingerbank 可参考多证据画像，Recog 可参考服务字段匹配，LibreNMS 可参考 SNMP 检测条件，Wireshark 或开源 SADP 解码器可用于原报文对照。 [IPP](https://www.rfc-editor.org/rfc/rfc8011.html) · [ONVIF](https://www.onvif.org/specs/core/ONVIF-Core-Specification-v1912.pdf) · [CAPWAP](https://datatracker.ietf.org/doc/html/rfc5415#section-4.6.40) · [PacketFence](https://packetfence.org/doc/15.2.0/PacketFence_Installation_Guide.html) · [Recog](https://github.com/rapid7/recog) · [LibreNMS](https://docs.librenms.org/Developing/os/Initial-Detection/) · [SADP 解码器](https://github.com/MatrixEditor/hiktools)
+
 ## 镜像可见标识统计契约（204 首阶段）
 
 统计单元为“网络作用域 + 标识”，不是物理设备。作用域由传感器、校区、接入域、VLAN、VRF 组成；缺少关键维度的行单列说明，不与完整作用域合并。IP 只取单播、位于明确配置的校方站点 CIDR 内且报文归属可判断的地址。内部流量两侧本地 IP 可分别计入；IPv4/IPv6 分列。MAC 只接受 ARP/NDP、DHCP 客户端或有帧源与响应地址一致性证明的直接服务响应，单播且非零；普通 `conn` 的 MAC、目标 MAC、网关转发 MAC 不作为终端身份。本地管理位 MAC（含随机地址，也可能包含虚拟或手工设置的地址）单列。有效 IP–MAC 绑定只计未撤销、未过期且同作用域同 IP 无并行 MAC 冲突的配对；DHCP ACK 换绑终止旧声明，ARP/NDP 同时声明保留冲突。

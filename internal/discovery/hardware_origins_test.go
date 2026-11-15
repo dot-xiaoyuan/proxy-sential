@@ -7,6 +7,10 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"proxy-sentinel/internal/normalized"
+
+	"github.com/DATA-DOG/go-sqlmock"
 )
 
 func TestHardwarePassiveSelectionAdmitsProductSourcesOnlyWhenEnabled(t *testing.T) {
@@ -26,6 +30,45 @@ func TestHardwarePassiveSelectionAdmitsProductSourcesOnlyWhenEnabled(t *testing.
 				}
 			}
 		}
+	}
+}
+
+func TestIndexedHardwareListAndExportKeepRetainedSNMPClue(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.ValueConverterOption(censusArrayConverter{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC()
+	o := Observation{ID: "retained", EventID: "snmp-original", IP: "10.131.253.254", VLAN: "4005",
+		Origin: "snmp", DeviceType: "switch", Confidence: "confirmed", ModelName: "Core Switch", ObservedAt: now, ValidUntil: now.Add(time.Hour),
+		Evidence: normalized.Event{EventID: "snmp-original", RawRef: map[string]any{"log": "snmp_device"},
+			Payload: map[string]any{"is_response": true, "response_source_ip": "10.131.253.254", "hardware_identity": "ambiguous_or_missing"}}}
+	raw, err := json.Marshal(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := Repository{DB: db, HardwareV2: true}
+	for _, export := range []bool{false, true} {
+		mock.ExpectQuery("FROM candidate_rows l JOIN candidates").
+			WillReturnRows(sqlmock.NewRows([]string{"identity", "key", "data", "endpoint", "role", "confidence", "conflict", "profile_candidate_role", "category"}).
+				AddRow("ip-only", "key", raw, "", "", 0, false, "", "identity_only"))
+		mock.ExpectQuery("SELECT identity_key,data FROM passive_hardware_current").
+			WillReturnRows(sqlmock.NewRows([]string{"identity_key", "data"}))
+		page, err := repo.devicesIndexed(context.Background(), db, DeviceQuery{Mode: "passive", Export: export}, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		item := page["items"].([]DeviceView)[0]
+		clue := item.Observations[0]
+		if item.DeviceType != "" || item.ClassificationStatus != "candidate" ||
+			clue.Confidence != "clue" || clue.DeviceType != "" || clue.ModelName != o.ModelName ||
+			clue.Evidence.EventID != "snmp-original" || clue.Evidence.RawRef["log"] != "snmp_device" {
+			t.Fatalf("export=%v lost classification boundary or source evidence: %+v", export, clue)
+		}
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 

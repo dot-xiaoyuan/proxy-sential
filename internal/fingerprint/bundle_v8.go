@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-var hardwareBundleSource = BundleSource{Name: "Proxy Sentinel hardware adjudication", Version: "hardware-catalog-2026-11-12.2", URL: "internal://proxy-sentinel/hardware-catalog", License: "internal-rule; upstream rules retain individual licenses"}
+var hardwareBundleSource = BundleSource{Name: "Proxy Sentinel hardware adjudication", Version: "hardware-catalog-2026-11-15.1", URL: "internal://proxy-sentinel/hardware-catalog", License: "internal-rule; upstream rules retain individual licenses"}
 var nativeRecogSource = BundleSource{Name: "recog-go native matcher", Version: "v0.1.1-0.20230801014443-aa6fe9074750", URL: "https://github.com/runZeroInc/recog-go", License: "BSD-2-Clause"}
 
 func verifyV8Hardware(manifest BundleManifest, files map[string][]byte) error {
@@ -30,15 +30,16 @@ func verifyV8Hardware(manifest BundleManifest, files map[string][]byte) error {
 	return nil
 }
 
-// BuildV8Bundle adds native hardware adjudication to a verified V7 pack.
-// Existing V7 payload bytes are retained; the old recognition API is untouched.
+// BuildV8Bundle installs the embedded hardware catalog in a verified V7 or V8
+// pack while preserving the payload of the legacy recognition library.
 func BuildV8Bundle(baseData []byte, output, version string, now time.Time) (BundleManifest, error) {
 	base, err := VerifyBundleBytes(baseData)
 	if err != nil {
 		return BundleManifest{}, err
 	}
-	if base.Manifest.SchemaVersion != BundleSchemaVersionV7 || strings.TrimSpace(version) == "" || version == base.Manifest.Version {
-		return BundleManifest{}, fmt.Errorf("v8 upgrade requires a verified v7 pack and a new version")
+	if (base.Manifest.SchemaVersion != BundleSchemaVersionV7 && base.Manifest.SchemaVersion != BundleSchemaVersionV8) ||
+		strings.TrimSpace(version) == "" || version == base.Manifest.Version {
+		return BundleManifest{}, fmt.Errorf("v8 upgrade requires a verified v7 or v8 pack and a new version")
 	}
 	delete(base.Files, "manifest.json")
 	base.Files["hardware-catalog.json"] = embeddedHardwareCatalog
@@ -47,7 +48,13 @@ func BuildV8Bundle(baseData []byte, output, version string, now time.Time) (Bund
 	manifest.SchemaVersion = BundleSchemaVersionV8
 	manifest.Version = version
 	manifest.CreatedAt = now.UTC().Format(time.RFC3339Nano)
-	manifest.Sources = append(manifest.Sources, hardwareBundleSource, nativeRecogSource)
+	sources := make([]BundleSource, 0, len(manifest.Sources)+2)
+	for _, source := range manifest.Sources {
+		if source.Name != hardwareBundleSource.Name && source.Name != nativeRecogSource.Name {
+			sources = append(sources, source)
+		}
+	}
+	manifest.Sources = append(sources, hardwareBundleSource, nativeRecogSource)
 	manifest.Files = map[string]BundleFile{}
 	for name, value := range base.Files {
 		manifest.Files[name] = bundleFile(value)

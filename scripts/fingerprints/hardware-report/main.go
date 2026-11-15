@@ -60,7 +60,7 @@ func main() {
 func run() error {
 	input := flag.String("input", "", "JSONL exported fields or explicit attributed evidence; no pcap claim")
 	output := flag.String("output", "", "JSON output (stdout if empty)")
-	base := flag.String("build-v8-base", "", "verified V7 bundle to upgrade")
+	base := flag.String("build-v8-base", "", "verified V7 or V8 bundle to upgrade")
 	bundleOutput := flag.String("bundle-output", "", "candidate V8 output path")
 	version := flag.String("version", "", "new immutable bundle version")
 	dataDir := flag.String("data-dir", "internal/fingerprint/data", "pinned catalog directory")

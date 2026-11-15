@@ -98,10 +98,15 @@ func resolveHardwareOwnershipBatch(ctx context.Context, db passiveDiscoveryDB, o
 			}
 		}
 	}
-	if len(probes) == 0 {
-		return nil
+	if len(probes) > 0 {
+		if err := applyHardwareBindings(ctx, db, observations, probes); err != nil {
+			return err
+		}
 	}
-	return applyHardwareBindings(ctx, db, observations, probes)
+	for i := range observations {
+		observations[i].MarkUnattributedSNMPClue()
+	}
+	return nil
 }
 
 func applyHardwareBindings(ctx context.Context, db passiveDiscoveryDB, observations []discovery.Observation, probes []hardwareBindingProbe) error {

@@ -62,6 +62,32 @@ func TestIndexedMetadataPropagatesQueryFailure(t *testing.T) {
 	}
 }
 
+func TestHardwareMetadataReportsCandidatesApartFromConfirmedTypes(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	at := time.Now().UTC()
+	mock.ExpectQuery("(?s)endpoint_recognition_summary.*GROUP BY classification_status").
+		WillReturnRows(sqlmock.NewRows([]string{"status", "type", "count", "as_of"}).
+			AddRow("identified", "printer", 3, at).
+			AddRow("candidate", "mobile", 12, at).
+			AddRow("candidate", "", 5, at))
+	metadata, err := (Repository{HardwareV2: true}).devicesIndexedMetadata(context.Background(), db, DeviceQuery{Mode: "passive"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Total != 20 || metadata.Identified != 3 || metadata.Candidate != 17 ||
+		len(metadata.Types) != 1 || metadata.Types[0] != (IndexedDeviceTypeCount{DeviceType: "printer", Count: 3}) ||
+		len(metadata.CandidateTypes) != 1 || metadata.CandidateTypes[0] != (IndexedDeviceTypeCount{DeviceType: "mobile", Count: 12}) {
+		t.Fatalf("metadata=%+v", metadata)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestIndexedIdentityAggregationPreservesStableGroupAndHistoryKey(t *testing.T) {
 	now := time.Now().UTC()
 	first := deviceObservationRow{DeviceKey: "history-a", IndexedIdentityKey: "scope-mac", Observation: Observation{ID: "a", MAC: "00:11:22:33:44:55", IP: "10.0.0.8", Origin: "arp", ObservedAt: now, ValidUntil: now.Add(time.Hour)}}

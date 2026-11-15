@@ -1,5 +1,5 @@
 {
-  "version": "hardware-model-review-2026-11-12.2",
+  "version": "hardware-model-review-2026-11-14.1",
   "entries": [
     {
       "id": "canon-mf260-series",
@@ -134,6 +134,793 @@
         "S5570S-28S-HPWR-EI",
         "S5570S-28S-HPWR-EI-A-OTHER",
         "1.3.6.1.4.1.25506"
+      ]
+    },
+    {
+      "id": "canon-mf260-ii-series",
+      "pattern": "(?i)^Canon MF260 II Series(?: UUID=[0-9a-f]{12})?$",
+      "type": "printer",
+      "model": "Canon MF260 II Series",
+      "manufacturer": "Canon",
+      "capabilities": [
+        "scanning"
+      ],
+      "source_url": "https://canon.a.bigcontent.io/v1/static/mf267dw-ii_mf264dw-ii_datasheet_em_final_forweb_472c5cb8646746e5bdb82813d5306c8a",
+      "rationale": "Manufacturer documentation identifies this exact model or reported series. Match only an attributed device self-report; preserve the reported product granularity.",
+      "positive": [
+        "Canon MF260 II Series",
+        "Canon MF260 II Series UUID=0123456789ab"
+      ],
+      "negative": [
+        "Canon",
+        "Canon MF260 II Series firmware",
+        "Canon MF260 II Series0",
+        "unknown Canon MF260 II Series"
+      ]
+    },
+    {
+      "id": "canon-mf240-series",
+      "pattern": "(?i)^Canon MF240 Series(?: UUID=[0-9a-f]{12} MFG=Canon MDL=MF240 Series scannerAvailable=1)?$",
+      "type": "printer",
+      "model": "Canon MF240 Series",
+      "manufacturer": "Canon",
+      "capabilities": [
+        "scanning"
+      ],
+      "source_url": "https://downloads.canon.com/nw/printer/products/printers-and-multifunction/imageclass-series/imageclass-mf240s/spec-sheets/imageCLASS-MF240-Series-SpecSheet.pdf",
+      "rationale": "Manufacturer documentation identifies this exact model or reported series. Match only an attributed device self-report; preserve the reported product granularity.",
+      "positive": [
+        "Canon MF240 Series",
+        "Canon MF240 Series UUID=0123456789ab MFG=Canon MDL=MF240 Series scannerAvailable=1"
+      ],
+      "negative": [
+        "Canon",
+        "Canon MF240 Series firmware",
+        "Canon MF240 Series0",
+        "unknown Canon MF240 Series"
+      ]
+    },
+    {
+      "id": "brother-dcp-l2648dw",
+      "pattern": "(?i)^(?:Brother )?DCP\\-L2648DW$",
+      "type": "printer",
+      "model": "Brother DCP-L2648DW",
+      "manufacturer": "Brother",
+      "capabilities": [
+        "scanning"
+      ],
+      "source_url": "https://www.brother.cn/printer/fb/dcp-l2648dw",
+      "rationale": "Manufacturer documentation identifies this exact model or reported series. Match only an attributed device self-report; preserve the reported product granularity.",
+      "positive": [
+        "Brother DCP-L2648DW",
+        "DCP-L2648DW"
+      ],
+      "negative": [
+        "Brother",
+        "Brother DCP-L2648DW firmware",
+        "Brother DCP-L2648DW0",
+        "unknown Brother DCP-L2648DW"
+      ]
+    },
+    {
+      "id": "brother-dcp-b7638dn",
+      "pattern": "(?i)^(?:Brother )?DCP\\-B7638DN$",
+      "type": "printer",
+      "model": "Brother DCP-B7638DN",
+      "manufacturer": "Brother",
+      "capabilities": [
+        "scanning"
+      ],
+      "source_url": "https://www.brother.cn/printer/fb/dcp-b7638dn",
+      "rationale": "Manufacturer documentation identifies this exact model or reported series. Match only an attributed device self-report; preserve the reported product granularity.",
+      "positive": [
+        "Brother DCP-B7638DN",
+        "DCP-B7638DN"
+      ],
+      "negative": [
+        "Brother",
+        "Brother DCP-B7638DN firmware",
+        "Brother DCP-B7638DN0",
+        "unknown Brother DCP-B7638DN"
+      ]
+    },
+    {
+      "id": "brother-dcp-l3528cdw",
+      "pattern": "(?i)^(?:Brother )?DCP\\-L3528CDW$",
+      "type": "printer",
+      "model": "Brother DCP-L3528CDW",
+      "manufacturer": "Brother",
+      "capabilities": [
+        "scanning"
+      ],
+      "source_url": "https://www.brother.cn/printer/fb/dcp-l3528cdw",
+      "rationale": "Manufacturer documentation identifies this exact model or reported series. Match only an attributed device self-report; preserve the reported product granularity.",
+      "positive": [
+        "Brother DCP-L3528CDW",
+        "DCP-L3528CDW"
+      ],
+      "negative": [
+        "Brother",
+        "Brother DCP-L3528CDW firmware",
+        "Brother DCP-L3528CDW0",
+        "unknown Brother DCP-L3528CDW"
+      ]
+    },
+    {
+      "id": "brother-dcp-t730dw",
+      "pattern": "(?i)^(?:Brother )?DCP\\-T730DW$",
+      "type": "printer",
+      "model": "Brother DCP-T730DW",
+      "manufacturer": "Brother",
+      "capabilities": [
+        "scanning"
+      ],
+      "source_url": "https://www.brother.cn/printer/fb/dcp-t730dw",
+      "rationale": "Manufacturer documentation identifies this exact model or reported series. Match only an attributed device self-report; preserve the reported product granularity.",
+      "positive": [
+        "Brother DCP-T730DW",
+        "DCP-T730DW"
+      ],
+      "negative": [
+        "Brother",
+        "Brother DCP-T730DW firmware",
+        "Brother DCP-T730DW0",
+        "unknown Brother DCP-T730DW"
+      ]
+    },
+    {
+      "id": "hp-laserjet-m232-m237",
+      "pattern": "(?i)^HP\\ LaserJet\\ MFP\\ M232\\-M237$",
+      "type": "printer",
+      "model": "HP LaserJet MFP M232-M237",
+      "manufacturer": "HP",
+      "capabilities": [
+        "scanning"
+      ],
+      "source_url": "https://support.hp.com/us-en/product/product-specs/hp-laserjet-mfp-m232e-m237e-printer-series/30836599",
+      "rationale": "Manufacturer documentation identifies this exact model or reported series. Match only an attributed device self-report; preserve the reported product granularity.",
+      "positive": [
+        "HP LaserJet MFP M232-M237"
+      ],
+      "negative": [
+        "HP",
+        "HP LaserJet MFP M232-M237 firmware",
+        "HP LaserJet MFP M232-M2370",
+        "unknown HP LaserJet MFP M232-M237"
+      ]
+    },
+    {
+      "id": "hp-laserjet-m28-m31",
+      "pattern": "(?i)^HP\\ LaserJet\\ MFP\\ M28\\-M31$",
+      "type": "printer",
+      "model": "HP LaserJet MFP M28-M31",
+      "manufacturer": "HP",
+      "capabilities": [
+        "scanning"
+      ],
+      "source_url": "https://support.hp.com/us-en/product/setup-user-guides/hp-laserjet-pro-mfp-m28-m31-printer-series/model/16647082",
+      "rationale": "Manufacturer documentation identifies this exact model or reported series. Match only an attributed device self-report; preserve the reported product granularity.",
+      "positive": [
+        "HP LaserJet MFP M28-M31"
+      ],
+      "negative": [
+        "HP",
+        "HP LaserJet MFP M28-M31 firmware",
+        "HP LaserJet MFP M28-M310",
+        "unknown HP LaserJet MFP M28-M31"
+      ]
+    },
+    {
+      "id": "hp-laserjet-4303",
+      "pattern": "(?i)^HP\\ Color\\ LaserJet\\ Pro\\ MFP\\ 4303$",
+      "type": "printer",
+      "model": "HP Color LaserJet Pro MFP 4303",
+      "manufacturer": "HP",
+      "capabilities": [
+        "scanning"
+      ],
+      "source_url": "https://kaas.hpcloud.hp.com/pdf-public/pdf_6084301_en-US-1.pdf",
+      "rationale": "Manufacturer documentation identifies this exact model or reported series. Match only an attributed device self-report; preserve the reported product granularity.",
+      "positive": [
+        "HP Color LaserJet Pro MFP 4303"
+      ],
+      "negative": [
+        "HP",
+        "HP Color LaserJet Pro MFP 4303 firmware",
+        "HP Color LaserJet Pro MFP 43030",
+        "unknown HP Color LaserJet Pro MFP 4303"
+      ]
+    },
+    {
+      "id": "hp-laserjet-m427fdn",
+      "pattern": "(?i)^HP\\ LaserJet\\ MFP\\ M427fdn$",
+      "type": "printer",
+      "model": "HP LaserJet MFP M427fdn",
+      "manufacturer": "HP",
+      "capabilities": [
+        "scanning"
+      ],
+      "source_url": "https://support.hp.com/us-en/product/product-specs/hp-laserjet-pro-mfp-m426-m427-f-series/model/7458664",
+      "rationale": "Manufacturer documentation identifies this exact model or reported series. Match only an attributed device self-report; preserve the reported product granularity.",
+      "positive": [
+        "HP LaserJet MFP M427fdn"
+      ],
+      "negative": [
+        "HP",
+        "HP LaserJet MFP M427fdn firmware",
+        "HP LaserJet MFP M427fdn0",
+        "unknown HP LaserJet MFP M427fdn"
+      ]
+    },
+    {
+      "id": "hp-laserjet-m1536dnf",
+      "pattern": "(?i)^HP\\ LaserJet\\ M1536dnf\\ MFP$",
+      "type": "printer",
+      "model": "HP LaserJet M1536dnf MFP",
+      "manufacturer": "HP",
+      "capabilities": [
+        "scanning"
+      ],
+      "source_url": "https://support.hp.com/us-en/product/product-specs/hp-laserjet-pro-m1536dnf-multifunction-printer/model/3974278",
+      "rationale": "Manufacturer documentation identifies this exact model or reported series. Match only an attributed device self-report; preserve the reported product granularity.",
+      "positive": [
+        "HP LaserJet M1536dnf MFP"
+      ],
+      "negative": [
+        "HP",
+        "HP LaserJet M1536dnf MFP firmware",
+        "HP LaserJet M1536dnf MFP0",
+        "unknown HP LaserJet M1536dnf MFP"
+      ]
+    },
+    {
+      "id": "hp-laserjet-m1213nf",
+      "pattern": "(?i)^HP\\ LaserJet\\ Professional\\ M1213nf\\ MFP$",
+      "type": "printer",
+      "model": "HP LaserJet Professional M1213nf MFP",
+      "manufacturer": "HP",
+      "capabilities": [
+        "scanning"
+      ],
+      "source_url": "https://support.hp.com/sk-en/product/product-specs/hp/4075454",
+      "rationale": "Manufacturer documentation identifies this exact model or reported series. Match only an attributed device self-report; preserve the reported product granularity.",
+      "positive": [
+        "HP LaserJet Professional M1213nf MFP"
+      ],
+      "negative": [
+        "HP",
+        "HP LaserJet Professional M1213nf MFP firmware",
+        "HP LaserJet Professional M1213nf MFP0",
+        "unknown HP LaserJet Professional M1213nf MFP"
+      ]
+    },
+    {
+      "id": "hp-laserjet-m202dw",
+      "pattern": "(?i)^HP\\ LaserJet\\ Pro\\ M202dw$",
+      "type": "printer",
+      "model": "HP LaserJet Pro M202dw",
+      "manufacturer": "HP",
+      "source_url": "https://support.hp.com/us-en/product/product-specs/hp-laserjet-m200-printer-series/model/6778283",
+      "rationale": "Manufacturer documentation identifies this exact model or reported series. Match only an attributed device self-report; preserve the reported product granularity.",
+      "positive": [
+        "HP LaserJet Pro M202dw"
+      ],
+      "negative": [
+        "HP",
+        "HP LaserJet Pro M202dw firmware",
+        "HP LaserJet Pro M202dw0",
+        "unknown HP LaserJet Pro M202dw"
+      ]
+    },
+    {
+      "id": "epson-l6270",
+      "pattern": "(?i)^EPSON L6270 Series(?: usb_MFG=EPSON)?$",
+      "type": "printer",
+      "model": "EPSON L6270 Series",
+      "manufacturer": "Epson",
+      "capabilities": [
+        "scanning"
+      ],
+      "source_url": "https://files.support.epson.com/docid/cpd6/cpd60178.pdf",
+      "rationale": "Manufacturer documentation identifies this exact model or reported series. Match only an attributed device self-report; preserve the reported product granularity.",
+      "positive": [
+        "EPSON L6270 Series",
+        "EPSON L6270 Series usb_MFG=EPSON"
+      ],
+      "negative": [
+        "Epson",
+        "EPSON L6270 Series firmware",
+        "EPSON L6270 Series0",
+        "unknown EPSON L6270 Series"
+      ]
+    },
+    {
+      "id": "ricoh-m-2701",
+      "pattern": "(?i)^RICOH M 2701(?: \\([0-9a-f]{6}\\)?)?$",
+      "type": "printer",
+      "model": "RICOH M 2701",
+      "manufacturer": "Ricoh",
+      "capabilities": [
+        "scanning"
+      ],
+      "source_url": "https://www.ricoh.com.cn/products/multifunction-printer-black-and-white/M-2701",
+      "rationale": "Manufacturer documentation identifies this exact model or reported series. Match only an attributed device self-report; preserve the reported product granularity.",
+      "positive": [
+        "RICOH M 2701",
+        "RICOH M 2701 (0123AB",
+        "RICOH M 2701 (0123AB)"
+      ],
+      "negative": [
+        "Ricoh",
+        "RICOH M 2701 firmware",
+        "RICOH M 27010",
+        "unknown RICOH M 2701"
+      ]
+    },
+    {
+      "id": "huawei-cv81-wdmse",
+      "pattern": "(?i)^HUAWEI\\ CV81\\-WDMSE$",
+      "type": "printer",
+      "model": "HUAWEI CV81-WDMSE",
+      "manufacturer": "Huawei",
+      "source_url": "https://consumer.huawei.com/cn/support/content/zh-cn16011655/",
+      "rationale": "Manufacturer documentation identifies this exact model or reported series. Match only an attributed device self-report; preserve the reported product granularity.",
+      "positive": [
+        "HUAWEI CV81-WDMSE"
+      ],
+      "negative": [
+        "Huawei",
+        "HUAWEI CV81-WDMSE firmware",
+        "HUAWEI CV81-WDMSE0",
+        "unknown HUAWEI CV81-WDMSE"
+      ]
+    },
+    {
+      "id": "lenovo-m7625dwa",
+      "pattern": "(?i)^Lenovo\\ M7625DWA$",
+      "type": "printer",
+      "model": "Lenovo M7625DWA",
+      "manufacturer": "Lenovo",
+      "capabilities": [
+        "scanning"
+      ],
+      "source_url": "https://www.lenovo.com.cn/wiki/product-1049367.html",
+      "rationale": "Manufacturer documentation identifies this exact model or reported series. Match only an attributed device self-report; preserve the reported product granularity.",
+      "positive": [
+        "Lenovo M7625DWA"
+      ],
+      "negative": [
+        "Lenovo",
+        "Lenovo M7625DWA firmware",
+        "Lenovo M7625DWA0",
+        "unknown Lenovo M7625DWA"
+      ]
+    },
+    {
+      "id": "hikvision-ds-ipc-b12v2-i",
+      "pattern": "(?i)^DS-IPC-B12V2-I$",
+      "type": "camera",
+      "model": "DS-IPC-B12V2-I",
+      "manufacturer": "Hikvision",
+      "source_url": "https://dealer-static.hikvision.com/upload/file/doc/DOC000056419-DS-IPC-B12V2-I.pdf",
+      "rationale": "Manufacturer documentation identifies this exact model or reported series. Match only an attributed device self-report; preserve the reported product granularity.",
+      "positive": [
+        "DS-IPC-B12V2-I"
+      ],
+      "negative": [
+        "Hikvision",
+        "DS-IPC-B12V2-I firmware",
+        "DS-IPC-B12V2-I0",
+        "unknown DS-IPC-B12V2-I"
+      ]
+    },
+    {
+      "id": "apple-mac17-3",
+      "pattern": "(?i)^Mac17,3$",
+      "type": "laptop",
+      "model": "MacBook Air (13-inch, M5)",
+      "manufacturer": "Apple",
+      "source_url": "https://support.apple.com/en-asia/102869",
+      "rationale": "Manufacturer documentation identifies this exact model or reported series. Match only an attributed device self-report; preserve the reported product granularity.",
+      "positive": [
+        "Mac17,3"
+      ],
+      "negative": [
+        "Apple",
+        "Mac17,3 firmware",
+        "Mac17,30",
+        "unknown Mac17,3"
+      ]
+    },
+    {
+      "id": "apple-mac16-12",
+      "pattern": "(?i)^Mac16,12$",
+      "type": "laptop",
+      "model": "MacBook Air (13-inch, M4, 2025)",
+      "manufacturer": "Apple",
+      "source_url": "https://support.apple.com/en-au/102869",
+      "rationale": "Manufacturer documentation identifies this exact model or reported series. Match only an attributed device self-report; preserve the reported product granularity.",
+      "positive": [
+        "Mac16,12"
+      ],
+      "negative": [
+        "Apple",
+        "Mac16,12 firmware",
+        "Mac16,120",
+        "unknown Mac16,12"
+      ]
+    },
+    {
+      "id": "apple-mac14-2",
+      "pattern": "(?i)^Mac14,2$",
+      "type": "laptop",
+      "model": "MacBook Air (M2, 2022)",
+      "manufacturer": "Apple",
+      "source_url": "https://support.apple.com/en-au/102869",
+      "rationale": "Manufacturer documentation identifies this exact model or reported series. Match only an attributed device self-report; preserve the reported product granularity.",
+      "positive": [
+        "Mac14,2"
+      ],
+      "negative": [
+        "Apple",
+        "Mac14,2 firmware",
+        "Mac14,20",
+        "unknown Mac14,2"
+      ]
+    },
+    {
+      "id": "apple-mac16-8",
+      "pattern": "(?i)^Mac16,8$",
+      "type": "laptop",
+      "model": "MacBook Pro (14-inch, 2024)",
+      "manufacturer": "Apple",
+      "source_url": "https://support.apple.com/en-us/108052",
+      "rationale": "Manufacturer documentation identifies this exact model or reported series. Match only an attributed device self-report; preserve the reported product granularity.",
+      "positive": [
+        "Mac16,8"
+      ],
+      "negative": [
+        "Apple",
+        "Mac16,8 firmware",
+        "Mac16,80",
+        "unknown Mac16,8"
+      ]
+    },
+    {
+      "id": "apple-mac14-7",
+      "pattern": "(?i)^Mac14,7$",
+      "type": "laptop",
+      "model": "MacBook Pro (13-inch, M2, 2022)",
+      "manufacturer": "Apple",
+      "source_url": "https://support.apple.com/en-us/108052",
+      "rationale": "Manufacturer documentation identifies this exact model or reported series. Match only an attributed device self-report; preserve the reported product granularity.",
+      "positive": [
+        "Mac14,7"
+      ],
+      "negative": [
+        "Apple",
+        "Mac14,7 firmware",
+        "Mac14,70",
+        "unknown Mac14,7"
+      ]
+    },
+    {
+      "id": "lenovo-m7675dxf",
+      "pattern": "(?i)^Lenovo M7675DXF$",
+      "type": "printer",
+      "model": "Lenovo M7675DXF",
+      "manufacturer": "Lenovo",
+      "source_url": "https://www.lenovo.com.cn/wiki/product-1049363.html",
+      "rationale": "The manufacturer lists this exact model as a printer. The rule requires an attributed device self-report.",
+      "positive": [
+        "Lenovo M7675DXF"
+      ],
+      "negative": [
+        "Lenovo",
+        "Lenovo M7675DXF0",
+        "Lenovo M7675DXF firmware"
+      ]
+    },
+    {
+      "id": "kyocera-ecosys-m8224cidn",
+      "pattern": "(?i)^(?:Kyocera )?ECOSYS M8224cidn$",
+      "type": "printer",
+      "model": "ECOSYS M8224cidn",
+      "manufacturer": "Kyocera",
+      "source_url": "https://www.kyoceradocumentsolutions.com/support/printcenter/include/modellist_prn.html",
+      "rationale": "The manufacturer lists this exact model as a printer. The rule requires an attributed device self-report.",
+      "positive": [
+        "ECOSYS M8224cidn"
+      ],
+      "negative": [
+        "Kyocera",
+        "ECOSYS M8224cidn0",
+        "ECOSYS M8224cidn firmware"
+      ]
+    },
+    {
+      "id": "dhcp-h3c-wa2610h-gn",
+      "version": "hardware-dhcp-model-review-2026-11-15.1",
+      "field": "dhcp_product_model",
+      "pattern": "(?i)^WA2610H\\-GN$",
+      "type": "access_point",
+      "model": "WA2610H-GN",
+      "manufacturer": "H3C",
+      "source_url": "https://www.h3c.com/cn/Service/Document_Software/Software_Download/IP_Wlan/",
+      "rationale": "Vendor product documentation identifies the hardware type. This exact model code is accepted only from an attributed DHCP ACK.",
+      "positive": [
+        "WA2610H-GN"
+      ],
+      "negative": [
+        "H3C",
+        "WA2610H-GN-OTHER",
+        "WA2610H-GN firmware"
+      ]
+    },
+    {
+      "id": "dhcp-h3c-wa5320",
+      "version": "hardware-dhcp-model-review-2026-11-15.1",
+      "field": "dhcp_product_model",
+      "pattern": "(?i)^WA5320$",
+      "type": "access_point",
+      "model": "WA5320",
+      "manufacturer": "H3C",
+      "source_url": "https://www.h3c.com/cn/d_202311/1962329_30005_0.htm",
+      "rationale": "Vendor product documentation identifies the hardware type. This exact model code is accepted only from an attributed DHCP ACK.",
+      "positive": [
+        "WA5320"
+      ],
+      "negative": [
+        "H3C",
+        "WA5320-OTHER",
+        "WA5320 firmware"
+      ]
+    },
+    {
+      "id": "dhcp-h3c-wa5320h",
+      "version": "hardware-dhcp-model-review-2026-11-15.1",
+      "field": "dhcp_product_model",
+      "pattern": "(?i)^WA5320H$",
+      "type": "access_point",
+      "model": "WA5320H",
+      "manufacturer": "H3C",
+      "source_url": "https://www.h3c.com/cn/d_202311/1962329_30005_0.htm",
+      "rationale": "Vendor product documentation identifies the hardware type. This exact model code is accepted only from an attributed DHCP ACK.",
+      "positive": [
+        "WA5320H"
+      ],
+      "negative": [
+        "H3C",
+        "WA5320H-OTHER",
+        "WA5320H firmware"
+      ]
+    },
+    {
+      "id": "dhcp-h3c-wa5530",
+      "version": "hardware-dhcp-model-review-2026-11-15.1",
+      "field": "dhcp_product_model",
+      "pattern": "(?i)^WA5530$",
+      "type": "access_point",
+      "model": "WA5530",
+      "manufacturer": "H3C",
+      "source_url": "https://www.h3c.com/cn/d_202311/1962329_30005_0.htm",
+      "rationale": "Vendor product documentation identifies the hardware type. This exact model code is accepted only from an attributed DHCP ACK.",
+      "positive": [
+        "WA5530"
+      ],
+      "negative": [
+        "H3C",
+        "WA5530-OTHER",
+        "WA5530 firmware"
+      ]
+    },
+    {
+      "id": "dhcp-h3c-wa6520h-hi",
+      "version": "hardware-dhcp-model-review-2026-11-15.1",
+      "field": "dhcp_product_model",
+      "pattern": "(?i)^WA6520H\\-HI$",
+      "type": "access_point",
+      "model": "WA6520H-HI",
+      "manufacturer": "H3C",
+      "source_url": "https://www.h3c.com/cn/Service/Document_Software/Software_Download/IP_Wlan/",
+      "rationale": "Vendor product documentation identifies the hardware type. This exact model code is accepted only from an attributed DHCP ACK.",
+      "positive": [
+        "WA6520H-HI"
+      ],
+      "negative": [
+        "H3C",
+        "WA6520H-HI-OTHER",
+        "WA6520H-HI firmware"
+      ]
+    },
+    {
+      "id": "dhcp-h3c-wa7220",
+      "version": "hardware-dhcp-model-review-2026-11-15.1",
+      "field": "dhcp_product_model",
+      "pattern": "(?i)^WA7220$",
+      "type": "access_point",
+      "model": "WA7220",
+      "manufacturer": "H3C",
+      "source_url": "https://www.h3c.com/cn/d_202606/2868986_30005_0.htm",
+      "rationale": "Vendor product documentation identifies the hardware type. This exact model code is accepted only from an attributed DHCP ACK.",
+      "positive": [
+        "WA7220"
+      ],
+      "negative": [
+        "H3C",
+        "WA7220-OTHER",
+        "WA7220 firmware"
+      ]
+    },
+    {
+      "id": "dhcp-h3c-wa7220h",
+      "version": "hardware-dhcp-model-review-2026-11-15.1",
+      "field": "dhcp_product_model",
+      "pattern": "(?i)^WA7220H$",
+      "type": "access_point",
+      "model": "WA7220H",
+      "manufacturer": "H3C",
+      "source_url": "https://www.h3c.com/cn/d_202606/2868986_30005_0.htm",
+      "rationale": "Vendor product documentation identifies the hardware type. This exact model code is accepted only from an attributed DHCP ACK.",
+      "positive": [
+        "WA7220H"
+      ],
+      "negative": [
+        "H3C",
+        "WA7220H-OTHER",
+        "WA7220H firmware"
+      ]
+    },
+    {
+      "id": "dhcp-h3c-wa7230",
+      "version": "hardware-dhcp-model-review-2026-11-15.1",
+      "field": "dhcp_product_model",
+      "pattern": "(?i)^WA7230$",
+      "type": "access_point",
+      "model": "WA7230",
+      "manufacturer": "H3C",
+      "source_url": "https://www.h3c.com/cn/d_202606/2868986_30005_0.htm",
+      "rationale": "Vendor product documentation identifies the hardware type. This exact model code is accepted only from an attributed DHCP ACK.",
+      "positive": [
+        "WA7230"
+      ],
+      "negative": [
+        "H3C",
+        "WA7230-OTHER",
+        "WA7230 firmware"
+      ]
+    },
+    {
+      "id": "dhcp-h3c-wa7338-hi",
+      "version": "hardware-dhcp-model-review-2026-11-15.1",
+      "field": "dhcp_product_model",
+      "pattern": "(?i)^WA7338\\-HI$",
+      "type": "access_point",
+      "model": "WA7338-HI",
+      "manufacturer": "H3C",
+      "source_url": "https://www.h3c.com/cn/Service/Document_Software/Software_Download/IP_Wlan/",
+      "rationale": "Vendor product documentation identifies the hardware type. This exact model code is accepted only from an attributed DHCP ACK.",
+      "positive": [
+        "WA7338-HI"
+      ],
+      "negative": [
+        "H3C",
+        "WA7338-HI-OTHER",
+        "WA7338-HI firmware"
+      ]
+    },
+    {
+      "id": "dhcp-huawei-ax31-10",
+      "version": "hardware-dhcp-model-review-2026-11-15.1",
+      "field": "dhcp_product_model",
+      "pattern": "(?i)^AX31\\-10$",
+      "type": "router",
+      "model": "AX31-10",
+      "manufacturer": "Huawei",
+      "source_url": "https://consumer.huawei.com/cn/support/content/zh-cn15943502/",
+      "rationale": "Huawei documents the corresponding PSDN-AX31-10 router; retain the shorter identifier used in DHCP.",
+      "positive": [
+        "AX31-10"
+      ],
+      "negative": [
+        "Huawei",
+        "AX31-10-OTHER",
+        "AX31-10 firmware"
+      ]
+    },
+    {
+      "id": "dhcp-huawei-ax32-10",
+      "version": "hardware-dhcp-model-review-2026-11-15.1",
+      "field": "dhcp_product_model",
+      "pattern": "(?i)^AX32\\-10$",
+      "type": "router",
+      "model": "AX32-10",
+      "manufacturer": "Huawei",
+      "source_url": "https://consumer.huawei.com/cn/support/content/zh-cn15943502/",
+      "rationale": "Huawei documents the corresponding PSDN-AX32-10 router; retain the shorter identifier used in DHCP.",
+      "positive": [
+        "AX32-10"
+      ],
+      "negative": [
+        "Huawei",
+        "AX32-10-OTHER",
+        "AX32-10 firmware"
+      ]
+    },
+    {
+      "id": "dhcp-huawei-ws7000-11",
+      "version": "hardware-dhcp-model-review-2026-11-15.1",
+      "field": "dhcp_product_model",
+      "pattern": "(?i)^WS7000\\-11$",
+      "type": "router",
+      "model": "WS7000-11",
+      "manufacturer": "Huawei",
+      "source_url": "https://consumer.huawei.com/cn/support/content/zh-cn15904688/",
+      "rationale": "Vendor product documentation identifies the hardware type. This exact model code is accepted only from an attributed DHCP ACK.",
+      "positive": [
+        "WS7000-11"
+      ],
+      "negative": [
+        "Huawei",
+        "WS7000-11-OTHER",
+        "WS7000-11 firmware"
+      ]
+    },
+    {
+      "id": "dhcp-huawei-ws7000-12",
+      "version": "hardware-dhcp-model-review-2026-11-15.1",
+      "field": "dhcp_product_model",
+      "pattern": "(?i)^WS7000\\-12$",
+      "type": "router",
+      "model": "WS7000-12",
+      "manufacturer": "Huawei",
+      "source_url": "https://consumer.huawei.com/cn/support/content/zh-cn15904688/",
+      "rationale": "Vendor product documentation identifies the hardware type. This exact model code is accepted only from an attributed DHCP ACK.",
+      "positive": [
+        "WS7000-12"
+      ],
+      "negative": [
+        "Huawei",
+        "WS7000-12-OTHER",
+        "WS7000-12 firmware"
+      ]
+    },
+    {
+      "id": "dhcp-huawei-ws7200-0g",
+      "version": "hardware-dhcp-model-review-2026-11-15.1",
+      "field": "dhcp_product_model",
+      "pattern": "(?i)^WS7200\\-0G$",
+      "type": "router",
+      "model": "WS7200-0G",
+      "manufacturer": "Huawei",
+      "source_url": "https://consumer.huawei.com/jp/support/content/ja-jp15938700/",
+      "rationale": "Huawei documents WS7200 as a router platform; preserve the exact suffix reported in DHCP, with no retail SKU equivalence inferred.",
+      "positive": [
+        "WS7200-0G"
+      ],
+      "negative": [
+        "Huawei",
+        "WS7200-0G-OTHER",
+        "WS7200-0G firmware"
+      ]
+    },
+    {
+      "id": "dhcp-honor-ws831",
+      "version": "hardware-dhcp-model-review-2026-11-15.1",
+      "field": "dhcp_product_model",
+      "pattern": "(?i)^WS831$",
+      "type": "router",
+      "model": "WS831",
+      "manufacturer": "Honor",
+      "source_url": "https://consumer.huawei.com/cn/support/content/zh-cn15816684/",
+      "rationale": "Vendor product documentation identifies the hardware type. This exact model code is accepted only from an attributed DHCP ACK.",
+      "positive": [
+        "WS831"
+      ],
+      "negative": [
+        "Honor",
+        "WS831-OTHER",
+        "WS831 firmware"
       ]
     }
   ]

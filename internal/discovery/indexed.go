@@ -124,11 +124,18 @@ ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
 		var row deviceObservationRow
 		var raw []byte
 		var category string
-		if err = rows.Scan(&row.IndexedIdentityKey, &row.DeviceKey, &raw, &row.EndpointID, &row.ProfileDeviceType, &row.ProfileTypeConfidence, &row.ProfileConflict, &category); err != nil {
+		fields := []any{&row.IndexedIdentityKey, &row.DeviceKey, &raw, &row.EndpointID, &row.ProfileDeviceType, &row.ProfileTypeConfidence, &row.ProfileConflict}
+		if r.HardwareV2 {
+			fields = append(fields, &row.ProfileCandidateRole)
+		}
+		if err = rows.Scan(append(fields, &category)...); err != nil {
 			return nil, err
 		}
 		if err = json.Unmarshal(raw, &row.Observation); err != nil {
 			return nil, err
+		}
+		if r.HardwareV2 {
+			row.Observation.MarkUnattributedSNMPClue()
 		}
 		categories[row.IndexedIdentityKey] = category
 		deviceRows = append(deviceRows, row)
@@ -150,19 +157,19 @@ ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
 			return nil, err
 		}
 	}
-	if selection.PageProfiles && query.View != "iot" {
-		// Category clues are resolved only for this bounded page when they
-		// were not a selection predicate. Keep the SQL grouping semantics.
-		candidateCategories := indexedPageCandidateCategories(deviceRows, now)
-		for _, item := range items {
-			if item.ClassificationStatus == "candidate" {
-				categories[item.indexedIdentityKey] = candidateCategories[item.indexedIdentityKey]
-			}
-		}
+	var candidateTypes map[string]string
+	if r.HardwareV2 {
+		candidateTypes = indexedPageCandidateTypes(deviceRows)
 	}
 	for i := range items {
 		if items[i].DeviceType == "" {
 			items[i].Category = categories[items[i].indexedIdentityKey]
+		}
+		if items[i].ClassificationStatus == "candidate" {
+			items[i].CandidateDeviceType = candidateTypes[items[i].indexedIdentityKey]
+			if selection.PageProfiles && query.View != "iot" && items[i].CandidateDeviceType != "" {
+				items[i].Category = deviceCategory(items[i].CandidateDeviceType)
+			}
 		}
 		if query.ReviewReason != "" {
 			items[i].ReviewReason = query.ReviewReason
@@ -261,24 +268,23 @@ func indexedOrigins(mode string) ([]string, error) {
 	}
 }
 
-func indexedPageCandidateCategories(rows []deviceObservationRow, now time.Time) map[string]string {
+func indexedPageCandidateTypes(rows []deviceObservationRow) map[string]string {
 	roles := map[string]map[string]bool{}
 	for _, row := range rows {
 		if roles[row.IndexedIdentityKey] == nil {
 			roles[row.IndexedIdentityKey] = map[string]bool{}
 		}
-		if row.Observation.ValidUntil.After(now) && !row.ProfileConflict && row.ProfileTypeConfidence >= .4 && row.ProfileTypeConfidence < .8 && row.ProfileDeviceType != "" {
-			roles[row.IndexedIdentityKey][row.ProfileDeviceType] = true
+		if row.ProfileCandidateRole != "" {
+			roles[row.IndexedIdentityKey][row.ProfileCandidateRole] = true
 		}
 	}
-	categories := map[string]string{}
+	candidates := map[string]string{}
 	for key, types := range roles {
-		categories[key] = "identity_only"
 		if len(types) == 1 {
 			for kind := range types {
-				categories[key] = deviceCategory(kind)
+				candidates[key] = kind
 			}
 		}
 	}
-	return categories
+	return candidates
 }

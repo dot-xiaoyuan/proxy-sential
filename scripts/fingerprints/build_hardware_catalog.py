@@ -10,7 +10,7 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-VERSION = 'hardware-catalog-2026-11-12.2'
+VERSION = 'hardware-catalog-2026-11-15.1'
 CONVERTER = 'sentinel-hardware-converter/1'
 RECOG_FIELDS = {'snmp_sysdescr':'snmp_sysdescr','http_servers':'http_server','html_title':'http_title','http_wwwauth':'http_www_authenticate','mdns_device-info_txt':'mdns_model','ssh_banners':'ssh_banner','sip_banners':'sip_server','x509_subjects':'tls_subject','x509_issuers':'tls_issuer','dhcp_vendor_class':'dhcp_vendor_class','sip_user_agents':'sip_user_agent'}
 
@@ -137,7 +137,7 @@ def build(raw,legacy,models,products):
     result['source_counts']={'openwrt':len(toh['entries']),'librenms_hardware':len(hardware_gaps)+executable_hardware}
     reviewed=json.loads(raw['verified/reviewed-hardware-models.json'])
     for entry in reviewed['entries']:
-        rule=dict(entry,source='verified_model',version=reviewed['version'],raw_ref='verified/reviewed-hardware-models.json',raw_sha256=hashlib.sha256(raw['verified/reviewed-hardware-models.json'].encode()).hexdigest())
+        rule=dict(entry,source='verified_model',version=entry.get('version',reviewed['version']),raw_ref='verified/reviewed-hardware-models.json',raw_sha256=hashlib.sha256(raw['verified/reviewed-hardware-models.json'].encode()).hexdigest())
         result['models'].append(rule)
     return result
 

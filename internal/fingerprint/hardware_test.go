@@ -141,6 +141,31 @@ func TestHardwareReviewedMultifunctionModels(t *testing.T) {
 	}
 }
 
+func TestHardwareReviewedRetainedSelfReports(t *testing.T) {
+	now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct{ protocol, field, value, wantType, wantModel string }{
+		{"dns_sd", "dns_sd_model", "Canon MF260 II Series UUID=0123456789ab", "printer", "Canon MF260 II Series"},
+		{"dns_sd", "dns_sd_model", "Brother DCP-L3528CDW", "printer", "Brother DCP-L3528CDW"},
+		{"dns_sd", "dns_sd_model", "Mac17,3", "laptop", "MacBook Air (13-inch, M5)"},
+		{"sadp", "sadp_model", "DS-IPC-B12V2-I", "camera", "DS-IPC-B12V2-I"},
+		{"sadp", "sadp_model", "DS-IPC-B12-I", "", ""},
+		{"dns_sd", "service_type", "_ipp._tcp", "", ""},
+		{"dns_sd", "dns_sd_model", "Canon MF260 II Series UUID=invalid", "", ""},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			evidence := []EvidenceSignal{hardwareSignal(tc.protocol, tc.field, tc.value, "retained-evidence")}
+			got := defaultHardwareCatalog().Evaluate(HardwareInput{IdentityTrusted: true, Evidence: evidence}, now)
+			if got.Type != tc.wantType || got.Model != tc.wantModel {
+				t.Fatalf("got type/model %q/%q, want %q/%q", got.Type, got.Model, tc.wantType, tc.wantModel)
+			}
+			untrusted := defaultHardwareCatalog().Evaluate(HardwareInput{Evidence: evidence}, now)
+			if untrusted.Type != "" {
+				t.Fatalf("unattributed evidence assigned %q", untrusted.Type)
+			}
+		})
+	}
+}
+
 func TestHardwareReviewedSiteModelsV2(t *testing.T) {
 	now := time.Date(2026, 11, 12, 4, 0, 0, 0, time.UTC)
 	for _, tc := range []struct{ protocol, field, model, kind string }{
@@ -148,7 +173,7 @@ func TestHardwareReviewedSiteModelsV2(t *testing.T) {
 		{"sadp", "sadp_model", "DS-7808N-Q2", "recorder"},
 	} {
 		r := EvaluateHardware(HardwareInput{IdentityTrusted: true, Evidence: []EvidenceSignal{hardwareSignal(tc.protocol, tc.field, tc.model, "retained-observation")}}, now)
-		if r.Type != tc.kind || r.Model != tc.model || r.Version != "hardware-catalog-2026-11-12.2" {
+		if r.Type != tc.kind || r.Model != tc.model || r.Version != hardwareBundleSource.Version {
 			t.Fatalf("reviewed model %s: %+v", tc.model, r)
 		}
 		if tc.kind == "printer" && (strings.Contains(strings.ToLower(r.Model), "fdn") || len(r.Capabilities) != 1 || r.Capabilities[0] != "scanning") {
@@ -165,7 +190,7 @@ func TestHardwareReviewedSiteModelsV2(t *testing.T) {
 		libre, reviewed := false, false
 		for _, source := range r.Sources {
 			libre = libre || source.Source == "librenms" && source.Fields["hw.product"] == model
-			reviewed = reviewed || source.Source == "verified_model" && source.RuleVersion == "hardware-model-review-2026-11-12.2"
+			reviewed = reviewed || source.Source == "verified_model" && source.RuleVersion == "hardware-model-review-2026-11-14.1"
 		}
 		if !libre || !reviewed {
 			t.Fatalf("missing extraction/rule provenance: %+v", r)

@@ -5179,7 +5179,6 @@ pre.wrap-code {
 .discovery-list-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-width: 0; }
 @media (max-width: 1399px) {
   .discovery-list-actions .terminal-page-summary { display: none; }
-  .list-surface-head .terminal-type-shortcuts { display: none; }
 }
 .discovery-list-actions .terminal-page-summary { gap: 4px 12px; font-size: 12px; }
 .discovery-list-actions .terminal-page-summary strong { font-size: 13px; }
@@ -5187,6 +5186,7 @@ pre.wrap-code {
   .discovery-overview-strip .discovery-overview-caption { display: none; }
   .discovery-overview-strip .discovery-overview-types { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
   .discovery-overview-strip .discovery-overview-types > .ant-typography { flex-shrink: 0; }
+  .discovery-overview-strip .discovery-overview-candidates { flex-wrap: wrap; overflow-x: visible; }
 }
 @media (max-width: 560px) { .discovery-overview { padding: 12px 14px; } .discovery-overview-metrics { gap: 4px 18px; } .discovery-overview-metrics strong { font-size: 17px; } }
 .terminal-identity { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
@@ -5218,7 +5218,7 @@ pre.wrap-code {
   .terminal-workspace-header h3.ant-typography { font-size: 21px; }
   .terminal-header-actions { width: 100%; }
   .terminal-header-actions .ant-btn { flex: 1 0 0; }
-  .terminal-type-shortcuts { gap: 6px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; padding-bottom: 2px; }
+  .terminal-type-shortcuts { gap: 6px; }
   .terminal-type-shortcuts .ant-btn { padding-inline: 10px; }
   .terminal-total strong { font-size: 20px; }
   .terminal-page-summary { gap: 8px 14px; }

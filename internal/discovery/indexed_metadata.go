@@ -14,6 +14,7 @@ type IndexedDeviceMetadata struct {
 	Conflict              int64                    `json:"conflict"`
 	Expired               int64                    `json:"expired"`
 	Types                 []IndexedDeviceTypeCount `json:"types"`
+	CandidateTypes        []IndexedDeviceTypeCount `json:"candidate_types,omitempty"`
 	AsOf                  time.Time                `json:"as_of"`
 	CountUnit             string                   `json:"count_unit"`
 	Window                string                   `json:"window"`
@@ -37,6 +38,7 @@ func (r Repository) DevicesIndexedMetadataSnapshot(ctx context.Context, tx *sql.
 
 func (r Repository) devicesIndexedMetadata(ctx context.Context, db indexedQueryer, q DeviceQuery, includeFreshness bool) (IndexedDeviceMetadata, error) {
 	q.HardwareV2 = r.HardwareV2
+	q.includeCandidateTypes = r.HardwareV2
 	q.Cursor = ""
 	q.Offset = 0
 	q.Limit = 50
@@ -72,6 +74,9 @@ func (r Repository) devicesIndexedMetadata(ctx context.Context, db indexedQuerye
 			result.Types = append(result.Types, IndexedDeviceTypeCount{DeviceType: kind, Count: count})
 		case "candidate":
 			result.Candidate += count
+			if r.HardwareV2 && kind != "" {
+				result.CandidateTypes = append(result.CandidateTypes, IndexedDeviceTypeCount{DeviceType: kind, Count: count})
+			}
 		case "conflict":
 			result.Conflict += count
 		case "expired":

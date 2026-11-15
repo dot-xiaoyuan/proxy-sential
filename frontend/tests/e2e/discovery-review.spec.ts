@@ -68,3 +68,47 @@ test('confirmed type overview has one entry per type at the required viewports',
   expect(consoleErrors).toEqual([])
   expect(networkErrors).toEqual([])
 })
+
+test('device type shortcuts remain visible and usable after filtering to printers', async ({page}, testInfo) => {
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  page.on('console', entry => { if (entry.type() === 'error') errors.push(entry.text()) })
+  page.on('response', response => { if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`) })
+  for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }, { width: 1440, height: 900 }]) {
+    await page.setViewportSize(viewport)
+    await page.goto('/discovery?discovery_type=printer&discovery_state=identified')
+    const shortcuts = page.getByRole('navigation', { name: '快捷设备类型' })
+    await expect(shortcuts.getByRole('button', { name: '打印机', pressed: true })).toBeVisible()
+    for (const name of ['手机', '路由器', '无线 AP', '交换机']) {
+      await expect(shortcuts.getByRole('button', { name, exact: true })).toBeVisible()
+    }
+    const probe = await shortcuts.evaluate(element => {
+      const bounds = element.getBoundingClientRect()
+      const selected = element.querySelector('button[aria-pressed="true"]')
+      const luminance = (color: string) => (color.match(/[\d.]+/g) ?? []).slice(0, 3).map(value => {
+        const channel = Number(value) / 255
+        return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+      }).reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index], 0)
+      const foreground = selected ? luminance(getComputedStyle(selected).color) : 0
+      const background = selected ? luminance(getComputedStyle(selected).backgroundColor) : 0
+      return {
+        documentOverflow: document.documentElement.scrollWidth > innerWidth + 2,
+        regionOverflow: element.scrollWidth > element.clientWidth + 2,
+        selectedContrast: (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05),
+        clippedButtons: [...element.querySelectorAll('button')].filter(button => {
+          const style = getComputedStyle(button)
+          const rect = button.getBoundingClientRect()
+          return rect.left < bounds.left - 1 || rect.right > bounds.right + 1 || style.whiteSpace !== 'nowrap' || style.flexShrink !== '0'
+        }).length,
+      }
+    })
+    expect(probe).toMatchObject({ documentOverflow: false, regionOverflow: false, clippedButtons: 0 })
+    expect(probe.selectedContrast).toBeGreaterThanOrEqual(4.5)
+    await shortcuts.screenshot({ path: testInfo.outputPath(`type-shortcuts-${viewport.width}x${viewport.height}.png`), animations: 'disabled' })
+    await shortcuts.getByRole('button', { name: '手机', exact: true }).click()
+    await expect(page).toHaveURL(/discovery_type=mobile/)
+    await expect(page).not.toHaveURL(/discovery_state=identified/)
+    await expect(shortcuts.getByRole('button', { name: '手机', pressed: true })).toBeVisible()
+  }
+  expect(errors).toEqual([])
+})
