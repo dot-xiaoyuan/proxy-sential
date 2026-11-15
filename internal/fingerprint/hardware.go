@@ -75,6 +75,7 @@ type HardwareCondition struct {
 	re       *regexp.Regexp
 }
 type HardwareSNMPRule struct {
+	Manufacturer string              `json:"manufacturer,omitempty"`
 	ID           string              `json:"id"`
 	Source       string              `json:"source"`
 	Version      string              `json:"version"`
@@ -494,7 +495,7 @@ func CanonicalHardwareType(value string) string {
 		return "ups"
 	}
 	switch v {
-	case "printer", "scanner", "camera", "recorder", "access_control", "router", "switch", "access_point", "firewall", "ups", "pdu", "environment_monitor", "desktop", "laptop", "mobile", "tablet", "nas", "storage", "media_player", "media_device", "display", "tv", "network_adapter", "wireless_controller":
+	case "printer", "scanner", "camera", "recorder", "access_control", "router", "switch", "access_point", "firewall", "ups", "pdu", "environment_monitor", "desktop", "laptop", "mobile", "tablet", "nas", "storage", "media_player", "media_device", "display", "tv", "network_adapter", "wireless_controller", "wireless_host":
 		return v
 	}
 	return ""
@@ -766,7 +767,7 @@ func (h *HardwareCatalog) Evaluate(input HardwareInput, now time.Time) HardwareR
 				report.Matched++
 				reports["librenms_hardware"] = report
 			}
-			record(r.Source, r.ID, r.Version, r.Type, model, "", s, map[string]string{"os.product": r.Name, "hw.product": model})
+			record(r.Source, r.ID, r.Version, r.Type, model, r.Manufacturer, s, map[string]string{"os.product": r.Name, "hw.product": model})
 			// An extracted hardware model uses the same reviewed model catalog.
 			if model != "" {
 				for _, mr := range h.models {

@@ -10,7 +10,7 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-VERSION = 'hardware-catalog-2026-11-15.1'
+VERSION = 'hardware-catalog-2026-11-15.2'
 CONVERTER = 'sentinel-hardware-converter/1'
 RECOG_FIELDS = {'snmp_sysdescr':'snmp_sysdescr','http_servers':'http_server','html_title':'http_title','http_wwwauth':'http_www_authenticate','mdns_device-info_txt':'mdns_model','ssh_banners':'ssh_banner','sip_banners':'sip_server','x509_subjects':'tls_subject','x509_issuers':'tls_issuer','dhcp_vendor_class':'dhcp_vendor_class','sip_user_agents':'sip_user_agent'}
 
@@ -139,6 +139,15 @@ def build(raw,legacy,models,products):
     for entry in reviewed['entries']:
         rule=dict(entry,source='verified_model',version=entry.get('version',reviewed['version']),raw_ref='verified/reviewed-hardware-models.json',raw_sha256=hashlib.sha256(raw['verified/reviewed-hardware-models.json'].encode()).hexdigest())
         result['models'].append(rule)
+    reviewed_snmp=json.loads(raw.get('verified/reviewed-snmp-products.json','{"entries":[]}'))
+    for entry in reviewed_snmp['entries']:
+        pattern=entry['pattern']
+        for value in entry['positive']:
+            if not re.search(pattern,value):raise ValueError('SNMP positive failed: '+entry['id'])
+        for value in entry['negative']:
+            if re.search(pattern,value):raise ValueError('SNMP negative matched: '+entry['id'])
+        path='verified/reviewed-snmp-products.json'; digest=hashlib.sha256(raw[path].encode()).hexdigest()
+        result['snmp'].append(dict(id=entry['id'],source='verified_product',version=reviewed_snmp['version'],name=entry['name'],type=entry['type'],manufacturer=entry['manufacturer'],condition=dict(field='snmp_sysdescr',operator='regex',value=pattern),raw_ref=path,raw_sha256=digest,extractors=[dict(field='snmp_sysdescr',pattern=pattern,capture='hardware',raw_ref=path,raw_sha256=digest)]))
     return result
 
 def main():

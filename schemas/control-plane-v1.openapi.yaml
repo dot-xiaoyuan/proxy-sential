@@ -8514,14 +8514,22 @@ components:
         has_more: { type: boolean }
     DiscoveryFreshness:
       type: object
-      required: [status, lag_seconds, result_version]
+      required: [status, lag_seconds]
       properties:
         status: { type: string, enum: [initializing, ready, processing, delayed, failed] }
         lag_seconds: { type: number }
         result_version: { type: integer, format: int64 }
+        source: { type: string }
         oldest_pending_at: { type: string, format: date-time }
+        cursor_at: { type: string, format: date-time }
         ingested_at: { type: string, format: date-time }
         processed_at: { type: string, format: date-time }
+        last_success_at: { type: string, format: date-time }
+        pending_batches: { type: integer, format: int64 }
+        archive_pending_batches: { type: integer, format: int64 }
+        archive_verified_at: { type: string, format: date-time }
+        archive_oldest_pending_at: { type: string, format: date-time }
+        archive_lag_seconds: { type: number }
         error: { type: string }
     DiscoveryTypeCatalogue:
       type: object
@@ -8771,10 +8779,47 @@ components:
               observed_at: { type: string, format: date-time }
               kind: { type: string }
               evidence: { $ref: '#/components/schemas/DiscoveryObservation' }
+    DiscoveryProductClue:
+      type: object
+      required: [ip, sensor_id, site, domain, product_status, attribution, observed_at, event_id, rule_version]
+      properties:
+        ip: { type: string }
+        sensor_id: { type: string }
+        site: { type: string }
+        domain: { type: string }
+        vlan: { type: string }
+        vrf: { type: string }
+        type: { type: string }
+        manufacturer: { type: string }
+        model: { type: string }
+        product_status: { type: string }
+        attribution: { type: string, enum: [response_ip] }
+        observed_at: { type: string, format: date-time }
+        event_id: { type: string }
+        rule_version: { type: string }
+        source_sha256: { type: string }
+        raw_ref: { type: object, additionalProperties: true }
+        missing_fields: { type: array, items: { type: string } }
+        conflicting_types: { type: array, items: { type: string } }
+        conflicting_models: { type: array, items: { type: string } }
+        evaluation_error: { type: string }
+        sources:
+          type: array
+          items:
+            type: object
+            required: [source, rule_id, rule_version, evidence_id, observed_at]
+            properties:
+              source: { type: string }
+              rule_id: { type: string }
+              rule_version: { type: string }
+              evidence_id: { type: string }
+              observed_at: { type: string, format: date-time }
+              fields: { type: object, additionalProperties: { type: string } }
     DiscoveryObservation:
       type: object
       required: [id, origin, observed_at, valid_until, explanation]
       properties:
+        product_clue: { $ref: '#/components/schemas/DiscoveryProductClue' }
         id: { type: string }
         event_id: { type: string }
         source_id: { type: string }
@@ -8835,6 +8880,7 @@ components:
       type: object
       required: [id, observations, category, identity_kind, capabilities, protocols, first_seen, last_seen, current, evidence_count]
       properties:
+        product_clues: { type: array, items: { $ref: '#/components/schemas/DiscoveryProductClue' } }
         hardware_type: { type: string, description: "可信作用域身份的持久硬件类型；服务 TTL 到期不清除" }
         candidate_device_type: { type: string, description: A scoped candidate device type supported by a recent endpoint profile. This field does not confirm a hardware type. }
         hardware_type_status: { type: string, enum: [identified, candidate, conflict, revoked] }

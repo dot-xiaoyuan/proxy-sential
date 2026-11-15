@@ -187,6 +187,22 @@ func HardwareFactFromObservation(o Observation) (*HardwareFact, error) {
 	f := &HardwareFact{SensorID: o.Node, CampusID: o.Site, AccessDomain: o.Domain, VLAN: o.VLAN, VRF: o.VRF, MAC: strings.ToLower(mac.String()), DeviceKey: o.Key(), Source: o.Origin, FirstSeen: o.ObservedAt, ObservedAt: o.ObservedAt, ActiveUntil: o.ValidUntil, Revoked: o.Withdrawn, EvidenceID: firstText(o.EventID, o.ID), RawRef: o.Evidence.RawRef, Signals: []StoredHardwareSignal{}, AddressOnly: o.Origin == "arp" || o.Origin == "ndp"}
 	f.IdentityKey = HardwareIdentityKey(o.Node, o.Site, o.Domain, o.VLAN, o.VRF, f.MAC)
 	f.ClaimKey = hardwareHash([]string{o.SourceID, o.Origin, str(p, "service_instance"), str(p, "usn"), str(p, "bacnet_device_id"), str(p, "modbus_unit_id")})
+	f.Signals, err = hardwareObservationSignals(o)
+	if err != nil {
+		return nil, err
+	}
+	// Different product contents coexist; a newer model cannot silently erase a
+	// contradictory older direct self-report. Withdrawals target the claim below.
+	f.FactKey = hardwareHash([]any{f.ClaimKey, f.Signals})
+	if len(f.Signals) == 0 {
+		f.FactKey = hardwareHash([]string{f.ClaimKey, "activity"})
+	}
+	return f, nil
+}
+
+// hardwareObservationSignals extracts bounded product fields without asserting a physical identity.
+func hardwareObservationSignals(o Observation) ([]StoredHardwareSignal, error) {
+	p := o.Evidence.Payload
 	fields := map[string]string{}
 	switch o.Origin {
 	case "dhcp":
@@ -242,6 +258,7 @@ func HardwareFactFromObservation(o Observation) (*HardwareFact, error) {
 		fields["tls_subject"] = str(p, "certificate_subject")
 		fields["tls_issuer"] = str(p, "certificate_issuer")
 	}
+	signals := []StoredHardwareSignal{}
 	keys := make([]string, 0, len(fields))
 	for key := range fields {
 		keys = append(keys, key)
@@ -259,15 +276,9 @@ func HardwareFactFromObservation(o Observation) (*HardwareFact, error) {
 		if len(value) > bound {
 			return nil, fmt.Errorf("hardware field %s exceeds bound", key)
 		}
-		f.Signals = append(f.Signals, StoredHardwareSignal{Protocol: o.Origin, Field: key, Value: value})
+		signals = append(signals, StoredHardwareSignal{Protocol: o.Origin, Field: key, Value: value})
 	}
-	// Different product contents coexist; a newer model cannot silently erase a
-	// contradictory older direct self-report. Withdrawals target the claim below.
-	f.FactKey = hardwareHash([]any{f.ClaimKey, f.Signals})
-	if len(f.Signals) == 0 {
-		f.FactKey = hardwareHash([]string{f.ClaimKey, "activity"})
-	}
-	return f, nil
+	return signals, nil
 }
 
 func (f HardwareFact) Evidence() []fingerprint.EvidenceSignal {

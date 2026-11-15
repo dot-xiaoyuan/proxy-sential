@@ -922,6 +922,166 @@
         "WS831-OTHER",
         "WS831 firmware"
       ]
+    },
+    {
+      "id": "h3c-e528c",
+      "pattern": "(?i)^(?:H3C )?E528C$",
+      "type": "switch",
+      "model": "E528C",
+      "manufacturer": "H3C",
+      "source_url": "https://www.h3c.com/cn/Products_And_Solution/InterConnect/Products/Switches/Products/Park_Switches/Access_Switch/H3C_E/E500C/",
+      "version": "hardware-model-review-2026-11-15.2",
+      "rationale": "Manufacturer hardware specification identifies this exact switch model. Applies only to device-side model self-report or verified upstream model extraction; OS family alone is insufficient.",
+      "positive": [
+        "E528C",
+        "H3C E528C"
+      ],
+      "negative": [
+        "H3C",
+        "Comware",
+        "E528C-OTHER",
+        "Manual for E528C"
+      ]
+    },
+    {
+      "id": "h3c-e510c-x-pwr-f",
+      "pattern": "(?i)^(?:H3C )?E510C\\-X\\-PWR\\-F$",
+      "type": "switch",
+      "model": "E510C-X-PWR-F",
+      "manufacturer": "H3C",
+      "source_url": "https://www.h3c.com/cn/Products_And_Solution/InterConnect/Products/Switches/Products/Park_Switches/Access_Switch/H3C_E/E500C-F/Home/Detail_Material_List/Specifications/",
+      "version": "hardware-model-review-2026-11-15.2",
+      "rationale": "Manufacturer hardware specification identifies this exact switch model. Applies only to device-side model self-report or verified upstream model extraction; OS family alone is insufficient.",
+      "positive": [
+        "E510C-X-PWR-F",
+        "H3C E510C-X-PWR-F"
+      ],
+      "negative": [
+        "H3C",
+        "Comware",
+        "E510C-X-PWR-F-OTHER",
+        "Manual for E510C-X-PWR-F"
+      ]
+    },
+    {
+      "id": "h3c-e520c-mx-pwr-f",
+      "pattern": "(?i)^(?:H3C )?E520C\\-MX\\-PWR\\-F$",
+      "type": "switch",
+      "model": "E520C-MX-PWR-F",
+      "manufacturer": "H3C",
+      "source_url": "https://www.h3c.com/cn/Products_And_Solution/InterConnect/Products/Switches/Products/Park_Switches/Access_Switch/H3C_E/E500C-F/Home/Detail_Material_List/Specifications/",
+      "version": "hardware-model-review-2026-11-15.2",
+      "rationale": "Manufacturer hardware specification identifies this exact switch model. Applies only to device-side model self-report or verified upstream model extraction; OS family alone is insufficient.",
+      "positive": [
+        "E520C-MX-PWR-F",
+        "H3C E520C-MX-PWR-F"
+      ],
+      "negative": [
+        "H3C",
+        "Comware",
+        "E520C-MX-PWR-F-OTHER",
+        "Manual for E520C-MX-PWR-F"
+      ]
+    },
+    {
+      "id": "h3c-s6520x-54qc-ei",
+      "pattern": "(?i)^(?:H3C )?S6520X\\-54QC\\-EI$",
+      "type": "switch",
+      "model": "S6520X-54QC-EI",
+      "manufacturer": "H3C",
+      "source_url": "https://www.h3c.com/cn/d_202409/2273962_30005_0.htm",
+      "version": "hardware-model-review-2026-11-15.2",
+      "rationale": "Manufacturer hardware specification identifies this exact switch model. Applies only to device-side model self-report or verified upstream model extraction; OS family alone is insufficient.",
+      "positive": [
+        "S6520X-54QC-EI",
+        "H3C S6520X-54QC-EI"
+      ],
+      "negative": [
+        "H3C",
+        "Comware",
+        "S6520X-54QC-EI-OTHER",
+        "Manual for S6520X-54QC-EI"
+      ]
+    },
+    {
+      "id": "h3c-s5560x-30f-ei",
+      "pattern": "(?i)^(?:H3C )?S5560X\\-30F\\-EI$",
+      "type": "switch",
+      "model": "S5560X-30F-EI",
+      "manufacturer": "H3C",
+      "source_url": "https://www.h3c.com/cn/d_202512/2705316_30005_0.htm",
+      "version": "hardware-model-review-2026-11-15.2",
+      "rationale": "Manufacturer hardware specification identifies this exact switch model. Applies only to device-side model self-report or verified upstream model extraction; OS family alone is insufficient.",
+      "positive": [
+        "S5560X-30F-EI",
+        "H3C S5560X-30F-EI"
+      ],
+      "negative": [
+        "H3C",
+        "Comware",
+        "S5560X-30F-EI-OTHER",
+        "Manual for S5560X-30F-EI"
+      ]
+    },
+    {
+      "id": "h3c-s5590-28s8xc-ei",
+      "pattern": "(?i)^(?:H3C )?S5590\\-28S8XC\\-EI$",
+      "type": "switch",
+      "model": "S5590-28S8XC-EI",
+      "manufacturer": "H3C",
+      "source_url": "https://www.h3c.com/cn/Products_And_Solution/InterConnect/Products/Switches/Products/Park_Switches/Aggregation_Switch/S5500/S5590_EI/Home/Detail_Material_List/Specifications/",
+      "version": "hardware-model-review-2026-11-15.2",
+      "rationale": "Manufacturer hardware specification identifies this exact switch model. Applies only to device-side model self-report or verified upstream model extraction; OS family alone is insufficient.",
+      "positive": [
+        "S5590-28S8XC-EI",
+        "H3C S5590-28S8XC-EI"
+      ],
+      "negative": [
+        "H3C",
+        "Comware",
+        "S5590-28S8XC-EI-OTHER",
+        "Manual for S5590-28S8XC-EI"
+      ]
+    },
+    {
+      "id": "h3c-s5130s-16s-upwr-ei-q",
+      "pattern": "(?i)^(?:H3C )?S5130S\\-16S\\-UPWR\\-EI\\-Q$",
+      "type": "switch",
+      "model": "S5130S-16S-UPWR-EI-Q",
+      "manufacturer": "H3C",
+      "source_url": "https://www.h3c.com/en/Products_and_Solutions/InterConnect/Switches/Products/Campus_Network/Access/S5130/H3C_S5130S_EI/",
+      "version": "hardware-model-review-2026-11-15.2",
+      "rationale": "Manufacturer hardware specification identifies this exact switch model. Applies only to device-side model self-report or verified upstream model extraction; OS family alone is insufficient.",
+      "positive": [
+        "S5130S-16S-UPWR-EI-Q",
+        "H3C S5130S-16S-UPWR-EI-Q"
+      ],
+      "negative": [
+        "H3C",
+        "Comware",
+        "S5130S-16S-UPWR-EI-Q-OTHER",
+        "Manual for S5130S-16S-UPWR-EI-Q"
+      ]
+    },
+    {
+      "id": "h3c-s5120-52c-pwr-ei",
+      "pattern": "(?i)^(?:H3C )?S5120\\-52C\\-PWR\\-EI$",
+      "type": "switch",
+      "model": "S5120-52C-PWR-EI",
+      "manufacturer": "H3C",
+      "source_url": "https://www.h3c.com/cn/d_201307/790450_30005_0.htm",
+      "version": "hardware-model-review-2026-11-15.2",
+      "rationale": "Manufacturer hardware specification identifies this exact switch model. Applies only to device-side model self-report or verified upstream model extraction; OS family alone is insufficient.",
+      "positive": [
+        "S5120-52C-PWR-EI",
+        "H3C S5120-52C-PWR-EI"
+      ],
+      "negative": [
+        "H3C",
+        "Comware",
+        "S5120-52C-PWR-EI-OTHER",
+        "Manual for S5120-52C-PWR-EI"
+      ]
     }
   ]
 }

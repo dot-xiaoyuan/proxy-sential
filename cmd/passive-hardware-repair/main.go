@@ -160,7 +160,8 @@ func validateCheckpoint(s repairCheckpoint, m store.HardwareRepairManifest) erro
 	return nil
 }
 func run(ctx context.Context) error {
-	mode := flag.String("mode", "", "snapshot, prepare-dhcp (local proof validation), or apply")
+	mode := flag.String("mode", "", "snapshot, prepare-dhcp, prepare-product, or apply")
+	origin := flag.String("origin", "", "optional snapshot origin: dhcp, snmp, arp, ndp")
 	sourceManifest := flag.String("source-manifest", "", "frozen snapshot input for prepare-dhcp")
 	dhcpRecords := flag.String("dhcp-records", "", "bounded original Zeek record proofs for prepare-dhcp")
 	sensor := flag.String("sensor", "", "exact sensor for snapshot")
@@ -171,11 +172,14 @@ func run(ctx context.Context) error {
 	batch := flag.Int("batch-size", 25, "apply batch rows, 1..50")
 	pause := flag.Duration("pause", 500*time.Millisecond, "minimum pause between batches, at least 250ms")
 	flag.Parse()
-	if (*mode != "snapshot" && *mode != "apply" && *mode != "prepare-dhcp") || *manifestPath == "" || *batch < 1 || *batch > 50 || *pause < 250*time.Millisecond {
+	if (*mode != "snapshot" && *mode != "apply" && *mode != "prepare-dhcp" && *mode != "prepare-product") || *manifestPath == "" || *batch < 1 || *batch > 50 || *pause < 250*time.Millisecond {
 		return fmt.Errorf("specify mode, manifest and bounded batch/pause")
 	}
 	if *mode == "prepare-dhcp" {
 		return prepareDHCPRecovery(*sourceManifest, *dhcpRecords, *manifestPath)
+	}
+	if *mode == "prepare-product" {
+		return prepareProductRefresh(*sourceManifest, *manifestPath)
 	}
 	dsn := os.Getenv("PROXY_SENTINEL_POSTGRES_DSN")
 	if dsn == "" {
@@ -201,7 +205,7 @@ func run(ctx context.Context) error {
 		}
 		work, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		manifest, e := store.SnapshotHardwareRepair(work, db, store.HardwareRepairWindow{Sensor: *sensor, From: start, Until: end})
+		manifest, e := store.SnapshotHardwareRepair(work, db, store.HardwareRepairWindow{Sensor: *sensor, Origin: *origin, From: start, Until: end})
 		if e != nil {
 			return e
 		}
@@ -228,6 +232,14 @@ func run(ctx context.Context) error {
 	}
 	if err = manifest.Validate(); err != nil {
 		return err
+	}
+	for _, e := range manifest.Entries {
+		if e.ProductRefreshVersion != "" {
+			if _, err = openProductRuntime(); err != nil {
+				return err
+			}
+			break
+		}
 	}
 	work, cancel := context.WithTimeout(ctx, 5*time.Second)
 	conn, err := db.Conn(work)
@@ -297,7 +309,18 @@ func run(ctx context.Context) error {
 			admitted++
 		}
 	}
-	return json.NewEncoder(os.Stdout).Encode(map[string]any{"mode": "repair_enqueue_complete", "processed": state.Next, "admitted_or_already_present": admitted, "excluded": state.Next - admitted, "manifest_sha256": state.ManifestSHA256, "coverage": "retained_latest_in_event_time_window_only", "projection_completion": "verify independently; enqueue completion is not projection completion"})
+	resultMode, projectionNote := "repair_enqueue_complete", "verify independently; enqueue completion is not projection completion"
+	productOnly := true
+	for _, entry := range manifest.Entries {
+		if entry.Observation != nil && entry.ProductRefreshVersion == "" {
+			productOnly = false
+			break
+		}
+	}
+	if productOnly {
+		resultMode, projectionNote = "product_annotations_complete", "IP product annotations only; no physical identities created or enqueued"
+	}
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{"mode": resultMode, "processed": state.Next, "admitted_or_already_present": admitted, "excluded": state.Next - admitted, "manifest_sha256": state.ManifestSHA256, "coverage": "retained_latest_in_event_time_window_only", "projection_completion": projectionNote})
 }
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

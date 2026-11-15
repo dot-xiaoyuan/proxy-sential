@@ -24,6 +24,7 @@ const (
 // recover observations overwritten before this retained-latest snapshot.
 type HardwareRepairWindow struct {
 	Sensor string    `json:"sensor"`
+	Origin string    `json:"origin,omitempty"`
 	From   time.Time `json:"from"`
 	Until  time.Time `json:"until_exclusive"`
 }
@@ -38,16 +39,17 @@ type HardwareRepairManifest struct {
 // copied packet/XML. It is needed only until the recoverable job is reconciled.
 // SourceSHA256 identifies the exact retained row, InputSHA256 the decoded input.
 type HardwareRepairEntry struct {
-	Key            [5]string              `json:"latest_key"`
-	ObservationID  string                 `json:"observation_id"`
-	EventID        string                 `json:"event_id"`
-	ObservedAt     time.Time              `json:"observed_at"`
-	RawRef         map[string]any         `json:"raw_ref,omitempty"`
-	SourceSHA256   string                 `json:"source_sha256"`
-	InputSHA256    string                 `json:"input_sha256,omitempty"`
-	ExcludedReason string                 `json:"excluded_reason,omitempty"`
-	Observation    *discovery.Observation `json:"observation,omitempty"`
-	DHCPRecovery   *HardwareDHCPRecovery  `json:"dhcp_recovery,omitempty"`
+	Key                   [5]string              `json:"latest_key"`
+	ObservationID         string                 `json:"observation_id"`
+	EventID               string                 `json:"event_id"`
+	ObservedAt            time.Time              `json:"observed_at"`
+	RawRef                map[string]any         `json:"raw_ref,omitempty"`
+	SourceSHA256          string                 `json:"source_sha256"`
+	InputSHA256           string                 `json:"input_sha256,omitempty"`
+	ExcludedReason        string                 `json:"excluded_reason,omitempty"`
+	Observation           *discovery.Observation `json:"observation,omitempty"`
+	DHCPRecovery          *HardwareDHCPRecovery  `json:"dhcp_recovery,omitempty"`
+	ProductRefreshVersion string                 `json:"product_refresh_version,omitempty"`
 }
 type HardwareRepairOutcome struct {
 	Index         int    `json:"index"`
@@ -65,6 +67,9 @@ type HardwareRepairTxStarter interface {
 
 func repairHash(raw []byte) string { s := sha256.Sum256(raw); return hex.EncodeToString(s[:]) }
 func (w HardwareRepairWindow) validate() error {
+	if w.Origin != "" && w.Origin != "snmp" && w.Origin != "dhcp" && w.Origin != "arp" && w.Origin != "ndp" {
+		return fmt.Errorf("unsupported repair origin filter")
+	}
 	if w.Sensor == "" || w.From.IsZero() || !w.Until.After(w.From) || w.Until.Sub(w.From) > 30*24*time.Hour {
 		return fmt.Errorf("repair requires sensor and a fixed nonempty event-time window of at most 30 days")
 	}
@@ -102,7 +107,7 @@ func (m HardwareRepairManifest) Validate() error {
 		}
 		seen[e.Key] = true
 		if e.Observation == nil {
-			if e.DHCPRecovery != nil {
+			if e.DHCPRecovery != nil || e.ProductRefreshVersion != "" {
 				return fmt.Errorf("recovery requires a frozen observation")
 			}
 			if e.ExcludedReason == "" {
@@ -112,10 +117,13 @@ func (m HardwareRepairManifest) Validate() error {
 		}
 		o := e.Observation
 		b, err := json.Marshal(o)
-		if err != nil || len(b) > HardwareRepairMaxRowBytes || repairHash(b) != e.InputSHA256 || o.Node != m.Window.Sensor || o.SourceID != e.Key[1] || o.Origin != e.Key[2] || o.ID != e.ObservationID || o.EventID != e.EventID || !o.ObservedAt.Equal(e.ObservedAt) || o.EventID == "" || len(o.Evidence.RawRef) == 0 || e.ExcludedReason != "" {
+		if err != nil || len(b) > HardwareRepairMaxRowBytes || repairHash(b) != e.InputSHA256 || o.Node != m.Window.Sensor || (m.Window.Origin != "" && o.Origin != m.Window.Origin) || o.SourceID != e.Key[1] || o.Origin != e.Key[2] || o.ID != e.ObservationID || o.EventID != e.EventID || !o.ObservedAt.Equal(e.ObservedAt) || o.EventID == "" || len(o.Evidence.RawRef) == 0 || e.ExcludedReason != "" {
 			return fmt.Errorf("frozen source input changed or exceeds bound")
 		}
 		if e.DHCPRecovery != nil {
+			if e.ProductRefreshVersion != "" {
+				return fmt.Errorf("cannot combine scope recovery and product refresh")
+			}
 			if _, err := RecoverHardwareDHCPObservation(*o, *e.DHCPRecovery); err != nil {
 				return err
 			}
@@ -147,8 +155,8 @@ func SnapshotHardwareRepair(ctx context.Context, db HardwareRepairTxStarter, w H
 	defer tx.Rollback()
 	var count, total, largest int64
 	err = tx.QueryRowContext(ctx, `SELECT now(),count(*),coalesce(sum(octet_length(data::text)),0),coalesce(max(octet_length(data::text)),0) FROM (
- SELECT data FROM discovery_observation_latest WHERE data->>'node'=$1 AND observed_at>=$2 AND observed_at<$3
- ORDER BY device_key COLLATE "C",source_id COLLATE "C",origin COLLATE "C",service_type COLLATE "C",port COLLATE "C" LIMIT $4) bounded`, w.Sensor, w.From, w.Until, HardwareRepairMaxRows+1).Scan(&m.SnapshotAt, &count, &total, &largest)
+ SELECT data FROM discovery_observation_latest WHERE data->>'node'=$1 AND observed_at>=$2 AND observed_at<$3 AND ($5='' OR origin=$5)
+ ORDER BY device_key COLLATE "C",source_id COLLATE "C",origin COLLATE "C",service_type COLLATE "C",port COLLATE "C" LIMIT $4) bounded`, w.Sensor, w.From, w.Until, HardwareRepairMaxRows+1, w.Origin).Scan(&m.SnapshotAt, &count, &total, &largest)
 	if err != nil {
 		return m, err
 	}
@@ -156,8 +164,8 @@ func SnapshotHardwareRepair(ctx context.Context, db HardwareRepairTxStarter, w H
 		return m, fmt.Errorf("repair snapshot exceeds time/rows/bytes bounds: rows=%d bytes=%d max_row=%d", count, total, largest)
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT device_key,source_id,origin,service_type,port,id,observed_at,data FROM discovery_observation_latest
- WHERE data->>'node'=$1 AND observed_at>=$2 AND observed_at<$3
- ORDER BY device_key COLLATE "C",source_id COLLATE "C",origin COLLATE "C",service_type COLLATE "C",port COLLATE "C" LIMIT $4`, w.Sensor, w.From, w.Until, HardwareRepairMaxRows+1)
+ WHERE data->>'node'=$1 AND observed_at>=$2 AND observed_at<$3 AND ($5='' OR origin=$5)
+ ORDER BY device_key COLLATE "C",source_id COLLATE "C",origin COLLATE "C",service_type COLLATE "C",port COLLATE "C" LIMIT $4`, w.Sensor, w.From, w.Until, HardwareRepairMaxRows+1, w.Origin)
 	if err != nil {
 		return m, err
 	}
@@ -254,6 +262,18 @@ func ApplyHardwareRepairBatch(ctx context.Context, db HardwareRepairTxStarter, m
 		r := HardwareRepairOutcome{Index: index, ObservationID: e.ObservationID, EventID: e.EventID, SourceSHA256: e.SourceSHA256, Status: "excluded", Reason: e.ExcludedReason}
 		if e.Observation != nil {
 			o := *e.Observation
+			if e.ProductRefreshVersion != "" {
+				accepted, reason, err := applyIPProductRefresh(work, tx, e)
+				if err != nil {
+					return nil, err
+				}
+				r.Reason = reason
+				if accepted {
+					r.Status = "admitted"
+				}
+				outcomes = append(outcomes, r)
+				continue
+			}
 			if e.DHCPRecovery != nil {
 				restored, recoveryErr := RecoverHardwareDHCPObservation(o, *e.DHCPRecovery)
 				if recoveryErr != nil {

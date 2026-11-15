@@ -629,6 +629,18 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 	}
 	discovery.NormalizeObservationClassification(&o)
 	discovery.NormalizeObservationName(&o)
+	if discovery.HardwareProjectionEnabled() && o.Origin == "snmp" {
+		o.LatestPartition = discovery.SNMPProductPartition(o)
+		clue, err := discovery.BuildIPProductClue(o, time.Now().UTC())
+		if err != nil {
+			// Preserve the original observation even if product matching fails.
+			// This explicit gap can be retried by the controlled repair path.
+			clue = &discovery.IPProductClue{IP: o.IP, SensorID: o.Node, Site: o.Site, Domain: o.Domain, VLAN: o.VLAN, VRF: o.VRF,
+				ProductStatus: "evaluation_failed", Attribution: "response_ip", ObservedAt: o.ObservedAt, EventID: o.EventID,
+				RawRef: o.Evidence.RawRef, EvaluationError: err.Error()}
+		}
+		o.ProductClue = clue
+	}
 	if id := passiveRepeatableFactID(o); id != "" {
 		o.ID = id
 	}

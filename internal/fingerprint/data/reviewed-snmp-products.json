@@ -1,0 +1,58 @@
+{
+  "version": "snmp-product-review-2026-11-15.1",
+  "entries": [
+    {
+      "id": "ruijie-explicit-switch-sysdescr",
+      "name": "Ruijie switch self-report",
+      "type": "switch",
+      "manufacturer": "Ruijie",
+      "pattern": "^Ruijie [A-Za-z0-9 &/-]*Switch(?: with PoE)?\\s*\\((?P<hardware>S[A-Za-z0-9/+.-]{2,80})\\) By Ruijie Networks\\.?$",
+      "source_url": "https://www.ruijie.com.cn/cp/jh-yqw-jrjh/s291024guph/",
+      "rationale": "A verified SNMP agent explicitly identifies a Ruijie Switch and supplies a model. Routing Switch remains a switch; Ruijie AM wireless hosts and generic manufacturer OIDs do not match.",
+      "positive": [
+        "Ruijie Full Gigabit Security & Intelligence Access Switch (S2910-24GT4SFP-UP-H) By Ruijie Networks",
+        "Ruijie 10G Routing Switch(S5750-24SFP/8GT-E) By Ruijie Networks",
+        "Ruijie Gibabit Ethernet Switch with PoE(S2900-24GT4SFP/2GT-P-L) By Ruijie Networks"
+      ],
+      "negative": [
+        "Ruijie AM5528-SF (802.11a/n/ac/ax and 802.11b/g/n/ax) By Ruijie Networks.",
+        "Ruijie Switch() By Ruijie Networks",
+        "Documentation for Ruijie Switch(S2910-24GT4SFP-UP-H) By Ruijie Networks"
+      ]
+    },
+    {
+      "id": "huawei-s5735-s-v2-sysdescr",
+      "name": "Huawei CloudEngine S5735-S-V2",
+      "type": "switch",
+      "manufacturer": "Huawei",
+      "pattern": "(?s)^Huawei YunShan OS\\s+Version [^\\r\\n]+\\s+Copyright[^\\r\\n]+\\s+HUAWEI (?:CloudEngine )?(?P<hardware>S5735-S-V2)\\s*$",
+      "source_url": "https://e.huawei.com/cn/products/switches/campus-switches/s5735-s-v2",
+      "rationale": "Exact manufacturer-documented switch family in the product line of a verified YunShan agent response. Retain family granularity; do not infer a port-count variant.",
+      "positive": [
+        "Huawei YunShan OS \r\nVersion 1.23.0.1 (S5700 V600R023C00SPC500) \r\nCopyright (C) 2021-2023 Huawei Technologies Co., Ltd. \r\nHUAWEI CloudEngine S5735-S-V2 \r\n"
+      ],
+      "negative": [
+        "Huawei YunShan OS",
+        "HUAWEI CloudEngine S5735-S-V2",
+        "Browser accessing Huawei S5735-S-V2"
+      ]
+    },
+    {
+      "id": "ruijie-am5528-sf-sysdescr",
+      "name": "Ruijie AM5528-SF distributed wireless host",
+      "type": "wireless_host",
+      "manufacturer": "Ruijie",
+      "pattern": "^Ruijie (?P<hardware>AM5528-SF) \\(802\\.11a/n/ac/ax and 802\\.11b/g/n/ax\\) By Ruijie Networks\\.$",
+      "source_url": "https://www.ruijie.com.cn/cp/wx-zfap-xkap/am5528sf/",
+      "rationale": "Manufacturer identifies the exact model as the central host of a distributed wireless system. Keep separate from radio APs, standalone switches and AC controllers.",
+      "positive": [
+        "Ruijie AM5528-SF (802.11a/n/ac/ax and 802.11b/g/n/ax) By Ruijie Networks."
+      ],
+      "negative": [
+        "Ruijie AM5528",
+        "Ruijie AP5528-SF (802.11a/n/ac/ax and 802.11b/g/n/ax) By Ruijie Networks.",
+        "Ruijie Switch(AM5528-SF) By Ruijie Networks"
+      ]
+    }
+  ]
+}

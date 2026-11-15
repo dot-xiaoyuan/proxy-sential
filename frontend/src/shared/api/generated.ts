@@ -8098,13 +8098,27 @@ export interface components {
             status: "initializing" | "ready" | "processing" | "delayed" | "failed";
             lag_seconds: number;
             /** Format: int64 */
-            result_version: number;
+            result_version?: number;
+            source?: string;
             /** Format: date-time */
             oldest_pending_at?: string;
+            /** Format: date-time */
+            cursor_at?: string;
             /** Format: date-time */
             ingested_at?: string;
             /** Format: date-time */
             processed_at?: string;
+            /** Format: date-time */
+            last_success_at?: string;
+            /** Format: int64 */
+            pending_batches?: number;
+            /** Format: int64 */
+            archive_pending_batches?: number;
+            /** Format: date-time */
+            archive_verified_at?: string;
+            /** Format: date-time */
+            archive_oldest_pending_at?: string;
+            archive_lag_seconds?: number;
             error?: string;
         };
         DiscoveryTypeCatalogue: {
@@ -8320,7 +8334,45 @@ export interface components {
                 evidence: components["schemas"]["DiscoveryObservation"];
             }[];
         };
+        DiscoveryProductClue: {
+            ip: string;
+            sensor_id: string;
+            site: string;
+            domain: string;
+            vlan?: string;
+            vrf?: string;
+            type?: string;
+            manufacturer?: string;
+            model?: string;
+            product_status: string;
+            /** @enum {string} */
+            attribution: "response_ip";
+            /** Format: date-time */
+            observed_at: string;
+            event_id: string;
+            rule_version: string;
+            source_sha256?: string;
+            raw_ref?: {
+                [key: string]: unknown;
+            };
+            missing_fields?: string[];
+            conflicting_types?: string[];
+            conflicting_models?: string[];
+            evaluation_error?: string;
+            sources?: {
+                source: string;
+                rule_id: string;
+                rule_version: string;
+                evidence_id: string;
+                /** Format: date-time */
+                observed_at: string;
+                fields?: {
+                    [key: string]: string;
+                };
+            }[];
+        };
         DiscoveryObservation: {
+            product_clue?: components["schemas"]["DiscoveryProductClue"];
             id: string;
             event_id?: string;
             source_id?: string;
@@ -8383,6 +8435,7 @@ export interface components {
             items: components["schemas"]["DiscoveryChassisCandidate"][];
         };
         DiscoveryDevice: {
+            product_clues?: components["schemas"]["DiscoveryProductClue"][];
             /** @description 可信作用域身份的持久硬件类型；服务 TTL 到期不清除 */
             hardware_type?: string;
             /** @description A scoped candidate device type supported by a recent endpoint profile. This field does not confirm a hardware type. */

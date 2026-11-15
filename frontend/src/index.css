@@ -5149,6 +5149,8 @@ pre.wrap-code {
 .discovery-overview-line .discovery-overview-count { height: auto; padding: 0; color: #475569; font-size: 12px; font-weight: 400; }
 .discovery-overview-line .discovery-overview-count:hover { color: #1d4ed8; }
 .discovery-overview-line .discovery-overview-count.is-active { color: #1d4ed8; font-weight: 600; }
+.discovery-batch-progress { display: flex; flex-wrap: wrap; gap: 3px 16px; min-width: 0; font-size: 12px; }
+.discovery-batch-progress .ant-typography { color: #475569; overflow-wrap: anywhere; }
 .discovery-detail-profile-link { margin-left: 10px; padding-inline: 0; }
 .discovery-trend { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .discovery-trend-bars { display: inline-flex; align-items: flex-end; gap: 3px; height: 20px; }
@@ -5970,5 +5972,28 @@ pre.wrap-code {
   flex-direction: column;
   gap: 4px;
   padding-block: 8px;
+  overflow-wrap: anywhere;
+}
+.discovery-product-summary,
+.discovery-product-clues article {
+  display: grid;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+.discovery-product-summary {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--ant-color-text-secondary, #475569);
+}
+.discovery-product-clues article {
+  padding: 12px 0;
+  border-top: 1px solid #e2e8f0;
+}
+
+.discovery-product-summary,
+.discovery-product-summary > *,
+.discovery-status-details .ant-typography {
+  min-width: 0;
+  white-space: normal;
   overflow-wrap: anywhere;
 }

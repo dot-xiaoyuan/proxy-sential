@@ -268,6 +268,7 @@ type HistoricalAddress struct {
 
 type DeviceView struct {
 	HardwareDetails
+	ProductClues         []IPProductClue `json:"product_clues,omitempty"`
 	reviewProjectionAt   *time.Time
 	indexedIdentityKey   string
 	SensorID             string              `json:"sensor_id,omitempty"`
@@ -508,6 +509,18 @@ func aggregateDeviceRows(rows []deviceObservationRow, now time.Time) []DeviceVie
 		}
 		group.deviceKeys[row.DeviceKey] = true
 		group.view.Observations = append(group.view.Observations, o)
+		if o.ProductClue != nil && o.ProductClue.EventID == o.EventID && o.ProductClue.IP == o.IP && !o.Withdrawn {
+			duplicate := false
+			for _, prior := range group.view.ProductClues {
+				if prior.EventID == o.ProductClue.EventID && prior.RuleVersion == o.ProductClue.RuleVersion {
+					duplicate = true
+					break
+				}
+			}
+			if !duplicate {
+				group.view.ProductClues = append(group.view.ProductClues, *o.ProductClue)
+			}
+		}
 		group.view.EvidenceCount++
 		if o.ObservedAt.Before(group.view.FirstSeen) {
 			group.view.FirstSeen = o.ObservedAt
@@ -694,7 +707,7 @@ func deviceCategory(deviceType string) string {
 		return "printer"
 	case "camera":
 		return "camera"
-	case "router", "switch", "access_point", "gateway":
+	case "router", "switch", "access_point", "gateway", "wireless_host", "wireless_controller":
 		return "network"
 	case "media_device":
 		return "media"
@@ -730,7 +743,7 @@ func (r Repository) Devices(ctx context.Context, limit, offset int) (map[string]
  SELECT device_key,observed_at,valid_until,withdrawn,data FROM discovery_observation_latest WHERE observed_at<=now()
  UNION ALL
  SELECT old.device_key,old.observed_at,old.valid_until,old.withdrawn,old.data FROM discovery_observation_latest future
- CROSS JOIN LATERAL(SELECT device_key,observed_at,valid_until,withdrawn,data FROM discovery_observations o WHERE o.device_key=future.device_key AND o.source_id=future.source_id AND o.origin=future.origin AND coalesce(o.data->'evidence'->'payload'->>'service_type','')=future.service_type AND coalesce(o.data->>'port','')=future.port AND o.observed_at<=now() ORDER BY observed_at DESC,id DESC LIMIT 1) old WHERE future.observed_at>now()
+ CROSS JOIN LATERAL(SELECT device_key,observed_at,valid_until,withdrawn,data FROM discovery_observations o WHERE o.device_key=future.device_key AND o.source_id=future.source_id AND o.origin=future.origin AND coalesce(nullif(o.data->>'latest_partition',''),o.data->'evidence'->'payload'->>'service_type','')=future.service_type AND coalesce(o.data->>'port','')=future.port AND o.observed_at<=now() ORDER BY observed_at DESC,id DESC LIMIT 1) old WHERE future.observed_at>now()
  ), active AS(SELECT * FROM latest WHERE NOT withdrawn AND valid_until>now()), devices AS(SELECT device_key,max(observed_at) AS observed_at FROM active GROUP BY device_key) `
 	var total int
 	if err := tx.QueryRowContext(ctx, cte+`SELECT count(*) FROM devices`).Scan(&total); err != nil {

@@ -34,7 +34,7 @@ func TestHardwareRepairSnapshotFreezesMissingRefsAndExpiredEvidence(t *testing.T
 	no, _ := json.Marshal(absent)
 	m.ExpectBegin()
 	m.ExpectQuery("SELECT now\\(\\),count").WillReturnRows(sqlmock.NewRows([]string{"at", "count", "bytes", "max"}).AddRow(w.Until.Add(time.Minute), 2, len(raw)+len(no), len(raw)))
-	m.ExpectQuery("SELECT device_key,source_id,origin,service_type,port,id,observed_at,data FROM discovery_observation_latest").WithArgs(w.Sensor, w.From, w.Until, HardwareRepairMaxRows+1).WillReturnRows(sqlmock.NewRows([]string{"device", "source", "origin", "service", "port", "id", "observed_at", "data"}).AddRow("a", "source", "sadp", "", "", o.ID, o.ObservedAt, raw).AddRow("b", "source", "sadp", "", "", absent.ID, absent.ObservedAt, no))
+	m.ExpectQuery("SELECT device_key,source_id,origin,service_type,port,id,observed_at,data FROM discovery_observation_latest").WithArgs(w.Sensor, w.From, w.Until, HardwareRepairMaxRows+1, w.Origin).WillReturnRows(sqlmock.NewRows([]string{"device", "source", "origin", "service", "port", "id", "observed_at", "data"}).AddRow("a", "source", "sadp", "", "", o.ID, o.ObservedAt, raw).AddRow("b", "source", "sadp", "", "", absent.ID, absent.ObservedAt, no))
 	m.ExpectCommit()
 	got, err := SnapshotHardwareRepair(context.Background(), db, w)
 	if err != nil || len(got.Entries) != 2 {
