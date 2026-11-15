@@ -5997,3 +5997,25 @@ pre.wrap-code {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+.discovery-report { margin: 16px 0; padding: 20px; background: var(--surface, #fff); border: 1px solid #e2e8f0; border-radius: 8px; }
+.discovery-report-heading, .discovery-report-facts > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; }
+.discovery-report h3, .discovery-report h4 { margin: 0; color: #0f172a; font-weight: 650; }
+.discovery-report h3 { font-size: 17px; }
+.discovery-report h4 { font-size: 15px; }
+.discovery-report-grid, .discovery-report-fact-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+.discovery-report-metric { min-width: 0; padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; display: flex; flex-direction: column; gap: 3px; }
+.discovery-report-metric > span, .discovery-report-metric > small { color: #475569; overflow-wrap: anywhere; }
+.discovery-report-metric > span { font-size: 13px; font-weight: 550; }
+.discovery-report-metric > strong { font-size: 24px; color: #0f172a; line-height: 1.2; }
+.discovery-report-metric > small { font-size: 11px; }
+.discovery-report-boundary { margin: 12px 0 0; color: #475569; font-size: 12px; line-height: 1.55; }
+.discovery-report-facts { margin-top: 18px; padding-top: 16px; border-top: 1px solid #e2e8f0; }
+.discovery-report-bars { margin-top: 14px; display: grid; gap: 8px; }
+.discovery-report-bars label { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 8px; align-items: center; color: #334155; font-size: 12px; }
+.discovery-report-bars progress { width: 100%; height: 12px; appearance: none; border: 0; border-radius: 8px; background: #e2e8f0; overflow: hidden; }
+.discovery-report-bars progress::-webkit-progress-bar { background: #e2e8f0; border-radius: 8px; }
+.discovery-report-bars progress::-webkit-progress-value { background: #2563eb; border-radius: 8px; }
+.discovery-report-bars progress::-moz-progress-bar { background: #2563eb; border-radius: 8px; }
+.discovery-report-bars label + label progress::-webkit-progress-value { background: #16a34a; }
+.discovery-report-bars label + label progress::-moz-progress-bar { background: #16a34a; }
+@media (max-width: 560px) { .discovery-report { padding: 14px; } .discovery-report-grid, .discovery-report-fact-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .discovery-report-metric > strong { font-size: 20px; } .discovery-report-bars label { grid-template-columns: 1fr; } }

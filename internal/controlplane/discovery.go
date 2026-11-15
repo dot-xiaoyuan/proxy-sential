@@ -489,7 +489,7 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 		// A missing exact key remains an explicit gap. The check time lets an
 		// external audit pair it with the immutable journal acceptance time.
 		writeJSON(w, 200, map[string]any{"items": items, "missing_keys": missing, "checked_at": time.Now().UTC()})
-	case (path == "/discovery/devices" || path == "/discovery/devices/metadata" || path == "/discovery/devices/position" || path == "/discovery/devices/export") && r.Method == "GET":
+	case (path == "/discovery/devices" || path == "/discovery/devices/metadata" || path == "/discovery/devices/coverage-report" || path == "/discovery/devices/position" || path == "/discovery/devices/export") && r.Method == "GET":
 		if r.URL.Query().Get("offset") != "" && path == "/discovery/devices" {
 			writeError(w, 400, "bad_cursor", "发现记录已改用游标分页，请删除 offset 参数")
 			return
@@ -516,6 +516,21 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 			return
 		}
 		readStarted := time.Now()
+		if path == "/discovery/devices/coverage-report" {
+			if repo.ActiveStreamOnly || repo.PipelineV2 || !repo.HardwareV2 || window <= 0 {
+				writeError(w, 409, "coverage_read_path", "当前发现读取路径不支持覆盖报表")
+				return
+			}
+			report, err := repo.DiscoveryCoverageReport(ctx, s.sensorID, window)
+			if err != nil {
+				log.Printf("discovery coverage report failed after %s: %v", time.Since(readStarted), err)
+				writeError(w, 500, "coverage_report_failed", "读取覆盖报表失败")
+				return
+			}
+			writeJSON(w, 200, report)
+			return
+		}
+
 		if path == "/discovery/devices/export" {
 			if repo.ActiveStreamOnly || repo.PipelineV2 || os.Getenv("PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ") == "true" {
 				writeError(w, 409, "export_read_path", "当前发现读取路径不支持完整导出")

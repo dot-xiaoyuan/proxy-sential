@@ -532,6 +532,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/discovery/devices/coverage-report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Bounded passive discovery address and hardware identity report for the configured sensor. The /24 count is an observation grouping, not the configured subnet plan. Requires identity:read. */
+        get: operations["getDiscoveryCoverageReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/discovery/devices/export": {
         parameters: {
             query?: never;
@@ -8508,6 +8525,31 @@ export interface components {
             endpoint_id?: string;
             observations: components["schemas"]["DiscoveryObservation"][];
         };
+        DiscoveryCoverageReport: {
+            /** Format: date-time */
+            as_of: string;
+            /** Format: date-time */
+            identity_as_of: string;
+            window: string;
+            /** Format: int64 */
+            subnet24: number;
+            /** Format: int64 */
+            ipv4: number;
+            /** Format: int64 */
+            ipv6: number;
+            /** Format: int64 */
+            mac: number;
+            /** Format: int64 */
+            ip_mac_pairs: number;
+            /** Format: int64 */
+            scoped_mac: number;
+            /** Format: int64 */
+            identified: number;
+            /** Format: int64 */
+            dumb_terminals: number;
+            /** Format: int64 */
+            identity_total: number;
+        };
         DiscoveryDeviceMetadata: {
             classification_version?: string;
             /** Format: int64 */
@@ -10471,6 +10513,42 @@ export interface operations {
                 content?: never;
             };
             /** @description Count could not be read; never reported as an empty result */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getDiscoveryCoverageReport: {
+        parameters: {
+            query?: {
+                window?: "15m" | "24h" | "168h" | "720h";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Address and identity counts with an explicit data cutoff. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryCoverageReport"];
+                };
+            };
+            /** @description Passive hardware indexed reader unavailable */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Report could not be read */
             500: {
                 headers: {
                     [name: string]: unknown;

@@ -29,6 +29,7 @@ import { resolveDeviceBrand } from '../entities/device/brandMatcher'
 import { isRandomizedMAC } from '../entities/device/mac'
 import { DiscoveryEvidenceSummary } from './DiscoveryEvidenceSummary'
 import { DiscoveryProductClues } from './DiscoveryProductClues'
+import { DiscoveryCoverageReport } from './DiscoveryCoverageReport'
 import { discoveryCSV, fetchDiscoveryExport } from './discoveryExport'
 import { qualityReportCSV } from './discoveryQualityReport'
 import { loadDiscoveryViews, removeDiscoveryView, saveDiscoveryView } from './discoveryViews'
@@ -245,6 +246,8 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const statistics=useQuery({queryKey:['discovery-statistics'],queryFn:({signal})=>request<Statistics>('/discovery/statistics',{signal}),enabled:coverage.data?.enabled===true})
   const metadataQuery=new URLSearchParams(query);metadataQuery.delete('cursor');metadataQuery.delete('limit')
   const discoveryMetadata=useQuery({queryKey:['discovery-metadata',metadataQuery.toString()],queryFn:({signal})=>request<components['schemas']['DiscoveryDeviceMetadata']>(`/discovery/devices/metadata?${metadataQuery}`,{signal}),refetchInterval:autoRefresh?60_000:false,refetchOnWindowFocus:autoRefresh})
+  const reportWindow=['15m','24h','168h','720h'].includes(params.get('discovery_window')||'') ? params.get('discovery_window')! : '24h'
+  const coverageReport=useQuery({queryKey:['discovery-coverage-report',reportWindow],queryFn:({signal})=>request<components['schemas']['DiscoveryCoverageReport']>(`/discovery/devices/coverage-report?window=${reportWindow}`,{signal}),enabled:discoveryMetadata.data?.classification_version==='passive-hardware/v2',staleTime:60_000,refetchInterval:autoRefresh?60_000:false})
   const hardwareV2=discoveryMetadata.data?.classification_version==='passive-hardware/v2'
   const confirmedTypesLabel=hardwareV2?'已确认硬件类型':'已识别类型'
   const viewStates=hardwareV2?{...states,identified:'已知硬件类型',expired:'硬件结论已撤销'}:states
@@ -422,6 +425,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
           )}
         </div>}
       </div>
+      {hardwareV2&&<DiscoveryCoverageReport report={coverageReport.data} loading={coverageReport.isLoading} error={coverageReport.isError} />}
       <AppTable className="passive-ledger-table" rowKey={discoveryTableRowKey} columns={columns} dataSource={items} tableLayout="fixed" loading={{spinning:listUpdating,delay:150}} scroll={{x:1125}} locale={{emptyText:listUpdating?'正在加载设备…':'当前筛选下暂无符合条件的设备'}}/>
       <AppServerPagination disabled={devices.isFetching||position.isLocating} page={page+1} pageSize={pageSize} total={discoveryMetadata.data?.total} onChange={(nextPage,nextSize)=>{
         if(nextSize!==pageSize){setPageSize(nextSize);setPaging({key:filterKey,page:0});return}

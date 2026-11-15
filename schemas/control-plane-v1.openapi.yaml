@@ -402,6 +402,20 @@ paths:
         '400': { description: Invalid filter or time window }
         '409': { description: Current discovery read path does not support this indexed metadata contract }
         '500': { description: Count could not be read; never reported as an empty result }
+  /discovery/devices/coverage-report:
+    get:
+      operationId: getDiscoveryCoverageReport
+      description: Bounded passive discovery address and hardware identity report for the configured sensor. The /24 count is an observation grouping, not the configured subnet plan. Requires identity:read.
+      parameters:
+        - { name: window, in: query, schema: { type: string, enum: [15m, 24h, 168h, 720h] } }
+      responses:
+        '200':
+          description: Address and identity counts with an explicit data cutoff.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DiscoveryCoverageReport' }
+        '409': { description: Passive hardware indexed reader unavailable }
+        '500': { description: Report could not be read }
   /discovery/devices/export:
     get:
       operationId: streamDiscoveryDevicesExport
@@ -8937,6 +8951,22 @@ components:
         evidence_count: { type: integer }
         endpoint_id: { type: string }
         observations: { type: array, items: { $ref: '#/components/schemas/DiscoveryObservation' } }
+    DiscoveryCoverageReport:
+      type: object
+      required: [as_of, identity_as_of, window, subnet24, ipv4, ipv6, mac, ip_mac_pairs, scoped_mac, identified, dumb_terminals, identity_total]
+      properties:
+        as_of: { type: string, format: date-time }
+        identity_as_of: { type: string, format: date-time }
+        window: { type: string }
+        subnet24: { type: integer, format: int64, minimum: 0 }
+        ipv4: { type: integer, format: int64, minimum: 0 }
+        ipv6: { type: integer, format: int64, minimum: 0 }
+        mac: { type: integer, format: int64, minimum: 0 }
+        ip_mac_pairs: { type: integer, format: int64, minimum: 0 }
+        scoped_mac: { type: integer, format: int64, minimum: 0 }
+        identified: { type: integer, format: int64, minimum: 0 }
+        dumb_terminals: { type: integer, format: int64, minimum: 0 }
+        identity_total: { type: integer, format: int64, minimum: 0 }
     DiscoveryDeviceMetadata:
       type: object
       required: [total, identified, candidate, conflict, expired, types, as_of, count_unit, window]
