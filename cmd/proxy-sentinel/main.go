@@ -446,6 +446,8 @@ func runIngest(args []string) error {
 	evePath := fs.String("eve", "", "Suricata EVE JSON path")
 	zeekIoT := fs.String("zeek-iot", os.Getenv("PROXY_SENTINEL_ZEEK_IOT_PATH"), "candidate-scoped Zeek iot_metadata.log")
 	zeekDHCP := fs.String("zeek-dhcp", "", "Zeek DHCP log path")
+	zeekDHCPMessage := fs.String("zeek-dhcp-message", "", "Zeek per-message DHCP log path; preserves client clues without creating requested leases")
+	zeekDHCPBinding := fs.String("zeek-dhcp-binding", "", "Zeek scoped REQUEST/ACK binding log path")
 	zeekSoftware := fs.String("zeek-software", "", "Zeek software log path")
 	zeekMDNS := fs.String("zeek-mdns", "", "Zeek mDNS device-signal log path")
 	zeekNBNS := fs.String("zeek-nbns", "", "Zeek NBNS device-signal log path")
@@ -487,6 +489,12 @@ func runIngest(args []string) error {
 	if *postgresDSN == "" || *clickhouseDSN == "" {
 		return fmt.Errorf("--postgres-dsn and --clickhouse-dsn are required")
 	}
+	if *zeekDHCPMessage != "" && filepath.Base(*zeekDHCPMessage) != "device_dhcp_message.log" {
+		return fmt.Errorf("--zeek-dhcp-message requires device_dhcp_message.log so source ownership and message parsing agree")
+	}
+	if *zeekDHCPBinding != "" && filepath.Base(*zeekDHCPBinding) != "device_dhcp_binding.log" {
+		return fmt.Errorf("--zeek-dhcp-binding requires device_dhcp_binding.log")
+	}
 	captureScope, err := normalized.LoadCaptureScope(*scopeFile)
 	if err != nil {
 		return err
@@ -504,6 +512,8 @@ func runIngest(args []string) error {
 		{Kind: "zeek-proxy", Path: *zeekProxy, CollectorInstanceID: *zeekInstanceID, ProxyProducer: proxyConfig.Producer(*sensorID, "zeek", *zeekInstanceID)},
 		{Kind: "zeek-iot", Path: *zeekIoT},
 		{Kind: "zeek-dhcp", Path: *zeekDHCP},
+		{Kind: "zeek-dhcp-binding", Path: *zeekDHCPMessage},
+		{Kind: "zeek-dhcp-binding", Path: *zeekDHCPBinding},
 		{Kind: "zeek-software", Path: *zeekSoftware},
 		{Kind: "zeek-mdns", Path: *zeekMDNS},
 		{Kind: "zeek-nbns", Path: *zeekNBNS},

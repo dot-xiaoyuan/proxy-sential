@@ -25,6 +25,8 @@ export {
         msg_types: string &log;
         capture_vlan: string &log;
         mac: string &log &optional;
+        client_chaddr: string &log &optional;
+        option_order: string &log &optional;
         requested_addr: addr &log &optional;
         assigned_addr: addr &log &optional;
         client_addr: addr &log &optional;
@@ -46,6 +48,7 @@ export {
         msg_types: string &log;
         capture_vlan: string &log;
         mac: string &log;
+        client_chaddr: string &log &optional;
         assigned_addr: addr &log;
         lease_time: interval &log &optional;
         host_name: string &log &optional;
@@ -102,6 +105,15 @@ event dhcp_message(c: connection, is_orig: bool, msg: DHCP::Msg, options: DHCP::
     local info = DHCP::DeviceMessageInfo($ts=network_time(), $uid=c$uid,
         $xid=msg$xid, $msg_types=DHCP::message_types[msg$m_type],
         $capture_vlan=vlan);
+    if ( msg$chaddr != "" )
+        info$client_chaddr = msg$chaddr;
+    if ( options?$options )
+        {
+        local sentinel_option_order = "";
+        for ( i in options$options )
+            sentinel_option_order = fmt("%s%s%d", sentinel_option_order, sentinel_option_order == "" ? "" : ",", options$options[i]);
+        info$option_order = sentinel_option_order;
+        }
     if ( options?$client_id && options$client_id$hwtype == 1 )
         info$mac = options$client_id$hwaddr;
     else if ( msg$chaddr != "" )
@@ -204,6 +216,8 @@ event DHCP::aggregate_msgs(ts: time, id: conn_id, uid: string, is_orig: bool, ms
                     $ack_uid=uid, $xid=msg$xid, $msg_types="ACK",
                     $capture_vlan=msg$sentinel_capture_vlan, $mac=mac,
                     $assigned_addr=msg$yiaddr);
+                if ( msg$chaddr != "" )
+                    binding$client_chaddr = msg$chaddr;
                 if ( options?$lease )
                     binding$lease_time = options$lease;
                 if ( prior_request$host_name != "" )

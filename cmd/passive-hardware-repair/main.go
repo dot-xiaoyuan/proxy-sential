@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"proxy-sentinel/internal/discovery"
+	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/store"
 )
 
@@ -160,7 +161,12 @@ func validateCheckpoint(s repairCheckpoint, m store.HardwareRepairManifest) erro
 	return nil
 }
 func run(ctx context.Context) error {
-	mode := flag.String("mode", "", "snapshot, prepare-dhcp, prepare-product, or apply")
+	mode := flag.String("mode", "", "snapshot, prepare-dhcp, prepare-product, apply, snapshot-dhcp-messages, or apply-dhcp-messages")
+	rawScopeFile := flag.String("scope-file", "", "verified capture scope file covering the original DHCP log")
+	rawFile := flag.String("original-file", "", "authoritative DHCP message log for bounded original replay")
+	rawOffset := flag.Int64("original-offset", 0, "record boundary from the previous original snapshot page")
+	rawInterface := flag.String("interface", "", "verified capture interface for original DHCP replay")
+	rawCIDRs := flag.String("cidrs", "", "verified campus scope for original DHCP replay")
 	observationIDs := flag.String("observation-ids", "", "optional JSON array of frozen SNMP response IDs for a bounded historical snapshot")
 	origin := flag.String("origin", "", "optional snapshot origin: dhcp, snmp, arp, ndp")
 	sourceManifest := flag.String("source-manifest", "", "frozen snapshot input for prepare-dhcp or prepare-product")
@@ -173,7 +179,7 @@ func run(ctx context.Context) error {
 	batch := flag.Int("batch-size", 25, "apply batch rows, 1..50")
 	pause := flag.Duration("pause", 500*time.Millisecond, "minimum pause between batches, at least 250ms")
 	flag.Parse()
-	if (*mode != "snapshot" && *mode != "apply" && *mode != "prepare-dhcp" && *mode != "prepare-product") || *manifestPath == "" || *batch < 1 || *batch > 50 || *pause < 250*time.Millisecond {
+	if (*mode != "snapshot" && *mode != "apply" && *mode != "prepare-dhcp" && *mode != "prepare-product" && *mode != "snapshot-dhcp-messages" && *mode != "apply-dhcp-messages") || *manifestPath == "" || *batch < 1 || *batch > 50 || *pause < 250*time.Millisecond {
 		return fmt.Errorf("specify mode, manifest and bounded batch/pause")
 	}
 	if *mode == "prepare-dhcp" {
@@ -181,6 +187,20 @@ func run(ctx context.Context) error {
 	}
 	if *mode == "prepare-product" {
 		return prepareProductRefresh(*sourceManifest, *manifestPath)
+	}
+	if *mode == "snapshot-dhcp-messages" {
+		scope, err := normalized.LoadCaptureScope(*rawScopeFile)
+		if err != nil {
+			return err
+		}
+		m, err := snapshotDHCPMessages(*rawFile, *sensor, *rawInterface, *rawCIDRs, *rawOffset, scope)
+		if err != nil {
+			return err
+		}
+		if err = writeRepairJSON(*manifestPath, m, true); err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{"mode": "original_snapshot", "records": len(m.Records), "from_offset": m.FromOffset, "next_offset": m.NextOffset, "snapshot_size": m.SnapshotSize, "manifest_sha256": messageManifestHash(m)})
 	}
 	dsn := os.Getenv("PROXY_SENTINEL_POSTGRES_DSN")
 	if dsn == "" {
@@ -195,6 +215,10 @@ func run(ctx context.Context) error {
 	defer db.Close()
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
+	if *mode == "apply-dhcp-messages" {
+		db.SetMaxOpenConns(3)
+		return runDHCPMessageApply(ctx, db, *manifestPath, *checkpointPath, *batch, *pause)
+	}
 	if *mode == "snapshot" {
 		start, e := time.Parse(time.RFC3339Nano, *from)
 		if e != nil {

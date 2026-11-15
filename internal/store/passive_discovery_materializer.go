@@ -379,6 +379,26 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 			o.VLAN = passiveString(event.Payload, "dhcp_capture_vlan")
 		}
 		action := strings.ToUpper(passiveString(event.Payload, "msg_types") + " " + passiveString(event.Payload, "message_type") + " " + passiveString(event.Payload, "action"))
+		if discovery.HardwareProjectionEnabled() && event.Payload["discovery_scope_conflict"] == true {
+			return discovery.Observation{}, "dhcp_scope_conflict"
+		}
+		message := strings.ToUpper(passiveString(event.Payload, "msg_types"))
+		if discovery.HardwareProjectionEnabled() && passiveString(event.Payload, "dhcp_log_kind") == "dhcp-message" &&
+			event.Payload["request_only"] == true && mac != "" && (message == "REQUEST" || message == "DISCOVER" || message == "INFORM") {
+			if passiveString(event.Payload, "vendor_class") == "" && passiveString(event.Payload, "requested_options") == "" && passiveString(event.Payload, "hostname") == "" {
+				return discovery.Observation{}, "dhcp_client_without_features"
+			}
+			// Separate origin prevents a proposal entering the address-binding
+			// lookup or overwriting the latest ACK for this scoped MAC.
+			o.IP, o.Origin, o.Confidence = "", "dhcp_client", "clue"
+			o.Name, o.Explanation = passiveString(event.Payload, "hostname"), "DHCP 客户端特征；地址租约另行核验"
+			if !strings.EqualFold(passiveString(event.Payload, "client_chaddr"), mac) &&
+				!(passiveString(event.Payload, "client_id_hwtype") == "1" && strings.EqualFold(passiveString(event.Payload, "client_id_hwaddr"), mac)) {
+				return discovery.Observation{}, "dhcp_client_mac_source_unverified"
+			}
+			o.ValidUntil = at.Add(10 * time.Minute)
+			break
+		}
 		if discovery.HardwareProjectionEnabled() && (strings.Contains(action, "RELEASE") || strings.Contains(action, "NAK")) && mac != "" && scope.allows(ip) {
 			o.Origin, o.Withdrawn, o.ValidUntil, o.Confidence, o.Explanation = "dhcp", true, at, "confirmed", "DHCP 地址声明撤销"
 			break
@@ -667,11 +687,18 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 // boundary; a change of address, interface or DHCP name starts a new row.
 func passiveRepeatableFactID(o discovery.Observation) string {
 	switch o.Origin {
-	case "arp", "ndp", "dhcp", "ieee1905":
+	case "arp", "ndp", "dhcp", "dhcp_client", "ieee1905":
 	default:
 		return ""
 	}
 	key := strings.Join([]string{o.Origin, o.SourceID, o.Node, o.Site, o.Domain, o.VLAN, o.VRF, o.MAC, o.IP, o.Name}, "\x00")
+	if o.Origin == "dhcp_client" {
+		// UID, xid and retransmission time remain in the authoritative source;
+		// they do not multiply identical client feature observations.
+		for _, field := range []string{"vendor_class", "requested_options", "dhcp_options", "client_id_hwtype", "client_id_hwaddr", "client_chaddr"} {
+			key += "\x00" + passiveString(o.Evidence.Payload, field)
+		}
+	}
 	sum := sha256.Sum256([]byte(key))
 	return "fact-" + hex.EncodeToString(sum[:16])
 }

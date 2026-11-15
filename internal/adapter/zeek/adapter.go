@@ -607,6 +607,14 @@ func dhcpEventFromFields(raw []byte, fields map[string]string, lineOffset int, o
 	subjectIP := first(fields, "assigned_addr", "requested_addr", "client_addr")
 	clientMAC := first(fields, "mac", "client_mac", "client_chaddr")
 	messageLog := opts.LogKind == "dhcp-message"
+	if messageLog || opts.LogKind == "dhcp-binding" {
+		// The client identifier may be opaque or eight bytes long. An
+		// explicitly logged six-byte BOOTP hardware address has priority.
+		if headerMAC := validDHCPMessageMAC(first(fields, "client_chaddr")); headerMAC != "" {
+			clientMAC = headerMAC
+		}
+		clientMAC = validDHCPMessageMAC(clientMAC)
+	}
 	if subjectIP == "0.0.0.0" {
 		subjectIP = ""
 	}
@@ -630,8 +638,10 @@ func dhcpEventFromFields(raw []byte, fields map[string]string, lineOffset int, o
 	}
 
 	payload := dhcpPayload(fields)
+	payload["dhcp_log_kind"] = opts.LogKind
 	messageType := strings.ToUpper(first(fields, "msg_types"))
-	if messageLog && messageType == "REQUEST" && clientMAC != "" {
+	clientMessage := messageType == "REQUEST" || messageType == "DISCOVER" || messageType == "INFORM"
+	if messageLog && clientMessage && clientMAC != "" {
 		// A requested address is the client's proposal, not an observed lease.
 		// The request remains a MAC-scoped identification clue.
 		payload["request_only"] = true
@@ -641,9 +651,22 @@ func dhcpEventFromFields(raw []byte, fields map[string]string, lineOffset int, o
 			clientIP = "0.0.0.0"
 		}
 	}
+	if messageLog && !clientMessage {
+		// An OFFER or rejected proposal is not a lease to revoke. RELEASE
+		// explicitly names the client's current address, not requested_addr.
+		subjectIP = ""
+		if messageType == "ACK" {
+			subjectIP = first(fields, "assigned_addr")
+		} else if messageType == "RELEASE" {
+			subjectIP = first(fields, "client_addr")
+		}
+		if !validDHCPMessageIP(subjectIP) {
+			subjectIP = ""
+		}
+	}
 	eventType := "device"
-	if messageLog && !(messageType == "ACK" && validDHCPMessageIP(first(fields, "assigned_addr")) && clientMAC != "" || messageType == "REQUEST" && clientMAC != "") {
-		// OFFER, DISCOVER and incomplete messages are retained as standard
+	if messageLog && !(messageType == "ACK" && validDHCPMessageIP(first(fields, "assigned_addr")) && clientMAC != "" || clientMessage && clientMAC != "") {
+		// OFFER and incomplete messages are retained as standard
 		// events but cannot become device or address-binding facts.
 		eventType = "dhcp_message"
 	}
@@ -663,6 +686,8 @@ func dhcpEventFromFields(raw []byte, fields map[string]string, lineOffset int, o
 	logName := "dhcp"
 	if messageLog {
 		logName = "device_dhcp_message"
+	} else if opts.LogKind == "dhcp-binding" {
+		logName = "device_dhcp_binding"
 	}
 	return normalized.Event{
 		SchemaVersion:   "v1",
@@ -779,6 +804,9 @@ func dhcpPayload(fields map[string]string) map[string]any {
 	copyPayload(payload, fields, "assigned_addr", "assigned_addr")
 	copyPayload(payload, fields, "msg_types", "msg_types")
 	copyPayload(payload, fields, "uids", "uids")
+	for _, key := range []string{"uid", "xid", "request_uid", "ack_uid", "client_addr", "server_addr", "htype", "hlen"} {
+		copyPayload(payload, fields, key, key)
+	}
 
 	if hint := deviceHint(payload); hint != "" {
 		payload["device_hint"] = hint

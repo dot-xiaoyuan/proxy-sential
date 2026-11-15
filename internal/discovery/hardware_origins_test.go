@@ -20,7 +20,7 @@ func TestHardwarePassiveSelectionAdmitsProductSourcesOnlyWhenEnabled(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, origin := range []string{"snmp", "bacnet", "modbus", "http_device", "rtsp", "sip", "tls_device", "ipp", "onvif"} {
+			for _, origin := range []string{"snmp", "bacnet", "modbus", "http_device", "rtsp", "sip", "tls_device", "ipp", "onvif", "dhcp_client"} {
 				found := false
 				for _, arg := range selection.Args {
 					found = found || arg == origin

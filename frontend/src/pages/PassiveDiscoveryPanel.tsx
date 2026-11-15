@@ -70,7 +70,7 @@ function dhcpFieldEvidenceFor(signal?: PassiveSignal) {
     .map(([field, ref]) => ({ field, label: dhcpEvidenceLabels[field] ?? field, value: values[field], ref }))
 }
 type HandshakeClue = components['schemas']['DiscoveryHandshakeClue']
-const protocols: Record<string,string> = { dhcp:'DHCP', dhcpv6:'DHCPv6', sip:'SIP', sadp:'SADP', dns_sd:'DNS-SD', ssdp:'SSDP', ws_discovery:'WS-Discovery', arp:'ARP', ndp:'NDP', ieee1905_client:'IEEE 1905', ieee1905_client_association:'IEEE 1905', lldp:'LLDP', cdp:'CDP', snmp:'SNMP', ipp:'IPP', onvif:'ONVIF', nbns:'NBNS', llmnr:'LLMNR', bacnet:'BACnet/IP', modbus:'Modbus', coap:'CoAP', mqtt:'MQTT', http:'HTTP', tls:'TLS', rtsp:'RTSP', fdb:'交换机 MAC 表', neighbor:'邻居表', active:'探测响应' }
+const protocols: Record<string,string> = { dhcp:'DHCP', dhcp_client:'DHCP 客户端特征', dhcpv6:'DHCPv6', sip:'SIP', sadp:'SADP', dns_sd:'DNS-SD', ssdp:'SSDP', ws_discovery:'WS-Discovery', arp:'ARP', ndp:'NDP', ieee1905_client:'IEEE 1905', ieee1905_client_association:'IEEE 1905', lldp:'LLDP', cdp:'CDP', snmp:'SNMP', ipp:'IPP', onvif:'ONVIF', nbns:'NBNS', llmnr:'LLMNR', bacnet:'BACnet/IP', modbus:'Modbus', coap:'CoAP', mqtt:'MQTT', http:'HTTP', tls:'TLS', rtsp:'RTSP', fdb:'交换机 MAC 表', neighbor:'邻居表', active:'探测响应' }
 const capabilities: Record<string,string> = { printing:'打印', scanning:'扫描', casting:'投屏', network_video:'网络视频', media_rendering:'媒体播放', voice:'语音通话' }
 function hardwareStatusLabel(item: Device): string {
   if (item.hardware_type_status === 'candidate' && item.product_clues?.length) return item.product_clues.some(clue => clue.type) ? '产品类型有依据，设备归属待核实' : '已有产品字段，类型待匹配'

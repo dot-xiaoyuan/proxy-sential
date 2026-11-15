@@ -123,6 +123,13 @@ func hardwareDirectOwnership(o Observation) bool {
 	switch o.Origin {
 	case "arp", "ndp", "dhcp":
 		return true
+	case "dhcp_client":
+		message := strings.ToUpper(str(p, "msg_types"))
+		clientAddress := strings.EqualFold(str(p, "client_chaddr"), o.MAC) ||
+			str(p, "client_id_hwtype") == "1" && strings.EqualFold(str(p, "client_id_hwaddr"), o.MAC)
+		return o.IP == "" && p["request_only"] == true && p["discovery_scope_conflict"] != true &&
+			str(p, "dhcp_log_kind") == "dhcp-message" && (message == "REQUEST" || message == "DISCOVER" || message == "INFORM") &&
+			strings.EqualFold(str(o.Evidence.Subject, "mac"), o.MAC) && clientAddress
 	case "sadp":
 		return p["is_response"] == true && (str(p, "identity_status") == "direct_l2" || str(p, "identity_status") == "arp_binding") && strings.EqualFold(str(p, "claimed_mac"), o.MAC) && str(p, "claimed_ip") == o.IP
 	case "dns_sd":
@@ -216,6 +223,12 @@ func hardwareObservationSignals(o Observation) ([]StoredHardwareSignal, error) {
 	switch o.Origin {
 	case "dhcp":
 		fields["dhcp_product_model"] = dhcpACKProductModel(o)
+	case "dhcp_client":
+		if hardwareDirectOwnership(o) {
+			for _, key := range []string{"vendor_class", "requested_options", "hostname", "dhcp_options", "client_id_hwtype", "client_id_hwaddr", "client_chaddr"} {
+				fields["dhcp_"+key] = str(p, key)
+			}
+		}
 	case "sadp":
 		fields["sadp_model"] = str(p, "product_model")
 	case "dns_sd":

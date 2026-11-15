@@ -188,8 +188,8 @@ func (s *DBStore) runPassiveHardwareProjection(ctx context.Context, sensor strin
 		}
 		processed := 0
 		if err == nil {
-			// Independent identity transactions can overlap their indexed reads
-			// without sharing a device lock. Keep the whole cycle capped at 16.
+			// Two lanes retain the 16-identity cycle cap. Each commits groups of
+			// at most four identities to reduce synchronous WAL commits.
 			var wg sync.WaitGroup
 			results := make(chan struct {
 				count int
@@ -199,7 +199,7 @@ func (s *DBStore) runPassiveHardwareProjection(ctx context.Context, sensor strin
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					count, runErr := discovery.ProcessHardwareProjectionWithin(work, s.pg.db, sensor, 8, 8*time.Second)
+					count, runErr := discovery.ProcessHardwareProjectionBatchedWithin(work, s.pg.db, sensor, 8, 8*time.Second)
 					results <- struct {
 						count int
 						err   error

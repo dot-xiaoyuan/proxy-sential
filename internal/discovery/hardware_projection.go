@@ -195,10 +195,13 @@ func enqueueHardwareFacts(ctx context.Context, db HardwareExecer, facts []Hardwa
 	if len(raw) > 2*1024*1024 {
 		return fmt.Errorf("hardware fact batch exceeds 2 MiB")
 	}
+	// DO UPDATE ... WHERE false takes the conflict-row lock without rewriting
+	// an unchanged queue entry. DO NOTHING does not wait for a projecting worker:
+	// its subsequent DELETE could otherwise erase a concurrent new observation.
 	_, err = db.ExecContext(ctx, `WITH incoming AS (SELECT r.*,to_jsonb(r) data FROM jsonb_to_recordset($1::jsonb) AS r(identity_key text,fact_key text,claim_key text,sensor_id text,campus_id text,access_domain text,vlan text,vrf text,mac text,device_key text,source text,first_seen timestamptz,observed_at timestamptz,active_until timestamptz,revoked boolean,evidence_id text,raw_ref jsonb,signals jsonb,address_only boolean)), changed AS (
  INSERT INTO passive_hardware_facts(identity_key,fact_key,claim_key,sensor_id,campus_id,access_domain,vlan,vrf,mac,device_key,source,first_seen,observed_at,active_until,revoked,evidence_id,data)
  SELECT i.identity_key,i.fact_key,i.claim_key,i.sensor_id,i.campus_id,i.access_domain,i.vlan,i.vrf,i.mac,i.device_key,i.source,i.first_seen,i.observed_at,i.active_until,
- i.revoked OR EXISTS(SELECT 1 FROM passive_hardware_facts old WHERE old.identity_key=i.identity_key AND old.claim_key=i.claim_key AND old.revoked AND old.observed_at>=i.observed_at),i.evidence_id,i.data FROM incoming i
+ i.revoked OR EXISTS(SELECT 1 FROM passive_hardware_facts old WHERE old.identity_key=i.identity_key AND old.claim_key=i.claim_key AND old.revoked AND old.observed_at>=i.observed_at),i.evidence_id,i.data FROM incoming i ORDER BY i.identity_key,i.fact_key
  ON CONFLICT(identity_key,fact_key) DO UPDATE SET observed_at=greatest(passive_hardware_facts.observed_at,EXCLUDED.observed_at),
  active_until=CASE WHEN EXCLUDED.observed_at>=passive_hardware_facts.observed_at THEN EXCLUDED.active_until ELSE passive_hardware_facts.active_until END,
  revoked=CASE WHEN EXCLUDED.observed_at>=passive_hardware_facts.observed_at THEN EXCLUDED.revoked OR (EXCLUDED.observed_at=passive_hardware_facts.observed_at AND passive_hardware_facts.revoked) ELSE passive_hardware_facts.revoked END,
@@ -208,8 +211,8 @@ func enqueueHardwareFacts(ctx context.Context, db HardwareExecer, facts []Hardwa
  WHERE EXCLUDED.first_seen<passive_hardware_facts.first_seen OR EXCLUDED.observed_at>passive_hardware_facts.observed_at OR (EXCLUDED.observed_at=passive_hardware_facts.observed_at AND EXCLUDED.revoked AND NOT passive_hardware_facts.revoked)
  RETURNING identity_key,sensor_id)
  INSERT INTO passive_hardware_dirty(identity_key,sensor_id,reason)
- SELECT DISTINCT identity_key,sensor_id,'observation' FROM changed
- ON CONFLICT(identity_key) DO NOTHING`, string(raw))
+ SELECT DISTINCT identity_key,sensor_id,'observation' FROM changed ORDER BY identity_key,sensor_id
+ ON CONFLICT(identity_key) DO UPDATE SET identity_key=EXCLUDED.identity_key WHERE false`, string(raw))
 	if err != nil {
 		return err
 	}
@@ -258,6 +261,18 @@ func ProcessHardwareProjection(ctx context.Context, db *sql.DB, sensor string, l
 // worker cycle runs out of time. Each completed identity is already committed,
 // so the remaining dirty rows stay eligible for the next cycle.
 func ProcessHardwareProjectionWithin(ctx context.Context, db *sql.DB, sensor string, limit int, budget time.Duration) (int, error) {
+	return processHardwareProjectionsWithin(ctx, db, sensor, limit, budget, 1)
+}
+
+// ProcessHardwareProjectionBatchedWithin retains the same claim/time limits but
+// commits at most four identities together. A failed group rolls back entirely;
+// only committed identities count as processed. Each identity reads <= 1 MiB,
+// so a group is also bounded to 4 MiB of fact input.
+func ProcessHardwareProjectionBatchedWithin(ctx context.Context, db *sql.DB, sensor string, limit int, budget time.Duration) (int, error) {
+	return processHardwareProjectionsWithin(ctx, db, sensor, limit, budget, 4)
+}
+
+func processHardwareProjectionsWithin(ctx context.Context, db *sql.DB, sensor string, limit int, budget time.Duration, groupSize int) (int, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
@@ -266,7 +281,7 @@ func ProcessHardwareProjectionWithin(ctx context.Context, db *sql.DB, sensor str
 		stopAt = time.Now().Add(budget)
 	}
 	count := 0
-	for ; count < limit; count++ {
+	for count < limit {
 		identityCtx := ctx
 		cancel := func() {}
 		if !stopAt.IsZero() {
@@ -276,7 +291,7 @@ func ProcessHardwareProjectionWithin(ctx context.Context, db *sql.DB, sensor str
 			}
 			identityCtx, cancel = context.WithTimeout(ctx, min(remaining, 7*time.Second))
 		}
-		processed, key, err := processHardwareIdentity(identityCtx, db, sensor)
+		processed, key, err := processHardwareIdentityGroup(identityCtx, db, sensor, min(groupSize, limit-count))
 		cancel()
 		if err != nil {
 			if key != "" {
@@ -286,9 +301,10 @@ func ProcessHardwareProjectionWithin(ctx context.Context, db *sql.DB, sensor str
 			}
 			return count, err
 		}
-		if !processed {
+		if processed == 0 {
 			break
 		}
+		count += processed
 	}
 	return count, nil
 }
@@ -316,25 +332,67 @@ func hardwareRuleDependenciesChanged(before, after []fingerprint.HardwareSource)
 	return false
 }
 
-func processHardwareIdentity(ctx context.Context, db *sql.DB, sensor string) (bool, string, error) {
+func processHardwareIdentityGroup(ctx context.Context, db *sql.DB, sensor string, limit int) (int, string, error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return false, "", err
+		return 0, "", err
 	}
 	defer tx.Rollback()
-	var key, reason string
-	err = tx.QueryRowContext(ctx, `SELECT identity_key,reason FROM passive_hardware_dirty WHERE sensor_id=$1 AND next_attempt_at<=now() ORDER BY first_enqueued_at,identity_key LIMIT 1 FOR UPDATE SKIP LOCKED`, sensor).Scan(&key, &reason)
-	if err == sql.ErrNoRows {
-		return false, "", nil
-	}
+	// Claim a small oldest candidate set, but acquire all row locks in the
+	// same identity order as fact writers. Two lanes can skip each other's four
+	// claims without introducing a reversed multi-row lock order.
+	rows, err := tx.QueryContext(ctx, `WITH candidates AS MATERIALIZED (
+ SELECT identity_key FROM passive_hardware_dirty WHERE sensor_id=$1 AND next_attempt_at<=now()
+ ORDER BY first_enqueued_at,identity_key LIMIT $2
+ ) SELECT d.identity_key,d.reason FROM passive_hardware_dirty d JOIN candidates c USING(identity_key)
+ ORDER BY d.identity_key LIMIT $3 FOR UPDATE OF d SKIP LOCKED`, sensor, limit*2, limit)
 	if err != nil {
-		return false, key, err
+		return 0, "", err
 	}
+	type claim struct{ key, reason string }
+	claims := []claim{}
+	for rows.Next() {
+		var c claim
+		if err = rows.Scan(&c.key, &c.reason); err != nil {
+			rows.Close()
+			return 0, "", err
+		}
+		claims = append(claims, c)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return 0, "", err
+	}
+	count := 0
+	lastKey := ""
+	for _, c := range claims {
+		processed, key, err := processHardwareIdentityTx(ctx, tx, c.key, c.reason)
+		if err != nil {
+			return 0, key, err
+		}
+		if !processed {
+			break
+		}
+		count++
+		lastKey = key
+	}
+	if count == 0 {
+		return 0, "", nil
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, lastKey, err
+	}
+	return count, "", nil
+}
+
+func processHardwareIdentityTx(ctx context.Context, tx *sql.Tx, key, reason string) (bool, string, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT data,first_seen,observed_at,active_until,revoked FROM passive_hardware_facts WHERE identity_key=$1 ORDER BY fact_key LIMIT 513`, key)
 	if err != nil {
 		return false, key, err
 	}
 	facts := []HardwareFact{}
+	factBytes := 0
 	for rows.Next() {
 		var raw []byte
 		var f HardwareFact
@@ -343,6 +401,11 @@ func processHardwareIdentity(ctx context.Context, db *sql.DB, sensor string) (bo
 		if err = rows.Scan(&raw, &first, &observed, &until, &revoked); err != nil {
 			rows.Close()
 			return false, key, err
+		}
+		factBytes += len(raw)
+		if factBytes > 1<<20 {
+			rows.Close()
+			return false, key, fmt.Errorf("hardware identity fact input exceeds 1 MiB")
 		}
 		if err = json.Unmarshal(raw, &f); err != nil {
 			rows.Close()
@@ -416,6 +479,5 @@ func processHardwareIdentity(ctx context.Context, db *sql.DB, sensor string) (bo
 	if _, err = tx.ExecContext(ctx, `DELETE FROM passive_hardware_dirty WHERE identity_key=$1`, key); err != nil {
 		return false, key, err
 	}
-	err = tx.Commit()
-	return err == nil, key, err
+	return true, key, nil
 }
