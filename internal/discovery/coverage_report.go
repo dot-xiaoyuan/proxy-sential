@@ -10,18 +10,26 @@ import (
 // CoverageReport counts addresses from the bounded discovery index. A /24 is
 // an observation bucket, not a claim about the campus routing configuration.
 type CoverageReport struct {
-	AsOf          time.Time `json:"as_of"`
-	IdentityAsOf  time.Time `json:"identity_as_of"`
-	Window        string    `json:"window"`
-	Subnet24      int64     `json:"subnet24"`
-	IPv4          int64     `json:"ipv4"`
-	IPv6          int64     `json:"ipv6"`
-	MAC           int64     `json:"mac"`
-	IPMACPairs    int64     `json:"ip_mac_pairs"`
-	ScopedMAC     int64     `json:"scoped_mac"`
-	Identified    int64     `json:"identified"`
-	DumbTerminals int64     `json:"dumb_terminals"`
-	IdentityTotal int64     `json:"identity_total"`
+	AsOf                   time.Time  `json:"as_of"`
+	IdentityAsOf           time.Time  `json:"identity_as_of"`
+	Window                 string     `json:"window"`
+	Subnet24               int64      `json:"subnet24"`
+	IPv4                   int64      `json:"ipv4"`
+	IPv6                   int64      `json:"ipv6"`
+	MAC                    int64      `json:"mac"`
+	IPMACPairs             int64      `json:"ip_mac_pairs"`
+	ScopedMAC              int64      `json:"scoped_mac"`
+	Identified             int64      `json:"identified"`
+	DumbTerminals          int64      `json:"dumb_terminals"`
+	IdentityTotal          int64      `json:"identity_total"`
+	DiagnosticAsOf         *time.Time `json:"diagnostic_as_of,omitempty"`
+	TypedIPv4              int64      `json:"typed_ipv4"`
+	IdentityNoTypeIPv4     int64      `json:"identity_no_type_ipv4"`
+	NoIdentityIPv4         int64      `json:"no_identity_ipv4"`
+	UntypedNetworkOnlyIPv4 int64      `json:"untyped_network_only_ipv4"`
+	UntypedDHCPOnlyIPv4    int64      `json:"untyped_dhcp_only_ipv4"`
+	UntypedApplicationIPv4 int64      `json:"untyped_application_ipv4"`
+	UntypedOtherIPv4       int64      `json:"untyped_other_ipv4"`
 }
 
 var dumbHardwareTypes = map[string]bool{
@@ -48,7 +56,54 @@ func (r Repository) DiscoveryCoverageReport(ctx context.Context, sensor string, 
 	// Count only device-side address bindings for MAC and IP/MAC. Other protocol
 	// endpoints can expose a routed next-hop MAC and must not inflate these.
 	err = coverageAddressCounts(ctx, r.DB, sensor, out.AsOf.Add(-window), out.AsOf, &out)
+	if err == nil {
+		err = coverageEvidenceCounts(ctx, r.DB, sensor, out.AsOf.Add(-window), out.AsOf, &out)
+	}
 	return out, err
+}
+
+// Evidence buckets partition IPv4 addresses with current-window device
+// observations. They are address counts, not physical device counts. A typed
+// address may have historical product evidence even if its latest observation
+// contains only ARP; origin buckets are therefore reported only for untyped
+// addresses with a hardware identity.
+func coverageEvidenceCounts(ctx context.Context, db *sql.DB, sensor string, from, until time.Time, out *CoverageReport) error {
+	const statement = `WITH hw AS MATERIALIZED (
+ SELECT device_key,bool_or(hardware_type_status='identified') typed
+ FROM passive_hardware_current
+ WHERE sensor_id=$1 AND last_seen>=$2 AND last_seen<$3 GROUP BY device_key
+), per_ip AS (
+ SELECT l.data->>'ip' ip,bool_or(hw.device_key IS NOT NULL) has_identity,
+  bool_or(coalesce(hw.typed,false)) typed,
+  bool_or(l.origin='dhcp') dhcp,
+  bool_or(l.origin IN ('snmp','http_device','tls_device','dns_sd','ssdp','sadp','rtsp','sip','ws_discovery')) app,
+  bool_and(l.origin IN ('arp','ttl','ndp')) network_only,
+  max(l.observed_at) latest
+ FROM discovery_observation_latest l LEFT JOIN hw ON hw.device_key=l.device_key
+ WHERE l.data->>'node'=$1 AND l.observed_at>=$2 AND l.observed_at<$3
+  AND NOT l.withdrawn
+  AND l.data->>'ip' ~ '^[0-9]{1,3}([.][0-9]{1,3}){3}$'
+ GROUP BY l.data->>'ip'
+)
+SELECT count(*) FILTER(WHERE typed),
+ count(*) FILTER(WHERE has_identity AND NOT typed),
+ count(*) FILTER(WHERE NOT has_identity),
+ count(*) FILTER(WHERE has_identity AND NOT typed AND network_only),
+ count(*) FILTER(WHERE has_identity AND NOT typed AND dhcp AND NOT app),
+ count(*) FILTER(WHERE has_identity AND NOT typed AND app),
+ count(*) FILTER(WHERE has_identity AND NOT typed AND NOT network_only AND NOT dhcp AND NOT app),
+ max(latest)
+FROM per_ip`
+	var latest sql.NullTime
+	err := db.QueryRowContext(ctx, statement, sensor, from, until).Scan(
+		&out.TypedIPv4, &out.IdentityNoTypeIPv4, &out.NoIdentityIPv4,
+		&out.UntypedNetworkOnlyIPv4, &out.UntypedDHCPOnlyIPv4,
+		&out.UntypedApplicationIPv4, &out.UntypedOtherIPv4, &latest,
+	)
+	if latest.Valid {
+		out.DiagnosticAsOf = &latest.Time
+	}
+	return err
 }
 
 func coverageAddressCounts(ctx context.Context, db *sql.DB, sensor string, from, until time.Time, out *CoverageReport) error {

@@ -8967,6 +8967,14 @@ components:
         identified: { type: integer, format: int64, minimum: 0 }
         dumb_terminals: { type: integer, format: int64, minimum: 0 }
         identity_total: { type: integer, format: int64, minimum: 0 }
+        diagnostic_as_of: { type: string, format: date-time, description: Latest observation included in the IPv4 evidence buckets. }
+        typed_ipv4: { type: integer, format: int64, minimum: 0, description: Distinct observed IPv4 addresses with at least one typed scoped identity. }
+        identity_no_type_ipv4: { type: integer, format: int64, minimum: 0 }
+        no_identity_ipv4: { type: integer, format: int64, minimum: 0 }
+        untyped_network_only_ipv4: { type: integer, format: int64, minimum: 0 }
+        untyped_dhcp_only_ipv4: { type: integer, format: int64, minimum: 0 }
+        untyped_application_ipv4: { type: integer, format: int64, minimum: 0 }
+        untyped_other_ipv4: { type: integer, format: int64, minimum: 0 }
     DiscoveryDeviceMetadata:
       type: object
       required: [total, identified, candidate, conflict, expired, types, as_of, count_unit, window]

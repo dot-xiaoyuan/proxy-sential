@@ -8549,6 +8549,28 @@ export interface components {
             dumb_terminals: number;
             /** Format: int64 */
             identity_total: number;
+            /**
+             * Format: date-time
+             * @description Latest observation included in the IPv4 evidence buckets.
+             */
+            diagnostic_as_of?: string;
+            /**
+             * Format: int64
+             * @description Distinct observed IPv4 addresses with at least one typed scoped identity.
+             */
+            typed_ipv4?: number;
+            /** Format: int64 */
+            identity_no_type_ipv4?: number;
+            /** Format: int64 */
+            no_identity_ipv4?: number;
+            /** Format: int64 */
+            untyped_network_only_ipv4?: number;
+            /** Format: int64 */
+            untyped_dhcp_only_ipv4?: number;
+            /** Format: int64 */
+            untyped_application_ipv4?: number;
+            /** Format: int64 */
+            untyped_other_ipv4?: number;
         };
         DiscoveryDeviceMetadata: {
             classification_version?: string;

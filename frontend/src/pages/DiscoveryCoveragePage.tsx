@@ -5,6 +5,7 @@ import { useSearchParams } from 'react-router-dom'
 import { request } from '../shared/api/client'
 import type { components } from '../shared/api/generated'
 import { DiscoveryCoverageReport } from './DiscoveryCoverageReport'
+import { DiscoveryCoverageDiagnostics } from './DiscoveryCoverageDiagnostics'
 import { CensusPanel } from './CensusPanel'
 
 const windows = [
@@ -32,6 +33,7 @@ export function DiscoveryCoveragePage() {
       </div>
     </header>
     <DiscoveryCoverageReport report={coverage.data} loading={coverage.isPending} error={coverage.isError}/>
+    <DiscoveryCoverageDiagnostics/>
     <CensusPanel/>
   </main>
 }

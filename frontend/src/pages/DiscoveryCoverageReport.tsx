@@ -1,15 +1,8 @@
 import { Typography } from 'antd'
 import type { components } from '../shared/api/generated'
 import { observedTimeTitle } from '../shared/ui/observedTime'
-import { deviceFactSnapshot } from './deviceFactSnapshot'
 
 type Report = components['schemas']['DiscoveryCoverageReport']
-
-const facts = deviceFactSnapshot.rows
-const covered = facts.filter(row => row.mirror > 0).length
-const typed = facts.filter(row => row.identified > 0).length
-const noMirror = facts.length - covered
-const withTrafficNoType = covered - typed
 
 export function DiscoveryCoverageReport({ report, loading, error }: { report?: Report; loading: boolean; error: boolean }) {
   const metric = (label: string, value?: number, detail?: string) => <div className="discovery-report-metric" key={label}><span>{label}</span><strong>{value === undefined ? error ? '读取失败' : '统计中' : value.toLocaleString('zh-CN')}</strong>{detail && <small>{detail}</small>}</div>
@@ -24,16 +17,23 @@ export function DiscoveryCoverageReport({ report, loading, error }: { report?: R
       {metric('哑终端类型', report?.dumb_terminals, '已确认类型中的哑终端品类')}
     </div>
     {report && <p className="discovery-report-boundary">另有 IPv6 地址 {report.ipv6.toLocaleString('zh-CN')}、作用域 MAC 身份 {report.scoped_mac.toLocaleString('zh-CN')}；设备身份合计 {report.identity_total.toLocaleString('zh-CN')}。IP、MAC、关联与身份的去重单位不同，不能相加。</p>}
-    <div className="discovery-report-facts"><div><h4>设备事实表对照</h4><Typography.Text type="secondary">冻结核查：{deviceFactSnapshot.observedAt} · 流量窗口 {deviceFactSnapshot.flowWindow}</Typography.Text></div>
-      <div className="discovery-report-fact-grid">
-        {metric('表内事实范围', facts.length, '原表地址行，范围可能重叠')}
-        {metric('镜像覆盖', covered, '范围内有镜像 IP')}
-        {metric('已有类型识别', typed, '范围内至少一个可信身份有类型')}
-        {metric('有流量待识别', withTrafficNoType, '覆盖范围内没有类型结论')}
-        {metric('未见镜像 IP', noMirror, '该次流量窗口')}
+    {report?.typed_ipv4 !== undefined && <div className="discovery-report-evidence">
+      <div className="discovery-report-heading"><h4>类型缺口：按 IPv4 地址拆解</h4><Typography.Text type="secondary">设备观测截至 {report.diagnostic_as_of ? observedTimeTitle(report.diagnostic_as_of) : observedTimeTitle(report.as_of)}</Typography.Text></div>
+      <div className="discovery-report-evidence-stage">
+        {metric('至少一个身份有类型', report.typed_ipv4, '同一 IP 可能先后对应多个设备')}
+        {metric('有身份，缺类型结论', report.identity_no_type_ipv4, '以下按可见协议分解')}
+        {metric('有观测，缺当前身份', report.no_identity_ipv4, '优先核对同作用域设备侧 MAC')}
       </div>
-      <div className="discovery-report-bars"><label>镜像覆盖 <progress value={covered} max={facts.length} /></label><label>至少一个类型结论 <progress value={typed} max={facts.length} /></label></div>
-      <p className="discovery-report-boundary">事实表的 46 行含 /16、/24、区间和单 IP，重叠行只按原表行数统计；本区块是核查快照，不随上方实时窗口更新。<a href={deviceFactSnapshot.source} target="_blank" rel="noreferrer">查看逐行依据</a></p>
-    </div>
+      <div className="discovery-report-evidence-breakdown">
+        <h4>有身份但缺类型的地址：当前可见特征</h4>
+        <div className="discovery-report-evidence-bars">
+          <label><span>仅 ARP / TTL / NDP</span><strong>{report.untyped_network_only_ipv4?.toLocaleString('zh-CN')}</strong><progress value={report.untyped_network_only_ipv4 || 0} max={report.identity_no_type_ipv4 || 1}/></label>
+          <label><span>有 DHCP、无应用协议观测</span><strong>{report.untyped_dhcp_only_ipv4?.toLocaleString('zh-CN')}</strong><progress value={report.untyped_dhcp_only_ipv4 || 0} max={report.identity_no_type_ipv4 || 1}/></label>
+          <label><span>有应用或发现协议</span><strong>{report.untyped_application_ipv4?.toLocaleString('zh-CN')}</strong><progress value={report.untyped_application_ipv4 || 0} max={report.identity_no_type_ipv4 || 1}/></label>
+          <label><span>其他设备观测</span><strong>{report.untyped_other_ipv4?.toLocaleString('zh-CN')}</strong><progress value={report.untyped_other_ipv4 || 0} max={report.identity_no_type_ipv4 || 1}/></label>
+        </div>
+        <p className="discovery-report-boundary">这些是互斥的 IP 桶，只说明采集到的协议层次。DHCP 可能仅给操作系统，应用协议可能仅给通用软件；仍需逐 IP 核对设备侧产品字段、规则和归属。镜像里只有连接、尚无设备观测的地址不在本分解中。</p>
+      </div>
+    </div>}
   </section>
 }
