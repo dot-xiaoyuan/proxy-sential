@@ -110,7 +110,7 @@ func TestDHCPOriginalRejectsMidFileSchema(t *testing.T) {
 	}
 }
 func TestDHCPOriginalCLIEntrypoints(t *testing.T) {
-	for _, mode := range []string{"snapshot-dhcp-messages", "apply-dhcp-messages"} {
+	for _, mode := range []string{"snapshot-dhcp-messages", "apply-dhcp-messages", "snapshot-original", "apply-original"} {
 		t.Run(mode, func(t *testing.T) {
 			oldFlags, oldArgs := flag.CommandLine, os.Args
 			t.Cleanup(func() { flag.CommandLine = oldFlags; os.Args = oldArgs })
@@ -121,9 +121,12 @@ func TestDHCPOriginalCLIEntrypoints(t *testing.T) {
 			os.WriteFile(scopePath, raw, 0600)
 			manifest := filepath.Join(t.TempDir(), "manifest.json")
 			os.Args = []string{"repair", "--mode", mode, "--manifest", manifest, "--original-file", path, "--sensor", "campus-204", "--interface", "enp3s0f0", "--cidrs", "10.0.0.0/8", "--scope-file", scopePath}
+			if mode == "snapshot-original" {
+				os.Args = append(os.Args, "--original-kind", "rtsp-device")
+			}
 			t.Setenv("PROXY_SENTINEL_POSTGRES_DSN", "")
 			err := run(context.Background())
-			if mode == "snapshot-dhcp-messages" {
+			if mode == "snapshot-dhcp-messages" || mode == "snapshot-original" {
 				if err != nil {
 					t.Fatal(err)
 				}

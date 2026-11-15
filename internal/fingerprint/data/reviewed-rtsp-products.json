@@ -1,0 +1,41 @@
+{
+  "version": "rtsp-product-review-2026-11-15.1",
+  "basis": "Explicit recorder-role self-report in original client RTSP DESCRIBE messages. Preserve unknown model. Vendor-only, generic desktop players, opposite endpoint and wrong protocol are excluded. This is a reviewed field-evidence rule, not an imported upstream signature.",
+  "samples": [
+    {
+      "value": "HIKVISION player NVR V4.74.210",
+      "content_sha256": "5a42fcb1f7089a5aac33349b8ae5c103c381a894ba6fc14ab43cd502552e87e8"
+    },
+    {
+      "value": "HIKVISION player NVR V4.84.030",
+      "content_sha256": "a71dca179f69ca5aa91ad3d1b25209ce7800012a8cfa183d6d4832bede1a1d22"
+    }
+  ],
+  "entries": [
+    {
+      "capabilities": [
+        "network_video"
+      ],
+      "field": "rtsp_user_agent",
+      "id": "hikvision-nvr-rtsp-client-role",
+      "manufacturer": "Hikvision",
+      "model": "",
+      "negative": [
+        "HIKVISION player",
+        "HIKVISION player Camera V4.74.210",
+        "VLC HIKVISION player NVR V4.74.210",
+        "HIKVISION player NVR V4.74.210 ffmpeg",
+        "HIKVISION player NVR"
+      ],
+      "pattern": "(?i)^HIKVISION player NVR V[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "positive": [
+        "HIKVISION player NVR V4.74.210",
+        "HIKVISION player NVR V4.84.030"
+      ],
+      "rationale": "Explicit recorder-role self-report in original client RTSP DESCRIBE messages. Preserve unknown model. Vendor-only, generic desktop players, opposite endpoint and wrong protocol are excluded. This is a reviewed field-evidence rule, not an imported upstream signature.",
+      "source_url": "https://www.rfc-editor.org/rfc/rfc7826.html#section-18.58",
+      "type": "recorder",
+      "type_only": true
+    }
+  ]
+}

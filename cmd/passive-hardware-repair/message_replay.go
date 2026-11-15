@@ -23,6 +23,7 @@ import (
 )
 
 const dhcpMessageReplaySchema = "dhcp-original-file-replay/v1"
+const protocolReplaySchema = "protocol-original-file-replay/v1"
 
 type dhcpMessageRecord struct {
 	Offset int64  `json:"offset"`
@@ -30,6 +31,7 @@ type dhcpMessageRecord struct {
 	SHA256 string `json:"sha256"`
 }
 type dhcpMessageManifest struct {
+	LogKind      string                   `json:"log_kind,omitempty"`
 	CaptureScope *normalized.CaptureScope `json:"capture_scope"`
 	Schema       string                   `json:"schema"`
 	Path         string                   `json:"path"`
@@ -114,9 +116,35 @@ func snapshotDHCPMessages(path, sensor, iface, cidrs string, offset int64, scope
 	return m, nil
 }
 
+func snapshotOriginalProtocol(path, sensor, iface, cidrs string, offset int64, scope *normalized.CaptureScope, kind string) (dhcpMessageManifest, error) {
+	if kind != "rtsp-device" {
+		return dhcpMessageManifest{}, fmt.Errorf("original protocol replay only supports rtsp-device")
+	}
+	m, err := snapshotDHCPMessages(path, sensor, iface, cidrs, offset, scope)
+	if err != nil {
+		return m, err
+	}
+	m.Schema, m.LogKind = protocolReplaySchema, kind
+	return m, nil
+}
+
+func originalReplayKind(m dhcpMessageManifest) (string, error) {
+	if m.Schema == dhcpMessageReplaySchema && m.LogKind == "" {
+		return "dhcp-message", nil
+	}
+	if m.Schema == protocolReplaySchema && m.LogKind == "rtsp-device" {
+		return m.LogKind, nil
+	}
+	return "", fmt.Errorf("unsupported original replay schema or protocol")
+}
+
 func readDHCPMessage(m dhcpMessageManifest, r dhcpMessageRecord) (normalized.Event, string, error) {
 	var empty normalized.Event
-	if m.CaptureScope == nil || m.CaptureScope.SensorID != m.Sensor || m.Schema != dhcpMessageReplaySchema || m.Sensor == "" || m.Interface == "" || m.CIDRs == "" || m.SnapshotAt.IsZero() || len(m.Header) > 8192 || messageDigest([]byte(m.Header)) != m.HeaderSHA256 || r.Length < 1 || r.Length > store.HardwareRepairMaxRowBytes || r.Offset < m.FromOffset || r.Offset+int64(r.Length) > m.NextOffset || m.NextOffset > m.SnapshotSize {
+	kind, kindErr := originalReplayKind(m)
+	if kindErr != nil {
+		return empty, "", kindErr
+	}
+	if m.CaptureScope == nil || m.CaptureScope.SensorID != m.Sensor || m.Sensor == "" || m.Interface == "" || m.CIDRs == "" || m.SnapshotAt.IsZero() || len(m.Header) > 8192 || messageDigest([]byte(m.Header)) != m.HeaderSHA256 || r.Length < 1 || r.Length > store.HardwareRepairMaxRowBytes || r.Offset < m.FromOffset || r.Offset+int64(r.Length) > m.NextOffset || m.NextOffset > m.SnapshotSize {
 		return empty, "", fmt.Errorf("invalid original manifest bounds")
 	}
 	f, err := os.Open(m.Path)
@@ -143,7 +171,7 @@ func readDHCPMessage(m dhcpMessageManifest, r dhcpMessageRecord) (normalized.Eve
 		return empty, "", fmt.Errorf("original record checksum changed")
 	}
 	var output bytes.Buffer
-	stats, err := zeek.Convert(bytes.NewReader(append(append([]byte(m.Header), raw...), '\n')), &output, zeek.Options{SensorID: m.Sensor, ControlledInterface: m.Interface, LogKind: "dhcp-message", CaptureScope: m.CaptureScope, CollectorInstanceID: m.CaptureScope.CollectorInstanceID})
+	stats, err := zeek.Convert(bytes.NewReader(append(append([]byte(m.Header), raw...), '\n')), &output, zeek.Options{SensorID: m.Sensor, ControlledInterface: m.Interface, LogKind: kind, CaptureScope: m.CaptureScope, CollectorInstanceID: m.CaptureScope.CollectorInstanceID})
 	if err != nil {
 		return empty, "", err
 	}
@@ -204,7 +232,13 @@ func applyDHCPMessages(ctx context.Context, db *sql.DB, m dhcpMessageManifest, s
 		}
 	}
 	if len(events) > 0 {
-		rows, err := store.ApplyDHCPMessageReplay(ctx, db, m.Sensor, m.CIDRs, events)
+		var rows []store.HardwareRepairOutcome
+		var err error
+		if m.Schema == protocolReplaySchema {
+			rows, err = store.ApplyRTSPOriginalReplay(ctx, db, m.Sensor, m.CIDRs, events)
+		} else {
+			rows, err = store.ApplyDHCPMessageReplay(ctx, db, m.Sensor, m.CIDRs, events)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -219,6 +253,9 @@ func applyDHCPMessages(ctx context.Context, db *sql.DB, m dhcpMessageManifest, s
 }
 
 func runDHCPMessageApply(ctx context.Context, db *sql.DB, manifestPath, checkpointPath string, batch int, pause time.Duration) error {
+	return runOriginalMessageApply(ctx, db, manifestPath, checkpointPath, batch, pause, dhcpMessageReplaySchema)
+}
+func runOriginalMessageApply(ctx context.Context, db *sql.DB, manifestPath, checkpointPath string, batch int, pause time.Duration, schema string) error {
 	if checkpointPath == "" || filepath.Clean(manifestPath) == filepath.Clean(checkpointPath) || !discovery.HardwareProjectionEnabled() {
 		return fmt.Errorf("original replay requires separate checkpoint and an already enabled hardware gate")
 	}
@@ -226,8 +263,11 @@ func runDHCPMessageApply(ctx context.Context, db *sql.DB, manifestPath, checkpoi
 	if err := readRepairJSON(manifestPath, &m); err != nil {
 		return err
 	}
-	if m.Schema != dhcpMessageReplaySchema || len(m.Records) > 5000 || m.NextOffset < m.FromOffset || m.NextOffset-m.FromOffset > 2<<20 {
+	if m.Schema != schema || len(m.Records) > 5000 || m.NextOffset < m.FromOffset || m.NextOffset-m.FromOffset > 2<<20 {
 		return fmt.Errorf("invalid original snapshot page")
+	}
+	if _, err := originalReplayKind(m); err != nil {
+		return err
 	}
 	last := m.FromOffset
 	for _, r := range m.Records {
@@ -256,14 +296,14 @@ func runDHCPMessageApply(ctx context.Context, db *sql.DB, manifestPath, checkpoi
 		defer cancel()
 		conn.ExecContext(c, `SELECT pg_advisory_unlock(hashtextextended($1,0))`, "passive-hardware-repair:"+m.Sensor)
 	}()
-	state := repairCheckpoint{SchemaVersion: dhcpMessageReplaySchema, ManifestSHA256: messageManifestHash(m), Total: len(m.Records), Complete: len(m.Records) == 0, Outcomes: []store.HardwareRepairOutcome{}, UpdatedAt: time.Now().UTC()}
+	state := repairCheckpoint{SchemaVersion: schema, ManifestSHA256: messageManifestHash(m), Total: len(m.Records), Complete: len(m.Records) == 0, Outcomes: []store.HardwareRepairOutcome{}, UpdatedAt: time.Now().UTC()}
 	if err = readRepairJSON(checkpointPath, &state); errors.Is(err, os.ErrNotExist) {
 		err = writeRepairJSON(checkpointPath, state, true)
 	}
 	if err != nil {
 		return err
 	}
-	if state.SchemaVersion != dhcpMessageReplaySchema || state.ManifestSHA256 != messageManifestHash(m) || state.Total != len(m.Records) || state.Next < 0 || state.Next > state.Total || len(state.Outcomes) != state.Next || state.Complete != (state.Next == state.Total) {
+	if state.SchemaVersion != schema || state.ManifestSHA256 != messageManifestHash(m) || state.Total != len(m.Records) || state.Next < 0 || state.Next > state.Total || len(state.Outcomes) != state.Next || state.Complete != (state.Next == state.Total) {
 		return fmt.Errorf("original checkpoint mismatch")
 	}
 	for i, r := range state.Outcomes {

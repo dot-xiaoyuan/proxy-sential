@@ -3386,6 +3386,35 @@
       "source_url": "https://enterprise.huawei.com/nla/products/coll-communication/union-comuni/ip-phone/hw-356860.htm",
       "type": "voip_phone",
       "version": "device-product-review-2026-11-15.1"
+    },
+    {
+      "capabilities": [
+        "network_video"
+      ],
+      "field": "rtsp_user_agent",
+      "id": "hikvision-nvr-rtsp-client-role",
+      "manufacturer": "Hikvision",
+      "model": "",
+      "negative": [
+        "HIKVISION player",
+        "HIKVISION player Camera V4.74.210",
+        "VLC HIKVISION player NVR V4.74.210",
+        "HIKVISION player NVR V4.74.210 ffmpeg",
+        "HIKVISION player NVR"
+      ],
+      "pattern": "(?i)^HIKVISION player NVR V[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "positive": [
+        "HIKVISION player NVR V4.74.210",
+        "HIKVISION player NVR V4.84.030"
+      ],
+      "rationale": "Explicit recorder-role self-report in original client RTSP DESCRIBE messages. Preserve unknown model. Vendor-only, generic desktop players, opposite endpoint and wrong protocol are excluded. This is a reviewed field-evidence rule, not an imported upstream signature.",
+      "raw_ref": "verified/reviewed-rtsp-products.json",
+      "raw_sha256": "6c432f168de7036b212db2619442ce0f045c0825bcf83801e9bfabcd86621054",
+      "source": "verified_product",
+      "source_url": "https://www.rfc-editor.org/rfc/rfc7826.html#section-18.58",
+      "type": "recorder",
+      "type_only": true,
+      "version": "rtsp-product-review-2026-11-15.1"
     }
   ],
   "recog_files": {
@@ -24102,5 +24131,5 @@
       "source": "librenms_hardware"
     }
   ],
-  "version": "hardware-catalog-2026-11-15.3"
+  "version": "hardware-catalog-2026-11-15.4"
 }

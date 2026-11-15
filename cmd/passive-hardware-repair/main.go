@@ -161,9 +161,10 @@ func validateCheckpoint(s repairCheckpoint, m store.HardwareRepairManifest) erro
 	return nil
 }
 func run(ctx context.Context) error {
-	mode := flag.String("mode", "", "snapshot, prepare-dhcp, prepare-product, apply, snapshot-dhcp-messages, or apply-dhcp-messages")
+	mode := flag.String("mode", "", "snapshot, prepare-dhcp, prepare-product, apply, snapshot-dhcp-messages, apply-dhcp-messages, snapshot-original, or apply-original")
 	rawScopeFile := flag.String("scope-file", "", "verified capture scope file covering the original DHCP log")
-	rawFile := flag.String("original-file", "", "authoritative DHCP message log for bounded original replay")
+	rawKind := flag.String("original-kind", "", "rtsp-device for snapshot-original")
+	rawFile := flag.String("original-file", "", "authoritative protocol log for bounded original replay")
 	rawOffset := flag.Int64("original-offset", 0, "record boundary from the previous original snapshot page")
 	rawInterface := flag.String("interface", "", "verified capture interface for original DHCP replay")
 	rawCIDRs := flag.String("cidrs", "", "verified campus scope for original DHCP replay")
@@ -179,7 +180,7 @@ func run(ctx context.Context) error {
 	batch := flag.Int("batch-size", 25, "apply batch rows, 1..50")
 	pause := flag.Duration("pause", 500*time.Millisecond, "minimum pause between batches, at least 250ms")
 	flag.Parse()
-	if (*mode != "snapshot" && *mode != "apply" && *mode != "prepare-dhcp" && *mode != "prepare-product" && *mode != "snapshot-dhcp-messages" && *mode != "apply-dhcp-messages") || *manifestPath == "" || *batch < 1 || *batch > 50 || *pause < 250*time.Millisecond {
+	if (*mode != "snapshot" && *mode != "apply" && *mode != "prepare-dhcp" && *mode != "prepare-product" && *mode != "snapshot-dhcp-messages" && *mode != "apply-dhcp-messages" && *mode != "snapshot-original" && *mode != "apply-original") || *manifestPath == "" || *batch < 1 || *batch > 50 || *pause < 250*time.Millisecond {
 		return fmt.Errorf("specify mode, manifest and bounded batch/pause")
 	}
 	if *mode == "prepare-dhcp" {
@@ -188,12 +189,17 @@ func run(ctx context.Context) error {
 	if *mode == "prepare-product" {
 		return prepareProductRefresh(*sourceManifest, *manifestPath)
 	}
-	if *mode == "snapshot-dhcp-messages" {
+	if *mode == "snapshot-dhcp-messages" || *mode == "snapshot-original" {
 		scope, err := normalized.LoadCaptureScope(*rawScopeFile)
 		if err != nil {
 			return err
 		}
-		m, err := snapshotDHCPMessages(*rawFile, *sensor, *rawInterface, *rawCIDRs, *rawOffset, scope)
+		var m dhcpMessageManifest
+		if *mode == "snapshot-original" {
+			m, err = snapshotOriginalProtocol(*rawFile, *sensor, *rawInterface, *rawCIDRs, *rawOffset, scope, *rawKind)
+		} else {
+			m, err = snapshotDHCPMessages(*rawFile, *sensor, *rawInterface, *rawCIDRs, *rawOffset, scope)
+		}
 		if err != nil {
 			return err
 		}
@@ -215,6 +221,10 @@ func run(ctx context.Context) error {
 	defer db.Close()
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
+	if *mode == "apply-original" {
+		db.SetMaxOpenConns(3)
+		return runOriginalMessageApply(ctx, db, *manifestPath, *checkpointPath, *batch, *pause, protocolReplaySchema)
+	}
 	if *mode == "apply-dhcp-messages" {
 		db.SetMaxOpenConns(3)
 		return runDHCPMessageApply(ctx, db, *manifestPath, *checkpointPath, *batch, *pause)

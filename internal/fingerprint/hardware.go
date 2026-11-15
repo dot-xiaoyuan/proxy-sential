@@ -99,6 +99,7 @@ type HardwareExtractor struct {
 	compiled         *regexp.Regexp
 }
 type hardwareModelRule struct {
+	TypeOnly     bool     `json:"type_only,omitempty"`
 	ID           string   `json:"id"`
 	Source       string   `json:"source"`
 	Version      string   `json:"version"`
@@ -246,8 +247,11 @@ func ParseHardwareCatalog(data, provenance []byte, extra ...[]byte) (*HardwareCa
 		if err := verifyRaw(r.RawRef, r.RawSHA256); err != nil {
 			return nil, err
 		}
-		if r.Field != "" && r.Field != "dhcp_product_model" && r.Field != "sip_user_agent" {
+		if r.Field != "" && r.Field != "dhcp_product_model" && r.Field != "sip_user_agent" && r.Field != "rtsp_user_agent" {
 			return nil, fmt.Errorf("model %s has unsupported model field %q", r.ID, r.Field)
+		}
+		if r.TypeOnly && (r.Model != "" || CanonicalHardwareType(r.Type) == "") {
+			return nil, fmt.Errorf("type-only rule %s must have a valid type and no model", r.ID)
 		}
 		add(r.Source, true)
 		var err error
@@ -501,10 +505,16 @@ func CanonicalHardwareType(value string) string {
 	return ""
 }
 
+var appleTVCompatibilityModel = regexp.MustCompile(`(?i)^AppleTV[0-9]+,[0-9]+$`)
+
 func hardwareEvidenceDirection(s EvidenceSignal) (string, bool) {
 	switch s.Field {
 	case "sip_user_agent":
 		return "client", s.Protocol == "sip"
+	case "rtsp_user_agent":
+		return "client", s.Protocol == "rtsp"
+	case "dns_sd_receiver_implementation":
+		return "device", s.Protocol == "dns_sd"
 	case "dhcp_product_model":
 		return "device", s.Protocol == "dhcp"
 	case "sadp_model":
@@ -622,6 +632,18 @@ func (h *HardwareCatalog) Evaluate(input HardwareInput, now time.Time) HardwareR
 		}
 		out.Sources = append(out.Sources, HardwareSource{Source: source, RuleID: id, RuleVersion: version, EvidenceID: s.EventID, SourceFamily: s.SourceFamily, ObservedAt: s.ObservedAt, Fields: fields})
 	}
+	// Evidence in this input belongs to one verified scoped identity. A
+	// receiver implementation and AppleTV model in its announcement window are
+	// compatibility claims, not proof of Apple hardware. Do not permanently
+	// blacklist later announcements or correlate across IP-only observations.
+	// Five minutes accommodates record ordering and old records lacking TTL;
+	// where available the receiver announcement TTL bounds subsequent models.
+	receiverSignals := []EvidenceSignal{}
+	for _, s := range evidence {
+		if s.Field == "dns_sd_receiver_implementation" && s.Value == "com.tcl.MultiScreenInteraction_TV" && hardwareEvidenceAccepted(s, now) {
+			receiverSignals = append(receiverSignals, s)
+		}
+	}
 	for _, s := range evidence {
 		if len(s.Value) > 65536 || (s.Field != "snmp_oid_values" && len(s.Value) > 16384) || (hardwareModelField(s.Field) && len(s.Value) > 512) {
 			out.Incomplete = true
@@ -639,6 +661,30 @@ func (h *HardwareCatalog) Evaluate(input HardwareInput, now time.Time) HardwareR
 				out.RejectedReasons = map[string]int{}
 			}
 			out.RejectedReasons[hardwareRejectedReason(s, now)]++
+			continue
+		}
+		if s.Field == "dns_sd_receiver_implementation" {
+			continue
+		}
+		compatibility := false
+		if s.Protocol == "dns_sd" && s.Field == "dns_sd_model" && appleTVCompatibilityModel.MatchString(strings.TrimSpace(s.Value)) {
+			for _, receiver := range receiverSignals {
+				until := receiver.ValidUntil
+				if until.IsZero() {
+					until = receiver.ObservedAt.Add(5 * time.Minute)
+				}
+				if !s.ObservedAt.Before(receiver.ObservedAt.Add(-5*time.Minute)) && !s.ObservedAt.After(until) {
+					compatibility = true
+					break
+				}
+			}
+		}
+		if compatibility {
+			out.RejectedSignals++
+			if out.RejectedReasons == nil {
+				out.RejectedReasons = map[string]int{}
+			}
+			out.RejectedReasons["protocol_compatibility_model"]++
 			continue
 		}
 		inputKey := s.SourceFamily + "\x00" + s.Protocol + "\x00" + s.EventID + "\x00" + s.Field + "\x00" + s.Value
@@ -671,7 +717,7 @@ func (h *HardwareCatalog) Evaluate(input HardwareInput, now time.Time) HardwareR
 		if hardwareModelField(s.Field) {
 			for _, r := range h.models {
 				// The DHCP model field only uses rules reviewed for a client self-report.
-				if r.Field != s.Field && (r.Field != "" || s.Field == "dhcp_product_model" || s.Field == "sip_user_agent") {
+				if r.Field != s.Field && (r.Field != "" || s.Field == "dhcp_product_model" || s.Field == "sip_user_agent" || s.Field == "rtsp_user_agent") {
 					continue
 				}
 				report := reports[r.Source]
@@ -679,7 +725,7 @@ func (h *HardwareCatalog) Evaluate(input HardwareInput, now time.Time) HardwareR
 				reports[r.Source] = report
 				if r.compiled.MatchString(s.Value) {
 					model := r.Model
-					if model == "" {
+					if model == "" && !r.TypeOnly {
 						model = r.compiled.FindString(s.Value)
 					}
 					record(r.Source, r.ID, r.Version, r.Type, model, r.Manufacturer, s, nil)
@@ -832,7 +878,7 @@ func (h *HardwareCatalog) Evaluate(input HardwareInput, now time.Time) HardwareR
 
 func hardwareModelField(field string) bool {
 	switch field {
-	case "sip_user_agent", "dhcp_product_model", "sadp_model", "snmp_model", "ssdp_model", "dns_sd_model", "mdns_model", "printer_make_and_model", "onvif_model", "wsd_model", "bacnet_model", "cdp_platform":
+	case "rtsp_user_agent", "sip_user_agent", "dhcp_product_model", "sadp_model", "snmp_model", "ssdp_model", "dns_sd_model", "mdns_model", "printer_make_and_model", "onvif_model", "wsd_model", "bacnet_model", "cdp_platform":
 		return true
 	}
 	return false

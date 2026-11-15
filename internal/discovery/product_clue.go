@@ -69,7 +69,7 @@ func BuildIPProductClue(o Observation, now time.Time) (*IPProductClue, error) {
 	if len(signals) == 0 {
 		clue.ProductStatus = "missing_product_fields"
 		clue.MissingFields = []string{"system_object_id", "system_description", "product_model"}
-		if o.Origin == "sip" {
+		if o.Origin == "sip" || o.Origin == "rtsp" {
 			clue.MissingFields = []string{"user_agent"}
 		}
 	}
@@ -95,10 +95,17 @@ func IPProductAttribution(o Observation) string {
 	if o.Origin == "snmp" && p["is_response"] == true && str(p, "response_source_ip") == o.IP {
 		return "response_ip"
 	}
-	if o.Origin != "sip" || o.IP == "" || o.IP != str(o.Evidence.Flow, "src_ip") ||
+	if (o.Origin != "sip" && o.Origin != "rtsp") || o.IP == "" || o.IP != str(o.Evidence.Flow, "src_ip") ||
 		str(o.Evidence.Flow, "direction") != "client" || str(p, "method") == "" || str(p, "user_agent") == "" ||
 		o.EventID == "zeek-e3b0c44298fc1c149afbf4c8" {
 		return ""
+	}
+	if o.Origin == "rtsp" {
+		switch str(p, "method") {
+		case "OPTIONS", "DESCRIBE", "SETUP", "PLAY", "PAUSE", "TEARDOWN", "GET_PARAMETER", "SET_PARAMETER", "ANNOUNCE", "RECORD":
+		default:
+			return ""
+		}
 	}
 	digest, err := hex.DecodeString(str(o.Evidence.RawRef, "content_sha256"))
 	if err != nil || len(digest) != 32 || o.Evidence.Source != "zeek" || o.EventID != "zeek-"+hex.EncodeToString(digest)[:24] {

@@ -132,6 +132,19 @@ func DNSSDModelFromTXT(text string) string {
 	return ""
 }
 
+// Receiver software can advertise an Apple compatibility model in another
+// DNS-SD service. Retain the implementation separately; it proves neither a
+// hardware brand nor a model. Correlation belongs to the scoped fact evaluator.
+var tclAirPlayImplementation = regexp.MustCompile(`(?i)(?:^|[;\s])packagename\s*=\s*com\.tcl\.MultiScreenInteraction_TV(?:[;\s]|$)`)
+
+func dnsSDReceiverImplementation(o Observation) string {
+	service := strings.ToLower(strings.TrimSuffix(str(o.Evidence.Payload, "service_type"), ".local"))
+	if service != "_leboremote._tcp" || !tclAirPlayImplementation.MatchString(protocolText(o.Evidence.Payload["txt"])) {
+		return ""
+	}
+	return "com.tcl.MultiScreenInteraction_TV"
+}
+
 // Only product-bearing protocol fields reach these rules. A friendly hostname,
 // certificate issuer or MAC OUI cannot feed a product match.
 func applyProductRules(o *Observation) {

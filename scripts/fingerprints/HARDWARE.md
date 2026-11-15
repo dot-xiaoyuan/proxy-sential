@@ -36,3 +36,11 @@ CLI 不访问现场，不发送探测，不导入运行中的规则包。默认�
 `latest_partition` 是派生索引内部键，按已验证 SNMP 响应的字段/OID 集合哈希，不包含值，不改变原始标准事件或作用域身份。迁移 248 仅替换 latest 触发器，新旧观测可共存，不自动扫描历史回填；原文与紧凑历史沿用既有保留规则。读取仍只读维护后的索引，每种现场实际响应集合增加一行，重复响应更新同一行；分区没有独立缓存，无额外失效任务。统计仍以身份去重，不以字段分区计设备。
 
 `IPProductClue` 只表示响应地址的产品自报，不构造 MAC 或硬件事实。产品注释最多 16 KiB，修复清单单行仍遵守 64 KiB 限额；匹配失败显式记录，不丢原观测。`reviewed-snmp-products.json` 保留限定的产品描述语法、厂商资料链接和正反例；企业 OID 的厂商识别不能替代产品类型判断。`scripts/fingerprints/ip-product-report` 可对固定作用域观测离线逐条输出结果及输入哈希，输出始终标记为 IP 产品回放而非物理设备确认。
+
+### RTSP 角色与投屏兼容声明
+
+`field: rtsp_user_agent` 仅接受经原文哈希校验的 RTSP 请求端自报。现场两条 `HIKVISION player NVR V...` 原文支撑显式录像设备角色；新 `type_only` 规则保留品牌、类型及原文依据，不把固件版本当型号。反向响应、普通播放器和仅厂商名不命中。204 的硬件门控开启时，RTSP 与 SNMP/SIP 一样生成 IP 级产品线索；缺同作用域 MAC 时不创建硬件身份。184 风险与旧分类入口未接入这项硬件规则，相关回归单独执行。
+
+`_leboremote._tcp` 的 `packagename=com.tcl.MultiScreenInteraction_TV` 作为接收端软件证据保留，不映射 TCL 硬件品牌。同一可信作用域身份中，AppleTV 型号声明处于该公告有效窗口时，暂不作为苹果硬件型号确认。允许五分钟记录先后差；缺 TTL 的旧记录仅采用五分钟窗口。撤销的标记不参与判断，后续超出公告窗口的型号可重新评估，跨身份输入直接拒绝。原 TXT 和各服务证据不删除。
+
+原文恢复器新增 `snapshot-original --original-kind rtsp-device` / `apply-original`，复用 DHCP 的行哈希、文件身份、固定 30 天窗口、2 MiB/5,000 条分页、1 MiB/50 条事务、背压与检查点流程。新 schema 为 `protocol-original-file-replay/v1`；旧 DHCP 清单和检查点保持原 schema/哈希语义。仅受控 RTSP 原文可进入新增入口，不改实时消费游标。

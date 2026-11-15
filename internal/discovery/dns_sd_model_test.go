@@ -65,3 +65,75 @@ func TestFromEventDNSDCarriesModelName(t *testing.T) {
 		t.Fatalf("DNS-SD TXT model was not kept on the observation: %+v", observation)
 	}
 }
+
+func TestDNSSDReceiverImplementationIsSoftwareEvidence(t *testing.T) {
+	o := hardwareTestObservation(time.Now().UTC().Add(-time.Minute))
+	o.Origin = "dns_sd"
+	o.ModelName = ""
+	o.Evidence.Payload = map[string]any{"hardware_identity": "unique_binding", "service_type": "_leboremote._tcp", "txt": "port=35037 version=3.2 packagename=com.tcl.MultiScreenInteraction_TV htv=1 etv=1"}
+	f, err := HardwareFactFromObservation(o)
+	if err != nil || f == nil {
+		t.Fatalf("lost owned software clue: %+v %v", f, err)
+	}
+	found := false
+	for _, s := range f.Signals {
+		if s.Field == "dns_sd_model" {
+			t.Fatal("package treated as hardware model")
+		}
+		if s.Field == "dns_sd_receiver_implementation" && s.Value == "com.tcl.MultiScreenInteraction_TV" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("receiver software not retained")
+	}
+	o.Evidence.Payload["service_type"] = "_ipp._tcp"
+	if dnsSDReceiverImplementation(o) != "" {
+		t.Fatal("unrelated service supplied receiver marker")
+	}
+	o.Evidence.Payload["service_type"] = "_leboremote._tcp"
+	o.Evidence.Payload["txt"] = "packagename=com.tcl.MultiScreenInteraction_TV.evil"
+	if dnsSDReceiverImplementation(o) != "" {
+		t.Fatal("partial package matched")
+	}
+}
+
+// The field sample publishes these records in separate services on one scoped
+// identity. Never synthesize a single TXT containing both statements.
+func TestAirPlaySeparateServicesScopeWithdrawalAndTime(t *testing.T) {
+	now := time.Now().UTC()
+	o := hardwareTestObservation(now.Add(-time.Minute))
+	o.Origin = "dns_sd"
+	o.ModelName = "AppleTV3,1"
+	o.Evidence.Payload = map[string]any{"hardware_identity": "unique_binding", "service_type": "_airplay._tcp", "service_instance": "tv._airplay._tcp.local", "txt": "model=AppleTV3,1 flags=0x4"}
+	model, err := HardwareFactFromObservation(o)
+	if err != nil || model == nil {
+		t.Fatal(err)
+	}
+	o.ModelName = ""
+	o.Evidence.Payload = map[string]any{"hardware_identity": "unique_binding", "service_type": "_leboremote._tcp", "service_instance": "tv._leboremote._tcp.local", "txt": "port=35037 version=3.2 packagename=com.tcl.MultiScreenInteraction_TV htv=1 etv=1"}
+	receiver, err := HardwareFactFromObservation(o)
+	if err != nil || receiver == nil {
+		t.Fatal(err)
+	}
+	state, err := EvaluateHardwareFacts([]HardwareFact{*model, *receiver}, nil, now)
+	if err != nil || state.HardwareModel != "" || state.Manufacturer != "" || state.HardwareTypeStatus == "identified" {
+		t.Fatalf("compatibility became hardware: %+v %v", state, err)
+	}
+	receiver.Revoked = true
+	state, err = EvaluateHardwareFacts([]HardwareFact{*model, *receiver}, nil, now)
+	if err != nil || state.Manufacturer != "Apple" {
+		t.Fatalf("withdrawn marker suppressed model: %+v %v", state, err)
+	}
+	receiver.Revoked = false
+	receiver.ObservedAt = model.ObservedAt.Add(-6 * time.Minute)
+	receiver.ActiveUntil = model.ObservedAt.Add(-time.Minute)
+	state, err = EvaluateHardwareFacts([]HardwareFact{*model, *receiver}, nil, now)
+	if err != nil || state.Manufacturer != "Apple" {
+		t.Fatalf("old software marker erased newer model: %+v %v", state, err)
+	}
+	receiver.IdentityKey += "other-scope"
+	if _, err = EvaluateHardwareFacts([]HardwareFact{*model, *receiver}, nil, now); err == nil {
+		t.Fatal("cross-scope software marker joined")
+	}
+}

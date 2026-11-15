@@ -106,3 +106,60 @@ func TestDHCPOriginalReplayPostgresRollbackResumeAndConcurrentLatest(t *testing.
 		t.Fatal("request created address lease")
 	}
 }
+
+func TestRTSPOriginalReplayPostgresIPProductWithoutInventedMAC(t *testing.T) {
+	dsn := os.Getenv("PROXY_SENTINEL_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("isolated PostgreSQL required")
+	}
+	t.Setenv("PROXY_SENTINEL_HARDWARE_V2", "true")
+	t.Setenv("PROXY_SENTINEL_PASSIVE_CENSUS_ENABLED", "false")
+	admin, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := fmt.Sprintf("dhcp_raw_%d", time.Now().UnixNano())
+	if _, err = admin.Exec("CREATE SCHEMA " + schema); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.RuntimeParams["search_path"] = schema
+	db := stdlib.OpenDB(*cfg)
+	db.SetMaxOpenConns(3)
+	t.Cleanup(func() { db.Close(); admin.Exec("DROP SCHEMA " + schema + " CASCADE"); admin.Close() })
+	for _, name := range []string{"002_identity_subject_schema.sql", "058_network_discovery.sql", "234_discovery_observations_service_instance.sql", "241_passive_hardware_projection.sql", "242_passive_hardware_claim_index.sql"} {
+		raw, err := os.ReadFile("../../migrations/postgres/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = db.Exec(string(raw)); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+
+	event := passiveTestEvent("rtsp", "192.168.0.10", "", map[string]any{"origin": "rtsp", "method": "DESCRIBE", "user_agent": "HIKVISION player NVR V4.74.210", "vlan": "20"})
+	event.Source = "zeek"
+	event.Timestamp = time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano)
+	event.EventID = "zeek-" + strings.Repeat("c", 24)
+	event.RawRef = map[string]any{"content_sha256": strings.Repeat("c", 64), "original_file_id": "verified-original"}
+	event.Flow = map[string]any{"src_ip": "192.168.0.10", "dst_ip": "192.168.0.11", "direction": "client", "dst_port": 554}
+	for i := 0; i < 2; i++ {
+		rows, err := ApplyRTSPOriginalReplay(context.Background(), db, "office-30", "192.168.0.0/24", []normalized.Event{event})
+		if err != nil || len(rows) != 1 || rows[0].Status != "admitted" {
+			t.Fatalf("original replay: %+v %v", rows, err)
+		}
+	}
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM discovery_observations WHERE data->>'ip'='192.168.0.10' AND data->'product_clue'->>'type'='recorder' AND coalesce(data->'product_clue'->>'model','')=''`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("IP product lost or duplicated: %d %v", n, err)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM passive_hardware_facts`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("IP response invented MAC: %d %v", n, err)
+	}
+	if _, err := ApplyDHCPMessageReplay(context.Background(), db, "office-30", "192.168.0.0/24", []normalized.Event{event}); err == nil {
+		t.Fatal("DHCP mode accepted RTSP")
+	}
+}

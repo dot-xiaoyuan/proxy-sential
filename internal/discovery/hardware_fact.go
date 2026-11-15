@@ -191,11 +191,15 @@ func HardwareFactFromObservation(o Observation) (*HardwareFact, error) {
 	}
 	p := o.Evidence.Payload
 	switch o.Origin {
+	case "rtsp":
+		if IPProductAttribution(o) != "request_ip" {
+			return nil, nil
+		}
 	case "ssdp", "ws_discovery":
 		if p["is_response"] != true && p["is_announcement"] != true {
 			return nil, nil
 		}
-	case "snmp", "bacnet", "modbus", "ipp", "onvif", "rtsp", "http_device":
+	case "snmp", "bacnet", "modbus", "ipp", "onvif", "http_device":
 		if p["is_response"] != true {
 			return nil, nil
 		}
@@ -233,6 +237,7 @@ func hardwareObservationSignals(o Observation) ([]StoredHardwareSignal, error) {
 		fields["sadp_model"] = str(p, "product_model")
 	case "dns_sd":
 		fields["dns_sd_model"] = firstText(o.ModelName, str(p, "product_model"))
+		fields["dns_sd_receiver_implementation"] = dnsSDReceiverImplementation(o)
 		fields["service_type"] = str(p, "service_type")
 	case "ssdp":
 		fields["ssdp_model"] = firstText(o.ModelName, str(p, "product_model"))
@@ -274,6 +279,10 @@ func hardwareObservationSignals(o Observation) ([]StoredHardwareSignal, error) {
 	case "http_device":
 		fields["http_server"] = str(p, "server")
 		fields["http_title"] = str(p, "title")
+	case "rtsp":
+		if IPProductAttribution(o) == "request_ip" {
+			fields["rtsp_user_agent"] = str(p, "user_agent")
+		}
 	case "sip":
 		if o.IP == str(o.Evidence.Flow, "src_ip") && (str(p, "attribution_side") == "client" || str(o.Evidence.Flow, "direction") == "client") {
 			fields["sip_user_agent"] = str(p, "user_agent")
@@ -323,12 +332,16 @@ func (f HardwareFact) Evidence() []fingerprint.EvidenceSignal {
 			protocol = "tls"
 		}
 		switch s.Field {
-		case "sip_user_agent":
+		case "sip_user_agent", "rtsp_user_agent":
 			direction = "client"
 		case "http_server", "http_title", "sip_server", "tls_subject", "tls_issuer", "tls_san":
 			direction = "server"
 		}
-		out = append(out, fingerprint.EvidenceSignal{Protocol: protocol, Field: s.Field, Value: s.Value, Direction: direction, Association: "direct", SourceFamily: s.Protocol, EventID: f.EvidenceID, ObservedAt: f.ObservedAt})
+		var validUntil time.Time
+		if s.Field == "dns_sd_receiver_implementation" {
+			validUntil = f.ActiveUntil
+		}
+		out = append(out, fingerprint.EvidenceSignal{Protocol: protocol, Field: s.Field, Value: s.Value, Direction: direction, Association: "direct", SourceFamily: s.Protocol, EventID: f.EvidenceID, ObservedAt: f.ObservedAt, ValidUntil: validUntil})
 	}
 	return out
 }
