@@ -39,6 +39,7 @@ type HardwareRepairManifest struct {
 // copied packet/XML. It is needed only until the recoverable job is reconciled.
 // SourceSHA256 identifies the exact retained row, InputSHA256 the decoded input.
 type HardwareRepairEntry struct {
+	SourceRelation        string                 `json:"source_relation,omitempty"`
 	Key                   [5]string              `json:"latest_key"`
 	ObservationID         string                 `json:"observation_id"`
 	EventID               string                 `json:"event_id"`
@@ -102,6 +103,9 @@ func (m HardwareRepairManifest) Validate() error {
 	}
 	seen := map[[5]string]bool{}
 	for _, e := range m.Entries {
+		if e.SourceRelation != "" && e.SourceRelation != "observation" {
+			return fmt.Errorf("invalid repair source relation")
+		}
 		if seen[e.Key] || e.Key[0] == "" || e.ObservationID == "" || len(e.SourceSHA256) != 64 || e.ObservedAt.Before(m.Window.From) || !e.ObservedAt.Before(m.Window.Until) {
 			return fmt.Errorf("invalid or duplicate frozen source entry")
 		}
@@ -258,6 +262,9 @@ func ApplyHardwareRepairBatch(ctx context.Context, db HardwareRepairTxStarter, m
 	outcomes := make([]HardwareRepairOutcome, 0, end-start)
 	observations := []discovery.Observation{}
 	for index := start; index < end; index++ {
+		if e := m.Entries[index]; e.SourceRelation == "observation" && e.ProductRefreshVersion == "" {
+			return nil, fmt.Errorf("historical source requires explicit product-only preparation")
+		}
 		e := m.Entries[index]
 		r := HardwareRepairOutcome{Index: index, ObservationID: e.ObservationID, EventID: e.EventID, SourceSHA256: e.SourceSHA256, Status: "excluded", Reason: e.ExcludedReason}
 		if e.Observation != nil {

@@ -161,8 +161,9 @@ func validateCheckpoint(s repairCheckpoint, m store.HardwareRepairManifest) erro
 }
 func run(ctx context.Context) error {
 	mode := flag.String("mode", "", "snapshot, prepare-dhcp, prepare-product, or apply")
+	observationIDs := flag.String("observation-ids", "", "optional JSON array of frozen SNMP response IDs for a bounded historical snapshot")
 	origin := flag.String("origin", "", "optional snapshot origin: dhcp, snmp, arp, ndp")
-	sourceManifest := flag.String("source-manifest", "", "frozen snapshot input for prepare-dhcp")
+	sourceManifest := flag.String("source-manifest", "", "frozen snapshot input for prepare-dhcp or prepare-product")
 	dhcpRecords := flag.String("dhcp-records", "", "bounded original Zeek record proofs for prepare-dhcp")
 	sensor := flag.String("sensor", "", "exact sensor for snapshot")
 	from := flag.String("from", "", "inclusive event-time RFC3339")
@@ -205,7 +206,17 @@ func run(ctx context.Context) error {
 		}
 		work, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		manifest, e := store.SnapshotHardwareRepair(work, db, store.HardwareRepairWindow{Sensor: *sensor, Origin: *origin, From: start, Until: end})
+		window := store.HardwareRepairWindow{Sensor: *sensor, Origin: *origin, From: start, Until: end}
+		var manifest store.HardwareRepairManifest
+		if *observationIDs != "" {
+			var ids []string
+			if e = readRepairJSON(*observationIDs, &ids); e != nil {
+				return e
+			}
+			manifest, e = store.SnapshotProductResponses(work, db, window, ids)
+		} else {
+			manifest, e = store.SnapshotHardwareRepair(work, db, window)
+		}
 		if e != nil {
 			return e
 		}
@@ -277,19 +288,30 @@ func run(ctx context.Context) error {
 	apply := func(c context.Context, start, limit int) ([]store.HardwareRepairOutcome, error) {
 		return store.ApplyHardwareRepairBatch(c, conn, manifest, start, limit)
 	}
+	productOnly := true
+	for _, entry := range manifest.Entries {
+		if entry.Observation != nil && entry.ProductRefreshVersion == "" {
+			productOnly = false
+			break
+		}
+	}
 	for !state.Complete {
 		// Leave an already backlogged worker to real-time observations. The local
 		// checkpoint remains resumable; this is not completion or cancellation.
-		work, cancel = context.WithTimeout(ctx, time.Second)
-		var busy bool
-		err = conn.QueryRowContext(work, `SELECT EXISTS(SELECT 1 FROM passive_hardware_dirty WHERE sensor_id=$1 OFFSET 100 LIMIT 1)`, manifest.Window.Sensor).Scan(&busy)
-		cancel()
-		if err != nil {
-			return err
+		if !productOnly {
+			work, cancel = context.WithTimeout(ctx, time.Second)
+			var busy bool
+			err = conn.QueryRowContext(work, `SELECT EXISTS(SELECT 1 FROM passive_hardware_dirty WHERE sensor_id=$1 OFFSET 100 LIMIT 1)`, manifest.Window.Sensor).Scan(&busy)
+			cancel()
+			if err != nil {
+				return err
+			}
+			if busy {
+				return fmt.Errorf("hardware queue exceeds 100 identities; repair yields with checkpoint %d/%d, rerun later", state.Next, state.Total)
+			}
 		}
-		if busy {
-			return fmt.Errorf("hardware queue exceeds 100 identities; repair yields with checkpoint %d/%d, rerun later", state.Next, state.Total)
-		}
+		// IP-only annotations use bounded transactions and pauses, but do not enqueue
+		// hardware work, so that unrelated queue is not their admission gate.
 		if err = advanceRepair(ctx, &state, *batch, apply, save); err != nil {
 			return err
 		}
@@ -310,13 +332,6 @@ func run(ctx context.Context) error {
 		}
 	}
 	resultMode, projectionNote := "repair_enqueue_complete", "verify independently; enqueue completion is not projection completion"
-	productOnly := true
-	for _, entry := range manifest.Entries {
-		if entry.Observation != nil && entry.ProductRefreshVersion == "" {
-			productOnly = false
-			break
-		}
-	}
 	if productOnly {
 		resultMode, projectionNote = "product_annotations_complete", "IP product annotations only; no physical identities created or enqueued"
 	}
