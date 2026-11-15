@@ -20,7 +20,7 @@ export function installHardwareReplay() {
   worker.use(
     http.get('*/discovery/devices',()=>HttpResponse.json({items:[...items,mobile,product],has_more:false,next_cursor:'',limit:20,window:'24h',classification_version:'passive-hardware/v2'})),
     http.get('*/discovery/devices/metadata',()=>HttpResponse.json({total:4,identified:2,candidate:2,conflict:0,expired:0,classification_version:'passive-hardware/v2',types:[{device_type:'printer',count:1},{device_type:'environment_monitor',count:1}],candidate_types:[{device_type:'mobile',count:1}],ip_product_types:[{device_type:'switch',count:1}],as_of:now,count_unit:'trusted_discovery_identity',window:'24h'})),
-    http.get('*/discovery/devices/coverage-report',()=>HttpResponse.json({as_of:now,identity_as_of:now,window:'24h',subnet24:3,ipv4:4,ipv6:0,mac:3,scoped_mac:3,ip_mac_pairs:3,identified:2,dumb_terminals:2,identity_total:4})),
+    http.get('*/discovery/devices/coverage-report',()=>HttpResponse.json({as_of:now,identity_as_of:now,window:'24h',subnet24:3,ipv4:4,ipv6:0,mac:3,scoped_mac:3,ip_mac_pairs:3,ipv4_with_mac:3,ip_mac_unique_pairs:3,ip_mac_valid_scoped_pairs:2,multi_mac_ipv4:0,multi_scope_ip_mac_pairs:0,blank_and_filled_vlan_pairs:0,identified:2,dumb_terminals:2,identity_total:4})),
     http.get('*/discovery/census/summary',()=>HttpResponse.json(summary)),
     http.get('*/discovery/census/identifiers',()=>HttpResponse.json({items:[],has_more:false,next_cursor:''})),
   )

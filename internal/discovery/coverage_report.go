@@ -10,26 +10,32 @@ import (
 // CoverageReport counts addresses from the bounded discovery index. A /24 is
 // an observation bucket, not a claim about the campus routing configuration.
 type CoverageReport struct {
-	AsOf                   time.Time  `json:"as_of"`
-	IdentityAsOf           time.Time  `json:"identity_as_of"`
-	Window                 string     `json:"window"`
-	Subnet24               int64      `json:"subnet24"`
-	IPv4                   int64      `json:"ipv4"`
-	IPv6                   int64      `json:"ipv6"`
-	MAC                    int64      `json:"mac"`
-	IPMACPairs             int64      `json:"ip_mac_pairs"`
-	ScopedMAC              int64      `json:"scoped_mac"`
-	Identified             int64      `json:"identified"`
-	DumbTerminals          int64      `json:"dumb_terminals"`
-	IdentityTotal          int64      `json:"identity_total"`
-	DiagnosticAsOf         *time.Time `json:"diagnostic_as_of,omitempty"`
-	TypedIPv4              int64      `json:"typed_ipv4"`
-	IdentityNoTypeIPv4     int64      `json:"identity_no_type_ipv4"`
-	NoIdentityIPv4         int64      `json:"no_identity_ipv4"`
-	UntypedNetworkOnlyIPv4 int64      `json:"untyped_network_only_ipv4"`
-	UntypedDHCPOnlyIPv4    int64      `json:"untyped_dhcp_only_ipv4"`
-	UntypedApplicationIPv4 int64      `json:"untyped_application_ipv4"`
-	UntypedOtherIPv4       int64      `json:"untyped_other_ipv4"`
+	AsOf                    time.Time  `json:"as_of"`
+	IdentityAsOf            time.Time  `json:"identity_as_of"`
+	Window                  string     `json:"window"`
+	Subnet24                int64      `json:"subnet24"`
+	IPv4                    int64      `json:"ipv4"`
+	IPv6                    int64      `json:"ipv6"`
+	MAC                     int64      `json:"mac"`
+	IPMACPairs              int64      `json:"ip_mac_pairs"`
+	IPv4WithMAC             int64      `json:"ipv4_with_mac"`
+	IPMACUniquePairs        int64      `json:"ip_mac_unique_pairs"`
+	IPMACValidScopedPairs   int64      `json:"ip_mac_valid_scoped_pairs"`
+	MultiMACIPv4            int64      `json:"multi_mac_ipv4"`
+	MultiScopeIPMACPairs    int64      `json:"multi_scope_ip_mac_pairs"`
+	BlankAndFilledVLANPairs int64      `json:"blank_and_filled_vlan_pairs"`
+	ScopedMAC               int64      `json:"scoped_mac"`
+	Identified              int64      `json:"identified"`
+	DumbTerminals           int64      `json:"dumb_terminals"`
+	IdentityTotal           int64      `json:"identity_total"`
+	DiagnosticAsOf          *time.Time `json:"diagnostic_as_of,omitempty"`
+	TypedIPv4               int64      `json:"typed_ipv4"`
+	IdentityNoTypeIPv4      int64      `json:"identity_no_type_ipv4"`
+	NoIdentityIPv4          int64      `json:"no_identity_ipv4"`
+	UntypedNetworkOnlyIPv4  int64      `json:"untyped_network_only_ipv4"`
+	UntypedDHCPOnlyIPv4     int64      `json:"untyped_dhcp_only_ipv4"`
+	UntypedApplicationIPv4  int64      `json:"untyped_application_ipv4"`
+	UntypedOtherIPv4        int64      `json:"untyped_other_ipv4"`
 }
 
 var dumbHardwareTypes = map[string]bool{
@@ -108,7 +114,7 @@ FROM per_ip`
 
 func coverageAddressCounts(ctx context.Context, db *sql.DB, sensor string, from, until time.Time, out *CoverageReport) error {
 	const statement = `WITH observed AS MATERIALIZED (
- SELECT l.data->>'ip' ip,lower(coalesce(l.data->>'mac','')) mac,
+ SELECT l.data->>'ip' ip,lower(coalesce(l.data->>'mac','')) mac,l.valid_until,
   coalesce(l.data->>'node','') sensor,coalesce(l.data->>'site','') site,
   coalesce(l.data->>'domain','') domain,coalesce(l.data->>'vlan','') vlan,
   coalesce(l.data->>'vrf','') vrf,
@@ -124,12 +130,27 @@ func coverageAddressCounts(ctx context.Context, db *sql.DB, sensor string, from,
   binding AND mac ~ '^[0-9a-f][02468ace](:[0-9a-f]{2}){5}$'
    AND mac<>'00:00:00:00:00:00' AND ip<>'' trusted_pair
  FROM observed
+), trusted_ipv4 AS MATERIALIZED (
+ SELECT ip,mac,vlan,valid_until,
+  jsonb_build_array(ip,mac)::text raw_pair,
+  jsonb_build_array(sensor,site,domain,vlan,vrf,ip,mac)::text scoped_pair
+ FROM addresses WHERE v4 AND trusted_pair
 )
 SELECT count(DISTINCT split_part(ip,'.',1)||'.'||split_part(ip,'.',2)||'.'||split_part(ip,'.',3)) FILTER(WHERE v4),
  count(DISTINCT ip) FILTER(WHERE v4), count(DISTINCT ip) FILTER(WHERE v6),
  count(DISTINCT mac) FILTER(WHERE trusted_pair),
  count(DISTINCT jsonb_build_array(sensor,site,domain,vlan,vrf,ip,mac)::text) FILTER(WHERE trusted_pair),
- count(DISTINCT jsonb_build_array(sensor,site,domain,vlan,vrf,mac)::text) FILTER(WHERE trusted_pair)
+ count(DISTINCT jsonb_build_array(sensor,site,domain,vlan,vrf,mac)::text) FILTER(WHERE trusted_pair),
+ (SELECT count(DISTINCT ip) FROM trusted_ipv4),
+ (SELECT count(DISTINCT raw_pair) FROM trusted_ipv4),
+ (SELECT count(DISTINCT scoped_pair) FROM trusted_ipv4 WHERE valid_until>$3),
+ (SELECT count(*) FROM (SELECT ip FROM trusted_ipv4 GROUP BY ip HAVING count(DISTINCT mac)>1) multi_mac),
+ (SELECT count(*) FROM (SELECT raw_pair FROM trusted_ipv4 GROUP BY raw_pair HAVING count(DISTINCT scoped_pair)>1) multi_scope),
+ (SELECT count(*) FROM (SELECT raw_pair FROM trusted_ipv4 GROUP BY raw_pair HAVING bool_or(vlan='') AND bool_or(vlan<>'')) mixed_vlan)
 FROM addresses`
-	return db.QueryRowContext(ctx, statement, sensor, from, until).Scan(&out.Subnet24, &out.IPv4, &out.IPv6, &out.MAC, &out.IPMACPairs, &out.ScopedMAC)
+	return db.QueryRowContext(ctx, statement, sensor, from, until).Scan(
+		&out.Subnet24, &out.IPv4, &out.IPv6, &out.MAC, &out.IPMACPairs, &out.ScopedMAC,
+		&out.IPv4WithMAC, &out.IPMACUniquePairs, &out.IPMACValidScopedPairs,
+		&out.MultiMACIPv4, &out.MultiScopeIPMACPairs, &out.BlankAndFilledVLANPairs,
+	)
 }

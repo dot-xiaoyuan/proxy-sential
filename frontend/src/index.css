@@ -6016,6 +6016,8 @@ pre.wrap-code {
 .discovery-report-metric > strong { font-size: 24px; color: #0f172a; line-height: 1.2; }
 .discovery-report-metric > small { font-size: 11px; }
 .discovery-report-boundary { margin: 12px 0 0; color: #475569; font-size: 12px; line-height: 1.55; }
+.discovery-report-reconciliation { margin-top: 18px; padding-top: 16px; border-top: 1px solid #e2e8f0; color: #334155; font-size: 13px; line-height: 1.65; }
+.discovery-report-reconciliation p { margin: 8px 0 0; overflow-wrap: anywhere; }
 .discovery-report-delay { margin: 12px 0 0; padding: 9px 12px; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; color: #334155; font-size: 12px; line-height: 1.5; }
 .discovery-report-evidence { margin-top: 18px; padding-top: 16px; border-top: 1px solid #e2e8f0; }
 .discovery-report-evidence-stage { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }

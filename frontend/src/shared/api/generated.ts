@@ -8541,6 +8541,36 @@ export interface components {
             mac: number;
             /** Format: int64 */
             ip_mac_pairs: number;
+            /**
+             * Format: int64
+             * @description Distinct IPv4 addresses with trusted device-side MAC bindings in the window.
+             */
+            ipv4_with_mac?: number;
+            /**
+             * Format: int64
+             * @description Distinct IPv4 and trusted MAC pairs without scope in the window.
+             */
+            ip_mac_unique_pairs?: number;
+            /**
+             * Format: int64
+             * @description Distinct scoped IPv4 and trusted MAC pairs with valid_until after as_of.
+             */
+            ip_mac_valid_scoped_pairs?: number;
+            /**
+             * Format: int64
+             * @description IPv4 addresses paired with multiple trusted MAC addresses in the window.
+             */
+            multi_mac_ipv4?: number;
+            /**
+             * Format: int64
+             * @description Distinct IPv4 and MAC pairs observed in multiple scopes in the window.
+             */
+            multi_scope_ip_mac_pairs?: number;
+            /**
+             * Format: int64
+             * @description Distinct IPv4 and MAC pairs observed with both blank and populated VLAN values.
+             */
+            blank_and_filled_vlan_pairs?: number;
             /** Format: int64 */
             scoped_mac: number;
             /** Format: int64 */
