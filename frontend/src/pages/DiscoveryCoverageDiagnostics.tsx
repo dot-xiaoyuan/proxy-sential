@@ -60,7 +60,7 @@ export function DiscoveryCoverageDiagnostics() {
     <p className="discovery-report-boundary">下列数字按 46 行事实范围统计，/16、/24 和单 IP 互有重叠。范围有类型只表示至少一台形成结论，不能推断该范围内其他设备均已定型。</p>
     <div className="discovery-diagnostics-current">
       <h4>11 月 15 日 20:40 只读复核 · 近 24 小时设备观测</h4>
-      <p>查询时间 {observedTimeTitle(deviceFactLiveSnapshot.capturedAt)}；发现处理水位 {observedTimeTitle(deviceFactLiveSnapshot.observationWaterline.replace(' ','T'))}。这是设备观测，不等同镜像流量覆盖。</p>
+      <p>查询时间 {observedTimeTitle(deviceFactLiveSnapshot.capturedAt)}；发现处理水位 {observedTimeTitle(deviceFactLiveSnapshot.observationWaterline)}。这是设备观测，不等同镜像流量覆盖。</p>
       <div className="discovery-diagnostics-current-grid">
         <div><strong>{liveCounts.noObservation}</strong><span>范围缺设备观测</span></div>
         <div><strong>{liveCounts.noIdentity}</strong><span>有设备观测，缺身份</span></div>

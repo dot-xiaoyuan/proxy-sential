@@ -5,6 +5,7 @@ import { observedTimeTitle } from '../shared/ui/observedTime'
 type Report = components['schemas']['DiscoveryCoverageReport']
 
 export function DiscoveryCoverageReport({ report, loading, error }: { report?: Report; loading: boolean; error: boolean }) {
+  const lagMinutes = report ? Math.max(0, Math.round((Date.parse(report.as_of) - Date.parse(report.identity_as_of)) / 60_000)) : 0
   const metric = (label: string, value?: number, detail?: string) => <div className="discovery-report-metric" key={label}><span>{label}</span><strong>{value === undefined ? error ? '读取失败' : '统计中' : value.toLocaleString('zh-CN')}</strong>{detail && <small>{detail}</small>}</div>
   return <section className="discovery-report" aria-label="设备发现覆盖报表">
     <div className="discovery-report-heading"><div><h3>现场观测</h3><Typography.Text type="secondary">{report ? `${report.window} 观测窗口 · 地址查询 ${observedTimeTitle(report.as_of)} · 设备发现水位 ${observedTimeTitle(report.identity_as_of)}` : loading ? '正在读取现场统计' : '现场统计读取失败'}</Typography.Text></div></div>
@@ -17,6 +18,7 @@ export function DiscoveryCoverageReport({ report, loading, error }: { report?: R
       {metric('哑终端类型', report?.dumb_terminals, '已确认类型中的哑终端品类')}
     </div>
     {report && <p className="discovery-report-boundary">另有 IPv6 地址 {report.ipv6.toLocaleString('zh-CN')}、作用域 MAC 身份 {report.scoped_mac.toLocaleString('zh-CN')}；设备身份合计 {report.identity_total.toLocaleString('zh-CN')}。IP、MAC、关联与身份的去重单位不同，不能相加。</p>}
+    {Number.isFinite(lagMinutes) && lagMinutes > 0 && <p className="discovery-report-delay">发现处理水位比地址查询落后约 {lagMinutes} 分钟；类型和身份统计截至水位时间，近期流量仍可能在处理中。</p>}
     {report?.typed_ipv4 !== undefined && <div className="discovery-report-evidence">
       <div className="discovery-report-heading"><h4>类型缺口：按 IPv4 地址拆解</h4><Typography.Text type="secondary">设备观测截至 {report.diagnostic_as_of ? observedTimeTitle(report.diagnostic_as_of) : observedTimeTitle(report.as_of)}</Typography.Text></div>
       <div className="discovery-report-evidence-stage">

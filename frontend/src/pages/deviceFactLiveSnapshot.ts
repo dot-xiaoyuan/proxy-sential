@@ -2,7 +2,7 @@
 // Observation counts use 24h discovery_observation_latest and scoped hardware current.
 export const deviceFactLiveSnapshot = {
   "capturedAt": "2026-11-15T20:40:45+08:00",
-  "observationWaterline": "2026-11-15 12:01:30+00",
+  "observationWaterline": "2026-11-15T12:01:30Z",
   "rows": [
     {
       "id": "7",

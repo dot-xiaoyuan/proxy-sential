@@ -12,4 +12,5 @@ it('shows only live address and identity counts in the current observation secti
   expect(report).toHaveTextContent('哑终端类型76')
   expect(report).toHaveTextContent('有身份，缺类型结论1,000')
   expect(report).toHaveTextContent('有 DHCP、无应用协议观测600')
+  expect(report).toHaveTextContent('落后约 22 分钟')
 })
