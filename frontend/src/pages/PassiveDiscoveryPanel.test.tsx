@@ -66,6 +66,20 @@ function observedCalls() {
 
 afterEach(() => { cleanup(); request.mockReset() })
 
+it('keeps the discovery page focused on its list and leaves coverage on its own page', async () => {
+  mockReads()
+  renderPanel()
+  expect(await screen.findByLabelText('发现设备摘要')).toBeInTheDocument()
+  expect(screen.queryByLabelText('设备发现覆盖报表')).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('设备普查')).not.toBeInTheDocument()
+  expect(request.mock.calls.some(([path]) => String(path).includes('/discovery/devices/coverage-report'))).toBe(false)
+  const list = document.querySelector('.passive-ledger-table')
+  const overview = document.querySelector('.discovery-overview-details')
+  expect(list).toBeTruthy()
+  expect(overview).toBeTruthy()
+  expect(Boolean(list!.compareDocumentPosition(overview!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
+})
+
 it('uses the same review reason for the list and count', async () => {
   mockReads({items:{}}, {...device,classification_status:'conflict',review_reason:'conflict',review_observed_at:'2026-11-10T08:00:00Z'})
   renderPanel(['/?discovery_review_reason=conflict'])

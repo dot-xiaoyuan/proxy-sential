@@ -29,7 +29,6 @@ import { resolveDeviceBrand } from '../entities/device/brandMatcher'
 import { isRandomizedMAC } from '../entities/device/mac'
 import { DiscoveryEvidenceSummary } from './DiscoveryEvidenceSummary'
 import { DiscoveryProductClues } from './DiscoveryProductClues'
-import { DiscoveryCoverageReport } from './DiscoveryCoverageReport'
 import { discoveryCSV, fetchDiscoveryExport } from './discoveryExport'
 import { qualityReportCSV } from './discoveryQualityReport'
 import { loadDiscoveryViews, removeDiscoveryView, saveDiscoveryView } from './discoveryViews'
@@ -37,7 +36,6 @@ import { deviceTypeLabel } from '../entities/device/DeviceInventoryCells'
 import { observedTimeLabel, observedTimeTitle } from '../shared/ui/observedTime'
 import { flowBelongsToDevice, serviceBelongsToDevice, signalAddressMatchesDevice } from './discoveryServiceAttribution'
 import { discoveryClassificationExplanation, discoveryNameClue } from './discoveryClassificationClues'
-import { CensusPanel } from './CensusPanel'
 import { activityStates, confirmedDeviceType, hardwareStates, type HardwareView } from './discoveryHardware'
 
 type DeviceRecognition = { os_family?: string; os_family_confidence?: number; device_type?: string; brand?: string; model?: string; confidence?: number; rule_version?: string; source?: string; evidence?: string[]; brand_inference_status?: string; brand_inference_brand?: string; brand_inference_confidence?: number }
@@ -246,8 +244,6 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const statistics=useQuery({queryKey:['discovery-statistics'],queryFn:({signal})=>request<Statistics>('/discovery/statistics',{signal}),enabled:coverage.data?.enabled===true})
   const metadataQuery=new URLSearchParams(query);metadataQuery.delete('cursor');metadataQuery.delete('limit')
   const discoveryMetadata=useQuery({queryKey:['discovery-metadata',metadataQuery.toString()],queryFn:({signal})=>request<components['schemas']['DiscoveryDeviceMetadata']>(`/discovery/devices/metadata?${metadataQuery}`,{signal}),refetchInterval:autoRefresh?60_000:false,refetchOnWindowFocus:autoRefresh})
-  const reportWindow=['15m','24h','168h','720h'].includes(params.get('discovery_window')||'') ? params.get('discovery_window')! : '24h'
-  const coverageReport=useQuery({queryKey:['discovery-coverage-report',reportWindow],queryFn:({signal})=>request<components['schemas']['DiscoveryCoverageReport']>(`/discovery/devices/coverage-report?window=${reportWindow}`,{signal}),enabled:discoveryMetadata.data?.classification_version==='passive-hardware/v2',staleTime:60_000,refetchInterval:autoRefresh?60_000:false})
   const hardwareV2=discoveryMetadata.data?.classification_version==='passive-hardware/v2'
   const confirmedTypesLabel=hardwareV2?'已确认硬件类型':'已识别类型'
   const viewStates=hardwareV2?{...states,identified:'已知硬件类型',expired:'硬件结论已撤销'}:states
@@ -350,7 +346,6 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
     <div className="workspace-topbar">
     <header className="terminal-workspace-header"><div><span className="terminal-eyebrow">设备中心 / 204 独立管理</span><Typography.Title level={3}>发现设备</Typography.Title><Typography.Text type="secondary">发现镜像中的设备，核对类型与识别依据。</Typography.Text></div><div className="terminal-header-actions"><Button icon={<ReloadOutlined aria-hidden="true"/>} onClick={refreshWorkspace}>刷新数据</Button></div></header>
     </div>
-    <CensusPanel/>
     {discoveryMetadata.isError&&<AppErrorAlert title="读取发现数量失败" message={discoveryMetadata.error.message} action={<Button onClick={()=>void discoveryMetadata.refetch()}>重试统计</Button>}/>}
     {position.isError&&<AppErrorAlert title="页码定位失败" message={position.error.message} action={<Button onClick={()=>void position.refetch()}>重试定位</Button>}/>}
     {devices.isError&&<AppErrorAlert title="读取发现设备失败" message={devices.data?'当前展示上次成功读取的结果；请重试。':devices.error.message} action={<Button onClick={()=>void devices.refetch()}>重试列表</Button>}/>}
@@ -393,7 +388,13 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
           <Button type={dumbFilter?'primary':'default'} aria-pressed={dumbFilter} onClick={()=>shortcut('',dumbFilter?'':'dumb')}>哑终端线索</Button>
         </nav>
       </div>
-      <div className="discovery-overview-strip" aria-label="发现设备总览" title={`${params.get('discovery_window')==='15m'?'近 15 分钟':params.get('discovery_window')==='168h'?'近 7 天':params.get('discovery_window')==='720h'?'近 30 天':'近 24 小时'} · 按采集范围与可信身份去重${discoveryMetadata.data?.as_of?` · 统计于 ${observedTimeTitle(discoveryMetadata.data.as_of)}`:''}`}>
+      {hardwareFresh?.status==='failed'&&<div className="discovery-hardware-progress" aria-label="硬件分类处理进度"><Typography.Text type="warning">硬件分类处理异常：{hardwareFresh.error||'处理状态读取失败'}</Typography.Text></div>}
+      <AppTable className="passive-ledger-table" rowKey={discoveryTableRowKey} columns={columns} dataSource={items} tableLayout="fixed" loading={{spinning:listUpdating,delay:150}} scroll={{x:1125}} locale={{emptyText:listUpdating?'正在加载设备…':'当前筛选下暂无符合条件的设备'}}/>
+      <AppServerPagination disabled={devices.isFetching||position.isLocating} page={page+1} pageSize={pageSize} total={discoveryMetadata.data?.total} onChange={(nextPage,nextSize)=>{
+        if(nextSize!==pageSize){setPageSize(nextSize);setPaging({key:filterKey,page:0});return}
+        setPaging({key:filterKey,page:nextPage-1})
+      }} totalText={discoveryMetadata.data?`共 ${discoveryMetadata.data.total} 个设备`:(discoveryMetadata.isError?'数量读取失败':'正在统计数量')} />
+      <details className="discovery-overview-details"><summary>类型与处理状态快捷筛选</summary><div className="discovery-overview-strip" aria-label="发现设备总览" title={`${params.get('discovery_window')==='15m'?'近 15 分钟':params.get('discovery_window')==='168h'?'近 7 天':params.get('discovery_window')==='720h'?'近 30 天':'近 24 小时'} · 按采集范围与可信身份去重${discoveryMetadata.data?.as_of?` · 统计于 ${observedTimeTitle(discoveryMetadata.data.as_of)}`:''}`}>
         <div className="discovery-overview-line">
           <strong>共 {metadataValue(discoveryMetadata.data?.total)} 个设备</strong>
           <Button type="text" size="small" className={`discovery-overview-count${params.get('discovery_state')==='identified'?' is-active':''}`} onClick={()=>toggleState('identified')}>{confirmedTypesLabel} <strong>{metadataValue(discoveryMetadata.data?.identified)}</strong></Button>
@@ -402,7 +403,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
           <Button type="text" size="small" className={`discovery-overview-count${params.get('discovery_state')==='expired'?' is-active':''}`} onClick={()=>toggleState('expired')}>{hardwareV2?'硬件结论已撤销':'证据过期'} <strong>{metadataValue(discoveryMetadata.data?.expired)}</strong></Button>{fresh?.status==='ready'&&<Typography.Text type="secondary" className="discovery-freshness">{fresh.lag_seconds<60?'数据实时':`数据延迟 ${Math.round(fresh.lag_seconds/60)} 分钟`}</Typography.Text>}
           <Typography.Text className="discovery-overview-caption" type="secondary">{params.get('discovery_window')==='168h'?'近 7 天':params.get('discovery_window')==='720h'?'近 30 天':'近 24 小时'} · 按采集范围与可信身份去重{discoveryMetadata.data?.as_of?` · 统计于 ${observedTimeTitle(discoveryMetadata.data.as_of)}`:''}{discoveryMetadata.isFetching?' · 统计更新中':''}</Typography.Text>
         </div>
-        {hardwareFresh&&<div className="discovery-hardware-progress" aria-label="硬件分类处理进度"><Typography.Text type={hardwareFresh.status==='failed'?'warning':'secondary'}>{hardwareFresh.status==='failed'?`硬件分类处理异常：${hardwareFresh.error||'处理状态读取失败'}`:<>硬件分类{hardwareFresh.coverage==='live_input_only'?'仅含启用后输入':hardwareFresh.backfill_complete?'保留观测回填完成':'保留观测回填中'}{hardwareFresh.available_from?` · 可用起点 ${observedTimeTitle(hardwareFresh.available_from)}`:''} · 待处理 {hardwareFresh.pending_identities??0} · 处理失败 {hardwareFresh.failed_identities??0}{hardwareFresh.oldest_pending_at?` · 最早积压 ${observedTimeTitle(hardwareFresh.oldest_pending_at)}`:''}{hardwareFresh.missing_source_refs?` · 缺少原文引用 ${hardwareFresh.missing_source_refs}`:''}{hardwareFresh.changed_after_backfill_start?` · 回填窗口被新观测替换 ${hardwareFresh.changed_after_backfill_start}`:''}</>}</Typography.Text></div>}
+        {hardwareFresh&&hardwareFresh.status!=='failed'&&<div className="discovery-hardware-progress" aria-label="硬件分类处理进度"><Typography.Text type="secondary">硬件分类{hardwareFresh.coverage==='live_input_only'?'仅含启用后输入':hardwareFresh.backfill_complete?'保留观测回填完成':'保留观测回填中'}{hardwareFresh.available_from?` · 可用起点 ${observedTimeTitle(hardwareFresh.available_from)}`:''} · 待处理 {hardwareFresh.pending_identities??0} · 处理失败 {hardwareFresh.failed_identities??0}{hardwareFresh.oldest_pending_at?` · 最早积压 ${observedTimeTitle(hardwareFresh.oldest_pending_at)}`:''}{hardwareFresh.missing_source_refs?` · 缺少原文引用 ${hardwareFresh.missing_source_refs}`:''}{hardwareFresh.changed_after_backfill_start?` · 回填窗口被新观测替换 ${hardwareFresh.changed_after_backfill_start}`:''}</Typography.Text></div>}
         {fresh?.source==='passive-discovery-batch-v3'&&<div className="discovery-batch-progress" aria-label="存储处理进度">
           {fresh.ingested_at&&<Typography.Text type="secondary">采集入库 {observedTimeTitle(fresh.ingested_at)}</Typography.Text>}
           {fresh.processed_at&&<Typography.Text type="secondary">设备发现 {observedTimeTitle(fresh.processed_at)}</Typography.Text>}
@@ -424,13 +425,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
             <Button key={item.device_type} type="text" size="small" className="discovery-overview-type" onClick={()=>shortcut(item.device_type,'','candidate')}>{types[item.device_type]??deviceTypeLabel(item.device_type)} <strong>{item.count}</strong></Button>
           )}
         </div>}
-      </div>
-      {hardwareV2&&<DiscoveryCoverageReport report={coverageReport.data} loading={coverageReport.isLoading} error={coverageReport.isError} />}
-      <AppTable className="passive-ledger-table" rowKey={discoveryTableRowKey} columns={columns} dataSource={items} tableLayout="fixed" loading={{spinning:listUpdating,delay:150}} scroll={{x:1125}} locale={{emptyText:listUpdating?'正在加载设备…':'当前筛选下暂无符合条件的设备'}}/>
-      <AppServerPagination disabled={devices.isFetching||position.isLocating} page={page+1} pageSize={pageSize} total={discoveryMetadata.data?.total} onChange={(nextPage,nextSize)=>{
-        if(nextSize!==pageSize){setPageSize(nextSize);setPaging({key:filterKey,page:0});return}
-        setPaging({key:filterKey,page:nextPage-1})
-      }} totalText={discoveryMetadata.data?`共 ${discoveryMetadata.data.total} 个设备`:(discoveryMetadata.isError?'数量读取失败':'正在统计数量')} />
+      </div></details>
     </section>}
     <details className="terminal-diagnostics" open={qualityOpen}><summary onClick={event=>{event.preventDefault();setQualityOpen(value=>!value)}}>采集与识别状态</summary>    <section className="surface center-list-toolbar">
       {qualityOpen&&<div className="recognition-quality-strip" aria-label="识别质量">

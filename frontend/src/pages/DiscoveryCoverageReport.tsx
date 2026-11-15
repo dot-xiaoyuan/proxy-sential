@@ -14,7 +14,7 @@ const withTrafficNoType = covered - typed
 export function DiscoveryCoverageReport({ report, loading, error }: { report?: Report; loading: boolean; error: boolean }) {
   const metric = (label: string, value?: number, detail?: string) => <div className="discovery-report-metric" key={label}><span>{label}</span><strong>{value === undefined ? error ? '读取失败' : '统计中' : value.toLocaleString('zh-CN')}</strong>{detail && <small>{detail}</small>}</div>
   return <section className="discovery-report" aria-label="设备发现覆盖报表">
-    <div className="discovery-report-heading"><div><h3>设备发现覆盖报表</h3><Typography.Text type="secondary">{report ? `${report.window} 观测窗口 · 地址查询 ${observedTimeTitle(report.as_of)} · 设备发现水位 ${observedTimeTitle(report.identity_as_of)}` : loading ? '正在读取现场统计' : '现场统计读取失败'}</Typography.Text></div></div>
+    <div className="discovery-report-heading"><div><h3>现场观测</h3><Typography.Text type="secondary">{report ? `${report.window} 观测窗口 · 地址查询 ${observedTimeTitle(report.as_of)} · 设备发现水位 ${observedTimeTitle(report.identity_as_of)}` : loading ? '正在读取现场统计' : '现场统计读取失败'}</Typography.Text></div></div>
     <div className="discovery-report-grid">
       {metric('/24 观察分组', report?.subnet24, '按地址前三段分组，非校方配置网段')}
       {metric('IPv4 地址', report?.ipv4, '窗口内不同地址')}

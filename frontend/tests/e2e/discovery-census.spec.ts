@@ -8,7 +8,7 @@ test('mirror census stays readable and scoped at three viewports', async ({page}
   page.on('request',request=>{if(request.url().includes('/discovery/census/identifiers?'))identifierRequests.push(request.url())})
   for(const viewport of [{width:390,height:844},{width:1280,height:800},{width:1440,height:900}]){
     await page.setViewportSize(viewport)
-    await page.goto('/devices?tab=discovery')
+    await page.goto('/devices/coverage')
     const panel=page.getByRole('region',{name:'镜像可见标识统计'})
     await expect(panel).toBeVisible()
     await expect(panel.locator('.census-card').first()).toContainText('2')
@@ -19,17 +19,13 @@ test('mirror census stays readable and scoped at three viewports', async ({page}
       const panel=document.querySelector('.census-panel')!
       const cards=[...panel.querySelectorAll('.census-card')]
       const badButtons=[...panel.querySelectorAll('.ant-btn')].filter(button=>{const style=getComputedStyle(button);return style.whiteSpace!=='nowrap'||style.flexShrink!=='0'}).length
-      const list=document.querySelector('.center-list-surface')!
-      const firstRow=document.querySelector('.passive-ledger-table .ant-table-tbody > tr[data-row-key]')
-      return {documentOverflow:document.documentElement.scrollWidth>innerWidth+2,panelOverflow:panel.scrollWidth>panel.clientWidth+2,badButtons,cardCount:cards.length,cardOverflow:cards.filter(card=>card.scrollWidth>card.clientWidth+2).length,panelHeight:panel.getBoundingClientRect().height,listTop:list.getBoundingClientRect().top,firstRowTop:firstRow?.getBoundingClientRect().top}
+      return {documentOverflow:document.documentElement.scrollWidth>innerWidth+2,panelOverflow:panel.scrollWidth>panel.clientWidth+2,badButtons,cardCount:cards.length,cardOverflow:cards.filter(card=>card.scrollWidth>card.clientWidth+2).length,panelHeight:panel.getBoundingClientRect().height}
     })
     expect(probe.documentOverflow).toBe(false)
     expect(probe.panelOverflow).toBe(false)
     expect(probe.badButtons).toBe(0)
     expect(probe.cardCount).toBe(4)
     expect(probe.cardOverflow).toBe(0)
-    expect(probe.listTop).toBeLessThan(viewport.height)
-    if(viewport.width>=1280)expect(probe.firstRowTop).toBeLessThan(viewport.height)
     await panel.locator('.census-card').first().click()
     const detail=page.getByRole('dialog')
     await expect(detail).toBeVisible()

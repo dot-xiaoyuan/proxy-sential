@@ -19,6 +19,7 @@ export const navigation: NavigationGroup[] = [
     {...item('devices','终端列表','/devices?tab=terminal','identity:read'), owns: (p,q) => (p === '/devices' && deviceCenterTab(q) === 'terminal') || (p.startsWith('/devices/') && !p.startsWith('/devices/network/'))},
     {...item('routers','路由器','/devices?tab=network','identity:read'), owns: (p,q) => (p === '/devices' && deviceCenterTab(q) === 'network') || p.startsWith('/devices/network/') || p.startsWith('/discovery/routers/')},
     {...item('discovered-devices','发现设备','/devices?tab=discovery','identity:read'), owns: (p,q) => (p === '/devices' && deviceCenterTab(q) === 'discovery') || p === '/discovery'},
+    {...item('discovery-coverage','发现覆盖报表','/devices/coverage','identity:read'), owns: p => p === '/devices/coverage'},
     {...item('ip-observations','IP 流量观察','/devices?tab=ip','events:read'), hidden: true, owns: (p,q) => p === '/devices' && deviceCenterTab(q) === 'ip'},
   ] },
   { key: 'network', title: '网络分析', hidden: true, items: [

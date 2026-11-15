@@ -5,7 +5,7 @@ import type { Session } from '../shared/api/types'
 describe('menu and investigation navigation',()=>{
  it('has six nonempty groups with stable detail ownership',()=>{
  expect(navigation.map(g=>g.title)).toEqual(['运营工作台','AI 中转站','风险运营','设备中心','网络分析','策略与验证','系统管理'])
- expect(visibleNavigation({user:{id:'admin',name:'admin'},role:'admin',permissions:['identity:read','events:read']} as Session).find(g=>g.key==='assets')?.items.map(item=>item.title)).toEqual(['终端列表','路由器','发现设备'])
+ expect(visibleNavigation({user:{id:'admin',name:'admin'},role:'admin',permissions:['identity:read','events:read']} as Session).find(g=>g.key==='assets')?.items.map(item=>item.title)).toEqual(['终端列表','路由器','发现设备','发现覆盖报表'])
  expect(navigation.find(g=>g.key==='risk')?.items.map(item=>item.title)).toEqual(['共享发现与核验','策略与处置记录'])
  expect(routeOwner('/discovery','')?.entry.key).toBe('discovered-devices')
  expect(routeOwner('/devices','')?.entry.key).toBe('devices')
@@ -15,6 +15,8 @@ describe('menu and investigation navigation',()=>{
  expect(routePermission('/devices','?tab=ip')).toBe('events:read')
  expect(routePermission('/devices','?tab=discovery')).toBe('identity:read')
  expect(routeOwner('/devices','?tab=discovery')?.entry.key).toBe('discovered-devices')
+ expect(routeOwner('/devices/coverage','')?.entry.key).toBe('discovery-coverage')
+ expect(routePermission('/devices/coverage','')).toBe('identity:read')
  expect(routeOwner('/devices/mac:aa:bb','')?.entry.key).toBe('devices')
  expect(routeOwner('/devices/network/assessment-1','')?.entry.key).toBe('routers')
  expect(routeOwner('/discovery/routers/assessment-1','')?.entry.key).toBe('routers')

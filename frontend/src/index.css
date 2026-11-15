@@ -5998,6 +5998,13 @@ pre.wrap-code {
   overflow-wrap: anywhere;
 }
 .discovery-report { margin: 16px 0; padding: 20px; background: var(--surface, #fff); border: 1px solid #e2e8f0; border-radius: 8px; }
+.discovery-report-page-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 20px; }
+.discovery-report-page-header h3.ant-typography { margin: 0; font-size: 20px; }
+.discovery-report-page-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.discovery-report-page-actions .ant-select { min-width: 150px; }
+.discovery-report-page-actions .ant-btn { white-space: nowrap; flex-shrink: 0; }
+.discovery-overview-details { margin-top: 12px; }
+.discovery-overview-details > summary { cursor: pointer; color: #475569; font-size: 13px; }
 .discovery-report-heading, .discovery-report-facts > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; }
 .discovery-report h3, .discovery-report h4 { margin: 0; color: #0f172a; font-weight: 650; }
 .discovery-report h3 { font-size: 17px; }
