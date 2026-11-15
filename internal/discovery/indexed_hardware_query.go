@@ -26,6 +26,10 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 	if query.Capability != "" || query.View == "iot" {
 		caps = indexedObservationCapabilitiesSQL
 	}
+	productType := "''::text"
+	if query.DeviceType != "" || query.includeCandidateTypes || query.View == "iot" || query.Capability == "dumb" {
+		productType = indexedValidProductTypeSQL
+	}
 	identitySQL := strings.NewReplacer(
 		"coalesce(l.data->>'mac','')", "l.raw_mac", "l.data->>'mac'", "l.raw_mac",
 		"coalesce(l.data->>'node','')", "l.sensor_id", "coalesce(l.data->>'site','')", "l.site_id",
@@ -36,7 +40,7 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 	if query.OSFamily != "" {
 		profileOS = "coalesce(rec.os_family,'')"
 	}
-	filterCandidates := query.State != "identified" && (query.DeviceType != "" || query.includeCandidateTypes)
+	filterCandidates := query.State != "identified" && (query.DeviceType != "" || query.includeCandidateTypes || query.View == "iot" || query.Capability == "dumb")
 	pageProfiles := query.Search == "" && query.Category == "" && query.OSFamily == "" && !filterCandidates
 	recognitionSource := `SELECT rec.endpoint_id,coalesce(rec.role,'') role,coalesce(rec.os_family,'') os_family,rec.last_seen profile_seen,
  ` + indexedProfileConfidenceSQL("rec") + ` profile_confidence,
@@ -80,7 +84,9 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
  ` + searchIP + ` search_ip,lower(coalesce(l.data->>'mac','')) search_mac,
  ` + searchName + ` search_name,` + searchType + ` search_device_type,
  ` + searchManufacturer + ` search_manufacturer,` + searchModel + ` search_model,
- ` + caps + ` observation_capabilities
+ ` + caps + ` observation_capabilities,
+ ` + productType + ` product_type,
+ (l.valid_until>now() AND l.data->>'confidence' IN ('strong','confirmed') AND coalesce(l.data->'evidence'->'observer'->>'capture_scope_issue','')='') service_clue_valid
  FROM discovery_observation_latest l WHERE ` + strings.Join(baseWhere, " AND ") + `
 ), missing_mac_links AS MATERIALIZED (
  SELECT observation_id,endpoint_id FROM discovery_identity_links
@@ -99,7 +105,7 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 ), seed_rows AS MATERIALIZED (
  SELECT l.observation_tid,l.id,l.device_key,l.origin,l.observed_at,l.valid_until,
  l.search_ip,l.search_mac,l.search_name,l.search_device_type,l.search_manufacturer,l.search_model,
- ` + identitySQL + ` identity_key,l.observation_capabilities,
+ ` + identitySQL + ` identity_key,l.observation_capabilities,l.product_type,l.service_clue_valid,
  (l.capture_scope_valid AND l.sensor_id<>'' AND l.site_id<>'' AND l.access_domain<>''
   AND lower(l.raw_mac) ~ '^[0-9a-f][02468ace](:[0-9a-f]{2}){5}$' AND lower(l.raw_mac)<>'00:00:00:00:00:00'
   AND (coalesce(l.display_endpoint,'')='' OR lower(l.display_endpoint)='mac:'||lower(l.raw_mac))) profile_identity_verified,
@@ -111,7 +117,7 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 ), candidate_rows AS MATERIALIZED (
  SELECT l.observation_tid,l.id,l.device_key,l.origin,l.observed_at,l.valid_until,
  l.search_ip,l.search_mac,l.search_name,l.search_device_type,l.search_manufacturer,l.search_model,
- l.identity_key,l.observation_capabilities,l.linked_endpoint,l.recognition_endpoint,l.profile_identity_verified,
+ l.identity_key,l.observation_capabilities,l.product_type,l.service_clue_valid,l.linked_endpoint,l.recognition_endpoint,l.profile_identity_verified,
  coalesce(rec.role,'') profile_role,coalesce(rec.profile_confidence,0) profile_confidence,
  ` + profileOS + ` profile_os,` + profileType + ` profile_type,
  coalesce(rec.profile_conflict,false) AND coalesce(rec.role,'')<>'' profile_conflict,
@@ -120,6 +126,8 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 ), candidate_grouped AS (
  SELECT identity_key COLLATE "C" identity_key,coalesce(min(device_key COLLATE "C") FILTER (WHERE search_mac<>''),min(device_key COLLATE "C")) device_key,
  max(observed_at) last_seen,max(profile_os) profile_os,
+ coalesce(array_agg(DISTINCT product_type) FILTER (WHERE product_type<>''),'{}'::text[]) product_types,
+ bool_or(service_clue_valid AND observation_capabilities ?| ARRAY['printing','scanning','casting','media_rendering','network_video','voice']) has_iot_service,
  bool_or(observation_capabilities ?| ARRAY['printing','scanning']) has_printing,
  bool_or(observation_capabilities ? 'network_video') has_video,
  bool_or(observation_capabilities ?| ARRAY['casting','media_rendering']) has_media,
@@ -131,7 +139,7 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 ), candidate_classified AS (
  SELECT *,` + indexedClassificationProjection(true) + ` classification_status FROM candidate_types
 ), candidate_source AS (
- SELECT *,` + indexedCategorySQL(query.View) + ` category FROM candidate_classified
+ SELECT *,` + indexedCategorySQL("") + ` category FROM candidate_classified
 ), matched AS (
  SELECT * FROM candidate_source` + matchedWhere + `
 )`

@@ -86,10 +86,11 @@ function qualityItem(label:string,value:{known:number;rate:number}|undefined,tot
 }
 
 function dumbTerminal(item: Device) {
+  if (['access_point','router','switch','wireless_controller','wireless_host','gateway','firewall'].includes(confirmedDeviceType(item) || item.candidate_device_type || '')) return ''
   const caps = item.capabilities ?? []
   if (caps.includes('printing') || caps.includes('scanning')) return '打印/扫描'
-  if (caps.includes('casting') || caps.includes('media_rendering') || caps.includes('network_video')) return '媒体播放/投屏'
-  if (caps.includes('routing')) return '网关/路由'
+  if (caps.includes('casting') || caps.includes('media_rendering')) return '媒体播放/投屏'
+  if (caps.includes('network_video')) return '视频监控'
   if (caps.includes('voice')) return '语音话机'
   return ''
 }
@@ -360,7 +361,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
         onSearch={value=>change('search', value.trim())}
         filters={<>
           <Select aria-label="设备类型" mode="multiple" allowClear placeholder="全部设备类型" showSearch optionFilterProp="label" value={(params.get('discovery_type')||'').split(',').filter(Boolean)} options={(catalogue.data?.items??[]).map(t=>({value:t.id,label:t.label}))} onChange={values=>setParams(current=>{const next=new URLSearchParams(current);if(values.length)next.set('discovery_type',values.join(','));else next.delete('discovery_type');next.delete('discovery_category');return next},{replace:true})}/>
-          <Select aria-label="证据状态" value={params.get('discovery_state')||''} options={[{value:'',label:'全部证据状态'},{value:'identified,candidate,conflict',label:'当前有效（不含过期）'},...Object.entries(viewStates).filter(([k])=>view!=='iot'||k!=='candidate').map(([value,label])=>({value,label}))]} onChange={v=>change('state',v)}/>
+          <Select aria-label="证据状态" value={params.get('discovery_state')||''} options={[{value:'',label:'全部证据状态'},{value:'identified,candidate,conflict',label:'当前有效（不含过期）'},...Object.entries(viewStates).map(([value,label])=>({value,label}))]} onChange={v=>change('state',v)}/>
           <Select aria-label="待核实原因" value={params.get('discovery_review_reason')||''} options={[{value:'',label:'全部核实原因'},...Object.entries(reviewReasons).map(([value,label])=>({value,label}))]} onChange={v=>change('review_reason',v)}/>
           <Button size="small" type="text" onClick={()=>setMoreOpen(value=>!value)}>{moreOpen?'收起筛选':'更多筛选'}{['category','type','protocol','window','domain','vlan','random_mac','os'].filter(key=>params.get(`discovery_${key}`)).length?`（${['category','type','protocol','window','domain','vlan','random_mac','os'].filter(key=>params.get(`discovery_${key}`)).length}）`:''}</Button>
         </>}
@@ -411,6 +412,12 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
         {!!discoveryMetadata.data?.candidate_types?.length&&<div className="discovery-overview-types discovery-overview-candidates" aria-label="画像类型线索">
           <Typography.Text type="secondary">画像类型线索</Typography.Text>
           {[...discoveryMetadata.data.candidate_types].sort((a,b)=>b.count-a.count||a.device_type.localeCompare(b.device_type)).map(item=>
+            <Button key={item.device_type} type="text" size="small" className="discovery-overview-type" onClick={()=>shortcut(item.device_type,'','candidate')}>{types[item.device_type]??deviceTypeLabel(item.device_type)} <strong>{item.count}</strong></Button>
+          )}
+        </div>}
+        {!!discoveryMetadata.data?.ip_product_types?.length&&<div className="discovery-overview-types discovery-overview-candidates" aria-label="IP 产品类型线索">
+          <Typography.Text type="secondary">IP 产品类型线索（不计入确认硬件）</Typography.Text>
+          {[...discoveryMetadata.data.ip_product_types].sort((a,b)=>b.count-a.count||a.device_type.localeCompare(b.device_type)).map(item=>
             <Button key={item.device_type} type="text" size="small" className="discovery-overview-type" onClick={()=>shortcut(item.device_type,'','candidate')}>{types[item.device_type]??deviceTypeLabel(item.device_type)} <strong>{item.count}</strong></Button>
           )}
         </div>}

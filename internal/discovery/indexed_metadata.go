@@ -15,6 +15,7 @@ type IndexedDeviceMetadata struct {
 	Expired               int64                    `json:"expired"`
 	Types                 []IndexedDeviceTypeCount `json:"types"`
 	CandidateTypes        []IndexedDeviceTypeCount `json:"candidate_types,omitempty"`
+	IPProductTypes        []IndexedDeviceTypeCount `json:"ip_product_types,omitempty"`
 	AsOf                  time.Time                `json:"as_of"`
 	CountUnit             string                   `json:"count_unit"`
 	Window                string                   `json:"window"`
@@ -50,11 +51,17 @@ func (r Repository) devicesIndexedMetadata(ctx context.Context, db indexedQuerye
 	if r.HardwareV2 {
 		result.ClassificationVersion = "passive-hardware/v2"
 	}
-	rows, err := db.QueryContext(ctx, selection.CTE+` SELECT classification_status,
+	counts := ` SELECT classification_status,
  CASE WHEN classification_status='identified' THEN effective_types[1]
   WHEN classification_status='candidate' AND cardinality(effective_types)=0 THEN candidate_role
   ELSE '' END device_type,
- count(*),now() FROM matched GROUP BY classification_status,device_type ORDER BY classification_status,device_type`, selection.Args...)
+ count(*),now() FROM matched GROUP BY classification_status,device_type`
+	if r.HardwareV2 {
+		counts += ` UNION ALL SELECT 'ip_product',kind,count(DISTINCT identity_key),now()
+ FROM matched CROSS JOIN LATERAL unnest(product_types) kind
+ WHERE classification_status='candidate' GROUP BY kind`
+	}
+	rows, err := db.QueryContext(ctx, selection.CTE+counts+` ORDER BY 1,2`, selection.Args...)
 	if err != nil {
 		return IndexedDeviceMetadata{}, err
 	}
@@ -65,6 +72,10 @@ func (r Repository) devicesIndexedMetadata(ctx context.Context, db indexedQuerye
 		var at time.Time
 		if err := rows.Scan(&state, &kind, &count, &at); err != nil {
 			return IndexedDeviceMetadata{}, err
+		}
+		if state == "ip_product" {
+			result.IPProductTypes = append(result.IPProductTypes, IndexedDeviceTypeCount{DeviceType: kind, Count: count})
+			continue
 		}
 		result.Total += count
 		result.AsOf = at

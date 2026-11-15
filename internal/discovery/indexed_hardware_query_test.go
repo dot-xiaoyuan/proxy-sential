@@ -12,7 +12,7 @@ func TestHardwareTypeFilterKeepsAttributedProfileCandidates(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, fragment := range []string{
-		"classification_status='candidate' AND candidate_role",
+		"classification_status='candidate' AND (candidate_role",
 		"l.profile_identity_verified",
 		"l.valid_until>now()",
 		"rec.profile_seen>=$1",

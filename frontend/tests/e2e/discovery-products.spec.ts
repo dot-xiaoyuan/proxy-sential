@@ -13,6 +13,9 @@ test('IP product evidence stays separate from physical confirmation at three vie
   await expect(page.getByLabel('发现设备总览')).toContainText('已确认硬件类型（合计 2）')
   for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }, { width: 1440, height: 900 }]) {
     await page.setViewportSize(viewport)
+    await page.getByLabel('IP 产品类型线索').scrollIntoViewIfNeeded()
+    await expect(page.getByLabel('IP 产品类型线索')).toContainText('不计入确认硬件')
+    await page.screenshot({path:`test-results/product-counts-${viewport.width}.png`,animations:'disabled'})
     const row = page.locator('.passive-ledger-table').getByRole('button', { name: 'SNMP IP product', exact: true })
     await row.scrollIntoViewIfNeeded()
     await expect(row).toBeInViewport()

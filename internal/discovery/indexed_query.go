@@ -83,7 +83,7 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 	}
 	// Apply service admission before the candidate limit, so newer DHCP-only
 	// devices cannot hide a service announcer on a later candidate page.
-	if query.View == "iot" {
+	if query.View == "iot" && !query.HardwareV2 {
 		baseWhere = append(baseWhere, `origin IN ('dns_sd','ssdp','ws_discovery')`,
 			`(data->>'confidence' IN ('strong','confirmed') OR (data->>'confidence'='clue' AND coalesce(data->>'mac','')<>''))`,
 			`coalesce(data->'capabilities','[]'::jsonb) ?| ARRAY['printing','scanning','network_video','casting','media_rendering']`)
@@ -117,7 +117,7 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 		args = append(args, query.DeviceType)
 		match := "= ANY(string_to_array($" + fmt.Sprint(len(args)) + ", ','))"
 		if query.HardwareV2 {
-			classifiedWhere = append(classifiedWhere, "(projection_type"+match+" OR (classification_status='candidate' AND candidate_role"+match+"))")
+			classifiedWhere = append(classifiedWhere, "(projection_type"+match+" OR (classification_status='candidate' AND (candidate_role"+match+" OR product_types && string_to_array($"+fmt.Sprint(len(args))+", ','))))")
 		} else {
 			classifiedWhere = append(classifiedWhere, "((classification_status='identified' AND effective_types[1]"+match+") OR (classification_status='expired' AND historical_type"+match+") OR (classification_status='candidate' AND candidate_role"+match+"))")
 		}
@@ -138,12 +138,17 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 		classifiedWhere = append(classifiedWhere, "classification_status = ANY(string_to_array($"+fmt.Sprint(len(args))+", ','))")
 	}
 	if query.Capability != "" {
-		if query.Capability == "dumb" {
+		if query.Capability == "dumb" && query.HardwareV2 {
+			// Unified hardware admission is applied after classification below.
+		} else if query.Capability == "dumb" {
 			having = append(having, "bool_or(observation_capabilities ?| ARRAY['printing','scanning','casting','media_rendering','network_video','routing','voice'])")
 		} else {
 			args = append(args, query.Capability)
 			having = append(having, fmt.Sprintf("bool_or(observation_capabilities ? $%d)", len(args)))
 		}
+	}
+	if query.HardwareV2 && (query.View == "iot" || query.Capability == "dumb") {
+		classifiedWhere = append(classifiedWhere, hardwareIoTAdmissionSQL())
 	}
 	candidateHaving := ""
 	if len(having) > 0 {

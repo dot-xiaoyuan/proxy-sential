@@ -8535,6 +8535,12 @@ export interface components {
                 /** Format: int64 */
                 count: number;
             }[];
+            /** @description Counts of candidate identities with valid response-IP product types; excluded from confirmed hardware counts and may overlap profile clues. */
+            ip_product_types?: {
+                device_type: string;
+                /** Format: int64 */
+                count: number;
+            }[];
             /** Format: date-time */
             as_of: string;
             /**

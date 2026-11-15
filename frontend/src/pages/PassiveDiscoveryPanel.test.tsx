@@ -306,6 +306,19 @@ it('keeps V8 profile type clues visible without counting them as hardware confir
     String(path).includes('type=mobile') && String(path).includes('state=candidate'))).toBe(true))
 })
 
+it('filters response IP products without adding hardware confirmations', async () => {
+  mockReads()
+  const read=request.getMockImplementation()!
+  request.mockImplementation((path:string)=>path.startsWith('/discovery/devices/metadata?')?Promise.resolve({
+    total:1,identified:0,candidate:1,conflict:0,expired:0,classification_version:'passive-hardware/v2',types:[],ip_product_types:[{device_type:'switch',count:1}],
+  }):read(path))
+  renderPanel()
+  const products=await screen.findByLabelText('IP 产品类型线索')
+  expect(screen.getByLabelText('发现设备总览')).toHaveTextContent('已确认硬件类型（合计 0）')
+  fireEvent.click(within(products).getByRole('button',{name:/交换机/}))
+  await waitFor(()=>expect(request.mock.calls.some(([path])=>String(path).startsWith('/discovery/devices?')&&String(path).includes('type=switch')&&String(path).includes('state=candidate'))).toBe(true))
+})
+
 it('does not count expired or conflicting recognition as an explicit current type', async()=>{
   mockReads({items:{}},{...device,classification_status:'expired',recognition:{device_type:'access_point',confidence:.95}})
   renderPanel()

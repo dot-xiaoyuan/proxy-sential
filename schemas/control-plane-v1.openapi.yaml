@@ -8965,6 +8965,15 @@ components:
             properties:
               device_type: { type: string }
               count: { type: integer, format: int64, minimum: 0 }
+        ip_product_types:
+          type: array
+          description: Counts of candidate identities with valid response-IP product types; excluded from confirmed hardware counts and may overlap profile clues.
+          items:
+            type: object
+            required: [device_type, count]
+            properties:
+              device_type: { type: string }
+              count: { type: integer, format: int64, minimum: 0 }
         as_of: { type: string, format: date-time }
         count_unit: { type: string, enum: [trusted_discovery_identity], description: A discovered device grouped by source scope and trusted endpoint or MAC identity; unresolved identity falls back to the discovery key. }
         window: { type: string }
