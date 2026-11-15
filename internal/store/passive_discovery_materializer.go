@@ -803,20 +803,21 @@ func passiveTXTObservation(event normalized.Event, sensor, iface, recordName, te
 	if deviceType == "" && len(capabilities) == 0 {
 		return discovery.Observation{}, false
 	}
-	hash := sha256.Sum256([]byte(strings.Join([]string{sensor, iface, recordName, address, text}, "\x00")))
+	hash := sha256.Sum256([]byte(strings.Join([]string{sensor, iface, passiveMDNSScopeKey(event), recordName, address, text}, "\x00")))
 	name := strings.TrimSpace(strings.Split(recordName, "._")[0])
 	payload := map[string]any{"origin": "dns_sd", "is_response": true, "service_type": service, "service_instance": recordName, "txt": text, "model": model, "ttl": int(validUntil.Sub(at).Seconds())}
 	evidence := event
 	evidence.EventID = "dns-sd-txt-" + hex.EncodeToString(hash[:16])
+	inheritMDNSScope(event, payload)
 	evidence.Type, evidence.SourceEventType, evidence.Payload = "discovery", "dns_sd", payload
 	evidence.Subject = map[string]any{"ip": address, "campus_id": passiveString(event.Subject, "campus_id")}
-	directMAC := passiveDirectResponderMAC(event)
+	directMAC := passiveMDNSAddressMAC(event, address)
 	if directMAC != "" {
 		evidence.Subject["mac"] = directMAC
 		evidence.Payload["l2_source_mac_direct"] = true
 		evidence.Payload["responder_l2_mac"] = directMAC
 	}
-	o := discovery.Observation{ID: evidence.EventID, EventID: evidence.EventID, SourceID: "passive:" + sensor + ":" + iface, Node: sensor, Site: passiveString(event.Subject, "campus_id"), Domain: passiveString(event.Payload, "access_domain"), IP: address, MAC: directMAC, Name: name, Origin: "dns_sd", DeviceType: deviceType, Capabilities: capabilities, ModelName: model, Confidence: "strong", Explanation: "DNS-SD TXT 型号自述", RuleVersion: discovery.RuleVersion, ObservedAt: at, ValidUntil: validUntil, Interface: iface, Evidence: evidence}
+	o := discovery.Observation{ID: evidence.EventID, EventID: evidence.EventID, SourceID: "passive:" + sensor + ":" + iface, Node: sensor, Site: passiveMDNSSite(event), Domain: passiveMDNSDomain(event), VLAN: passiveScopeField(event, "vlan"), VRF: passiveScopeField(event, "vrf"), IP: address, MAC: directMAC, Name: name, Origin: "dns_sd", DeviceType: deviceType, Capabilities: capabilities, ModelName: model, Confidence: "strong", Explanation: "DNS-SD TXT 型号自述", RuleVersion: discovery.RuleVersion, ObservedAt: at, ValidUntil: validUntil, Interface: iface, Evidence: evidence}
 	if o.Site == "" {
 		o.Site = sensor
 	}
@@ -964,24 +965,20 @@ func passivePTRObservation(event normalized.Event, sensor, iface, recordName, in
 	name := strings.TrimSpace(strings.Split(instance, "._")[0])
 	// The observation ID is stable per service instance and address so repeated
 	// advertisements update one row instead of adding a new one per packet.
-	hash := sha256.Sum256([]byte(strings.Join([]string{sensor, iface, "ptr", instance, address}, "\x00")))
+	hash := sha256.Sum256([]byte(strings.Join([]string{sensor, iface, passiveMDNSScopeKey(event), "ptr", instance, address}, "\x00")))
 	payload := map[string]any{"origin": "dns_sd", "is_response": true, "service_type": service, "service_instance": instance, "service_source": "ptr_responder", "ttl": int(validUntil.Sub(at).Seconds())}
 	evidence := event
 	evidence.EventID = "dns-sd-" + hex.EncodeToString(hash[:16])
+	inheritMDNSScope(event, payload)
 	evidence.Type, evidence.SourceEventType, evidence.Payload = "discovery", "dns_sd", payload
 	evidence.Subject = map[string]any{"ip": address, "campus_id": passiveString(event.Subject, "campus_id")}
-	directMAC := ""
-	if event.Source == "zeek" && event.Payload["l2_source_mac_direct"] == true {
-		if destination, err := netip.ParseAddr(passiveString(event.Flow, "dst_ip")); err == nil && destination.IsMulticast() {
-			directMAC = validPassiveMAC(passiveString(event.Payload, "responder_l2_mac"))
-		}
-	}
+	directMAC := passiveMDNSAddressMAC(event, address)
 	if directMAC != "" {
 		evidence.Subject["mac"] = directMAC
 		evidence.Payload["l2_source_mac_direct"] = true
 		evidence.Payload["responder_l2_mac"] = directMAC
 	}
-	observation := discovery.Observation{ID: evidence.EventID, EventID: evidence.EventID, SourceID: "passive:" + sensor + ":" + iface, Node: sensor, Site: passiveString(event.Subject, "campus_id"), Domain: passiveString(event.Payload, "access_domain"), IP: address, MAC: directMAC, Name: name, Origin: "dns_sd", DeviceType: passivePrinterType(capabilities, instance), Capabilities: capabilities, Confidence: "strong", Explanation: "DNS-SD 服务响应由报文源地址被动关联", RuleVersion: discovery.RuleVersion, ObservedAt: at, ValidUntil: validUntil, Interface: iface, Evidence: evidence}
+	observation := discovery.Observation{ID: evidence.EventID, EventID: evidence.EventID, SourceID: "passive:" + sensor + ":" + iface, Node: sensor, Site: passiveMDNSSite(event), Domain: passiveMDNSDomain(event), VLAN: passiveScopeField(event, "vlan"), VRF: passiveScopeField(event, "vrf"), IP: address, MAC: directMAC, Name: name, Origin: "dns_sd", DeviceType: passivePrinterType(capabilities, instance), Capabilities: capabilities, Confidence: "strong", Explanation: "DNS-SD 服务响应由报文源地址被动关联", RuleVersion: discovery.RuleVersion, ObservedAt: at, ValidUntil: validUntil, Interface: iface, Evidence: evidence}
 	if observation.Site == "" {
 		observation.Site = sensor
 	}
@@ -996,20 +993,32 @@ func (s *DBStore) passivePTRAddressObservations(ctx context.Context, db passiveD
 	if token == "" || !scope.allows(address) || !passiveUsableAddress(address) {
 		return nil, nil
 	}
-	rows, err := db.QueryContext(ctx, `SELECT record_name,record_value,least(valid_until,$4) FROM passive_discovery_mdns_records WHERE sensor_id=$1 AND interface_name=$2 AND record_type='PTR' AND valid_until>$3 AND lower(record_value) LIKE $5`, sensor, iface, at, addressUntil, "%["+token+"]%")
+	rows, err := db.QueryContext(ctx, `SELECT record_name,record_value,least(valid_until,$4),event_id,raw_ref FROM passive_discovery_mdns_scoped_records WHERE sensor_id=$1 AND interface_name=$2 AND record_type='PTR' AND valid_until>$3 AND observed_at<=$3 AND scope_key=$6 AND lower(record_value) LIKE $5 ORDER BY record_name,record_value LIMIT 65`, sensor, iface, at, addressUntil, "%["+token+"]%", passiveMDNSScopeKey(event))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	result := []discovery.Observation{}
+	joined := 0
 	for rows.Next() {
-		var serviceName, instance string
+		joined++
+		if joined > 64 {
+			return nil, fmt.Errorf("DNS-SD PTR join exceeds 64 records in one scope")
+		}
+		var serviceName, instance, ptrEventID string
+		var ptrRef json.RawMessage
 		var validUntil time.Time
-		if err = rows.Scan(&serviceName, &instance, &validUntil); err != nil {
+		if err = rows.Scan(&serviceName, &instance, &validUntil, &ptrEventID, &ptrRef); err != nil {
 			return nil, err
 		}
 		addressEvent := event
+		addressEvent.RawRef = map[string]any{"backend": "derived_dns_sd", "records": []any{map[string]any{"event_id": ptrEventID, "raw_ref": ptrRef}, map[string]any{"event_id": event.EventID, "raw_ref": event.RawRef}}}
 		addressEvent.Subject = map[string]any{"ip": address, "campus_id": passiveString(event.Subject, "campus_id")}
+		addressEvent.Payload = cloneMDNSPayload(event.Payload)
+		if passiveMDNSAddressMAC(event, address) == "" {
+			delete(addressEvent.Payload, "l2_source_mac_direct")
+			delete(addressEvent.Payload, "responder_l2_mac")
+		}
 		observation, ok := passivePTRObservation(addressEvent, sensor, iface, serviceName, instance, at, validUntil, scope)
 		if !ok {
 			continue
@@ -1055,21 +1064,36 @@ func (s *DBStore) materializeMDNS(ctx context.Context, db passiveDiscoveryDB, ev
 	if ttl > 0 && recordType != "A" && recordType != "AAAA" && passiveServiceType(recordName) == "" {
 		return nil, "mdns_unusable_service", nil
 	}
-	raw, _ := json.Marshal(event.Payload)
-	if ttl == 0 {
-		_, err = db.ExecContext(ctx, `DELETE FROM passive_discovery_mdns_records WHERE sensor_id=$1 AND interface_name=$2 AND record_name=$3 AND record_type=$4 AND record_value=$5`, sensor, iface, recordName, recordType, value)
-		if err == nil {
-			switch recordType {
-			case "A", "AAAA":
-				_, err = db.ExecContext(ctx, `UPDATE discovery_observations SET valid_until=$1,withdrawn=true WHERE origin='dns_sd' AND source_id=$2 AND data->>'ip'=$3 AND observed_at<=$1 AND NOT withdrawn AND valid_until>$1`, at, "passive:"+sensor+":"+iface, value)
-			case "SRV", "TXT":
-				_, err = db.ExecContext(ctx, `UPDATE discovery_observations SET valid_until=$1,withdrawn=true WHERE origin='dns_sd' AND source_id=$2 AND data->'evidence'->'payload'->>'service_instance'=$3 AND observed_at<=$1 AND NOT withdrawn AND valid_until>$1`, at, "passive:"+sensor+":"+iface, recordName)
-			case "PTR":
-				_, err = db.ExecContext(ctx, `UPDATE discovery_observations SET valid_until=$1,withdrawn=true WHERE origin='dns_sd' AND source_id=$2 AND data->'evidence'->'payload'->>'service_instance'=$3 AND observed_at<=$1 AND NOT withdrawn AND valid_until>$1`, at, "passive:"+sensor+":"+iface, value)
-			}
+	// Keep zero-TTL tombstones so a delayed positive cannot resurrect a withdrawn record.
+	rawRef, _ := json.Marshal(event.RawRef)
+	cacheResult, err := db.ExecContext(ctx, `INSERT INTO passive_discovery_mdns_scoped_records(sensor_id,interface_name,scope_key,record_name,record_type,record_value,observed_at,valid_until,event_id,raw_ref)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+ON CONFLICT(sensor_id,interface_name,scope_key,record_name,record_type,record_value) DO UPDATE
+SET observed_at=EXCLUDED.observed_at,valid_until=EXCLUDED.valid_until,event_id=EXCLUDED.event_id,raw_ref=EXCLUDED.raw_ref
+WHERE EXCLUDED.observed_at>passive_discovery_mdns_scoped_records.observed_at OR
+(EXCLUDED.observed_at=passive_discovery_mdns_scoped_records.observed_at AND EXCLUDED.valid_until<passive_discovery_mdns_scoped_records.valid_until)`, sensor, iface, passiveMDNSScopeKey(event), recordName, recordType, value, at, validUntil, event.EventID, rawRef)
+	if err != nil {
+		return nil, "", err
+	}
+	if changed, rowsErr := cacheResult.RowsAffected(); rowsErr != nil {
+		return nil, "", rowsErr
+	} else if changed == 0 {
+		return nil, "mdns_stale_or_duplicate_record", nil
+	}
+	if err == nil && ttl == 0 {
+		field, match := "", value
+		switch recordType {
+		case "A", "AAAA":
+			field = "data->>'ip'"
+		case "SRV", "TXT":
+			field = "data->'evidence'->'payload'->>'service_instance'"
+			match = recordName
+		case "PTR":
+			field = "data->'evidence'->'payload'->>'service_instance'"
 		}
-	} else {
-		_, err = db.ExecContext(ctx, `INSERT INTO passive_discovery_mdns_records(sensor_id,interface_name,record_name,record_type,record_value,observed_at,valid_until,event_id,payload) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(sensor_id,interface_name,record_name,record_type,record_value) DO UPDATE SET observed_at=EXCLUDED.observed_at,valid_until=EXCLUDED.valid_until,event_id=EXCLUDED.event_id,payload=EXCLUDED.payload WHERE EXCLUDED.observed_at>=passive_discovery_mdns_records.observed_at`, sensor, iface, recordName, recordType, value, at, validUntil, event.EventID, raw)
+		if field != "" {
+			_, err = db.ExecContext(ctx, `UPDATE discovery_observations SET valid_until=$1,withdrawn=true WHERE origin='dns_sd' AND source_id=$2 AND `+field+`=$3 AND observed_at<=$1 AND NOT withdrawn AND valid_until>$1 AND coalesce(data->>'vlan','')=$4 AND coalesce(data->>'vrf','')=$5 AND coalesce(nullif(data->>'site',''),$8)=$6 AND coalesce(nullif(data->>'domain',''),$9)=$7`, at, "passive:"+sensor+":"+iface, match, passiveScopeField(event, "vlan"), passiveScopeField(event, "vrf"), passiveMDNSSite(event), passiveMDNSDomain(event), sensor, iface)
+		}
 	}
 	if err != nil || ttl == 0 {
 		return nil, "", err
@@ -1102,19 +1126,25 @@ func (s *DBStore) materializeMDNS(ctx context.Context, db passiveDiscoveryDB, ev
 	if recordType != "SRV" && recordType != "A" && recordType != "AAAA" {
 		return result, "", nil
 	}
-	rows, err := db.QueryContext(ctx, `SELECT srv.record_name,srv.record_value,addr.record_value,least(srv.valid_until,addr.valid_until),coalesce(txt.record_value,''),greatest(srv.observed_at,addr.observed_at),srv.event_id
-FROM passive_discovery_mdns_records srv
-JOIN passive_discovery_mdns_records addr ON addr.sensor_id=srv.sensor_id AND addr.interface_name=srv.interface_name AND addr.record_name=srv.record_value AND addr.record_type IN ('A','AAAA') AND addr.valid_until>$3
-LEFT JOIN passive_discovery_mdns_records txt ON txt.sensor_id=srv.sensor_id AND txt.interface_name=srv.interface_name AND txt.record_name=srv.record_name AND txt.record_type='TXT' AND txt.valid_until>$3
-WHERE srv.sensor_id=$1 AND srv.interface_name=$2 AND srv.record_type='SRV' AND srv.valid_until>$3 AND (srv.record_name=$4 OR srv.record_value=$4 OR addr.record_name=$4)`, sensor, iface, at, recordName)
+	rows, err := db.QueryContext(ctx, `SELECT srv.record_name,srv.record_value,addr.record_value,least(srv.valid_until,addr.valid_until,txt.valid_until),coalesce(txt.record_value,''),greatest(srv.observed_at,addr.observed_at,txt.observed_at),srv.event_id, jsonb_build_array(jsonb_build_object('event_id',srv.event_id,'raw_ref',srv.raw_ref),jsonb_build_object('event_id',addr.event_id,'raw_ref',addr.raw_ref),jsonb_build_object('event_id',txt.event_id,'raw_ref',txt.raw_ref))
+FROM passive_discovery_mdns_scoped_records srv
+JOIN passive_discovery_mdns_scoped_records addr ON addr.sensor_id=srv.sensor_id AND addr.interface_name=srv.interface_name AND addr.scope_key=srv.scope_key AND addr.observed_at<=$3 AND addr.record_name=srv.record_value AND addr.record_type IN ('A','AAAA') AND addr.valid_until>$3
+LEFT JOIN passive_discovery_mdns_scoped_records txt ON txt.sensor_id=srv.sensor_id AND txt.interface_name=srv.interface_name AND txt.scope_key=srv.scope_key AND txt.observed_at<=$3 AND txt.record_name=srv.record_name AND txt.record_type='TXT' AND txt.valid_until>$3
+WHERE srv.sensor_id=$1 AND srv.interface_name=$2 AND srv.scope_key=$5 AND srv.observed_at<=$3 AND srv.record_type='SRV' AND srv.valid_until>$3 AND (srv.record_name=$4 OR srv.record_value=$4 OR addr.record_name=$4) ORDER BY srv.record_name,addr.record_value,txt.record_value LIMIT 65`, sensor, iface, at, recordName, passiveMDNSScopeKey(event))
 	if err != nil {
 		return nil, "", err
 	}
 	defer rows.Close()
+	joined := 0
 	for rows.Next() {
+		joined++
+		if joined > 64 {
+			return nil, "", fmt.Errorf("DNS-SD SRV join exceeds 64 records in one scope")
+		}
 		var instance, target, address, textValue, srvEventID string
+		var references json.RawMessage
 		var until, observed time.Time
-		if err = rows.Scan(&instance, &target, &address, &until, &textValue, &observed, &srvEventID); err != nil {
+		if err = rows.Scan(&instance, &target, &address, &until, &textValue, &observed, &srvEventID, &references); err != nil {
 			return nil, "", err
 		}
 		// A service target resolved only to a link-local IPv6 address cannot be
@@ -1139,20 +1169,22 @@ WHERE srv.sensor_id=$1 AND srv.interface_name=$2 AND srv.record_type='SRV' AND s
 		}
 		// Stable per (instance, target, address): repeated SRV answers must not
 		// create a new observation row each time.
-		hash := sha256.Sum256([]byte(strings.Join([]string{sensor, iface, "srv", instance, target, address}, "\x00")))
+		hash := sha256.Sum256([]byte(strings.Join([]string{sensor, iface, passiveMDNSScopeKey(event), "srv", instance, target, address}, "\x00")))
 		name := strings.TrimSpace(strings.Split(instance, "._")[0])
 		payload := map[string]any{"origin": "dns_sd", "is_response": true, "service_type": service, "service_instance": instance, "service_target": target, "txt": textValue, "model": model, "ttl": int(until.Sub(observed).Seconds())}
 		evidence := event
+		evidence.RawRef = map[string]any{"backend": "derived_dns_sd", "records": references}
 		evidence.EventID = "dns-sd-" + hex.EncodeToString(hash[:16])
+		inheritMDNSScope(event, payload)
 		evidence.Type, evidence.SourceEventType, evidence.Payload = "discovery", "dns_sd", payload
 		evidence.Subject = map[string]any{"ip": address, "campus_id": passiveString(event.Subject, "campus_id")}
-		directMAC := passiveDirectResponderMAC(event)
+		directMAC := passiveMDNSAddressMAC(event, address)
 		if directMAC != "" {
 			evidence.Subject["mac"] = directMAC
 			evidence.Payload["l2_source_mac_direct"] = true
 			evidence.Payload["responder_l2_mac"] = directMAC
 		}
-		o := discovery.Observation{ID: evidence.EventID, EventID: evidence.EventID, SourceID: "passive:" + sensor + ":" + iface, Node: sensor, Site: passiveString(event.Subject, "campus_id"), Domain: passiveString(event.Payload, "access_domain"), IP: address, MAC: directMAC, Name: name, Origin: "dns_sd", DeviceType: deviceType, Capabilities: capabilities, ModelName: model, Confidence: "strong", Explanation: "DNS-SD 服务响应与地址记录自动关联", RuleVersion: discovery.RuleVersion, ObservedAt: observed, ValidUntil: until, Interface: iface, Evidence: evidence}
+		o := discovery.Observation{ID: evidence.EventID, EventID: evidence.EventID, SourceID: "passive:" + sensor + ":" + iface, Node: sensor, Site: passiveMDNSSite(event), Domain: passiveMDNSDomain(event), VLAN: passiveScopeField(event, "vlan"), VRF: passiveScopeField(event, "vrf"), IP: address, MAC: directMAC, Name: name, Origin: "dns_sd", DeviceType: deviceType, Capabilities: capabilities, ModelName: model, Confidence: "strong", Explanation: "DNS-SD 服务响应与地址记录自动关联", RuleVersion: discovery.RuleVersion, ObservedAt: observed, ValidUntil: until, Interface: iface, Evidence: evidence}
 		if o.Site == "" {
 			o.Site = sensor
 		}
@@ -1608,6 +1640,9 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 	// observation/link loop does not hold endpoint_entities row locks that the
 	// identity and recognition writers need.
 	if err := measure("arp_candidates", func() error { return ensurePassiveARPCandidateEndpoints(ctx, s.pg.db, events, scope) }); err != nil {
+		return stats, err
+	}
+	if err := expireMDNSScopedCache(ctx, tx, events); err != nil {
 		return stats, err
 	}
 	coalescedMDNS := passiveCoalescedMDNSIndexes(events)

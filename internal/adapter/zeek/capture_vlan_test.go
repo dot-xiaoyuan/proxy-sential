@@ -51,7 +51,7 @@ func TestCustomDeviceLogsPreserveCapturedScope(t *testing.T) {
 		if err = json.Unmarshal(bytes.TrimSpace(out.Bytes()), &e); err != nil {
 			t.Fatalf("%s: %v", kind, err)
 		}
-		if e.Payload["vlan"] != "2701/26" && e.Subject["vlan"] != "2701/26" {
+		if e.Payload["vlan"] != "2701/26" {
 			t.Fatalf("%s lost scope: %+v", kind, e)
 		}
 	}

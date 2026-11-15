@@ -124,7 +124,7 @@ func TestPassiveMDNSIgnoresUnusableServiceAnnouncementsButKeepsWithdrawal(t *tes
 		"is_response": true, "record_type": "PTR", "record_name": "_dosvc._tcp.local",
 		"service_target": "desktop._dosvc._tcp.local", "ttl": 0,
 	}
-	mock.ExpectExec("DELETE FROM passive_discovery_mdns_records").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO passive_discovery_mdns_scoped_records").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("UPDATE discovery_observations SET valid_until").WillReturnResult(sqlmock.NewResult(0, 0))
 	if _, _, err := (&DBStore{}).materializeMDNS(context.Background(), db, withdrawn, scope); err != nil {
 		t.Fatalf("withdrawal must still remove an older service projection: %v", err)
@@ -148,7 +148,7 @@ func TestPassiveMDNSRetainsSupportedServiceAnnouncement(t *testing.T) {
 		"is_response": true, "record_type": "PTR", "record_name": "_ipp._tcp.local",
 		"service_target": "printer._ipp._tcp.local", "ttl": 120,
 	})
-	mock.ExpectExec("INSERT INTO passive_discovery_mdns_records").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO passive_discovery_mdns_scoped_records").WillReturnResult(sqlmock.NewResult(0, 1))
 	// PTR answers create their observation directly; the SRV/A join only runs
 	// for SRV and address answers.
 	observations, reason, err := (&DBStore{}).materializeMDNS(context.Background(), db, event, scope)

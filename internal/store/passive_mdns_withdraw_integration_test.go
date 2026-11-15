@@ -28,7 +28,10 @@ func TestPassiveMDNSRepeatedWithdrawalDoesNotRewriteHistory(t *testing.T) {
 	defer pg.Close()
 	store := &DBStore{pg: pg}
 	at := time.Now().UTC().Truncate(time.Second)
-	sensor, iface := "withdraw-test", "mirror"
+	sensor, iface := fmt.Sprintf("withdraw-test-%d", time.Now().UnixNano()), "mirror"
+	t.Cleanup(func() {
+		_, _ = pg.db.Exec(`DELETE FROM passive_discovery_mdns_scoped_records WHERE sensor_id=$1`, sensor)
+	})
 	for _, tc := range []struct{ kind, name, value, ip, instance string }{
 		{"A", "printer.local", "192.168.50.10", "192.168.50.10", ""},
 		{"SRV", "printer._ipp._tcp.local", "printer.local", "192.168.50.10", "printer._ipp._tcp.local"},
