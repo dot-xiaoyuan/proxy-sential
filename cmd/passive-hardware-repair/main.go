@@ -229,7 +229,7 @@ func run(ctx context.Context) error {
 				excluded++
 			}
 		}
-		return json.NewEncoder(os.Stdout).Encode(map[string]any{"mode": "read_only_snapshot", "rows": len(manifest.Entries), "eligible": len(manifest.Entries) - excluded, "excluded": excluded, "manifest_sha256": manifestHash(manifest), "coverage": "retained_latest_in_event_time_window_only"})
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{"mode": "read_only_snapshot", "rows": len(manifest.Entries), "eligible": len(manifest.Entries) - excluded, "excluded": excluded, "manifest_sha256": manifestHash(manifest), "coverage": repairCoverage(manifest)})
 	}
 	if *checkpointPath == "" || filepath.Clean(*checkpointPath) == filepath.Clean(*manifestPath) {
 		return fmt.Errorf("apply requires a distinct checkpoint path")
@@ -335,8 +335,17 @@ func run(ctx context.Context) error {
 	if productOnly {
 		resultMode, projectionNote = "product_annotations_complete", "IP product annotations only; no physical identities created or enqueued"
 	}
-	return json.NewEncoder(os.Stdout).Encode(map[string]any{"mode": resultMode, "processed": state.Next, "admitted_or_already_present": admitted, "excluded": state.Next - admitted, "manifest_sha256": state.ManifestSHA256, "coverage": "retained_latest_in_event_time_window_only", "projection_completion": projectionNote})
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{"mode": resultMode, "processed": state.Next, "admitted_or_already_present": admitted, "excluded": state.Next - admitted, "manifest_sha256": state.ManifestSHA256, "coverage": repairCoverage(manifest), "projection_completion": projectionNote})
 }
+func repairCoverage(m store.HardwareRepairManifest) string {
+	for _, entry := range m.Entries {
+		if entry.SourceRelation == "observation" {
+			return "explicit_retained_response_ids_in_event_time_window"
+		}
+	}
+	return "retained_latest_in_event_time_window_only"
+}
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
