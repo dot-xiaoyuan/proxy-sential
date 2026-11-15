@@ -156,3 +156,40 @@ func TestHardwareBatchPostgresConcurrentObservationRemainsQueued(t *testing.T) {
 		t.Fatalf("newer fact not projected: %v %v", last, err)
 	}
 }
+
+func TestHardwareBatchPostgresBoundedCatchup(t *testing.T) {
+	db := hardwareIntegrationDB(t)
+	at := time.Now().UTC().Add(-time.Minute)
+	var obs []Observation
+	for i := 0; i < 40; i++ {
+		o := hardwareTestObservation(at)
+		o.Origin = "arp"
+		o.MAC = fmt.Sprintf("00:11:22:33:45:%02x", i)
+		o.ID = fmt.Sprint(i)
+		o.EventID = o.ID
+		obs = append(obs, o)
+	}
+	if err := EnqueueHardwareObservations(context.Background(), db, obs); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE transaction_probe(id bigint); CREATE FUNCTION capture_transaction() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN INSERT INTO transaction_probe VALUES(txid_current()); RETURN NEW; END $$; CREATE TRIGGER capture_transaction AFTER INSERT ON passive_hardware_current FOR EACH ROW EXECUTE FUNCTION capture_transaction()`); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := ProcessHardwareProjectionBatchedWithin(context.Background(), db, "sensor", 32, time.Second); err != nil || n != 0 {
+		t.Fatalf("insufficient budget must not claim: %d %v", n, err)
+	}
+	n, err := ProcessHardwareProjectionBatchedWithin(context.Background(), db, "sensor", 32, 8*time.Second)
+	if err != nil || n != 32 {
+		t.Fatalf("bounded catchup: %d %v", n, err)
+	}
+	var dirty, txs, largest int
+	if err = db.QueryRow(`SELECT count(*) FROM passive_hardware_dirty`).Scan(&dirty); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.QueryRow(`SELECT count(*),max(n) FROM (SELECT id,count(*) n FROM transaction_probe GROUP BY id)q`).Scan(&txs, &largest); err != nil {
+		t.Fatal(err)
+	}
+	if dirty != 8 || txs != 8 || largest != 4 {
+		t.Fatalf("queue/group bounds changed: dirty=%d txs=%d largest=%d", dirty, txs, largest)
+	}
+}

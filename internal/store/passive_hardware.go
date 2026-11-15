@@ -188,8 +188,9 @@ func (s *DBStore) runPassiveHardwareProjection(ctx context.Context, sensor strin
 		}
 		processed := 0
 		if err == nil {
-			// Two lanes retain the 16-identity cycle cap. Each commits groups of
-			// at most four identities to reduce synchronous WAL commits.
+			// Two lanes retain the time budget and four-identity transactions.
+			// Allow up to 64 identities per cycle so fast group commits can
+			// drain live bursts instead of idling at the old 16-identity cap.
 			var wg sync.WaitGroup
 			results := make(chan struct {
 				count int
@@ -199,7 +200,7 @@ func (s *DBStore) runPassiveHardwareProjection(ctx context.Context, sensor strin
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					count, runErr := discovery.ProcessHardwareProjectionBatchedWithin(work, s.pg.db, sensor, 8, 8*time.Second)
+					count, runErr := discovery.ProcessHardwareProjectionBatchedWithin(work, s.pg.db, sensor, 32, 8*time.Second)
 					results <- struct {
 						count int
 						err   error
