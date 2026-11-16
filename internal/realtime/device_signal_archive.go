@@ -153,7 +153,7 @@ func deviceSignalFiles(path string) ([]signalFile, error) {
 		seq := -1
 		if protected && ordinal == 0 {
 			seq = 0
-			if parsed, ok := signalFileChainSequence(filepath.Base(name)); ok {
+			if parsed, ok := signalFileChainSequence(filepath.Base(name), strings.TrimSuffix(filepath.Base(path), ".jsonl")); ok {
 				seq = parsed
 			}
 		}
@@ -187,8 +187,9 @@ func signalFileOrdinal(source, candidate string, protected bool) (int, bool, boo
 		return -1, false, true
 	}
 	base, name := filepath.Base(source), filepath.Base(candidate)
-	if protected && base == "ttl.jsonl" {
-		if _, ok := signalFileChainSequence(name); ok {
+	stem := strings.TrimSuffix(base, ".jsonl")
+	if protected && (stem == "ttl" || stem == "handshake") {
+		if _, ok := signalFileChainSequence(name, stem); ok {
 			return 0, true, true
 		}
 	}
@@ -211,8 +212,8 @@ func signalFileOrdinal(source, candidate string, protected bool) (int, bool, boo
 	return n, compressed, err == nil && n > 0 && n <= 1000
 }
 
-func signalFileChainSequence(name string) (int, bool) {
-	const prefix, suffix = "ttl-chain-", ".jsonl.gz"
+func signalFileChainSequence(name, stem string) (int, bool) {
+	prefix, suffix := stem+"-chain-", ".jsonl.gz"
 	if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
 		return 0, false
 	}

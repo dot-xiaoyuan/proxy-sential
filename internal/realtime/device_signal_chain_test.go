@@ -76,3 +76,44 @@ func TestProtectedDeviceSignalChainAdvancesOnlyAcrossVerifiedSuccessors(t *testi
 		t.Fatalf("missing first proof was accepted: %v", err)
 	}
 }
+
+func TestProtectedHandshakeChainResumesAfterDateArchiveRecovery(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "handshake.jsonl")
+	recovery := filepath.Join(dir, "protected")
+	t.Setenv(deviceSignalRecoveryDirEnv, recovery)
+	if err := os.Mkdir(recovery, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for path, data := range map[string][]byte{
+		source: []byte("current\n"),
+		filepath.Join(recovery, "handshake-live-start.jsonl"): []byte("old\n"),
+	} {
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	chain0 := filepath.Join(recovery, "handshake-chain-000000000000.jsonl.gz")
+	chain1 := filepath.Join(recovery, "handshake-chain-000000000001.jsonl.gz")
+	writeGzipFixture(t, chain0, []byte("old\n"))
+	writeGzipFixture(t, chain1, []byte("next\n"))
+	old := []byte("old\n")
+	sum := sha256.Sum256(old)
+	live := filepath.Join(recovery, "handshake-live-start.jsonl")
+	info, err := os.Stat(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cursor := streamlog.SourceCursor{FileID: FileIdentityBirthAt(source, live, info), Offset: int64(len(old)), TailBytes: len(old), TailSHA256: hex.EncodeToString(sum[:])}
+	read, err := readDeviceSignalChunk(source, cursor, 1024)
+	if err != nil || !read.verifiedRotation || string(read.data) != "next\n" {
+		t.Fatalf("handshake successor was not recovered: %+v %v", read, err)
+	}
+	if err := os.Remove(chain0); err != nil {
+		t.Fatal(err)
+	}
+	clearSignalGzip(source)
+	if _, err := readDeviceSignalChunk(source, cursor, 1024); !errors.Is(err, ErrStreamSourceGap) {
+		t.Fatalf("handshake successor without first chain proof was accepted: %v", err)
+	}
+}

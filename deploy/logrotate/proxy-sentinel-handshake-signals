@@ -1,9 +1,7 @@
-# Handshake summary output (device-signal --handshake-only). Same reopen-per-bucket contract
-# as the router TTL output: rename rotation plus delaycompress keeps the newest rotation
-# readable for realtime ingest, which drains by file identity. A clock-level dateformat
-# prevents a second same-day rotation from colliding and being skipped.
-# The file grows at roughly 25k records per hour with the per-bucket bound, far below the
-# TTL stream, so the threshold is smaller.
+# Handshake summary output (device-signal --handshake-only). The stream reader
+# follows a verified numbered rotation chain. A dateext archive is invisible to
+# that chain once the original inode has been compressed. Keep the recovery
+# anchor and run the protector after each rotation before removing any alias.
 /opt/proxy-sentinel/data/device-signals/handshake.jsonl {
   size 256M
   rotate 4
@@ -12,5 +10,10 @@
   nocreate
   compress
   delaycompress
-  dateformat -%Y%m%d-%H%M%S
+  nodateext
+  postrotate
+    if [ -d /opt/proxy-sentinel/data/handshake-source-recovery ]; then
+      /usr/bin/python3 /opt/proxy-sentinel/current/scripts/protect_device_signal_rotations.py /opt/proxy-sentinel/data/device-signals/handshake.jsonl /opt/proxy-sentinel/data/handshake-source-recovery
+    fi
+  endscript
 }
