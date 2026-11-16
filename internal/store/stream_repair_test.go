@@ -171,6 +171,7 @@ func TestConfirmedStreamRawRequiresOneExactJournalInterval(t *testing.T) {
 	segment.Source = "zeek-dhcp-binding"
 	segment.SourceBackedRaw = true
 	segment.SourcePath = "/zeek/current/device_dhcp_message.log"
+	segment.AcceptedAt = time.Date(2026, 10, 24, 10, 0, 0, 11910758, time.UTC)
 	raw := []byte("the exact source interval\n")
 	segment.EndOffset = segment.StartOffset + int64(len(raw))
 	sum := sha256.Sum256(raw)
@@ -180,7 +181,7 @@ func TestConfirmedStreamRawRequiresOneExactJournalInterval(t *testing.T) {
 		"raw_sha256": segment.RawSHA256, "raw_base64": base64.StdEncoding.EncodeToString(raw),
 		"source": segment.Source, "source_path": segment.SourcePath, "file_id": segment.FileID,
 		"start_offset": segment.StartOffset, "end_offset": segment.EndOffset,
-		"accepted_at": segment.AcceptedAt.UTC().Format("2006-01-02 15:04:05.000000"),
+		"accepted_at": segment.AcceptedAt.UTC().Truncate(time.Microsecond).Format("2006-01-02T15:04:05.000000Z"),
 	}
 	var response []map[string]any
 	var query string
@@ -202,6 +203,11 @@ func TestConfirmedStreamRawRequiresOneExactJournalInterval(t *testing.T) {
 	if err != nil || string(got) != string(raw) || !strings.Contains(query, "segment_id='"+id+"'") || !strings.Contains(query, "LIMIT 2") {
 		t.Fatalf("confirmed raw mismatch: raw=%q query=%q err=%v", got, query, err)
 	}
+	row["accepted_at"] = segment.AcceptedAt.UTC().Truncate(time.Microsecond).Format("2006-01-02 15:04:05.000000")
+	if got, err := ch.ReadConfirmedStreamRaw(context.Background(), id, segment); err != nil || string(got) != string(raw) {
+		t.Fatalf("space-formatted confirmed raw mismatch: raw=%q err=%v", got, err)
+	}
+	row["accepted_at"] = segment.AcceptedAt.UTC().Truncate(time.Microsecond).Format("2006-01-02T15:04:05.000000Z")
 	response = []map[string]any{row, row}
 	if _, err := ch.ReadConfirmedStreamRaw(context.Background(), id, segment); !errors.Is(err, streamlog.ErrUnconfirmed) {
 		t.Fatalf("duplicate raw row accepted: %v", err)
@@ -209,7 +215,10 @@ func TestConfirmedStreamRawRequiresOneExactJournalInterval(t *testing.T) {
 	for _, changed := range []map[string]any{
 		{"file_id": "another-inode"}, {"raw_sha256": strings.Repeat("f", 64)},
 		{"end_offset": segment.EndOffset + 1}, {"raw_base64": base64.StdEncoding.EncodeToString(raw[:len(raw)-1])},
-		{"accepted_at": "2026-10-24 11:00:00.000000"},
+		{"accepted_at": "2026-10-24 11:00:00.011910"},
+		{"accepted_at": "2026-10-24T10:00:00.011911Z"},
+		{"accepted_at": "2026-10-24T10:00:00.01191Z"},
+		{"accepted_at": "2026-10-24T10:00:00.011910000Z"},
 	} {
 		bad := map[string]any{}
 		for key, value := range row {
