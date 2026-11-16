@@ -276,8 +276,11 @@ func runRouter(args []string) error {
 	if len(args) > 0 && args[0] == "reset-recovery" {
 		return runRouterResetRecovery(args[1:])
 	}
+	if len(args) > 0 && args[0] == "network-backfill" {
+		return runRouterNetworkBackfill(args[1:])
+	}
 	if len(args) < 1 || args[0] != "sample" {
-		return fmt.Errorf("usage: proxy-sentinel router sample|fresh-cutover|reset-recovery")
+		return fmt.Errorf("usage: proxy-sentinel router sample|fresh-cutover|reset-recovery|network-backfill")
 	}
 	fs := flag.NewFlagSet("router sample", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)

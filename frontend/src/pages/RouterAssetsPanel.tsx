@@ -29,14 +29,29 @@ function discoveryLink(item: Device) {
   return `/devices?${new URLSearchParams({ tab: 'discovery', discovery_search: item.mac || item.primary_ip || item.name || '' })}`
 }
 
+function networkTypeLabel(item: Device) {
+  switch (item.network_device_type || item.last_network_device_type) {
+    case 'gateway': return '网关类型线索'
+    case 'access_point': return '接入点类型线索'
+    default: return '路由器类型线索'
+  }
+}
+
+function networkTypeStatusLabel(item: Device) {
+  const label = networkTypeLabel(item)
+  if (item.network_type_status === 'pending_expiry') return `${label}（已到期，待投影处理）`
+  if (item.network_type_status === 'expired') return `历史${label}`
+  return label
+}
+
 export function RouterAssetsPanel() {
   const [params, setParams] = useSearchParams()
   const queryClient=useQueryClient()
   const view = params.get('routers_view') === 'ap' ? 'ap' : 'router'
   const type = view === 'ap' ? 'access_point' : 'router'
-  const label = view === 'ap' ? '接入点' : '路由器'
+  const label = view === 'ap' ? '接入点' : '路由器／网关'
   const search = params.get('routers_search') || ''
-  const state = params.get('routers_state') || ''
+  const state = params.get('routers_state') === 'expired' ? 'expired' : ''
   const window = params.get('routers_window') || '24h'
   const [draft, setDraft] = useState(search)
   const [pageSize, setPageSize] = useState(20)
@@ -91,7 +106,7 @@ export function RouterAssetsPanel() {
       : freshness?.status === 'failed' ? '设备投影处理失败，当前列表可能不是最新结果。'
         : freshness?.status === 'unknown' || freshness?.source_progress_status === 'unverified' ? `来源进度尚未核验，不具备来源追平证明${processedAt ? `；设备投影最近完成于 ${processedAt}` : ''}。` : ''
   const emptyDescription = freshness && (freshness.status === 'delayed' || freshness.status === 'initializing' || freshness.source_progress_status === 'unverified')
-    ? `当前已处理范围内暂无匹配的${label}设备` : `当前观测范围内暂无匹配的${label}设备`
+    ? `当前已处理范围内暂无匹配的${label}类型线索` : `当前观测范围内暂无匹配的${label}类型线索`
   const filtered = Boolean(search || state || window !== '24h')
   const columns = [
     {
@@ -99,7 +114,7 @@ export function RouterAssetsPanel() {
       render: (_: unknown, item: Device) => {
         const candidate = candidateByNeighbor.get((item.mac ?? '').toLowerCase())
         return <div className="router-device-cell">
-          <DiscoveryDeviceIcon type={type} />
+          <DiscoveryDeviceIcon type={item.network_device_type === 'gateway' ? 'gateway' : type} />
           <DeviceAddress name={item.name} ip={currentAddresses(item)[0]} addresses={currentAddresses(item)} mac={item.mac} historicalIP={item.last_observed_ip} />
           {candidate && <Tooltip title={(candidate.evidence ?? []).join('；')}>
             <Typography.Text type="secondary" className="router-chassis-candidate">疑似同一机箱：{candidate.partner_ip} · {Math.round(candidate.confidence * 100)}%</Typography.Text>
@@ -110,7 +125,7 @@ export function RouterAssetsPanel() {
     {
       title: '类型 / 厂商型号', key: 'type', width: 175,
       render: (_: unknown, item: Device) => <div className="router-identity">
-        <Tag color={item.classification_status === 'expired' ? undefined : 'blue'}>{item.classification_status === 'expired' ? `历史${label}` : label}</Tag>
+        <Tag>{networkTypeStatusLabel(item)}</Tag>
         {(item.manufacturer || item.model_name) && <Typography.Text type="secondary">{[item.manufacturer, item.model_name].filter(Boolean).join(' · ')}</Typography.Text>}
       </div>,
     },
@@ -118,15 +133,14 @@ export function RouterAssetsPanel() {
       title: '识别依据', key: 'evidence', width: 175,
       render: (_: unknown, item: Device) => <div className="router-recognition-evidence">
         {(item.protocols ?? []).map(protocol => <Tag key={protocol} className="router-source">{routerSourceLabels[protocol] || protocol.toUpperCase()}</Tag>)}
-        {item.classification_status === 'expired' && <Typography.Text type="secondary">类型证据已过期</Typography.Text>}
-        {item.classification?.reason && <span className="router-verdict-reason">{item.classification.reason}</span>}
+        {item.network_type_reason && <span className="router-verdict-reason">{item.network_type_reason}</span>}
       </div>,
     },
     {
       title: '网络范围', key: 'scope', width: 110,
       render: (_: unknown, item: Device) => <div className="router-identity"><span>{item.domain}</span>{item.vlan && <Typography.Text type="secondary">VLAN {item.vlan}</Typography.Text>}</div>,
     },
-    { title: '最近观测', key: 'last_seen', width: 105, render: (_: unknown, item: Device) => <span title={observedTimeTitle(item.last_seen)}>{observedTimeLabel(item.last_seen)}</span> },
+    { title: '类型线索时间', key: 'network_type_last_seen', width: 105, render: (_: unknown, item: Device) => <span title={observedTimeTitle(item.network_type_last_seen)}>{observedTimeLabel(item.network_type_last_seen)}</span> },
     { title: '操作', key: 'action', width: 85, render: (_: unknown, item: Device) => <Button type="link" onClick={() => setSelected(item)}>查看设备</Button> },
   ]
   return <section className="router-observations-panel">
@@ -137,17 +151,18 @@ export function RouterAssetsPanel() {
       onSearchChange={value => { setDraft(value); if (!value) change('search', '') }}
       onSearch={value => change('search', value.trim())}
       filters={<>
-        <Select aria-label="类型证据状态" value={state} options={[{ value: '', label: '全部类型记录' }, { value: 'identified', label: '当前类型' }, { value: 'expired', label: '历史类型' }]} onChange={value => change('state', value)} />
+        <Select aria-label="类型证据状态" value={state} options={[{ value: '', label: '当前类型线索' }, { value: 'expired', label: '历史及到期线索' }]} onChange={value => change('state', value)} />
         <Select aria-label="设备观测范围" value={window} options={[{ value: '24h', label: '近 24 小时' }, { value: '168h', label: '近 7 天' }, { value: '720h', label: '近 30 天' }]} onChange={value => change('window', value)} />
         <Button onClick={() => change('search', draft.trim())}>查询</Button>
         {filtered && <Button type="text" onClick={reset}>清空筛选</Button>}
       </>}
     />
     {freshnessMessage && <div className="router-freshness-note" role="status">{freshnessMessage}</div>}
+    {devices.data?.network_type_coverage === 'new_observations' && <div className="router-freshness-note" role="status">类型线索读模型从新观测或到期处理逐步建立；旧状态尚未批量回填，列表覆盖范围可能不完整。</div>}
     <section className="surface center-list-surface">
       <AppListHeader
-        title={`${label}设备`}
-        description="设备类型用于资产管理；违规与共享行为需另行核验。"
+        title={`${label}类型线索`}
+        description="被动协议公告提供设备类型线索，整机类型需核验；违规与共享行为由独立角色评估判断。"
         actions={<Button aria-label="刷新设备" icon={<ReloadOutlined />} loading={devices.isFetching} onClick={refresh}>刷新</Button>}
       />
       {devices.isError ? <AppErrorAlert title="读取网络设备失败" message={devices.error.message} action={<Button onClick={() => void devices.refetch()}>重新读取</Button>} /> : <>
@@ -163,12 +178,13 @@ export function RouterAssetsPanel() {
         <DeviceAddress name={selected.name} ip={currentAddresses(selected)[0]} addresses={currentAddresses(selected)} mac={selected.mac} historicalIP={selected.last_observed_ip} />
         <dl className="discovery-detail-facts">
           {[
-            ['设备类型', selected.classification_status === 'expired' ? `历史${label}（类型证据已过期）` : label],
+            ['设备类型线索', networkTypeStatusLabel(selected)],
             ['厂商', selected.manufacturer], ['型号', selected.model_name], ['网络域', selected.domain], ['VLAN', selected.vlan],
-            ['采集传感器', selected.sensor_id], ['首次观测', observedTimeTitle(selected.first_seen)], ['最近观测', observedTimeTitle(selected.last_seen)],
+            ['采集传感器', selected.sensor_id], ['线索首次观测', observedTimeTitle(selected.network_type_first_seen)], ['线索最近观测', observedTimeTitle(selected.network_type_last_seen)],
           ].filter(([, value]) => Boolean(value)).map(([title, value]) => <div key={title}><dt>{title}</dt><dd>{value}</dd></div>)}
         </dl>
-        {selected.classification?.reason && <Typography.Paragraph>{selected.classification.reason}</Typography.Paragraph>}
+        {selected.network_type_reason && <Typography.Paragraph>{selected.network_type_reason}</Typography.Paragraph>}
+        {(selected.network_type_evidence_ids?.length ?? 0) > 0 && <Typography.Paragraph className="router-network-evidence-refs" type="secondary">证据引用：{selected.network_type_evidence_ids?.join('、')}</Typography.Paragraph>}
         <Space wrap>{(selected.protocols ?? []).map(protocol => <Tag key={protocol}>{routerSourceLabels[protocol] || protocol.toUpperCase()}</Tag>)}</Space>
         <DiscoveryEvidenceSummary observations={selected.observations ?? []} />
       </>}

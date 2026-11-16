@@ -41,17 +41,77 @@ function matches(item: RouterAssessment, url: URL) {
   const equal = (name: string, value?: string) => !url.searchParams.get(name) || value?.toLowerCase() === url.searchParams.get(name)?.toLowerCase()
   const minimum = Number(url.searchParams.get('confidence_min') || 0)
   const maximum = Number(url.searchParams.get('confidence_max') || 100)
-  return (!keyword || text.includes(keyword)) && equal('ip', item.ip) && equal('mac', item.mac) && equal('brand', item.brand) && equal('model', item.model) && (url.searchParams.get('role')==='network'?['router','ap','switch','firewall'].includes(item.role):equal('role', item.role)) && equal('status', item.status) && (!url.searchParams.get('vlan') || item.vlans?.includes(url.searchParams.get('vlan') || '')) && (!url.searchParams.get('source') || item.sources.includes(url.searchParams.get('source') || '')) && (!url.searchParams.has('infrastructure') || item.infrastructure === (url.searchParams.get('infrastructure') === 'true')) && (!url.searchParams.has('has_auth_binding') || Boolean(item.auth_bindings?.length) === (url.searchParams.get('has_auth_binding') === 'true')) && item.confidence >= minimum && item.confidence <= maximum
+  const role = url.searchParams.get('role') || 'router'
+  const roleMatches = role === 'network' ? ['router', 'ap', 'switch', 'firewall'].includes(item.role) : item.role === role
+  const status = url.searchParams.get('status')
+  const statusMatches = status ? item.status === status : url.searchParams.get('include_candidates') === 'true' || item.status === 'likely' || item.status === 'confirmed'
+  const inRange = (field: string, from: string, to: string) => (!url.searchParams.get(from) || field >= url.searchParams.get(from)!) && (!url.searchParams.get(to) || field <= url.searchParams.get(to)!)
+  return Boolean(item.ip) && !item.brand_reference_only && roleMatches && statusMatches &&
+    (!keyword || text.includes(keyword)) && equal('ip', item.ip) && equal('mac', item.mac) && equal('brand', item.brand) && equal('model', item.model) &&
+    (!url.searchParams.get('vlan') || item.vlans?.includes(url.searchParams.get('vlan') || '')) &&
+    (!url.searchParams.get('source') || item.sources.includes(url.searchParams.get('source') || '')) &&
+    (!url.searchParams.has('infrastructure') || item.infrastructure === (url.searchParams.get('infrastructure') === 'true')) &&
+    (url.searchParams.get('has_auth_binding') !== 'true' || Boolean(item.auth_bindings?.length)) &&
+    item.confidence >= minimum && item.confidence <= maximum &&
+    inRange(item.first_seen, 'first_seen_from', 'first_seen_to') && inRange(item.last_seen, 'last_seen_from', 'last_seen_to')
+}
+
+type RouterMockCursor = { confidence: number; last_seen: string; assessment_id: string; scope: string }
+const routerCursorPrefix = 'router-seek:'
+
+function routerCursorScope(url: URL) {
+  const params = new URLSearchParams(url.searchParams)
+  params.delete('cursor')
+  params.delete('limit')
+  params.sort()
+  return params.toString()
+}
+
+function routerPageOrder(a: Pick<RouterAssessment, 'confidence' | 'last_seen' | 'assessment_id'>, b: Pick<RouterAssessment, 'confidence' | 'last_seen' | 'assessment_id'>) {
+  return b.confidence - a.confidence || b.last_seen.localeCompare(a.last_seen) || a.assessment_id.localeCompare(b.assessment_id)
+}
+
+function routerWinnerOrder(a: RouterAssessment, b: RouterAssessment) {
+  const statusRank: Record<string, number> = { confirmed: 3, likely: 2, candidate: 1 }
+  return (statusRank[b.status] ?? 0) - (statusRank[a.status] ?? 0) || b.confidence - a.confidence || Number(Boolean(b.endpoint_id)) - Number(Boolean(a.endpoint_id)) || b.last_seen.localeCompare(a.last_seen) || a.assessment_id.localeCompare(b.assessment_id)
+}
+
+function routerPhysicalKey(item: RouterAssessment) {
+  return item.mac ? `mac:${item.mac.toLowerCase()}` : item.endpoint_id ? `endpoint:${item.endpoint_id}` : item.ip ? `ip:${item.ip}:vlans:${item.vlans?.join(',') ?? ''}` : `assessment:${item.assessment_id}`
+}
+
+function routerMockCursor(value: string, scope: string): RouterMockCursor | null {
+  if (!value.startsWith(routerCursorPrefix) || value.length > 2048) return null
+  try {
+    const parsed = JSON.parse(decodeURIComponent(atob(value.slice(routerCursorPrefix.length)))) as RouterMockCursor
+    return parsed.scope === scope && Number.isInteger(parsed.confidence) && parsed.confidence >= 0 && parsed.confidence <= 100 && Boolean(parsed.last_seen) && Boolean(parsed.assessment_id) ? parsed : null
+  } catch { return null }
+}
+
+function encodeRouterMockCursor(item: RouterAssessment, scope: string) {
+  return routerCursorPrefix + btoa(encodeURIComponent(JSON.stringify({ confidence: item.confidence, last_seen: item.last_seen, assessment_id: item.assessment_id, scope })))
 }
 
 export const routerObservationHandlers = [
   http.get('/api/v1/router-observations', ({ request }) => {
     const url = new URL(request.url)
     const limit = Number(url.searchParams.get('limit') || 20)
-    const offset = Number(url.searchParams.get('cursor') || 0)
-    const filtered = routerObservations.filter(item => item.current && matches(item, url))
-    const items = filtered.slice(offset, offset + limit).map(({ evidence: _evidence, history: _history, ...item }) => item)
-    return HttpResponse.json({ items, page: { limit, next_cursor: offset + items.length < filtered.length ? String(offset + items.length) : null, total: filtered.length } })
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) return HttpResponse.json({ code: 'bad_router_observation_query', message: '路由观察分页参数无效' }, { status: 400 })
+    const scope = routerCursorScope(url)
+    const rawCursor = url.searchParams.get('cursor') || ''
+    const cursor = rawCursor && rawCursor !== '0' ? routerMockCursor(rawCursor, scope) : null
+    if (rawCursor && rawCursor !== '0' && !cursor) return HttpResponse.json({ code: 'bad_router_observation_query', message: '路由观察游标无效' }, { status: 400 })
+    const winners = new Map<string, RouterObservationDetail>()
+    for (const item of routerObservations.filter(item => item.current && matches(item, url))) {
+      const key = routerPhysicalKey(item)
+      const previous = winners.get(key)
+      if (!previous || routerWinnerOrder(item, previous) < 0) winners.set(key, item)
+    }
+    const ordered = [...winners.values()].sort(routerPageOrder).filter(item => !cursor || routerPageOrder(item, cursor) > 0)
+    const hasMore = ordered.length > limit
+    const selected = ordered.slice(0, limit)
+    const items = selected.map(({ evidence: _evidence, history: _history, ...item }) => item)
+    return HttpResponse.json({ items, page: { limit, next_cursor: hasMore ? encodeRouterMockCursor(selected[selected.length - 1], scope) : null, total: 0, has_more: hasMore } })
   }),
   http.get('/api/v1/router-observations/:assessmentId', ({ params }) => {
     const item = routerObservations.find(entry => entry.assessment_id === params.assessmentId)

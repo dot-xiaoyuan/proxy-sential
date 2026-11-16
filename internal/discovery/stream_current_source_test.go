@@ -38,7 +38,7 @@ func (m currentSourceMatcher) Match(expected, actual string) error {
 	return nil
 }
 
-func TestStreamHistoricalClassificationRemainsVisible(t *testing.T) {
+func TestStreamHistoricalIoTClassificationRemainsVisible(t *testing.T) {
 	var query string
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(currentSourceMatcher{&query}))
 	if err != nil {
@@ -46,9 +46,9 @@ func TestStreamHistoricalClassificationRemainsVisible(t *testing.T) {
 	}
 	defer db.Close()
 	now := time.Now().UTC()
-	mock.ExpectQuery("historical-page").WillReturnRows(sqlmock.NewRows([]string{"device_key", "last_seen", "result_version", "document"}).AddRow("old-router", now, int64(7), []byte(`{"id":"old-router","current":false,"last_device_type":"router","classification_status":"expired"}`)))
+	mock.ExpectQuery("historical-page").WillReturnRows(sqlmock.NewRows([]string{"device_key", "last_seen", "result_version", "document"}).AddRow("old-printer", now, int64(7), []byte(`{"id":"old-printer","current":false,"last_device_type":"printer","classification_status":"expired"}`)))
 	mock.ExpectQuery("SELECT min\\(p.accepted_at\\)").WillReturnRows(sqlmock.NewRows([]string{"accepted", "projected", "processing_lag", "version", "active", "projected_epochs"}).AddRow(now, now, float64(0), int64(7), 1, 1))
-	page, err := (Repository{DB: db, ActiveStreamOnly: true}).DevicesState(context.Background(), DeviceQuery{Mode: "passive", DeviceType: "router", State: "expired", Limit: 20})
+	page, err := (Repository{DB: db, ActiveStreamOnly: true}).DevicesState(context.Background(), DeviceQuery{Mode: "passive", DeviceType: "printer", State: "expired", Limit: 20})
 	if err != nil {
 		t.Fatal(err)
 	}

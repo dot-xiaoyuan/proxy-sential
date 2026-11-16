@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -14,7 +17,7 @@ import (
 func routerProjectionPrivatePostgres(t *testing.T) *DBStore {
 	t.Helper()
 	s := activityV3PrivatePostgres(t)
-	for _, name := range []string{"059_router_observations.sql", "066_shared_behavior_observations.sql", "067_shared_behavior_rule_history.sql", "075_shared_behavior_current_discovery.sql"} {
+	for _, name := range []string{"059_router_observations.sql", "066_shared_behavior_observations.sql", "067_shared_behavior_rule_history.sql", "075_shared_behavior_current_discovery.sql", "132_router_assessment_device_rank.sql"} {
 		raw, err := os.ReadFile("../../migrations/postgres/" + name)
 		if err != nil {
 			t.Fatal(err)
@@ -24,6 +27,59 @@ func routerProjectionPrivatePostgres(t *testing.T) *DBStore {
 		}
 	}
 	return s
+}
+
+func TestRouterObservationSeekPagesDeduplicateAcrossBoundariesPostgres(t *testing.T) {
+	s := routerProjectionPrivatePostgres(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	insert := func(id, mac, status string, confidence int, last time.Time) {
+		t.Helper()
+		assessment := evidence.RouterAssessment{AssessmentID: id, MAC: mac, IP: "192.0.2.10", Role: "router", Status: status, Confidence: confidence}
+		raw, err := json.Marshal(assessment)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = s.pg.db.Exec(`INSERT INTO router_assessments(assessment_id,endpoint_id,ip,mac,role,status,confidence,rule_version,first_seen,last_seen,expires_at,assessment)
+VALUES($1,'',$2,$3,'router',$4,$5,'test',$6,$7,$8,$9)`, id, assessment.IP, mac, status, confidence, last.Add(-time.Hour), last, now.Add(time.Hour), raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Many higher-scoring records for one physical MAC must not displace the
+	// confirmed winner or fill a page before the next distinct devices.
+	for i := range 24 {
+		insert(fmt.Sprintf("duplicate-%02d", i), "aa:00:00:00:00:01", "likely", 99, now.Add(-time.Duration(i)*time.Second))
+	}
+	insert("duplicate-winner", "aa:00:00:00:00:01", "confirmed", 75, now.Add(-time.Minute))
+	insert("device-b", "bb:00:00:00:00:02", "likely", 90, now.Add(-time.Minute))
+	insert("device-c", "cc:00:00:00:00:03", "likely", 80, now.Add(-time.Minute))
+	insert("device-d", "dd:00:00:00:00:04", "likely", 60, now.Add(-time.Minute))
+	query := RouterQuery{Role: "network", IncludeCandidates: true, Limit: 2}
+	var ids []string
+	for {
+		page, err := s.ListRouterObservations(ctx, query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range page.Items {
+			ids = append(ids, item.AssessmentID)
+		}
+		if page.Page.NextCursor == nil {
+			if page.Page.HasMore {
+				t.Fatal("has_more without cursor")
+			}
+			break
+		}
+		if !page.Page.HasMore || len(page.Items) != 2 {
+			t.Fatalf("incomplete seek page: %+v", page)
+		}
+		query.SeekCursor = *page.Page.NextCursor
+	}
+	want := []string{"device-b", "device-c", "duplicate-winner", "device-d"}
+	if !slices.Equal(ids, want) {
+		t.Fatalf("seek pages lost/repeated a physical device: got %v want %v", ids, want)
+	}
 }
 
 func routerProjectionFact(now time.Time) evidence.RouterEvidence {

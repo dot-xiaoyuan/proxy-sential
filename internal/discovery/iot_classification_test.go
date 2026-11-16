@@ -36,6 +36,9 @@ func TestIoTClassificationRequiresProductEvidence(t *testing.T) {
 	if c := ClassifyIoT([]Observation{o, {Origin: "lldp", DeviceType: "router", ObservedAt: now, ValidUntil: now.Add(time.Hour)}}, now); !c.Conflict || c.Category != "" {
 		t.Fatalf("infrastructure exclusion missing: %+v", c)
 	}
+	if c := ClassifyIoT([]Observation{o, {Origin: "ssdp", DeviceType: "gateway", ObservedAt: now, ValidUntil: now.Add(time.Hour)}}, now); !c.Conflict || c.Category != "" {
+		t.Fatalf("gateway exclusion missing: %+v", c)
+	}
 	o.Withdrawn = true
 	if c := ClassifyIoT([]Observation{o}, now); c.Category != "" {
 		t.Fatal("withdrawn device admitted")

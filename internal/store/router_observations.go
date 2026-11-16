@@ -2,8 +2,11 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -34,12 +37,56 @@ type RouterQuery struct {
 	Infrastructure    *bool
 	HasAuthBinding    *bool
 	Limit             int
-	Cursor            int
+	SeekCursor        string
+}
+
+type routerObservationCursor struct {
+	Confidence   int       `json:"confidence"`
+	LastSeen     time.Time `json:"last_seen"`
+	AssessmentID string    `json:"assessment_id"`
+	Scope        string    `json:"scope"`
+}
+
+var ErrInvalidRouterObservationCursor = errors.New("invalid router observation cursor")
+
+func routerObservationCursorScope(query RouterQuery) string {
+	query.Limit = 0
+	query.SeekCursor = ""
+	raw, _ := json.Marshal(query)
+	sum := sha256.Sum256(raw)
+	return base64.RawURLEncoding.EncodeToString(sum[:12])
+}
+
+func encodeRouterObservationCursor(cursor routerObservationCursor) string {
+	raw, _ := json.Marshal(cursor)
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func decodeRouterObservationCursor(value, scope string) (routerObservationCursor, error) {
+	if len(value) > 2048 {
+		return routerObservationCursor{}, ErrInvalidRouterObservationCursor
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return routerObservationCursor{}, ErrInvalidRouterObservationCursor
+	}
+	var cursor routerObservationCursor
+	if err = json.Unmarshal(raw, &cursor); err != nil || cursor.LastSeen.IsZero() || cursor.AssessmentID == "" || cursor.Confidence < 0 || cursor.Confidence > 100 || cursor.Scope != scope {
+		return routerObservationCursor{}, ErrInvalidRouterObservationCursor
+	}
+	return cursor, nil
 }
 
 type RouterAssessmentPage struct {
 	Items []evidence.RouterAssessment `json:"items"`
-	Page  Page                        `json:"page"`
+	Page  RouterAssessmentPageInfo    `json:"page"`
+}
+
+type RouterAssessmentPageInfo struct {
+	Limit      int     `json:"limit"`
+	NextCursor *string `json:"next_cursor"`
+	Total      int     `json:"total"` // Legacy field; zero means no exact count was requested.
+	HasMore    bool    `json:"has_more"`
 }
 
 type RouterAssessmentHistory struct {
@@ -328,53 +375,67 @@ func (s *PostgresStore) ListRouterObservations(ctx context.Context, query Router
 	if query.Limit <= 0 {
 		query.Limit = 20
 	}
+	if query.Limit > 100 {
+		query.Limit = 100
+	}
 	where, args, err := routerWhere(query)
 	if err != nil {
 		return RouterAssessmentPage{}, err
 	}
-	args = append(args, query.Limit, query.Cursor)
+	scope := routerObservationCursorScope(query)
+	seek := ""
+	if query.SeekCursor != "" {
+		cursor, err := decodeRouterObservationCursor(query.SeekCursor, scope)
+		if err != nil {
+			return RouterAssessmentPage{}, err
+		}
+		args = append(args, cursor.Confidence, cursor.LastSeen, cursor.AssessmentID)
+		seek = fmt.Sprintf(` AND (f.confidence < $%d OR (f.confidence = $%d AND f.last_seen < $%d) OR (f.confidence = $%d AND f.last_seen = $%d AND f.assessment_id > $%d))`, len(args)-2, len(args)-2, len(args)-1, len(args)-2, len(args)-1, len(args))
+	}
+	args = append(args, query.Limit+1)
 	// A device may first be observed by MAC and later gain an endpoint identity.
 	// Keep both durable assessments for auditability, but expose one current row
 	// per physical device so the operator does not see the same router twice.
-	rows, err := s.db.QueryContext(ctx, `WITH filtered AS (
- SELECT assessment_id,confidence,first_seen,last_seen,expires_at,
-  CASE WHEN mac<>'' THEN 'mac:'||lower(mac)
-       WHEN endpoint_id<>'' THEN 'endpoint:'||endpoint_id
-       WHEN ip IS NOT NULL THEN 'ip:'||host(ip)||':vlans:'||array_to_string(vlans,',')
-       ELSE 'assessment:'||assessment_id END AS device_key,
-  CASE status WHEN 'confirmed' THEN 3 WHEN 'likely' THEN 2 ELSE 1 END AS status_rank,
-  (endpoint_id<>'') AS has_endpoint
+	// The correlated winner lookup uses router_assessment_device_rank. It makes
+	// the chosen row independent of page boundaries without sorting/counting
+	// every current assessment before LIMIT.
+	rows, err := s.db.QueryContext(ctx, `WITH filtered AS NOT MATERIALIZED (
+ SELECT assessment_id,assessment,confidence,first_seen,last_seen,expires_at,
+  device_key,status_rank,(endpoint_id<>'') AS has_endpoint
  FROM router_assessments `+where+`
-), ranked AS (
- SELECT assessment_id,confidence,first_seen,last_seen,expires_at,
-  count(*) OVER(PARTITION BY device_key) AS merged_records,
-  row_number() OVER(PARTITION BY device_key ORDER BY status_rank DESC,confidence DESC,has_endpoint DESC,last_seen DESC,assessment_id) AS device_rank
- FROM filtered
-), devices AS (
- SELECT assessment_id,confidence,first_seen,last_seen,expires_at,merged_records FROM ranked WHERE device_rank=1
-), page AS (
- SELECT assessment_id,confidence,first_seen,last_seen,expires_at,merged_records,count(*) OVER() AS total FROM devices`+fmt.Sprintf(` ORDER BY confidence DESC,last_seen DESC,assessment_id LIMIT $%d OFFSET $%d`, len(args)-1, len(args))+`
 )
-SELECT r.assessment,p.merged_records,p.total,p.first_seen,p.last_seen,p.expires_at FROM page p JOIN router_assessments r USING (assessment_id)
-ORDER BY p.confidence DESC,p.last_seen DESC,p.assessment_id`, args...)
+SELECT f.assessment,f.confidence,f.assessment_id,f.first_seen,f.last_seen,f.expires_at
+FROM filtered f
+WHERE f.assessment_id = (
+ SELECT winner.assessment_id FROM filtered winner
+ WHERE winner.device_key=f.device_key
+ ORDER BY winner.status_rank DESC,winner.confidence DESC,winner.has_endpoint DESC,winner.last_seen DESC,winner.assessment_id
+ LIMIT 1
+)`+seek+fmt.Sprintf(` ORDER BY f.confidence DESC,f.last_seen DESC,f.assessment_id LIMIT $%d`, len(args)), args...)
 	if err != nil {
 		return RouterAssessmentPage{}, err
 	}
 	defer rows.Close()
-	page := RouterAssessmentPage{Items: []evidence.RouterAssessment{}, Page: Page{Limit: query.Limit}}
+	page := RouterAssessmentPage{Items: []evidence.RouterAssessment{}, Page: RouterAssessmentPageInfo{Limit: query.Limit}}
 	for rows.Next() {
 		var raw []byte
-		var mergedRecords int
+		var confidence int
+		var assessmentID string
 		var times routerObservationTimes
-		if err = rows.Scan(&raw, &mergedRecords, &page.Page.Total, &times.first, &times.last, &times.expires); err != nil {
+		if err = rows.Scan(&raw, &confidence, &assessmentID, &times.first, &times.last, &times.expires); err != nil {
 			return page, err
+		}
+		if len(page.Items) == query.Limit {
+			page.Page.HasMore = true
+			break
 		}
 		var item evidence.RouterAssessment
 		if err = json.Unmarshal(raw, &item); err != nil {
 			return page, err
 		}
 		item.Evidence = nil
-		item.MergedRecords = mergedRecords
+		item.AssessmentID = assessmentID
+		item.Confidence = confidence
 		times.applyAssessment(&item)
 		page.Items = append(page.Items, item)
 	}
@@ -387,8 +448,13 @@ ORDER BY p.confidence DESC,p.last_seen DESC,p.assessment_id`, args...)
 	if err = s.attachEndpointLibraries(ctx, page.Items); err != nil {
 		return page, err
 	}
-	if query.Cursor+len(page.Items) < page.Page.Total {
-		next := fmt.Sprint(query.Cursor + len(page.Items))
+	if page.Page.HasMore && len(page.Items) > 0 {
+		last := page.Items[len(page.Items)-1]
+		at, err := time.Parse(time.RFC3339Nano, last.LastSeen)
+		if err != nil {
+			return page, err
+		}
+		next := encodeRouterObservationCursor(routerObservationCursor{Confidence: last.Confidence, LastSeen: at, AssessmentID: last.AssessmentID, Scope: scope})
 		page.Page.NextCursor = &next
 	}
 	return page, nil

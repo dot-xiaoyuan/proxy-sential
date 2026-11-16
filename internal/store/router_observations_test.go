@@ -1,11 +1,78 @@
 package store
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"proxy-sentinel/internal/evidence"
 )
+
+func TestRouterObservationPageAlwaysSerializesHasMore(t *testing.T) {
+	raw, err := json.Marshal(RouterAssessmentPage{Items: []evidence.RouterAssessment{}, Page: RouterAssessmentPageInfo{Limit: 20}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"has_more":false`) {
+		t.Fatalf("last page must explicitly report has_more=false: %s", raw)
+	}
+}
+
+func TestRouterObservationListUsesSeekAndLookahead(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherFunc(func(_, actual string) error {
+		if !strings.Contains(actual, "WITH filtered AS NOT MATERIALIZED") || !strings.Contains(actual, "LIMIT 1") || strings.Contains(actual, "OVER(") || strings.Contains(actual, "count(*)") || strings.Contains(actual, " OFFSET ") {
+			return fmt.Errorf("router list is not a seek query: %s", actual)
+		}
+		return nil
+	})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Date(2026, 11, 16, 1, 2, 3, 0, time.UTC)
+	columns := []string{"assessment", "confidence", "assessment_id", "first_seen", "last_seen", "expires_at"}
+	mock.ExpectQuery("list").WithArgs(2).WillReturnRows(sqlmock.NewRows(columns).
+		AddRow([]byte(`{"assessment_id":"a","confidence":90}`), 90, "a", now.Add(-time.Hour), now, now.Add(time.Hour)).
+		AddRow([]byte(`{"assessment_id":"b","confidence":80}`), 80, "b", now.Add(-time.Hour), now.Add(-time.Minute), now.Add(time.Hour)))
+	store := &PostgresStore{db: db}
+	query := RouterQuery{Role: "network", IncludeCandidates: true, Limit: 1}
+	first, err := store.ListRouterObservations(context.Background(), query)
+	if err != nil || len(first.Items) != 1 || first.Items[0].AssessmentID != "a" || !first.Page.HasMore || first.Page.NextCursor == nil || first.Page.Total != 0 {
+		t.Fatalf("first seek page: %+v err=%v", first, err)
+	}
+	query.SeekCursor = *first.Page.NextCursor
+	mock.ExpectQuery("list").WithArgs(90, now, "a", 2).WillReturnRows(sqlmock.NewRows(columns).
+		AddRow([]byte(`{"assessment_id":"b","confidence":80}`), 80, "b", now.Add(-time.Hour), now.Add(-time.Minute), now.Add(time.Hour)))
+	second, err := store.ListRouterObservations(context.Background(), query)
+	if err != nil || len(second.Items) != 1 || second.Items[0].AssessmentID != "b" || second.Page.HasMore || second.Page.NextCursor != nil {
+		t.Fatalf("second seek page: %+v err=%v", second, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRouterObservationSeekCursorScopesFilters(t *testing.T) {
+	base := RouterQuery{Role: "router", Limit: 20}
+	cursor := routerObservationCursor{Confidence: 82, LastSeen: time.Date(2026, 11, 16, 1, 2, 3, 0, time.UTC), AssessmentID: "router-a", Scope: routerObservationCursorScope(base)}
+	encoded := encodeRouterObservationCursor(cursor)
+	decoded, err := decodeRouterObservationCursor(encoded, routerObservationCursorScope(RouterQuery{Role: "router", Limit: 50}))
+	if err != nil || decoded != cursor {
+		t.Fatalf("same filters should accept cursor: cursor=%+v err=%v", decoded, err)
+	}
+	if _, err := decodeRouterObservationCursor(encoded, routerObservationCursorScope(RouterQuery{Role: "ap", Limit: 20})); err == nil {
+		t.Fatal("cursor must reject another filter scope")
+	}
+	if _, err := decodeRouterObservationCursor("bad-cursor", cursor.Scope); err == nil {
+		t.Fatal("malformed cursor must be rejected")
+	}
+}
 
 func TestRouterWhereIncludesServerFilters(t *testing.T) {
 	minimum, maximum, infrastructure := 60, 80, true
@@ -100,6 +167,19 @@ func TestRouterObservationMigrationIsAdditiveAndIndexed(t *testing.T) {
 	for _, destructive := range []string{"DROP TABLE", "TRUNCATE", "DELETE FROM"} {
 		if strings.Contains(strings.ToUpper(sql), destructive) {
 			t.Fatalf("router observation migration must stay additive: found %s", destructive)
+		}
+	}
+}
+
+func TestRouterObservationSeekMigrationRejectsInvalidPrebuiltIndex(t *testing.T) {
+	raw, err := os.ReadFile("../../migrations/postgres/252_router_assessment_list_seek.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, required := range []string{"router_assessment_list_seek", "IF EXISTS (SELECT 1 FROM public.router_assessments LIMIT 1)", "i.indisvalid", "i.indisready", "i.indislive", "i.indoption::text='3 3 0'", "i.indnkeyatts=3", "predicate IN", "RAISE EXCEPTION"} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("seek migration does not validate %q", required)
 		}
 	}
 }

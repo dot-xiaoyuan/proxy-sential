@@ -383,7 +383,7 @@ paths:
         - { name: infrastructure, in: query, schema: { type: boolean } }
         - { name: has_auth_binding, in: query, description: Only include observations with a current authentication session linked by exact MAC or endpoint identity., schema: { type: boolean } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100 } }
-        - { name: cursor, in: query, schema: { type: string } }
+        - { name: cursor, in: query, description: Opaque next_cursor from the previous router page; legacy zero starts the first page., schema: { type: string } }
       responses:
         '200':
           description: Router observation page
@@ -8269,11 +8269,12 @@ components:
         items: { type: array, items: { $ref: '#/components/schemas/RouterAssessment' } }
         page:
           type: object
-          required: [limit, next_cursor, total]
+          required: [limit, next_cursor, total, has_more]
           properties:
             limit: { type: integer }
             next_cursor: { type: [string, 'null'] }
-            total: { type: integer }
+            total: { type: integer, description: Legacy field; zero means an exact count was not requested. }
+            has_more: { type: boolean, description: Whether another cursor page exists. }
     DeviceListResponse:
       type: object
       required: [items, page]
@@ -8813,6 +8814,14 @@ components:
       properties:
         last_device_type: { type: string }
         last_category: { type: string }
+        network_device_type: { type: string, description: Current passive protocol type clue; empty after expiry or conflict. }
+        last_network_device_type: { type: string, description: Last non-withdrawn passive network type clue. }
+        network_type_status: { type: string, enum: [clue, expired, pending_expiry, conflict, unverified] }
+        network_type_reason: { type: string }
+        network_type_evidence_ids: { type: array, items: { type: string } }
+        network_type_first_seen: { type: string, format: date-time }
+        network_type_last_seen: { type: string, format: date-time }
+        network_type_valid_until: { type: string, format: date-time }
         classification_status: { type: string, enum: [identified, expired, conflict, candidate] }
         classification: { type: object, properties: { reason: { type: string }, rule_version: { type: string }, conflict: { type: boolean }, confidence: { type: string } } }
         manufacturer: { type: string }
@@ -8866,6 +8875,7 @@ components:
       required: [items, next_cursor, has_more, limit, window]
       properties:
         freshness: { $ref: '#/components/schemas/DiscoveryFreshness' }
+        network_type_coverage: { type: string, enum: [new_observations, complete], description: Sparse passive network-type projection covers retained facts in all active epochs only after the bounded backfill completes without unresolved gaps. }
         items: { type: array, items: { $ref: '#/components/schemas/DiscoveryDevice' } }
         next_cursor: { type: string }
         has_more: { type: boolean }

@@ -31,6 +31,9 @@ func (r Repository) DevicesState(ctx context.Context, q DeviceQuery) (map[string
 		if q.Window == 0 {
 			q.Window = 24 * time.Hour
 		}
+		if q.Mode == "passive" && (q.DeviceType == "router" || q.DeviceType == "access_point") {
+			return r.devicesNetworkState(ctx, q)
+		}
 	}
 	signature := contentHash(struct {
 		View, Search, Category, Type, Protocol, State, Domain, VLAN, Capability string

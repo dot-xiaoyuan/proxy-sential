@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -42,6 +43,10 @@ func (s *Server) handleRouterObservations(w http.ResponseWriter, r *http.Request
 	}
 	page, err := reader.ListRouterObservations(ctx, query)
 	if err != nil {
+		if errors.Is(err, store.ErrInvalidRouterObservationCursor) {
+			writeError(w, http.StatusBadRequest, "bad_router_observation_query", "路由观察游标无效")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "read_router_observations_failed", err.Error())
 		return
 	}
@@ -53,9 +58,12 @@ func routerObservationQuery(values url.Values) (store.RouterQuery, error) {
 	if err != nil {
 		return store.RouterQuery{}, err
 	}
-	cursor, err := cursorOffset(values.Get("cursor"))
-	if err != nil {
-		return store.RouterQuery{}, err
+	cursor := strings.TrimSpace(values.Get("cursor"))
+	if numeric, parseErr := strconv.Atoi(cursor); parseErr == nil {
+		if numeric != 0 {
+			return store.RouterQuery{}, &routerQueryError{message: "路由观察游标无效"}
+		}
+		cursor = ""
 	}
 	parseConfidence := func(name string) (*int, error) {
 		raw := strings.TrimSpace(values.Get(name))
@@ -118,7 +126,7 @@ func routerObservationQuery(values url.Values) (store.RouterQuery, error) {
 		return store.RouterQuery{}, &routerQueryError{message: "role 无效"}
 	}
 	return store.RouterQuery{
-		Keyword: strings.TrimSpace(values.Get("keyword")), IP: strings.TrimSpace(values.Get("ip")), MAC: strings.TrimSpace(values.Get("mac")), VLAN: strings.TrimSpace(values.Get("vlan")), Brand: strings.TrimSpace(values.Get("brand")), Model: strings.TrimSpace(values.Get("model")), Role: role, Status: status, IncludeCandidates: includeCandidates, Source: strings.TrimSpace(values.Get("source")), ConfidenceMin: minimum, ConfidenceMax: maximum, FirstSeenFrom: strings.TrimSpace(values.Get("first_seen_from")), FirstSeenTo: strings.TrimSpace(values.Get("first_seen_to")), LastSeenFrom: strings.TrimSpace(values.Get("last_seen_from")), LastSeenTo: strings.TrimSpace(values.Get("last_seen_to")), Infrastructure: infrastructure, HasAuthBinding: hasAuthBinding, Limit: limit, Cursor: cursor,
+		Keyword: strings.TrimSpace(values.Get("keyword")), IP: strings.TrimSpace(values.Get("ip")), MAC: strings.TrimSpace(values.Get("mac")), VLAN: strings.TrimSpace(values.Get("vlan")), Brand: strings.TrimSpace(values.Get("brand")), Model: strings.TrimSpace(values.Get("model")), Role: role, Status: status, IncludeCandidates: includeCandidates, Source: strings.TrimSpace(values.Get("source")), ConfidenceMin: minimum, ConfidenceMax: maximum, FirstSeenFrom: strings.TrimSpace(values.Get("first_seen_from")), FirstSeenTo: strings.TrimSpace(values.Get("first_seen_to")), LastSeenFrom: strings.TrimSpace(values.Get("last_seen_from")), LastSeenTo: strings.TrimSpace(values.Get("last_seen_to")), Infrastructure: infrastructure, HasAuthBinding: hasAuthBinding, Limit: limit, SeekCursor: cursor,
 	}, nil
 }
 

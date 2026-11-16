@@ -10,7 +10,6 @@ import (
 	"proxy-sentinel/internal/sharedaccess"
 	"reflect"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -41,10 +40,10 @@ func (s *Server) evaluatePolicyQuota(ctx context.Context, account string, sessio
 		}
 	}
 	seen := map[string]bool{}
-	cursor := 0
+	cursor := ""
 	for {
 		hasBinding := true
-		page, err := reader.ListRouterObservations(ctx, store.RouterQuery{Role: "router", HasAuthBinding: &hasBinding, Limit: 100, Cursor: cursor})
+		page, err := reader.ListRouterObservations(ctx, store.RouterQuery{Role: "router", HasAuthBinding: &hasBinding, Limit: 100, SeekCursor: cursor})
 		if err != nil {
 			quota.CoverageComplete = false
 			quota.State = "unknown"
@@ -65,9 +64,12 @@ func (s *Server) evaluatePolicyQuota(ctx context.Context, account string, sessio
 		if page.Page.NextCursor == nil || *page.Page.NextCursor == "" {
 			break
 		}
-		next, err := strconv.Atoi(*page.Page.NextCursor)
-		if err != nil || next <= cursor {
-			break
+		next := *page.Page.NextCursor
+		if next == cursor {
+			quota.CoverageComplete = false
+			quota.State = "unknown"
+			quota.Reasons = append(quota.Reasons, "router_observation_pagination_stalled")
+			return quota
 		}
 		cursor = next
 	}

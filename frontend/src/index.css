@@ -4205,6 +4205,7 @@ pre.wrap-code {
 .router-evidence-events summary { width: fit-content; cursor: pointer; color: #2563eb; font-size: 12px; }
 .router-evidence-events div { margin-top: 6px; color: #64748b; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; overflow-wrap: anywhere; }
 .router-observations-panel .ant-btn, .router-observations-panel .ant-tag, .router-detail-page .ant-tag { white-space: nowrap; flex-shrink: 0; }
+.router-network-evidence-refs { overflow-wrap: anywhere; }
 @media(max-width:559px) {
   .router-filter-form { padding: 10px 0; }
   .router-filter-primary { flex-wrap: wrap; }

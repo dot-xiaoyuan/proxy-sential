@@ -3,8 +3,8 @@ import {
   observedTimeTitle } from '../shared/ui/observedTime'
 import { DeviceAddress } from '../entities/device/DeviceAddress'
 import { detailPath } from '../app/navigation'
-import { AppTable,
-  useServerPagination } from '../shared/ui'
+import { AppTable } from '../shared/ui'
+import { RecordCursorPagination, useRecordCursorPagination } from '../shared/ui/RecordCursorPagination'
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Button,
@@ -22,7 +22,7 @@ import { Link,useLocation,useSearchParams } from 'react-router-dom'
 import { InfoCircleOutlined } from '@ant-design/icons'
 import { api } from '../shared/api/client'
 import type { RouterAssessment, RouterObservationQuery } from '../shared/api/types'
-import { AppErrorAlert, AppListHeader, AppLoadingState, AppServerPagination, AppTableBar, useMediaQuery } from '../shared/ui'
+import { AppErrorAlert, AppListHeader, AppLoadingState, AppTableBar, useMediaQuery } from '../shared/ui'
 import { BrandLogo } from '../entities/device/BrandLogo'
 import { routerLibraryLabels } from '../entities/device/libraryLabels'
 import { routerConflictLabels, routerRoleLabels, routerSourceLabels, routerStatusLabels } from './routerLabels'
@@ -56,8 +56,9 @@ export function RouterObservationsPanel() {
 
 function RouterRoleObservationsPanel() {
   const [form] = Form.useForm()
-  const location=useLocation();const [params,setParams]=useSearchParams();const pagination=useServerPagination('routers_');const page=pagination.page;const setPage=(value:number)=>pagination.update(value,pagination.pageSize)
+  const location=useLocation();const [params,setParams]=useSearchParams()
   const query=routerObservationQueryFromParams(params)
+  const pagination=useRecordCursorPagination(JSON.stringify(query));const page=pagination.page
   const view = params.get('routers_view') === 'ap' ? 'ap' : 'router'
   const desktopAuth = useMediaQuery('(min-width: 1100px)')
   const mobileAuth = useMediaQuery('(max-width: 559px)')
@@ -65,11 +66,9 @@ function RouterRoleObservationsPanel() {
   const [searchDraft,setSearchDraft]=useState(String(params.get('router_keyword')||''))
   const [moreOpen,setMoreOpen]=useState(false)
   useEffect(()=>{setSearchDraft(String(params.get('router_keyword')||''))},[params])
-  query.limit=pagination.pageSize
   useEffect(()=>{form.setFieldsValue(query)},[params,form])
-  const requestQuery = { ...query, cursor: String((page - 1) * (query.limit || 20)) }
+  const requestQuery = { ...query, limit: pagination.pageSize, cursor: pagination.cursor || undefined }
   const observations = useQuery({ queryKey: ['router-observations', requestQuery], queryFn: () => api.routerObservations(requestQuery) })
-  useEffect(() => { if (observations.data && observations.data.items.length === 0 && page > 1) setPage(1) }, [observations.data, page])
   const hasAuthBinding = Form.useWatch('has_auth_binding', form)
   const search = (value: string) => submit({ ...form.getFieldsValue(), keyword: value.trim() })
   useEffect(()=>{const timer=globalThis.setTimeout(()=>{const next=searchDraft.trim();if(next!==String(params.get('router_keyword')||''))search(next)},300);return()=>globalThis.clearTimeout(timer)},[searchDraft])
@@ -86,7 +85,6 @@ function RouterRoleObservationsPanel() {
     { title:'最近观测',dataIndex:'last_seen',width:100,render:(value?:string)=><ObservedTime value={value}/> },
     { title:'操作',key:'action',width:75,render:(_,item)=><Link to={detailPath(`/devices/network/${encodeURIComponent(item.assessment_id)}`,location.pathname+location.search)}>查看详情</Link> },
   ]
-  const total = observations.data?.page?.total
   return <div className="router-observations-panel">
     {/* Filters and the list identity share one card so the table is not pushed down. */}
     <Form form={form} className="router-filter-form" layout="vertical" onFinish={submit}>
@@ -125,12 +123,11 @@ function RouterRoleObservationsPanel() {
     <section className="surface center-list-surface">
       <AppListHeader
         title={view === 'ap' ? '接入点观察' : '路由器观察'}
-        count={total===undefined?undefined:`${total} 台${view === 'ap' ? '接入点' : '设备'}`}
         actions={<Tooltip title={view === 'ap' ? '本页识别接入点。接入点记录不参与路由器确认；分类基于 DHCP、LLDP、管理面等证据，仍可能受弱信号影响。' : '本页识别路由器，不代表下游共享已确认。分数表示证据匹配强度；路由器确认还要求明确路由角色、独立来源、强证据和可靠设备关联，基础设施及排除证据会阻断确认。'}><InfoCircleOutlined aria-label="网络设备说明" /></Tooltip>}
       />
       {observations.isLoading ? <AppLoadingState rows={6} /> : observations.isError ? <AppErrorAlert title="路由观察读取失败" message={observations.error.message} /> : <>
         <AppTable rowKey="assessment_id" columns={columns} dataSource={items} pagination={false} tableLayout="fixed" scroll={{ x: showAuth ? 865 : 720 }} locale={{ emptyText: view === 'ap' ? '暂无匹配的接入点' : '暂无匹配的路由器' }} />
-        <AppServerPagination page={page} pageSize={pagination.pageSize} total={total} onChange={pagination.update}/>
+        {(items.length > 0 || page > 1) && <RecordCursorPagination page={page} pageSize={pagination.pageSize} count={items.length} nextCursor={observations.data?.page?.next_cursor ?? ''} fetching={observations.isFetching} onNext={() => pagination.next(observations.data?.page?.next_cursor ?? '')} onPrevious={pagination.previous} onPageSizeChange={pagination.changePageSize} />}
     </>}</section>
   </div>
 }

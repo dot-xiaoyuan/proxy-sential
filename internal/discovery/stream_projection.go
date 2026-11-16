@@ -199,7 +199,7 @@ func prepareStreamDiscovery(segment streamlog.Segment) ([]streamPreparedDiscover
 
 func excludedStreamDeviceType(kind string) bool {
 	switch strings.ToLower(kind) {
-	case "mobile", "phone", "desktop", "laptop", "computer", "server", "router", "switch", "access_point", "firewall":
+	case "mobile", "phone", "desktop", "laptop", "computer", "server", "router", "gateway", "switch", "access_point", "firewall":
 		return true
 	}
 	return false

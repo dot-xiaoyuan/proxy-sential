@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -413,14 +412,13 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 				}
 				items = append(items, proxyReviewCaseForRouterAssessment(assessment))
 			}
-			if page.Page.NextCursor == nil {
+			if page.Page.NextCursor == nil || *page.Page.NextCursor == "" {
 				break
 			}
-			next, err := strconv.Atoi(*page.Page.NextCursor)
-			if err != nil {
-				return err
+			if *page.Page.NextCursor == routerQuery.SeekCursor {
+				return fmt.Errorf("router observation pagination stalled")
 			}
-			routerQuery.Cursor = next
+			routerQuery.SeekCursor = *page.Page.NextCursor
 		}
 		closableKinds["router_observation"] = true
 	}

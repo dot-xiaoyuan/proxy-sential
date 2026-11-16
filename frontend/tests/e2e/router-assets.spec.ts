@@ -18,26 +18,26 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
         if (!url.pathname.endsWith('/discovery/devices')) return original(input, init)
         const stamp = new Date().toISOString()
         const type = url.searchParams.get('type') || 'router'
+        const current = { id: 'router-current', mac: '02:20:40:00:00:04', name: '教学楼路由设备', device_type: '', network_device_type: type === 'router' ? 'gateway' : type, last_network_device_type: type === 'router' ? 'gateway' : type, network_type_status: 'clue', network_type_reason: '被动协议公告提供设备类型线索，尚未核验整机类型或违规角色', network_type_evidence_ids: ['lldp-reference-1'], network_type_first_seen: stamp, network_type_last_seen: stamp, category: '', identity_kind: 'link_layer_device', manufacturer: 'Huawei', model_name: 'AR6120', classification_status: 'candidate', first_seen: stamp, last_seen: stamp, current: true, current_addresses: ['192.0.2.41'], primary_ip: '192.0.2.41', last_observed_ip: '192.0.2.41', protocols: ['lldp', 'dhcp'], capabilities: ['routing'], observations: [], evidence_count: 2, domain: '教学网', vlan: '20' }
+        const expired = { id: 'router-expired', mac: '02:20:40:00:00:05', name: '历史路由记录', device_type: '', network_device_type: '', last_network_device_type: type, network_type_status: 'pending_expiry', network_type_reason: '历史设备类型线索已过期', network_type_evidence_ids: ['ssdp-reference-2'], network_type_first_seen: stamp, network_type_last_seen: stamp, category: '', identity_kind: 'link_layer_device', classification_status: 'candidate', first_seen: stamp, last_seen: stamp, current: false, current_addresses: [], primary_ip: '192.0.2.42', last_observed_ip: '192.0.2.42', protocols: ['dhcp'], capabilities: [], observations: [], evidence_count: 1 }
         const response = {
-          items: [
-            { id: 'router-current', mac: '02:20:40:00:00:04', name: '教学楼路由设备', device_type: type, category: 'network', identity_kind: 'link_layer_device', manufacturer: 'Huawei', model_name: 'AR6120', classification_status: 'identified', first_seen: stamp, last_seen: stamp, current: true, current_addresses: ['192.0.2.41'], primary_ip: '192.0.2.41', last_observed_ip: '192.0.2.41', protocols: ['lldp', 'dhcp'], capabilities: ['routing'], observations: [], evidence_count: 2, domain: '教学网', vlan: '20' },
-            { id: 'router-expired', mac: '02:20:40:00:00:05', name: '历史路由记录', device_type: '', last_device_type: type, category: 'network', identity_kind: 'link_layer_device', classification_status: 'expired', first_seen: stamp, last_seen: stamp, current: false, current_addresses: [], primary_ip: '192.0.2.42', last_observed_ip: '192.0.2.42', protocols: ['dhcp'], capabilities: [], observations: [], evidence_count: 1 },
-          ], limit: 20, next_cursor: '', has_more: false,
+          items: url.searchParams.get('state') === 'expired' ? [expired] : [current], limit: 20, next_cursor: '', has_more: false, network_type_coverage: 'new_observations',
           freshness: { status: 'unknown', source: 'stream', source_progress_status: 'unverified', processed_at: stamp, lag_seconds: 0, processing_lag_seconds: 0, result_version: 42 },
         }
         return new Response(JSON.stringify(response), { headers: { 'Content-Type': 'application/json' } })
       }
     })
     await page.goto('/devices?tab=network&routers_view=router')
-    await expect(page.getByText('第 1 页 · 本页 2 条', { exact: true })).toBeVisible()
+    await expect(page.getByText('第 1 页 · 本页 1 条', { exact: true })).toBeVisible()
     await expect(page.getByText(/来源进度尚未核验/)).toBeVisible()
     await expect(page.getByText(/不具备来源追平证明/)).toBeVisible()
     await expect(page.getByText('教学楼路由设备', { exact: true })).toBeVisible()
-    await expect(page.getByText('历史路由器', { exact: true })).toBeVisible()
-    await expect(page.getByText('历史 IP：192.0.2.42', { exact: true })).toBeVisible()
-    await expect(page.getByText('设备类型用于资产管理；违规与共享行为需另行核验。', { exact: true })).toBeVisible()
-    await expect(page.getByRole('button', { name: '下一页' })).toBeDisabled()
-    await expect(page.getByRole('button', { name: '上一页' })).toBeDisabled()
+    await expect(page.getByText('网关类型线索', { exact: true })).toBeVisible()
+    await expect(page.getByText(/旧状态尚未批量回填/)).toBeVisible()
+    await expect(page.getByText('被动协议公告提供设备类型线索，整机类型需核验；违规与共享行为由独立角色评估判断。', { exact: true })).toBeVisible()
+    const assetPanel = page.locator('section.router-observations-panel')
+    await expect(assetPanel.getByRole('button', { name: '下一页' })).toBeDisabled()
+    await expect(assetPanel.getByRole('button', { name: '上一页' })).toBeDisabled()
     expect(discoveryRequests.some(url => url.includes('/metadata') || url.includes('/position'))).toBe(false)
     const probe = await page.evaluate(() => {
       const panel = document.querySelector('section.router-observations-panel')!
@@ -63,7 +63,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     })
     await writeFile(info.outputPath('router-assets-dom.json'), JSON.stringify({ viewport, probe, errors }, null, 2))
     await page.screenshot({ path: info.outputPath('router-assets.png'), fullPage: true, animations: 'disabled' })
-    await page.locator('.shared-policy-cursor-pagination').screenshot({ path: info.outputPath('router-assets-pagination.png'), animations: 'disabled' })
+    await assetPanel.locator('.shared-policy-cursor-pagination').screenshot({ path: info.outputPath('router-assets-pagination.png'), animations: 'disabled' })
     expect(probe.overflow).toBe(false)
     expect(probe.panelOverflow).toBe(false)
     expect(probe.controls).toEqual([])
@@ -77,6 +77,9 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await expect(page.getByRole('link', { name: '在发现设备中查看' })).toHaveAttribute('href', /discovery_search=02/)
     await page.screenshot({ path: info.outputPath('router-asset-details.png'), fullPage: true, animations: 'disabled' })
     expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 2)).toBe(false)
+    await page.goto('/devices?tab=network&routers_view=router&routers_state=expired')
+    await expect(page.getByText('路由器类型线索（已到期，待投影处理）', { exact: true })).toBeVisible()
+    await expect(page.getByText('历史 IP：192.0.2.42', { exact: true })).toBeVisible()
     expect(errors).toEqual([])
   })
 }

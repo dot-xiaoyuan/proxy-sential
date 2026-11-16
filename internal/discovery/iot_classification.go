@@ -139,7 +139,7 @@ func ClassifyIoT(observations []Observation, now time.Time) IoTClassification {
 			continue
 		}
 		switch o.DeviceType {
-		case "mobile", "phone", "desktop", "laptop", "computer", "server", "router", "switch", "access_point", "firewall":
+		case "mobile", "phone", "desktop", "laptop", "computer", "server", "router", "gateway", "switch", "access_point", "firewall":
 			excluded = true
 		}
 		kind, reason := observationIoTType(o)

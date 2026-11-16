@@ -31,7 +31,7 @@ type routerCaseSyncReader struct {
 }
 
 func (r *routerCaseSyncReader) ListRouterObservations(context.Context, store.RouterQuery) (store.RouterAssessmentPage, error) {
-	return store.RouterAssessmentPage{Items: r.routers, Page: store.Page{Limit: 100, Total: len(r.routers)}}, nil
+	return store.RouterAssessmentPage{Items: r.routers, Page: store.RouterAssessmentPageInfo{Limit: 100, Total: len(r.routers)}}, nil
 }
 
 func (r *routerCaseSyncReader) GetRouterObservation(context.Context, string) (store.RouterObservationDetail, bool, error) {

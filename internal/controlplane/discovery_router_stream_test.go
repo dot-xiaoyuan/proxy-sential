@@ -26,8 +26,9 @@ func TestRouterAssetListReadsMaintainedStreamWithEventBusShadowEnabled(t *testin
 				}
 				defer db.Close()
 				now := time.Now().UTC()
-				mock.ExpectQuery(`WITH fresh AS MATERIALIZED`).WillReturnRows(sqlmock.NewRows([]string{"device_key", "last_seen", "result_version", "document"}).AddRow("stream-device", now, int64(42), []byte(`{"id":"stream-device","current":true,"device_type":"`+deviceType+`"}`)))
+				mock.ExpectQuery(`FROM stream_discovery_network_state n`).WillReturnRows(sqlmock.NewRows([]string{"device_key", "type_last_seen", "result_version", "document"}).AddRow("stream-device", now, int64(42), []byte(`{"id":"stream-device","current":true,"network_device_type":"`+deviceType+`","network_type_status":"clue"}`)))
 				mock.ExpectQuery(`SELECT min\(p.accepted_at\),min\(p.projected_at\)`).WillReturnRows(sqlmock.NewRows([]string{"accepted", "projected", "processing_lag", "version", "active", "projected_epochs"}).AddRow(now.Add(-2*time.Second), now, 2.0, int64(42), 1, 1))
+				mock.ExpectQuery(`JOIN stream_discovery_network_backfill_progress p`).WillReturnRows(sqlmock.NewRows([]string{"covered"}).AddRow(false))
 				server := &Server{operations: &operationsState{db: db}}
 				response := httptest.NewRecorder()
 				server.handleDiscovery(response, httptest.NewRequest("GET", "/discovery/devices?mode=passive&type="+deviceType+"&window=24h", nil), "/discovery/devices")
@@ -38,11 +39,12 @@ func TestRouterAssetListReadsMaintainedStreamWithEventBusShadowEnabled(t *testin
 					Items     []map[string]any `json:"items"`
 					Freshness map[string]any   `json:"freshness"`
 					Total     *int             `json:"total"`
+					Coverage  string           `json:"network_type_coverage"`
 				}
 				if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
 					t.Fatal(err)
 				}
-				if len(result.Items) != 1 || result.Freshness["source"] != "stream" || result.Total != nil {
+				if len(result.Items) != 1 || result.Freshness["source"] != "stream" || result.Total != nil || result.Coverage != "new_observations" {
 					t.Fatalf("router asset page=%+v", result)
 				}
 				if err := mock.ExpectationsWereMet(); err != nil {

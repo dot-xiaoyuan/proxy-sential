@@ -619,6 +619,12 @@ func (s *Server) handleCORS(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
+	observed := &apiRequestStatusWriter{ResponseWriter: w}
+	defer func() {
+		logSlowAPIRequest(r, observed.statusCode(), time.Since(started))
+	}()
+	w = observed
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1")
 	if path == "/integrations/identity/bridge/catalog-snapshots" && r.Method == http.MethodPost {
 		s.handleIdentityBridgeCatalogSnapshot(w, r)

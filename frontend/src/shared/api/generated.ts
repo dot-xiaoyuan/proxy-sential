@@ -7805,7 +7805,10 @@ export interface components {
             page: {
                 limit: number;
                 next_cursor: string | null;
+                /** @description Legacy field; zero means an exact count was not requested. */
                 total: number;
+                /** @description Whether another cursor page exists. */
+                has_more: boolean;
             };
         };
         DeviceListResponse: {
@@ -8298,6 +8301,20 @@ export interface components {
         DiscoveryDevice: {
             last_device_type?: string;
             last_category?: string;
+            /** @description Current passive protocol type clue; empty after expiry or conflict. */
+            network_device_type?: string;
+            /** @description Last non-withdrawn passive network type clue. */
+            last_network_device_type?: string;
+            /** @enum {string} */
+            network_type_status?: "clue" | "expired" | "pending_expiry" | "conflict" | "unverified";
+            network_type_reason?: string;
+            network_type_evidence_ids?: string[];
+            /** Format: date-time */
+            network_type_first_seen?: string;
+            /** Format: date-time */
+            network_type_last_seen?: string;
+            /** Format: date-time */
+            network_type_valid_until?: string;
             /** @enum {string} */
             classification_status?: "identified" | "expired" | "conflict" | "candidate";
             classification?: {
@@ -8366,6 +8383,11 @@ export interface components {
         };
         DiscoveryDevicePage: {
             freshness?: components["schemas"]["DiscoveryFreshness"];
+            /**
+             * @description Sparse passive network-type projection covers retained facts in all active epochs only after the bounded backfill completes without unresolved gaps.
+             * @enum {string}
+             */
+            network_type_coverage?: "new_observations" | "complete";
             items: components["schemas"]["DiscoveryDevice"][];
             next_cursor: string;
             has_more: boolean;
@@ -10217,6 +10239,7 @@ export interface operations {
                 /** @description Only include observations with a current authentication session linked by exact MAC or endpoint identity. */
                 has_auth_binding?: boolean;
                 limit?: number;
+                /** @description Opaque next_cursor from the previous router page; legacy zero starts the first page. */
                 cursor?: string;
             };
             header?: never;

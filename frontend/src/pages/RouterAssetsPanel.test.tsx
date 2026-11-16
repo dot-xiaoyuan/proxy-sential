@@ -13,7 +13,10 @@ afterEach(() => { cleanup(); request.mockReset(); observations.mockReset() })
 
 const row = {
   id: 'mirror-router-1', endpoint_id: 'mac:02:00:00:00:00:01', mac: '02:00:00:00:00:01',
-  name: '宿舍路由设备', device_type: 'router', classification_status: 'identified', category: 'network',
+  name: '宿舍路由设备', device_type: '', classification_status: 'candidate', category: '',
+  network_device_type: 'router', last_network_device_type: 'router', network_type_status: 'clue',
+  network_type_reason: '被动协议公告提供设备类型线索，尚未核验整机类型或违规角色', network_type_evidence_ids: ['ssdp-reference-1'],
+  network_type_first_seen: '2026-11-05T12:00:00Z', network_type_last_seen: '2026-11-05T16:00:00Z',
   current_addresses: ['192.0.2.10'], last_observed_ip: '192.0.2.9', primary_ip: '192.0.2.10',
   protocols: ['dhcp', 'ssdp'], capabilities: ['routing'], observations: [], evidence_count: 2,
   first_seen: '2026-11-05T12:00:00Z', last_seen: '2026-11-05T16:00:00Z', current: true,
@@ -23,7 +26,7 @@ function setup(entry = '/devices?tab=network&routers_view=router', candidates: A
   observations.mockResolvedValue({ items: [], page: { total: 0 } })
   request.mockImplementation((path: string) => {
     if (path.startsWith('/discovery/chassis-candidates')) return Promise.resolve({ items: candidates })
-    return Promise.resolve({ items: [row], limit: 20, has_more: false, next_cursor: '', freshness: { status: 'unknown', source: 'stream', source_progress_status: 'unverified', processed_at: '2026-11-05T16:00:00Z' } })
+    return Promise.resolve({ items: [row], limit: 20, has_more: false, next_cursor: '', network_type_coverage: 'new_observations', freshness: { status: 'unknown', source: 'stream', source_progress_status: 'unverified', processed_at: '2026-11-05T16:00:00Z' } })
   })
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={[entry]}><RouterObservationsPanel /></MemoryRouter></QueryClientProvider>)
 }
@@ -33,7 +36,9 @@ it('shows discovered routers without requiring a risk or router-assessment recor
   expect(await screen.findByText('宿舍路由设备')).toBeVisible()
   expect(screen.getByText(/来源进度尚未核验/)).toBeVisible()
   expect(screen.getByText(/不具备来源追平证明/)).toBeVisible()
-  expect(screen.getByText('设备类型用于资产管理；违规与共享行为需另行核验。')).toBeVisible()
+  expect(screen.getByText('被动协议公告提供设备类型线索，整机类型需核验；违规与共享行为由独立角色评估判断。')).toBeVisible()
+  expect(screen.getByText(/旧状态尚未批量回填/)).toBeVisible()
+  expect(screen.getByText('路由器类型线索')).toBeVisible()
   await waitFor(() => expect(observations).toHaveBeenCalledWith(expect.objectContaining({ role: 'router', include_candidates: false })))
   const list = request.mock.calls.find(([path]) => String(path).startsWith('/discovery/devices?'))!
   const query = new URL(String(list[0]), 'http://localhost').searchParams
@@ -45,6 +50,17 @@ it('shows discovered routers without requiring a risk or router-assessment recor
   fireEvent.click(screen.getByRole('button', { name: '查看设备' }))
   expect(await screen.findByText('设备资料')).toBeInTheDocument()
   expect(screen.queryByText('确认违规')).not.toBeInTheDocument()
+})
+
+it('continues router role observations using the returned seek cursor', async () => {
+  const assessment = { assessment_id: 'role-router-1', role: 'router', status: 'likely', confidence: 80, ip: '192.0.2.20', mac: '02:00:00:00:00:20', conflicts: [], sources: [], score_components: [], libraries: [], last_seen: '2026-11-05T16:00:00Z' }
+  observations.mockImplementation((query: { cursor?: string }) => Promise.resolve({ items: [{ ...assessment, assessment_id: query.cursor ? 'role-router-2' : assessment.assessment_id, ip: query.cursor ? '192.0.2.21' : assessment.ip }], page: { limit: 20, total: 0, next_cursor: query.cursor ? null : 'opaque-role-cursor', has_more: !query.cursor } }))
+  request.mockResolvedValue({ items: [row], limit: 20, has_more: false, next_cursor: '' })
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={['/devices?tab=network&routers_view=router']}><RouterObservationsPanel /></MemoryRouter></QueryClientProvider>)
+  expect(await screen.findByText('192.0.2.20')).toBeInTheDocument()
+  fireEvent.click(screen.getAllByRole('button', { name: '下一页' })[0])
+  await waitFor(() => expect(observations).toHaveBeenCalledWith(expect.objectContaining({ cursor: 'opaque-role-cursor' })))
+  expect(await screen.findByText('192.0.2.21')).toBeInTheDocument()
 })
 
 it('annotates an LLDP-only router with a same-chassis candidate', async () => {
@@ -67,7 +83,7 @@ it('loads route role evidence before passive asset classification', async () => 
   setup()
   await screen.findByText('宿舍路由设备')
   await waitFor(() => expect(observations).toHaveBeenCalledWith(expect.objectContaining({ role: 'router', include_candidates: false })))
-  expect(screen.getByText('设备类型用于资产管理；违规与共享行为需另行核验。')).toBeVisible()
+  expect(screen.getByText('被动协议公告提供设备类型线索，整机类型需核验；违规与共享行为由独立角色评估判断。')).toBeVisible()
 })
 
 it('keeps every returned evidence reference in the grouped detail instead of truncating after ten', async () => {
@@ -85,10 +101,10 @@ it('keeps every returned evidence reference in the grouped detail instead of tru
 it('keeps expired router classification explicitly historical and never displays its old address as current', async () => {
   setup()
   await screen.findByText('宿舍路由设备')
-  request.mockResolvedValue({ items: [{ ...row, current: false, classification_status: 'expired', device_type: '', last_device_type: 'router', current_addresses: [] }], limit: 20, has_more: false, next_cursor: '' })
+  request.mockResolvedValue({ items: [{ ...row, current: false, network_device_type: '', last_network_device_type: 'router', network_type_status: 'expired', network_type_reason: '历史设备类型线索已过期', current_addresses: [] }], limit: 20, has_more: false, next_cursor: '' })
   fireEvent.click(screen.getByRole('button', { name: '刷新设备' }))
-  expect(await screen.findByText('历史路由器')).toBeVisible()
-  expect(screen.getByText('类型证据已过期')).toBeVisible()
+  expect(await screen.findByText('历史路由器类型线索')).toBeVisible()
+  expect(screen.getByText('历史设备类型线索已过期')).toBeVisible()
   expect(screen.getByText('历史 IP：192.0.2.9')).toBeVisible()
   expect(screen.queryByText('192.0.2.10')).not.toBeInTheDocument()
 })

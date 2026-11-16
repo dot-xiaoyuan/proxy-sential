@@ -19,26 +19,32 @@ const maxStreamFactsPerDevice = 256
 var ErrStreamFactScopeMismatch = errors.New("stream fact scope or device mismatch")
 
 type streamDiscoveryState struct {
-	Epoch                string         `json:"epoch"`
-	Device               string         `json:"device_key"`
-	Scope                string         `json:"scope_id"`
-	Sensor               string         `json:"sensor_id"`
-	Site                 string         `json:"site"`
-	Domain               string         `json:"domain"`
-	VLAN                 string         `json:"vlan"`
-	Interface            string         `json:"interface_name"`
-	Name                 string         `json:"name"`
-	Manufacturer         string         `json:"manufacturer"`
-	Model                string         `json:"model_name"`
-	DeviceType           string         `json:"device_type"`
-	Category             string         `json:"category"`
-	LastDeviceType       string         `json:"last_device_type"`
-	LastCategory         string         `json:"last_category"`
-	ClassificationStatus string         `json:"classification_status"`
-	FirstSeen            time.Time      `json:"first_seen"`
-	LastSeen             time.Time      `json:"last_seen"`
-	ExpiresAt            *time.Time     `json:"expires_at"`
-	Document             map[string]any `json:"document"`
+	Epoch                 string         `json:"epoch"`
+	Device                string         `json:"device_key"`
+	Scope                 string         `json:"scope_id"`
+	Sensor                string         `json:"sensor_id"`
+	Site                  string         `json:"site"`
+	Domain                string         `json:"domain"`
+	VLAN                  string         `json:"vlan"`
+	Interface             string         `json:"interface_name"`
+	Name                  string         `json:"name"`
+	Manufacturer          string         `json:"manufacturer"`
+	Model                 string         `json:"model_name"`
+	DeviceType            string         `json:"device_type"`
+	Category              string         `json:"category"`
+	LastDeviceType        string         `json:"last_device_type"`
+	LastCategory          string         `json:"last_category"`
+	NetworkDeviceType     string         `json:"network_device_type"`
+	LastNetworkDeviceType string         `json:"last_network_device_type"`
+	NetworkTypeStatus     string         `json:"network_type_status"`
+	NetworkTypeFirstSeen  time.Time      `json:"network_type_first_seen"`
+	NetworkTypeLastSeen   time.Time      `json:"network_type_last_seen"`
+	NetworkTypeValidUntil time.Time      `json:"network_type_valid_until"`
+	ClassificationStatus  string         `json:"classification_status"`
+	FirstSeen             time.Time      `json:"first_seen"`
+	LastSeen              time.Time      `json:"last_seen"`
+	ExpiresAt             *time.Time     `json:"expires_at"`
+	Document              map[string]any `json:"document"`
 }
 
 // A repeat may bypass the expensive state fact scan only when its new fact
@@ -53,6 +59,12 @@ type streamRepeatStateSkip struct {
 }
 
 func streamRepeatStateCandidate(previous *streamDiscoveryFact, next streamDiscoveryFact, decision streamFactDecision) (streamRepeatStateSkip, bool) {
+	// Typed observations take the bounded state path so type, evidence and
+	// expiry changes are checked. Only an unchanged type lease can be coalesced
+	// for the same short window as other current-state heartbeats.
+	if passiveStreamNetworkType(next) != "" {
+		return streamRepeatStateSkip{}, false
+	}
 	if previous == nil || decision.Result != "repeat_observation" || !decision.WriteFact || decision.VisibleChanged ||
 		previous.Scope != next.Scope || previous.Withdrawn || next.Withdrawn ||
 		next.Revision != previous.Revision || !next.Observed.After(previous.Observed) ||
@@ -156,6 +168,15 @@ func buildStreamDiscoveryStateSummary(epoch, key string, facts []streamDiscovery
 	addresses, protocols, caps := []string{}, []string{}, []string{}
 	seenIP, seenProtocol, seenCap := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	boundMAC := ""
+	networkKinds := map[string]string{}
+	networkEvidence := []string{}
+	networkFirstSeen := map[string]time.Time{}
+	networkValidUntil := map[string]time.Time{}
+	var historicalNetworkType string
+	var historicalNetworkFirst time.Time
+	var historicalNetworkSeen time.Time
+	var historicalNetworkUntil time.Time
+	var historicalNetworkEvent string
 	for _, fact := range facts {
 		if fact.Epoch != epoch || fact.Device != key || fact.Scope != state.Scope {
 			return state, ErrStreamFactScopeMismatch
@@ -189,6 +210,26 @@ func buildStreamDiscoveryStateSummary(epoch, key string, facts []streamDiscovery
 			at := fact.Observed
 			state.ExpiresAt = &at
 		}
+		if kind := passiveStreamNetworkType(fact); kind != "" && !fact.Withdrawn && !fact.Observed.After(now) {
+			if historicalNetworkType == "" {
+				historicalNetworkType, historicalNetworkFirst, historicalNetworkSeen, historicalNetworkUntil = kind, fact.FirstObserved, fact.Observed, fact.ValidUntil
+				historicalNetworkEvent = streamVisibleEvidenceEvent(fact)
+			}
+			if fact.ValidUntil.After(now) {
+				networkKinds[streamNetworkFamily(kind)] = kind
+				networkEvidence = append(networkEvidence, streamVisibleEvidenceEvent(fact))
+				if networkFirstSeen[kind].IsZero() || fact.FirstObserved.Before(networkFirstSeen[kind]) {
+					networkFirstSeen[kind] = fact.FirstObserved
+				}
+				if fact.ValidUntil.After(networkValidUntil[kind]) {
+					networkValidUntil[kind] = fact.ValidUntil
+				}
+				if state.NetworkTypeLastSeen.IsZero() || fact.Observed.After(state.NetworkTypeLastSeen) {
+					state.NetworkTypeLastSeen = fact.Observed
+					state.NetworkDeviceType = kind
+				}
+			}
+		}
 		if fact.Withdrawn || fact.Observed.After(now) || !fact.ValidUntil.After(now) {
 			continue
 		}
@@ -204,7 +245,7 @@ func buildStreamDiscoveryStateSummary(epoch, key string, facts []streamDiscovery
 		if fact.AddressBinding && fact.MAC != "" && (fact.Protocol == "dhcp" || fact.Protocol == "arp" || fact.Protocol == "ndp") && boundMAC == "" {
 			boundMAC = fact.MAC
 		}
-		if fact.Excluded {
+		if fact.Excluded || excludedStreamDeviceType(fact.DeviceType) {
 			excluded = true
 		}
 		if fact.CandidateType != "" {
@@ -227,6 +268,30 @@ func buildStreamDiscoveryStateSummary(epoch, key string, facts []streamDiscovery
 				state.ExpiresAt = &at
 			}
 		}
+	}
+	switch {
+	case truncated:
+		// The bounded recent sample cannot prove that an older network-type
+		// fact is absent. Keep the lookup out of current asset lists.
+		state.NetworkDeviceType = ""
+		state.NetworkTypeLastSeen = time.Time{}
+		state.NetworkTypeStatus = "unverified"
+	case len(networkKinds) > 1:
+		state.NetworkDeviceType = ""
+		state.NetworkTypeLastSeen = time.Time{}
+		state.NetworkTypeStatus = "conflict"
+	case len(networkKinds) == 1:
+		state.LastNetworkDeviceType = state.NetworkDeviceType
+		state.NetworkTypeStatus = "clue"
+		state.NetworkTypeFirstSeen = networkFirstSeen[state.NetworkDeviceType]
+		state.NetworkTypeValidUntil = networkValidUntil[state.NetworkDeviceType]
+	case historicalNetworkType != "":
+		state.LastNetworkDeviceType = historicalNetworkType
+		state.NetworkTypeFirstSeen = historicalNetworkFirst
+		state.NetworkTypeLastSeen = historicalNetworkSeen
+		state.NetworkTypeValidUntil = historicalNetworkUntil
+		state.NetworkTypeStatus = "expired"
+		networkEvidence = append(networkEvidence, historicalNetworkEvent)
 	}
 	if _, printer := kinds["printer"]; printer {
 		delete(kinds, "scanner")
@@ -296,7 +361,50 @@ func buildStreamDiscoveryStateSummary(epoch, key string, facts []streamDiscovery
 		"domain": state.Domain, "vlan": state.VLAN, "interface": state.Interface,
 		"manufacturer": state.Manufacturer, "model_name": state.Model,
 	}
+	if state.NetworkTypeStatus != "" {
+		sort.Strings(networkEvidence)
+		state.Document["network_device_type"] = state.NetworkDeviceType
+		state.Document["last_network_device_type"] = state.LastNetworkDeviceType
+		state.Document["network_type_status"] = state.NetworkTypeStatus
+		state.Document["network_type_first_seen"] = state.NetworkTypeFirstSeen
+		state.Document["network_type_last_seen"] = state.NetworkTypeLastSeen
+		state.Document["network_type_valid_until"] = state.NetworkTypeValidUntil
+		state.Document["network_type_evidence_ids"] = networkEvidence
+		state.Document["network_type_reason"] = streamNetworkTypeReason(state.NetworkTypeStatus)
+	}
 	return state, nil
+}
+
+func passiveStreamNetworkType(fact streamDiscoveryFact) string {
+	if fact.Protocol == "active" {
+		return ""
+	}
+	switch fact.DeviceType {
+	case "router", "gateway", "access_point", "switch", "firewall":
+		return fact.DeviceType
+	}
+	return ""
+}
+
+func streamNetworkFamily(kind string) string {
+	if kind == "gateway" {
+		return "router"
+	}
+	return kind
+}
+
+func streamNetworkTypeReason(status string) string {
+	switch status {
+	case "clue":
+		return "被动协议公告提供设备类型线索，尚未核验整机类型或违规角色"
+	case "expired":
+		return "历史设备类型线索已过期"
+	case "conflict":
+		return "被动设备类型线索相互冲突"
+	case "unverified":
+		return "设备事实超出实时摘要范围，类型待核验"
+	}
+	return ""
 }
 
 func streamVisibleEvidenceEvent(fact streamDiscoveryFact) string {
@@ -309,7 +417,23 @@ func streamVisibleEvidenceEvent(fact streamDiscoveryFact) string {
 // Receipts still record every observation immediately. Current-state rows may
 // coalesce a semantically identical heartbeat for at most five seconds.
 func coalesceStreamDiscoveryStateFreshness(previous *streamDiscoveryState, next streamDiscoveryState, now time.Time) streamDiscoveryState {
-	if previous == nil || !next.LastSeen.After(previous.LastSeen) || next.LastSeen.Sub(previous.LastSeen) >= 5*time.Second ||
+	if previous == nil {
+		return next
+	}
+	if oldNetworkSeen, oldNetworkUntil, ok := streamCoalescibleNetworkLease(previous, next, now); ok {
+		// Keep the old sparse lease until the normal expiry wake reads the
+		// already durable renewed fact. The wake must stay at or before that
+		// old lease even if another field forces a state update now.
+		if next.ExpiresAt.After(*previous.ExpiresAt) {
+			at := *previous.ExpiresAt
+			next.ExpiresAt = &at
+		}
+		next.NetworkTypeLastSeen = oldNetworkSeen
+		next.NetworkTypeValidUntil = oldNetworkUntil
+		next.Document["network_type_last_seen"] = previous.Document["network_type_last_seen"]
+		next.Document["network_type_valid_until"] = previous.Document["network_type_valid_until"]
+	}
+	if !next.LastSeen.After(previous.LastSeen) || next.LastSeen.Sub(previous.LastSeen) >= 5*time.Second ||
 		!next.FirstSeen.Equal(previous.FirstSeen) {
 		return next
 	}
@@ -343,6 +467,44 @@ func coalesceStreamDiscoveryStateFreshness(previous *streamDiscoveryState, next 
 	next.ExpiresAt = previous.ExpiresAt
 	next.Document["last_seen"] = previous.Document["last_seen"]
 	return next
+}
+
+func streamCoalescibleNetworkLease(previous *streamDiscoveryState, next streamDiscoveryState, now time.Time) (time.Time, time.Time, bool) {
+	if previous.Document["network_type_status"] != "clue" || next.NetworkTypeStatus != "clue" || previous.Scope != next.Scope ||
+		previous.ExpiresAt == nil || next.ExpiresAt == nil || !previous.ExpiresAt.After(now.Add(5*time.Second)) {
+		return time.Time{}, time.Time{}, false
+	}
+	last, ok := streamDocumentTime(previous.Document["network_type_last_seen"])
+	if !ok {
+		return time.Time{}, time.Time{}, false
+	}
+	until, ok := streamDocumentTime(previous.Document["network_type_valid_until"])
+	if !ok || !until.After(now.Add(5*time.Second)) || previous.ExpiresAt.After(until) ||
+		next.NetworkTypeLastSeen.Before(last) || !next.NetworkTypeLastSeen.Before(last.Add(5*time.Second)) ||
+		next.NetworkTypeValidUntil.Before(until) {
+		return time.Time{}, time.Time{}, false
+	}
+	oldType := streamNetworkDocument(previous.Document)
+	newType := streamNetworkDocument(next.Document)
+	delete(oldType, "network_type_last_seen")
+	delete(oldType, "network_type_valid_until")
+	delete(newType, "network_type_last_seen")
+	delete(newType, "network_type_valid_until")
+	if !streamDiscoveryDocumentsEqual(oldType, newType) {
+		return time.Time{}, time.Time{}, false
+	}
+	return last, until, true
+}
+
+func streamDocumentTime(value any) (time.Time, bool) {
+	switch at := value.(type) {
+	case time.Time:
+		return at, !at.IsZero()
+	case string:
+		parsed, err := time.Parse(time.RFC3339Nano, at)
+		return parsed, err == nil
+	}
+	return time.Time{}, false
 }
 
 func streamClassificationEvidence(doc map[string]any) []string {
@@ -627,7 +789,74 @@ func publishStreamDiscoveryStatesCountWithRepeats(ctx context.Context, tx *sql.T
 	if err != nil {
 		return err
 	}
+	if err := publishStreamDiscoveryNetworkStates(ctx, tx, states, oldStates); err != nil {
+		return err
+	}
 	return writeStreamRepeatStateDeltas(ctx, tx, epoch, deltas, affected)
+}
+
+type streamNetworkStateRow struct {
+	Epoch             string    `json:"epoch"`
+	Device            string    `json:"device_key"`
+	Scope             string    `json:"scope_id"`
+	NetworkDeviceType string    `json:"network_device_type"`
+	Status            string    `json:"status"`
+	TypeLastSeen      time.Time `json:"type_last_seen"`
+	TypeValidUntil    time.Time `json:"type_valid_until"`
+}
+
+func streamNetworkDocument(document map[string]any) map[string]any {
+	result := map[string]any{}
+	for _, key := range []string{"network_device_type", "last_network_device_type", "network_type_status", "network_type_first_seen", "network_type_last_seen", "network_type_valid_until", "network_type_evidence_ids", "network_type_reason"} {
+		if value, ok := document[key]; ok {
+			result[key] = value
+		}
+	}
+	return result
+}
+
+func publishStreamDiscoveryNetworkStates(ctx context.Context, tx *sql.Tx, states []streamDiscoveryState, previous map[string]streamDiscoveryState) error {
+	rows := make([]streamNetworkStateRow, 0)
+	deletes := make([]string, 0)
+	for _, state := range states {
+		old := previous[state.Device]
+		if old.Scope == state.Scope && streamDiscoveryDocumentsEqual(streamNetworkDocument(old.Document), streamNetworkDocument(state.Document)) {
+			continue
+		}
+		if (state.NetworkTypeStatus == "clue" || state.NetworkTypeStatus == "expired") &&
+			state.NetworkTypeLastSeen.IsZero() == false && state.NetworkTypeValidUntil.IsZero() == false {
+			kind := state.NetworkDeviceType
+			if state.NetworkTypeStatus == "expired" {
+				kind = state.LastNetworkDeviceType
+			}
+			rows = append(rows, streamNetworkStateRow{Epoch: state.Epoch, Device: state.Device, Scope: state.Scope,
+				NetworkDeviceType: kind, Status: state.NetworkTypeStatus, TypeLastSeen: state.NetworkTypeLastSeen, TypeValidUntil: state.NetworkTypeValidUntil})
+		} else if old.Document["network_type_status"] != nil {
+			deletes = append(deletes, state.Device)
+		}
+	}
+	if len(rows) > 0 {
+		raw, err := json.Marshal(rows)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO stream_discovery_network_state(epoch,device_key,scope_id,network_device_type,status,type_last_seen,type_valid_until)
+ SELECT v.epoch,v.device_key,v.scope_id,v.network_device_type,v.status,v.type_last_seen,v.type_valid_until
+ FROM jsonb_to_recordset($1::jsonb) AS v(epoch text,device_key text,scope_id text,network_device_type text,status text,type_last_seen timestamptz,type_valid_until timestamptz)
+ ON CONFLICT(epoch,device_key) DO UPDATE SET scope_id=EXCLUDED.scope_id,network_device_type=EXCLUDED.network_device_type,status=EXCLUDED.status,
+ type_last_seen=EXCLUDED.type_last_seen,type_valid_until=EXCLUDED.type_valid_until,updated_at=now()
+ WHERE (stream_discovery_network_state.scope_id,stream_discovery_network_state.network_device_type,stream_discovery_network_state.status,
+ stream_discovery_network_state.type_last_seen,stream_discovery_network_state.type_valid_until)
+ IS DISTINCT FROM (EXCLUDED.scope_id,EXCLUDED.network_device_type,EXCLUDED.status,EXCLUDED.type_last_seen,EXCLUDED.type_valid_until)`, raw)
+		if err != nil {
+			return err
+		}
+	}
+	if len(deletes) > 0 {
+		_, err := tx.ExecContext(ctx, `DELETE FROM stream_discovery_network_state WHERE epoch=$1 AND device_key=ANY($2::text[])`, states[0].Epoch, deletes)
+		return err
+	}
+	return nil
 }
 
 func publishStreamRepeatStateDeltas(ctx context.Context, tx *sql.Tx, epoch string, deltas []streamRepeatStateDeltaRow, affected *int64) error {
