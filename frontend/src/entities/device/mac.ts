@@ -1,6 +1,5 @@
-// A locally administered MAC (second-least-significant bit of the first
-// octet) is how phones and laptops hide their hardware address.
-export function isRandomizedMAC(mac?: string): boolean {
+// The U/L bit identifies local administration, not how the address was made.
+export function isLocallyAdministeredMAC(mac?: string): boolean {
   if (!mac) return false
   const octets = mac.trim().split(/[:-]/)
   if (octets.length < 1) return false

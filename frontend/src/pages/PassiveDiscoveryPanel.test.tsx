@@ -461,7 +461,7 @@ it('filters randomized MAC devices from the advanced filters', async () => {
   mockReads()
   renderPanel()
   fireEvent.click(screen.getByRole('button', { name: /更多筛选/ }))
-  fireEvent.click(screen.getByRole('checkbox', { name: '随机 MAC' }))
+  fireEvent.click(screen.getByRole('checkbox', { name: '本地管理 MAC' }))
   await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).startsWith('/discovery/devices?') && String(path).includes('random_mac=true'))).toBe(true))
 })
 

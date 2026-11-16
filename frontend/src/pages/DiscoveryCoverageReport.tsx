@@ -19,26 +19,26 @@ export function DiscoveryCoverageReport({ report, loading, error }: { report?: R
     {funnel && funnel.status !== 'initializing' && <>
       {funnel.status !== 'ready' && <p className="discovery-report-delay">本窗口数据{funnel.status === 'partial' ? '覆盖不完整' : '处理延迟'}；镜像标识投影从 {funnel.available_from ? observedTimeTitle(funnel.available_from) : '当前起点'} 开始，以下数量只代表已处理的范围。</p>}
       {funnelIdentityLag > 5 && <p className="discovery-report-delay">设备发现结果截至 {observedTimeTitle(report!.identity_as_of)}，比镜像数据晚约 {funnelIdentityLag} 分钟；近期新配对可能还在处理中。</p>}
-      <div className="discovery-report-group"><h4>地址与 MAC</h4><p>IPv4 和 MAC 在所选窗口内出现过；配对只计算查询时仍有效、无撤销且无冲突的记录。</p></div>
+      <div className="discovery-report-group"><h4>地址与 MAC</h4><p>前两项分别数 IPv4、MAC；第三项数 IP–MAC 配对，三项不能相加。配对只计算窗口内出现过且查询时仍有效的记录。</p></div>
       <div className="discovery-report-grid">
-        {metric('只有 IPv4', funnel.ipv4_only, `共 ${funnel.ipv4_total.toLocaleString('zh-CN')} 个 IPv4；当前没有有效的 IP–MAC 配对`)}
-        {metric('只有 MAC', funnel.mac_only, `共 ${funnel.mac_total.toLocaleString('zh-CN')} 个 MAC；当前没有有效的 IPv4 配对`)}
-        {metric('有 IP 和 MAC', funnel.ip_mac_pairs, '窗口内出现过、查询时仍有效的不同 IPv4 与 MAC 配对')}
+        {metric('只有 IPv4', funnel.ipv4_only, '个 IPv4 地址；当前没有有效的 MAC 配对')}
+        {metric('只有 MAC', funnel.mac_only, '个 MAC 地址；当前没有有效的 IPv4 配对')}
+        {metric('有 IP 和 MAC', funnel.ip_mac_pairs, '种当前有效的 IPv4 与 MAC 配对')}
       </div>
-      <div className="discovery-report-group"><h4>设备发现结果</h4><p>这里数的是有 IP–MAC 组合且已进入发现设备记录的设备；一个设备可能有多个组合。</p></div>
+      <div className="discovery-report-group"><h4>设备发现结果</h4><p>“有设备记录”表示当前配对能关联到同接入位置、同 MAC 的发现设备条目，不要求识别出设备类型。配对按 IP–MAC 去重，设备记录按接入位置和 MAC 去重；同一设备有多个 IP 时，配对数会多于设备记录数。</p></div>
       <div className="discovery-report-grid">
-        {metric('已发现设备（有 IP–MAC）', funnel.trusted_identities, '按接入位置和 MAC 去重的设备记录')}
-        {metric('有设备记录的组合', funnel.identified_pairs, '窗口内 IP–MAC 组合可对应到设备记录')}
-        {metric('没有设备记录的组合', withoutDeviceRecord, '截至设备发现处理水位，组合暂时没有设备记录')}
+        {metric('有设备记录的配对', funnel.identified_pairs, '种 IP–MAC 配对；可对应到设备记录')}
+        {metric('没有设备记录的配对', withoutDeviceRecord, '种 IP–MAC 配对；截至发现处理水位尚无记录')}
+        {metric('涉及的设备记录', funnel.trusted_identities, '条按接入位置和 MAC 去重的记录；类型不一定已确认')}
         <div className="discovery-report-metric discovery-report-rate" aria-label="有设备记录的组合占比"><span>有设备记录的组合占比</span><strong>{rate(funnel.identified_pairs, funnel.ip_mac_pairs)}</strong><small>{funnel.identified_pairs.toLocaleString('zh-CN')} / {funnel.ip_mac_pairs.toLocaleString('zh-CN')} 种组合</small><progress value={funnel.identified_pairs} max={funnel.ip_mac_pairs || 1}/></div>
       </div>
-      <div className="discovery-report-group"><h4>MAC 地址分类</h4><p>以下三组按不同 MAC 去重，合计为上方的 MAC 总数。</p></div>
+      <div className="discovery-report-group"><h4>MAC 地址分类</h4><p>按不同 MAC 去重。固定标志位区分本地管理与全局管理；全局管理地址再按 OUI 库分为匹配与未匹配。</p></div>
       <div className="discovery-report-grid">
         <div className="discovery-report-metric" aria-label="MAC OUI 匹配占比"><span>MAC OUI 匹配</span><strong>{rate(funnel.oui_matched, funnel.mac_total)}</strong><small>{funnel.oui_matched.toLocaleString('zh-CN')} / {funnel.mac_total.toLocaleString('zh-CN')} 个不同 MAC</small></div>
-        <div className="discovery-report-metric" aria-label="本地管理 MAC 占比"><span>本地管理 MAC</span><strong>{rate(funnel.locally_administered_mac, funnel.mac_total)}</strong><small>{funnel.locally_administered_mac.toLocaleString('zh-CN')} / {funnel.mac_total.toLocaleString('zh-CN')} 个不同 MAC</small></div>
+        <div className="discovery-report-metric" aria-label="本地管理 MAC 占比"><span>本地管理 MAC</span><strong>{rate(funnel.locally_administered_mac, funnel.mac_total)}</strong><small>{funnel.locally_administered_mac.toLocaleString('zh-CN')} / {funnel.mac_total.toLocaleString('zh-CN')} 个不同 MAC；不能等同随机 MAC</small></div>
         {metric('无 OUI 且非本地管理 MAC', funnel.no_oui_global_mac, '按当前 OUI 库查无匹配的全局管理地址')}
       </div>
-      <p className="discovery-report-boundary">随机 MAC 数量目前无法确定。现有数据只能判断 MAC 的本地管理位；这类地址可能由系统随机生成，也可能由管理员手工设置。OUI 匹配只说明地址前缀登记，不代表设备类型。当前有效配对按地址去重；{funnel.scoped_pairs.toLocaleString('zh-CN')} 条带接入位置的记录对应 {funnel.ip_mac_pairs.toLocaleString('zh-CN')} 种地址配对。当前 OUI 库：{funnel.oui_library_version}。</p>
+      <p className="discovery-report-boundary">随机 MAC 数量目前无法确定。随机生成的地址通常会设置本地管理位，但手工设置和虚拟网卡地址也可以设置这一位；它只说明地址由本地分配，不证明生成方式。OUI 匹配只说明地址前缀登记，不代表设备类型。当前 OUI 库：{funnel.oui_library_version}。</p>
     </>}
     <details className="discovery-report-details"><summary>查看设备观测与类型统计（另一统计口径）</summary>
     <div className="discovery-report-evidence">

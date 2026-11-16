@@ -288,8 +288,8 @@ export function EndpointDetailsPage() {
                   {recognition?.fingerprint_version || ""}
                 </Typography.Text>
               </Descriptions.Item>
-              <Descriptions.Item label="随机 MAC">
-                {recognition?.randomized_mac ? "是；不使用 OUI 判断厂商" : "否"}
+              <Descriptions.Item label="本地管理 MAC">
+                {recognition?.randomized_mac === undefined ? "" : recognition.randomized_mac ? "是；不能据此判定随机生成，不使用 OUI 判断厂商" : "否"}
               </Descriptions.Item>
               <Descriptions.Item label="识别冲突">
                 {recognition?.recognition_conflict
