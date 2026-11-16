@@ -577,6 +577,12 @@ func (p StreamDiscoveryProjector) MarkStreamRiskSubjectsDirty(ctx context.Contex
                      ELSE risk_feature_dirty_subjects.generation END,
      last_dirty_at=now(),
      last_observed_at=GREATEST(risk_feature_dirty_subjects.last_observed_at,EXCLUDED.last_observed_at)
+ -- A pending generation already covers duplicate or late observations. Its
+ -- first claim order and latest observed instant do not change; avoid a WAL
+ -- and index rewrite. Once claimed, every new segment must mint a generation
+ -- even when its observed instant is unchanged (correction or withdrawal).
+ WHERE risk_feature_dirty_subjects.claimed_generation IS NOT NULL
+    OR EXCLUDED.last_observed_at>risk_feature_dirty_subjects.last_observed_at
  RETURNING subject_id
 )
 UPDATE risk_feature_segment_receipts

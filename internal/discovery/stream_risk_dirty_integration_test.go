@@ -68,14 +68,25 @@ func TestRiskDirtyGenerationCoalescesOnlyUnclaimedWork(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT generation FROM risk_feature_dirty_subjects WHERE sensor_id='sensor-a' AND subject_type='ip'`).Scan(&second); err != nil || second != first {
 		t.Fatalf("unclaimed work created another generation: %d -> %d, %v", first, second, err)
 	}
+	var beforeTuple, afterTuple string
+	if err := db.QueryRowContext(ctx, `SELECT ctid::text || '/' || xmin::text FROM risk_feature_dirty_subjects WHERE sensor_id='sensor-a' AND subject_type='ip'`).Scan(&beforeTuple); err != nil {
+		t.Fatal(err)
+	}
+	queue("segment-b-duplicate", base.Add(time.Second))
+	queue("segment-b-late", base)
+	if err := db.QueryRowContext(ctx, `SELECT ctid::text || '/' || xmin::text FROM risk_feature_dirty_subjects WHERE sensor_id='sensor-a' AND subject_type='ip'`).Scan(&afterTuple); err != nil || afterTuple != beforeTuple {
+		t.Fatalf("unclaimed duplicate or late observation rewrote the dirty row: %s -> %s, %v", beforeTuple, afterTuple, err)
+	}
 	if _, err := db.ExecContext(ctx, `UPDATE risk_feature_dirty_subjects SET claimed_generation=generation,claim_until=now()+interval '1 minute' WHERE sensor_id='sensor-a'`); err != nil {
 		t.Fatal(err)
 	}
-	queue("segment-c", base.Add(2*time.Second))
+	// A correction or withdrawal can share the original observed instant.
+	// An in-flight claim must still leave a later generation for replay.
+	queue("segment-c", base.Add(time.Second))
 	if err := db.QueryRowContext(ctx, `SELECT generation FROM risk_feature_dirty_subjects WHERE sensor_id='sensor-a' AND subject_type='ip'`).Scan(&third); err != nil || third <= second {
 		t.Fatalf("claimed work lost later change: %d -> %d, %v", second, third, err)
 	}
-	queue("segment-c", base.Add(2*time.Second))
+	queue("segment-c", base.Add(time.Second))
 	var replay int64
 	if err := db.QueryRowContext(ctx, `SELECT generation FROM risk_feature_dirty_subjects WHERE sensor_id='sensor-a' AND subject_type='ip'`).Scan(&replay); err != nil || replay != third {
 		t.Fatalf("segment replay created another generation: %d -> %d, %v", third, replay, err)
