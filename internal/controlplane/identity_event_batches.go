@@ -57,11 +57,15 @@ func (s *Server) handleDurableIdentityBatch(w http.ResponseWriter, r *http.Reque
 	defer cancel()
 	// Once accepted, changes to source registration cannot invalidate its receipt.
 	if receipts, ok := s.reader.(store.DurableIdentityReceiptReader); ok {
+		lookupStarted := time.Now()
 		receipt, found, readErr := receipts.LookupIdentityReceipt(ctx, id, request.Hash(), len(request.Records))
 		if readErr != nil {
 			status, code := 503, "identity_inbox_unavailable"
 			if errors.Is(readErr, store.ErrIdentityBatchConflict) {
 				status, code = 409, "identity_batch_conflict"
+			}
+			if status == http.StatusServiceUnavailable {
+				logIdentityInboxFailure("lookup", time.Since(lookupStarted), readErr)
 			}
 			writeError(w, status, code, "retain the same batch until its receipt can be verified")
 			return
@@ -110,6 +114,7 @@ func (s *Server) handleDurableIdentityBatch(w http.ResponseWriter, r *http.Reque
 		writeError(w, 422, "bad_identity_batch", "normalized batch exceeds limits")
 		return
 	}
+	acceptStarted := time.Now()
 	receipt, err := backend.AcceptIdentityBatch(ctx, id, request.Hash(), scope, events, len(request.Records))
 	if err != nil {
 		status, code := http.StatusServiceUnavailable, "identity_inbox_unavailable"
@@ -124,6 +129,9 @@ func (s *Server) handleDurableIdentityBatch(w http.ResponseWriter, r *http.Reque
 		}
 		if errors.Is(err, store.ErrIdentityCutoverNotActive) {
 			status, code = http.StatusServiceUnavailable, "identity_cutover_not_active"
+		}
+		if status == http.StatusServiceUnavailable {
+			logIdentityInboxFailure("accept", time.Since(acceptStarted), err)
 		}
 		w.Header().Set("Retry-After", "2")
 		writeError(w, status, code, "batch was not acknowledged; retain and retry the same batch")
