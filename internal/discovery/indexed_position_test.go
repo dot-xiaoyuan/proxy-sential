@@ -38,3 +38,32 @@ func TestIndexedPositionReadsOnlyTwoBoundaryKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestIndexedPositionUsesHardwareReadPathAndCompatibleCursor(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	r := Repository{DB: db, HardwareV2: true}
+	q := DeviceQuery{Mode: "passive", View: "iot", Limit: 20}
+	at := time.Now().UTC()
+	mock.ExpectQuery(`(?s)WITH trusted_address.*observation_tid.*SELECT identity_key,device_key,last_seen FROM matched.*LIMIT 2 OFFSET`).WillReturnRows(sqlmock.NewRows([]string{"identity_key", "device_key", "last_seen"}).AddRow("anchor", "key", at).AddRow("next", "next-key", at.Add(-time.Second)))
+	pos, err := r.DevicesIndexedPosition(context.Background(), q, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q.HardwareV2 = r.HardwareV2
+	selection, err := buildIndexedDeviceSelection(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection.Query.Cursor = pos.Cursor
+	decoded, err := decodeIndexedDeviceCursor(selection.Query)
+	if err != nil || decoded.IdentityKey != "anchor" {
+		t.Fatalf("hardware list rejected position cursor: decoded=%+v err=%v", decoded, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

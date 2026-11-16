@@ -11,6 +11,7 @@ import (
 // DevicesIndexedPosition locates a numbered page using only ordered identity
 // keys from the same current index and filters as the list and metadata.
 func (r Repository) DevicesIndexedPosition(ctx context.Context, q DeviceQuery, page int) (pagination.Position, error) {
+	q.HardwareV2 = r.HardwareV2
 	q.Cursor, q.Offset = "", 0
 	selection, err := buildIndexedDeviceSelection(q)
 	if err != nil {
