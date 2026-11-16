@@ -284,7 +284,10 @@ func passiveStreamCurrentReadEnabled() bool {
 }
 
 func (s *Server) handleReadiness(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	// A stalled optional probe or connection wait must not hold the status
+	// endpoint for the full HTTP timeout. Unfinished required probes are
+	// reported unavailable by healthSnapshot; optional ones remain delayed.
+	ctx, cancel := context.WithTimeout(r.Context(), 800*time.Millisecond)
 	defer cancel()
 	components, ready := s.healthSnapshot(ctx)
 	statusCode := http.StatusOK
@@ -297,7 +300,7 @@ func (s *Server) handleReadiness(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 800*time.Millisecond)
 	defer cancel()
 	components, ready := s.healthSnapshot(ctx)
 	status := "ready"

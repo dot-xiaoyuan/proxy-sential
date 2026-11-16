@@ -3,6 +3,8 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -59,6 +61,13 @@ type uncancellableStatisticsHealthReader struct {
 	release <-chan struct{}
 }
 
+type stalledDatabaseHealthReader struct{ delayedStatisticsHealthReader }
+
+func (r stalledDatabaseHealthReader) Health(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
 func (r uncancellableStatisticsHealthReader) StatisticsReadModelHealth(context.Context) error {
 	<-r.release
 	return nil
@@ -83,5 +92,36 @@ func TestHealthDeadlineBoundsUnresponsiveOptionalProbe(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("health snapshot ignored its deadline")
+	}
+}
+
+func TestReadinessReturnsWithinOneSecondWhenDatabaseProbeStalls(t *testing.T) {
+	s := NewServer(Options{ShadowDir: t.TempDir(), ReadOnly: true})
+	s.reader = stalledDatabaseHealthReader{delayedStatisticsHealthReader{Reader: s.reader}}
+	response := httptest.NewRecorder()
+	started := time.Now()
+	s.handleReadiness(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("readiness waited %s for a stalled database probe", elapsed)
+	}
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("stalled required storage probe returned HTTP %d", response.Code)
+	}
+	if !strings.Contains(response.Body.String(), `"storage":{"status":"unavailable"`) {
+		t.Fatal("storage timeout was hidden")
+	}
+}
+
+func TestSystemStatusReturnsWithinOneSecondWhenDatabaseProbeStalls(t *testing.T) {
+	s := NewServer(Options{ShadowDir: t.TempDir(), ReadOnly: true})
+	s.reader = stalledDatabaseHealthReader{delayedStatisticsHealthReader{Reader: s.reader}}
+	response := httptest.NewRecorder()
+	started := time.Now()
+	s.handleSystemStatus(response, httptest.NewRequest(http.MethodGet, "/api/v1/system/status", nil))
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("system status waited %s for a stalled database probe", elapsed)
+	}
+	if !strings.Contains(response.Body.String(), `"storage":{"status":"unavailable"`) {
+		t.Fatal("storage timeout was hidden")
 	}
 }
