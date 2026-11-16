@@ -22,8 +22,8 @@ const row = {
   first_seen: '2026-11-05T12:00:00Z', last_seen: '2026-11-05T16:00:00Z', current: true,
 }
 
-function setup(entry = '/devices?tab=network&routers_view=router', candidates: Array<Record<string, unknown>> = []) {
-  observations.mockResolvedValue({ items: [], page: { total: 0 } })
+function setup(entry = '/devices?tab=network&routers_view=router', candidates: Array<Record<string, unknown>> = [], assessments: Array<Record<string, unknown>> = []) {
+  observations.mockResolvedValue({ items: assessments, page: { total: 0 } })
   request.mockImplementation((path: string) => {
     if (path.startsWith('/discovery/chassis-candidates')) return Promise.resolve({ items: candidates })
     return Promise.resolve({ items: [row], limit: 20, has_more: false, next_cursor: '', network_type_coverage: 'new_observations', freshness: { status: 'unknown', source: 'stream', source_progress_status: 'unverified', processed_at: '2026-11-05T16:00:00Z' } })
@@ -37,9 +37,10 @@ it('shows discovered routers without requiring a risk or router-assessment recor
   expect(screen.getByText(/来源进度尚未核验/)).toBeVisible()
   expect(screen.getByText(/不具备来源追平证明/)).toBeVisible()
   expect(screen.getByText('被动协议公告提供设备类型线索，整机类型需核验；违规与共享行为由独立角色评估判断。')).toBeVisible()
-  expect(screen.getByText(/旧状态尚未批量回填/)).toBeVisible()
+  expect(screen.getByText(/旧事实尚未完成回填与核验/)).toBeVisible()
+  expect(screen.getByText(/只有带有效设备类型的发现事实才会进入此列表/)).toBeVisible()
   expect(screen.getByText('路由器类型线索')).toBeVisible()
-  await waitFor(() => expect(observations).toHaveBeenCalledWith(expect.objectContaining({ role: 'router', include_candidates: false })))
+  await waitFor(() => expect(observations).toHaveBeenCalledWith(expect.objectContaining({ role: 'router', include_candidates: true })))
   const list = request.mock.calls.find(([path]) => String(path).startsWith('/discovery/devices?'))!
   const query = new URL(String(list[0]), 'http://localhost').searchParams
   expect(query.get('mode')).toBe('passive')
@@ -82,8 +83,27 @@ it('maps the access-point view to the discovery access_point type', async () => 
 it('loads route role evidence before passive asset classification', async () => {
   setup()
   await screen.findByText('宿舍路由设备')
-  await waitFor(() => expect(observations).toHaveBeenCalledWith(expect.objectContaining({ role: 'router', include_candidates: false })))
+  await waitFor(() => expect(observations).toHaveBeenCalledWith(expect.objectContaining({ role: 'router', include_candidates: true })))
   expect(screen.getByText('被动协议公告提供设备类型线索，整机类型需核验；违规与共享行为由独立角色评估判断。')).toBeVisible()
+})
+
+it('shows current SSDP router candidates as unconfirmed role clues without promoting them to assets', async () => {
+  setup('/devices?tab=network&routers_view=router', [], [{
+    assessment_id: 'ssdp-router-candidate', role: 'router', status: 'candidate', confidence: 55,
+    ip: '192.0.2.30', mac: '02:00:00:00:00:30', conflicts: ['infrastructure_role'],
+    sources: ['ssdp'], score_components: [], libraries: [], last_seen: '2026-11-16T11:45:30Z',
+  }])
+  expect(await screen.findByText('192.0.2.30')).toBeVisible()
+  expect(screen.getByText('路由器线索')).toBeVisible()
+  expect(screen.getByText(/候选记录仅是待核验的路由角色线索/)).toBeVisible()
+  expect(screen.getByText(/不计入已确认路由资产或共享违规/)).toBeVisible()
+})
+
+it('restores the default candidate view after the operator resets an exclusion', async () => {
+  setup('/devices?tab=network&routers_view=router&router_include_candidates=false')
+  await waitFor(() => expect(observations).toHaveBeenCalledWith(expect.objectContaining({ role: 'router', include_candidates: false })))
+  fireEvent.click(screen.getByRole('button', { name: '重置' }))
+  await waitFor(() => expect(observations).toHaveBeenCalledWith(expect.objectContaining({ role: 'router', include_candidates: true })))
 })
 
 it('keeps every returned evidence reference in the grouped detail instead of truncating after ten', async () => {

@@ -42,7 +42,7 @@ function iso(value?: string) {
 
 export function routerObservationQueryFromParams(params: URLSearchParams): RouterObservationQuery {
   const view = params.get('routers_view') === 'ap' ? 'ap' : 'router'
-  const query = { role: view, include_candidates: false, ...Object.fromEntries([...params.entries()].filter(([key]) => key.startsWith('router_')).map(([key, value]) => [key.slice(7), ['confidence_min', 'confidence_max'].includes(key.slice(7)) ? Number(value) : ['router_infrastructure','router_include_candidates','router_has_auth_binding'].includes(key) ? value === 'true' : value])) } as RouterObservationQuery
+  const query = { role: view, include_candidates: true, ...Object.fromEntries([...params.entries()].filter(([key]) => key.startsWith('router_')).map(([key, value]) => [key.slice(7), ['confidence_min', 'confidence_max'].includes(key.slice(7)) ? Number(value) : ['router_infrastructure','router_include_candidates','router_has_auth_binding'].includes(key) ? value === 'true' : value])) } as RouterObservationQuery
   query.role = view
   return query
 }
@@ -96,7 +96,7 @@ function RouterRoleObservationsPanel() {
         filters={<>
           <Checkbox checked={Boolean(hasAuthBinding)} onChange={event => submit({ ...form.getFieldsValue(), keyword: searchDraft.trim(), has_auth_binding: event.target.checked })}>只看有认证身份</Checkbox>
           <Button size="small" type="text" onClick={()=>setMoreOpen(value=>!value)}>{moreOpen?'收起筛选':'更多筛选'}</Button>
-          <Button size="small" type="text" onClick={() => { form.resetFields(); setSearchDraft(''); submit({}) }}>重置</Button>
+          <Button size="small" type="text" onClick={() => { form.resetFields(); setSearchDraft(''); submit({ include_candidates: true }) }}>重置</Button>
         </>}
         panel={moreOpen?<div className="app-filter-panel router-filter-panel">
           <div className="router-filter-grid">
@@ -125,6 +125,7 @@ function RouterRoleObservationsPanel() {
         title={view === 'ap' ? '接入点观察' : '路由器观察'}
         actions={<Tooltip title={view === 'ap' ? '本页识别接入点。接入点记录不参与路由器确认；分类基于 DHCP、LLDP、管理面等证据，仍可能受弱信号影响。' : '本页识别路由器，不代表下游共享已确认。分数表示证据匹配强度；路由器确认还要求明确路由角色、独立来源、强证据和可靠设备关联，基础设施及排除证据会阻断确认。'}><InfoCircleOutlined aria-label="网络设备说明" /></Tooltip>}
       />
+      {query.include_candidates && (!query.status || query.status === 'candidate') && <div className="router-candidate-note" role="note">候选记录仅是待核验的{view === 'ap' ? '接入点' : '路由'}角色线索，可能来自 SSDP 等弱信号；不计入已确认{view === 'ap' ? '接入点' : '路由'}资产或共享违规。资产类型由下方设备列表独立展示。</div>}
       {observations.isLoading ? <AppLoadingState rows={6} /> : observations.isError ? <AppErrorAlert title="路由观察读取失败" message={observations.error.message} /> : <>
         <AppTable rowKey="assessment_id" columns={columns} dataSource={items} pagination={false} tableLayout="fixed" scroll={{ x: showAuth ? 865 : 720 }} locale={{ emptyText: view === 'ap' ? '暂无匹配的接入点' : '暂无匹配的路由器' }} />
         {(items.length > 0 || page > 1) && <RecordCursorPagination page={page} pageSize={pagination.pageSize} count={items.length} nextCursor={observations.data?.page?.next_cursor ?? ''} fetching={observations.isFetching} onNext={() => pagination.next(observations.data?.page?.next_cursor ?? '')} onPrevious={pagination.previous} onPageSizeChange={pagination.changePageSize} />}
@@ -134,7 +135,7 @@ function RouterRoleObservationsPanel() {
 
 function AuthIdentity({ item }: { item: RouterAssessment }) {
   const bindings = item.auth_bindings || []
-  if (!bindings.length) return <div className="router-auth-identity"><span className="account-placeholder">无认证账号</span></div>
+  if (!bindings.length) return null
   const certain = bindings.filter(binding => !binding.ambiguous)
   if (!certain.length) return <div className="router-auth-identity router-auth-identity-ambiguous"><Tag color="warning">多会话精确命中</Tag><span>{bindings.length} 个当前认证会话</span></div>
   const binding = certain[0]
@@ -155,7 +156,7 @@ function RouterRecognition({ item }: { item: RouterAssessment }) {
  return <div className="router-recognition">
   <div className="router-recognition-head">
    {brand && <BrandLogo brandKey={brand} />}
-   <Tag className={`router-role router-role-${item.role}`}>{roleLabels[item.role] || item.role}</Tag>
+   <Tag className={`router-role router-role-${item.role}`}>{item.status === 'candidate' ? `${roleLabels[item.role] || item.role}线索` : roleLabels[item.role] || item.role}</Tag>
   </div>
   {model && <span className="router-model" title={model}>{model}</span>}
  </div>

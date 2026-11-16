@@ -158,7 +158,7 @@ export function RouterAssetsPanel() {
       </>}
     />
     {freshnessMessage && <div className="router-freshness-note" role="status">{freshnessMessage}</div>}
-    {devices.data?.network_type_coverage === 'new_observations' && <div className="router-freshness-note" role="status">类型线索读模型从新观测或到期处理逐步建立；旧状态尚未批量回填，列表覆盖范围可能不完整。</div>}
+    {devices.data?.network_type_coverage === 'new_observations' && <div className="router-freshness-note" role="status">类型线索读模型从新观测或到期处理逐步建立，旧事实尚未完成回填与核验；只有带有效设备类型的发现事实才会进入此列表，上方路由角色候选不会自动转为资产类型线索。</div>}
     <section className="surface center-list-surface">
       <AppListHeader
         title={`${label}类型线索`}

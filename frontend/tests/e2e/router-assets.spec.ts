@@ -33,7 +33,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await expect(page.getByText(/不具备来源追平证明/)).toBeVisible()
     await expect(page.getByText('教学楼路由设备', { exact: true })).toBeVisible()
     await expect(page.getByText('网关类型线索', { exact: true })).toBeVisible()
-    await expect(page.getByText(/旧状态尚未批量回填/)).toBeVisible()
+    await expect(page.getByText(/旧事实尚未完成回填与核验/)).toBeVisible()
     await expect(page.getByText('被动协议公告提供设备类型线索，整机类型需核验；违规与共享行为由独立角色评估判断。', { exact: true })).toBeVisible()
     const assetPanel = page.locator('section.router-observations-panel')
     await expect(assetPanel.getByRole('button', { name: '下一页' })).toBeDisabled()
