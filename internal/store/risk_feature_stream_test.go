@@ -26,7 +26,7 @@ func TestRiskFeatureStreamPagesSingleHotSubjectWithoutDroppingBoundaryDuplicates
 		"content_sha256": feature.item.hash, "feature_sha256": feature.featureHash,
 		"feature_version": "risk-features-v1", "feature_json": feature.featureJSON,
 		"sensor_id": "sensor-a", "subject_ip": "192.0.2.8", "account_id": "account-a",
-		"observed_at": segment.AcceptedAt.UTC().Format("2006-01-02 15:04:05.000000")}
+		"observed_at": segment.AcceptedAt.UTC().Truncate(time.Microsecond).Format("2006-01-02T15:04:05.000000Z")}
 	queries := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -52,6 +52,9 @@ func TestRiskFeatureStreamPagesSingleHotSubjectWithoutDroppingBoundaryDuplicates
 		func(event normalized.Event) error { seen++; return nil })
 	if err != nil || count != 1 || seen != 1 || len(queries) != 2 {
 		t.Fatalf("keyset page lost or repeated an event: count=%d seen=%d queries=%d err=%v", count, seen, len(queries), err)
+	}
+	if !strings.Contains(queries[1], "toDateTime64('"+segment.AcceptedAt.UTC().Format("2006-01-02 15:04:05.000000")+"'") {
+		t.Fatalf("ISO response timestamp was not normalized for ClickHouse keyset: %s", queries[1])
 	}
 	for _, query := range queries {
 		if strings.Contains(query, "stream_event_body") || !strings.Contains(query, "LIMIT 2") || !strings.Contains(query, "accepted_at<=") {

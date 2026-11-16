@@ -243,9 +243,13 @@ ORDER BY %s LIMIT %d SETTINGS max_threads=1,max_execution_time=3,max_result_rows
 				if err := json.Unmarshal(line, &row); err != nil {
 					return count, err
 				}
-				if _, err := time.Parse("2006-01-02 15:04:05.000000", row.ObservedAt); err != nil {
+				observedAt, err := streamSearchObservedAt(row.ObservedAt)
+				if err != nil || !isCanonicalClickHouseMicrosecond(row.ObservedAt, observedAt) {
 					return count, streamlog.ErrContentConflict
 				}
+				// toDateTime64 does not accept the ISO suffix that ClickHouse's
+				// HTTP output uses. Store the exact UTC microsecond for the next page.
+				row.ObservedAt = observedAt.UTC().Format("2006-01-02 15:04:05.000000")
 				last = row
 				hash := sha256.Sum256([]byte(row.FeatureJSON))
 				if row.Scope == "" || row.Key == "" || row.Sensor != sensor || row.Version != evidence.FeatureEventVersion ||

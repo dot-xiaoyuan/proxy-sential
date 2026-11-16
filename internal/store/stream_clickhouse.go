@@ -422,7 +422,7 @@ func (s *ClickHouseStore) ReadConfirmedStreamRaw(ctx context.Context, segmentID 
 	}
 	acceptedAt, err := streamSearchObservedAt(row.AcceptedAt)
 	if err != nil || !acceptedAt.UTC().Equal(segment.AcceptedAt.UTC().Truncate(time.Microsecond)) ||
-		!isCanonicalConfirmedRawTime(row.AcceptedAt, acceptedAt) {
+		!isCanonicalClickHouseMicrosecond(row.AcceptedAt, acceptedAt) {
 		return nil, streamlog.ErrContentConflict
 	}
 	if row.Hash != segment.RawSHA256 || row.Source != segment.Source ||
@@ -444,7 +444,7 @@ func (s *ClickHouseStore) ReadConfirmedStreamRaw(ctx context.Context, segmentID 
 // ClickHouse's HTTP connection requests ISO output, while operator probes can
 // use the default space-separated output. Both must retain DateTime64(6)
 // precision so that a rounded or truncated witness cannot be accepted.
-func isCanonicalConfirmedRawTime(raw string, parsed time.Time) bool {
+func isCanonicalClickHouseMicrosecond(raw string, parsed time.Time) bool {
 	return raw == parsed.UTC().Format("2006-01-02 15:04:05.000000") ||
 		raw == parsed.Format("2006-01-02T15:04:05.000000Z07:00") ||
 		raw == parsed.Format("2006-01-02T15:04:05.000000-07:00")
