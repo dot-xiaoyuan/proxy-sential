@@ -3,7 +3,7 @@ import { it, expect } from 'vitest'
 import { DiscoveryCoverageReport } from './DiscoveryCoverageReport'
 
 it('shows only live address and identity counts in the current observation section', () => {
-  render(<DiscoveryCoverageReport report={{as_of:'2026-11-15T11:00:00Z',identity_as_of:'2026-11-15T10:38:00Z',diagnostic_as_of:'2026-11-15T10:37:00Z',window:'24h',subnet24:1070,ipv4:15390,ipv6:12,mac:5144,scoped_mac:5200,ip_mac_pairs:4300,ipv4_with_mac:2500,ip_mac_unique_pairs:3100,ip_mac_valid_scoped_pairs:1400,multi_mac_ipv4:590,multi_scope_ip_mac_pairs:1380,blank_and_filled_vlan_pairs:1360,identified:329,dumb_terminals:76,identity_total:6285,typed_ipv4:300,identity_no_type_ipv4:1000,no_identity_ipv4:14090,untyped_network_only_ipv4:200,untyped_dhcp_only_ipv4:600,untyped_application_ipv4:190,untyped_other_ipv4:10,mirror_funnel:{status:'ready',evaluated_at:'2026-11-15T11:01:00Z',as_of:'2026-11-15T11:00:00Z',ipv4_total:5835,ipv4_only:3938,mac_total:3472,mac_only:767,ip_mac_pairs:4034,scoped_pairs:5483,trusted_identities:2867,identified_pairs:3559,oui_matched:1111,locally_administered_mac:2359,no_oui_global_mac:2,oui_library_version:'test-oui'}}} loading={false} error={false} />)
+  render(<DiscoveryCoverageReport report={{as_of:'2026-11-15T11:00:00Z',identity_as_of:'2026-11-15T10:38:00Z',diagnostic_as_of:'2026-11-15T10:37:00Z',window:'24h',subnet24:1070,ipv4:15390,ipv6:12,mac:5144,scoped_mac:5200,ip_mac_pairs:4300,ipv4_with_mac:2500,ip_mac_unique_pairs:3100,ip_mac_valid_scoped_pairs:1400,multi_mac_ipv4:590,multi_scope_ip_mac_pairs:1380,blank_and_filled_vlan_pairs:1360,identified:329,dumb_terminals:76,identity_total:6285,typed_ipv4:300,identity_no_type_ipv4:1000,no_identity_ipv4:14090,untyped_network_only_ipv4:200,untyped_dhcp_only_ipv4:600,untyped_application_ipv4:190,untyped_other_ipv4:10,mirror_funnel:{status:'ready',evaluated_at:'2026-11-15T11:01:00Z',as_of:'2026-11-15T11:00:00Z',ipv4_total:5835,ipv4_only:3938,mac_total:3472,mac_only:767,ip_mac_pairs:4034,scoped_pairs:5483,trusted_identities:2867,identified_pairs:3559,typed_pairs:703,oui_matched:1111,locally_administered_mac:2359,no_oui_global_mac:2,oui_library_version:'test-oui'}}} loading={false} error={false} />)
   const report = screen.getByLabelText('设备发现覆盖报表')
   expect(report).toHaveTextContent('15,390')
   expect(report).toHaveTextContent('绑定状态截至')
@@ -17,12 +17,11 @@ it('shows only live address and identity counts in the current observation secti
   expect(screen.getByText('当前无有效 MAC 配对的 IPv4').closest('.discovery-report-metric')).not.toHaveTextContent('5,835')
   expect(screen.getByText('当前无有效 IPv4 配对的 MAC').closest('.discovery-report-metric')).not.toHaveTextContent('3,472')
   expect(report).toHaveTextContent('查询时仍有效')
-  expect(report).toHaveTextContent('有设备记录的配对3,559')
-  expect(report).toHaveTextContent('没有设备记录的配对475')
-  expect(report).toHaveTextContent('涉及的设备记录2,867')
-  expect(report).toHaveTextContent('同一设备有多个 IP 时，配对数会多于设备记录数')
-  expect(report).toHaveTextContent('不要求识别出设备类型')
-  expect(screen.getByLabelText('有设备记录的组合占比')).toHaveTextContent('88.2%')
+  expect(report).toHaveTextContent('已识别设备类型的配对703')
+  expect(report).toHaveTextContent('类型待确认的配对3,331')
+  expect(report).toHaveTextContent('配对占比，不是物理设备台数占比')
+  expect(screen.getByLabelText('已识别设备类型的配对占比')).toHaveTextContent('17.4%')
+  expect(report).not.toHaveTextContent('有设备记录的组合占比')
   expect(screen.getByLabelText('MAC OUI 匹配占比')).toHaveTextContent('32.0%')
   expect(screen.getByLabelText('本地管理 MAC 占比')).toHaveTextContent('67.9%')
   expect(report).toHaveTextContent('无 OUI 且非本地管理 MAC2')

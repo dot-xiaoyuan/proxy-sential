@@ -8658,9 +8658,14 @@ export interface components {
             trusted_identities: number;
             /**
              * Format: int64
-             * @description Distinct raw IP and MAC combinations associated with a discovery hardware identity.
+             * @description Distinct raw IP and MAC combinations associated with a discovery hardware identity
              */
             identified_pairs: number;
+            /**
+             * Format: int64
+             * @description Distinct currently valid raw IP and MAC combinations with an identified nonempty hardware type in at least one matching access scope.
+             */
+            typed_pairs: number;
             /**
              * Format: int64
              * @description Distinct globally administered MAC values matched by the active IEEE OUI library.

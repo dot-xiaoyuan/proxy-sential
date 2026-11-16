@@ -27,6 +27,7 @@ type MirrorFunnel struct {
 	ScopedPairs       int64      `json:"scoped_pairs"`
 	TrustedIdentities int64      `json:"trusted_identities"`
 	IdentifiedPairs   int64      `json:"identified_pairs"`
+	TypedPairs        int64      `json:"typed_pairs"`
 	OUIMatched        int64      `json:"oui_matched"`
 	LocallyAdminMAC   int64      `json:"locally_administered_mac"`
 	NoOUIGlobalMAC    int64      `json:"no_oui_global_mac"`
@@ -87,7 +88,7 @@ func mirrorFunnelCounts(ctx context.Context, db *sql.DB, sensor string, window t
 ), macs AS MATERIALIZED (
  SELECT DISTINCT value mac FROM ids WHERE kind='mac'
 ), scoped_pairs AS MATERIALIZED (
- SELECT b.scope_key,b.ip,b.mac,h.identity_key
+ SELECT b.scope_key,b.ip,b.mac,h.identity_key,h.hardware_type,h.hardware_type_status
  FROM passive_census_binding_current b
  JOIN ids i ON i.scope_key=b.scope_key AND i.kind='ip' AND i.value=b.ip AND i.ip_family=4
  JOIN ids m ON m.scope_key=b.scope_key AND m.kind='mac' AND m.value=b.mac
@@ -100,6 +101,9 @@ func mirrorFunnelCounts(ctx context.Context, db *sql.DB, sensor string, window t
     AND peer.valid_until>$4 AND NOT peer.withdrawn)
 ), raw_pairs AS MATERIALIZED (
  SELECT DISTINCT ip,mac FROM scoped_pairs
+), typed_pairs AS MATERIALIZED (
+ SELECT DISTINCT ip,mac FROM scoped_pairs
+ WHERE hardware_type_status='identified' AND hardware_type<>''
 )
 SELECT (SELECT count(*) FROM ips),
  (SELECT count(*) FROM ips WHERE NOT EXISTS(SELECT 1 FROM raw_pairs p WHERE p.ip=ips.ip)),
@@ -110,12 +114,13 @@ SELECT (SELECT count(*) FROM ips),
  (SELECT count(DISTINCT identity_key) FROM scoped_pairs WHERE identity_key IS NOT NULL),
  (SELECT count(*) FROM raw_pairs p WHERE EXISTS(
   SELECT 1 FROM scoped_pairs s WHERE s.ip=p.ip AND s.mac=p.mac AND s.identity_key IS NOT NULL)),
+ (SELECT count(*) FROM typed_pairs),
  (SELECT coalesce(jsonb_agg(mac),'[]'::jsonb) FROM macs)`
 	var rawMACs []byte
 	err = tx.QueryRowContext(ctx, statement, sensor, cutoff, source.Time, result.EvaluatedAt).Scan(
 		&result.IPv4Total, &result.IPv4Only, &result.MACTotal, &result.MACOnly,
 		&result.IPMACPairs, &result.ScopedPairs, &result.TrustedIdentities,
-		&result.IdentifiedPairs, &rawMACs,
+		&result.IdentifiedPairs, &result.TypedPairs, &rawMACs,
 	)
 	if err != nil {
 		return MirrorFunnel{}, fmt.Errorf("mirror census funnel: %w", err)

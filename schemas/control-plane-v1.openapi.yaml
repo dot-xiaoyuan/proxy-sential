@@ -8984,7 +8984,7 @@ components:
         mirror_funnel: { $ref: '#/components/schemas/DiscoveryMirrorFunnel' }
     DiscoveryMirrorFunnel:
       type: object
-      required: [status, evaluated_at, ipv4_total, ipv4_only, mac_total, mac_only, ip_mac_pairs, scoped_pairs, trusted_identities, identified_pairs, oui_matched, locally_administered_mac, no_oui_global_mac, oui_library_version]
+      required: [status, evaluated_at, ipv4_total, ipv4_only, mac_total, mac_only, ip_mac_pairs, scoped_pairs, trusted_identities, identified_pairs, typed_pairs, oui_matched, locally_administered_mac, no_oui_global_mac, oui_library_version]
       properties:
         status: { type: string, enum: [initializing, ready, partial, delayed] }
         as_of: { type: string, format: date-time, description: Last mirrored source event included in this projection. }
@@ -8997,7 +8997,8 @@ components:
         ip_mac_pairs: { type: integer, format: int64, minimum: 0, description: Distinct raw IPv4 and MAC combinations observed in the window and still valid without withdrawal or scope conflict at evaluated_at. }
         scoped_pairs: { type: integer, format: int64, minimum: 0, description: Currently valid unambiguous IP and MAC combinations distinguished by access scope. }
         trusted_identities: { type: integer, format: int64, minimum: 0, description: Distinct discovery hardware identities associated with these scoped pairs. }
-        identified_pairs: { type: integer, format: int64, minimum: 0, description: Distinct raw IP and MAC combinations associated with a discovery hardware identity. }
+        identified_pairs: { type: integer, format: int64, minimum: 0, description: Distinct raw IP and MAC combinations associated with a discovery hardware identity, regardless of device type. }
+        typed_pairs: { type: integer, format: int64, minimum: 0, description: Distinct currently valid raw IP and MAC combinations with an identified nonempty hardware type in at least one matching access scope. }
         oui_matched: { type: integer, format: int64, minimum: 0, description: Distinct globally administered MAC values matched by the active IEEE OUI library. }
         locally_administered_mac: { type: integer, format: int64, minimum: 0, description: Distinct MAC values with the locally administered bit, including but not proving randomized addresses. }
         no_oui_global_mac: { type: integer, format: int64, minimum: 0, description: Distinct globally administered MAC values without a match in the active IEEE OUI library. }

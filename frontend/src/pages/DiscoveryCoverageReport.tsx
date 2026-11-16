@@ -10,7 +10,7 @@ export function DiscoveryCoverageReport({ report, loading, error }: { report?: R
   const windowLabel = windowCode ? ({'15m':'近 15 分钟','24h':'近 24 小时','168h':'近 7 天','720h':'近 30 天'} as Record<string,string>)[windowCode] || report?.window : ''
   const funnel = report?.mirror_funnel
   const funnelIdentityLag = funnel?.as_of && report ? Math.max(0, Math.round((Date.parse(funnel.as_of) - Date.parse(report.identity_as_of)) / 60_000)) : 0
-  const withoutDeviceRecord = funnel ? Math.max(0, funnel.ip_mac_pairs - funnel.identified_pairs) : 0
+  const typePendingPairs = funnel ? Math.max(0, funnel.ip_mac_pairs - funnel.typed_pairs) : 0
   const rate = (count: number, total: number) => total > 0 ? `${(count / total * 100).toFixed(1)}%` : ''
   const metric = (label: string, value?: number, detail?: string) => <div className="discovery-report-metric" key={label}><span>{label}</span><strong>{value === undefined ? error ? '读取失败' : '统计中' : value.toLocaleString('zh-CN')}</strong>{detail && <small>{detail}</small>}</div>
   return <section className="discovery-report" aria-label="设备发现覆盖报表">
@@ -25,12 +25,11 @@ export function DiscoveryCoverageReport({ report, loading, error }: { report?: R
         {metric('当前无有效 IPv4 配对的 MAC', funnel.mac_only, '个 MAC；可能只有其他网段或 IPv6 地址，或先前的绑定已失效')}
         {metric('当前有效的 IP–MAC 配对', funnel.ip_mac_pairs, '种窗口内出现过、查询时仍有效的配对')}
       </div>
-      <div className="discovery-report-group"><h4>设备发现结果</h4><p>“有设备记录”表示当前配对能关联到同接入位置、同 MAC 的发现设备条目，不要求识别出设备类型。配对按 IP–MAC 去重，设备记录按接入位置和 MAC 去重；同一设备有多个 IP 时，配对数会多于设备记录数。</p></div>
+      <div className="discovery-report-group"><h4>设备类型识别</h4><p>以本窗口出现过、查询时仍有效的 IP–MAC 配对为分母；只有设备类型已确认的配对计入识别数。同一设备有多个 IP 时会对应多个配对，因此这里是配对占比，不是物理设备台数占比。</p></div>
       <div className="discovery-report-grid">
-        {metric('有设备记录的配对', funnel.identified_pairs, '种 IP–MAC 配对；可对应到设备记录')}
-        {metric('没有设备记录的配对', withoutDeviceRecord, '种 IP–MAC 配对；截至发现处理水位尚无记录')}
-        {metric('涉及的设备记录', funnel.trusted_identities, '条按接入位置和 MAC 去重的记录；类型不一定已确认')}
-        <div className="discovery-report-metric discovery-report-rate" aria-label="有设备记录的组合占比"><span>有设备记录的组合占比</span><strong>{rate(funnel.identified_pairs, funnel.ip_mac_pairs)}</strong><small>{funnel.identified_pairs.toLocaleString('zh-CN')} / {funnel.ip_mac_pairs.toLocaleString('zh-CN')} 种组合</small><progress value={funnel.identified_pairs} max={funnel.ip_mac_pairs || 1}/></div>
+        {metric('已识别设备类型的配对', funnel.typed_pairs, '种 IP–MAC 配对；对应的设备类型已确认')}
+        {metric('类型待确认的配对', typePendingPairs, '种 IP–MAC 配对；包含尚无设备记录的配对')}
+        <div className="discovery-report-metric discovery-report-rate" aria-label="已识别设备类型的配对占比"><span>已识别设备类型的配对占比</span><strong>{rate(funnel.typed_pairs, funnel.ip_mac_pairs)}</strong><small>{funnel.typed_pairs.toLocaleString('zh-CN')} / {funnel.ip_mac_pairs.toLocaleString('zh-CN')} 种配对</small><progress value={funnel.typed_pairs} max={funnel.ip_mac_pairs || 1}/></div>
       </div>
       <div className="discovery-report-group"><h4>MAC 地址分类</h4><p>按不同 MAC 去重。固定标志位区分本地管理与全局管理；全局管理地址再按 OUI 库分为匹配与未匹配。</p></div>
       <div className="discovery-report-grid">
