@@ -161,11 +161,66 @@ func TestZeekBindingRejectsDuplicateArchivedTailWithoutHint(t *testing.T) {
 		}
 		writeZeekChainArchive(t, filepath.Join(archiveDir, name), append(append([]byte(nil), first...), []byte("unread\n")...))
 	}
+	// A high generation does not prove that FileID names the compressed inode:
+	// old source inodes can be reused after rotation.
+	firstArchive := filepath.Join(dir, "2026-11-10", "device_dhcp_message.09:00:00-10:00:00.log.gz")
+	info, err := os.Stat(firstArchive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cursor.FileID = fileIdentityAt(path, firstArchive, info)
+	cursor.Generation = 34
 	if err := os.WriteFile(path, []byte("current\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := readZeekBindingChunk(path, cursor, 1<<20); !errors.Is(err, streamlog.ErrContentConflict) {
 		t.Fatalf("duplicate historical anchor was accepted: %v", err)
+	}
+}
+
+func TestZeekDecodedArchiveCacheInvalidatesChangedOrCorruptFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "device_dhcp_message.09:00:00-10:00:00.log.gz")
+	writeZeekChainArchive(t, path, []byte("first\n"))
+	first, _, err := cachedDecodedZeekArchive(path)
+	if err != nil || string(first) != "first\n" {
+		t.Fatalf("first archive decode: %q %v", first, err)
+	}
+	if chunk, _, err := readZeekArchiveChunkAt(path, 0, 64); err != nil || string(chunk) != "first\n" {
+		t.Fatalf("cached archive segment read: %q %v", chunk, err)
+	}
+	again, _, err := cachedDecodedZeekArchive(path)
+	if err != nil || &again[0] != &first[0] {
+		t.Fatalf("sequential segment read decompressed the same archive again: %v", err)
+	}
+	writeZeekChainArchive(t, path, []byte("other\n"))
+	future := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(path, future, future); err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := cachedDecodedZeekArchive(path)
+	if err != nil || string(second) != "other\n" {
+		t.Fatalf("changed archive reused stale bytes: %q %v", second, err)
+	}
+	if err := os.WriteFile(path, []byte("not a gzip"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := cachedDecodedZeekArchive(path); !errors.Is(err, ErrStreamArchivePending) {
+		t.Fatalf("corrupt replacement archive passed cache proof: %v", err)
+	}
+}
+
+func TestLargeZeekArchiveUsesBoundedStreamFallback(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "device_dhcp_message.09:00:00-10:00:00.log.gz")
+	raw := bytes.Repeat([]byte{'x'}, maxCachedZeekArchiveBytes+1)
+	copy(raw, []byte("line\n"))
+	writeZeekChainArchive(t, path, raw)
+	if _, _, err := cachedDecodedZeekArchive(path); !errors.Is(err, errZeekArchiveTooLarge) {
+		t.Fatalf("oversized archive entered the bounded cache: %v", err)
+	}
+	chunk, atEOF, err := readZeekArchiveChunkAt(path, 0, 4096)
+	if err != nil || atEOF || string(chunk) != "line\n" {
+		t.Fatalf("oversized archive did not use stream fallback: chunk=%q eof=%t err=%v", chunk, atEOF, err)
 	}
 }
 
