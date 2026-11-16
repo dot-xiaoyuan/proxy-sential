@@ -7,7 +7,9 @@ import subprocess
 UNIT_BINARIES={
  'proxy-sentinel-control-plane.service':'proxy-sentinel',
  'proxy-sentinel-control-plane-eventbus.service':'proxy-sentinel',
+ 'proxy-sentinel-eventbus-consumer.service':'event-bus-consumer',
  'proxy-sentinel-ingest.service':'proxy-sentinel',
+ 'proxy-sentinel-eve-ingest.service':'proxy-sentinel',
  'proxy-sentinel-ingest-stream-dhcp-binding-b56.service':'proxy-sentinel',
  'proxy-sentinel-ingest-stream-dhcp-message-r1.service':'proxy-sentinel',
  'proxy-sentinel-ingest-stream-packet-b54.service':'proxy-sentinel',
@@ -29,6 +31,7 @@ UNIT_BINARIES={
  'proxy-sentinel-inventory.service':'proxy-sentinel',
  'proxy-sentinel-inventory-backfill.service':'proxy-sentinel',
  'proxy-sentinel-identity-materializer.service':'proxy-sentinel',
+ 'proxy-sentinel-identity-event-relay.service':'identity-event-relay',
  'proxy-sentinel-ncu-identity-materializer.service':'proxy-sentinel',
  'proxy-sentinel-application-materializer.service':'proxy-sentinel',
  'proxy-sentinel-discovery.service':'discovery-worker',

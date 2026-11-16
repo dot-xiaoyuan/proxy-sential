@@ -1,5 +1,6 @@
 """Runtime verification for an intentionally pinned NCU materializer."""
 import importlib.util
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -31,9 +32,9 @@ class RuntimeVerifierTest(unittest.TestCase):
         self.argv_executable = None
         self.exec_start_calls = 0
 
-    def binary(self, name):
-        path = self.root / "releases" / name / "bin" / "proxy-sentinel"
-        path.parent.mkdir(parents=True)
+    def binary(self, name, executable="proxy-sentinel"):
+        path = self.root / "releases" / name / "bin" / executable
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(name.encode())
         return path
 
@@ -68,6 +69,33 @@ class RuntimeVerifierTest(unittest.TestCase):
         self.process(412, self.old)
         with self.assertRaisesRegex(ValueError, "runs another release"):
             self.verify([NORMAL])
+
+    def test_live_event_bus_and_eve_units_are_restarted_and_verified(self):
+        upgrade = MODULE_PATH.with_name("upgrade-application.sh").read_text()
+        restart_loop = re.search(
+            r"for unit in (proxy-sentinel-control-plane .*?); do\n  if \[\[ \"\$preserve_inventory\"",
+            upgrade,
+            re.S,
+        )
+        self.assertIsNotNone(restart_loop, "application upgrade restart list is missing")
+        restarted = set(restart_loop.group(1).split())
+        for unit, binary in (
+            ("proxy-sentinel-eve-ingest.service", "proxy-sentinel"),
+            ("proxy-sentinel-eventbus-consumer.service", "event-bus-consumer"),
+            ("proxy-sentinel-identity-event-relay.service", "identity-event-relay"),
+        ):
+            with self.subTest(unit=unit):
+                self.assertIn(unit.removesuffix(".service"), restarted)
+                self.assertEqual(runtime.UNIT_BINARIES.get(unit), binary)
+                old = self.binary("r25", binary)
+                current = self.binary("r61", binary)
+                self.process(412, old)
+                self.pids[unit] = 412
+                with self.assertRaisesRegex(ValueError, "runs another release"):
+                    self.verify([unit])
+                self.process(412, current)
+                result = self.verify([unit])
+                self.assertEqual(result["verified_application_processes"][0]["executable"], str(current))
 
     def test_dhcp_archive_reader_keeps_its_explicit_immutable_release(self):
         for unit in ("proxy-sentinel-ingest-stream-dhcp-message-r1.service",
