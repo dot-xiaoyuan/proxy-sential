@@ -11,11 +11,13 @@ import (
 )
 
 // MirrorFunnel uses the mirror census rather than the device-observation index.
-// Address and MAC counts are raw distinct values; pairs are raw distinct
-// IPv4/MAC combinations, while trusted identities retain their access scope.
+// Address and MAC counts are raw distinct values seen in the selected window.
+// Pairs are currently valid, unambiguous IPv4/MAC bindings seen in that window;
+// discovery identities retain their access scope.
 type MirrorFunnel struct {
 	Status            string     `json:"status"`
 	AsOf              *time.Time `json:"as_of,omitempty"`
+	EvaluatedAt       time.Time  `json:"evaluated_at"`
 	AvailableFrom     *time.Time `json:"available_from,omitempty"`
 	IPv4Total         int64      `json:"ipv4_total"`
 	IPv4Only          int64      `json:"ipv4_only"`
@@ -48,7 +50,7 @@ func classifyMirrorMACs(library *fingerprint.Library, macs []string) (matched, l
 // mirrorFunnelCounts reads one repeatable snapshot so the address cohorts and
 // OUI denominator reconcile even while the stream updates current projections.
 func mirrorFunnelCounts(ctx context.Context, db *sql.DB, sensor string, window time.Duration) (MirrorFunnel, error) {
-	result := MirrorFunnel{Status: "initializing"}
+	result := MirrorFunnel{Status: "initializing", EvaluatedAt: time.Now().UTC()}
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return result, err
@@ -92,6 +94,10 @@ func mirrorFunnelCounts(ctx context.Context, db *sql.DB, sensor string, window t
  LEFT JOIN passive_hardware_current h ON h.scope_key=b.scope_key AND h.mac=b.mac
   AND h.sensor_id=$1 AND h.first_seen<=$3 AND h.last_seen<=$3
  WHERE b.observed_at>=$2 AND b.observed_at<=$3
+  AND b.valid_until>$4 AND NOT b.withdrawn
+  AND NOT EXISTS(SELECT 1 FROM passive_census_binding_current peer
+   WHERE peer.scope_key=b.scope_key AND peer.ip=b.ip AND peer.mac<>b.mac
+    AND peer.valid_until>$4 AND NOT peer.withdrawn)
 ), raw_pairs AS MATERIALIZED (
  SELECT DISTINCT ip,mac FROM scoped_pairs
 )
@@ -106,7 +112,7 @@ SELECT (SELECT count(*) FROM ips),
   SELECT 1 FROM scoped_pairs s WHERE s.ip=p.ip AND s.mac=p.mac AND s.identity_key IS NOT NULL)),
  (SELECT coalesce(jsonb_agg(mac),'[]'::jsonb) FROM macs)`
 	var rawMACs []byte
-	err = tx.QueryRowContext(ctx, statement, sensor, cutoff, source.Time).Scan(
+	err = tx.QueryRowContext(ctx, statement, sensor, cutoff, source.Time, result.EvaluatedAt).Scan(
 		&result.IPv4Total, &result.IPv4Only, &result.MACTotal, &result.MACOnly,
 		&result.IPMACPairs, &result.ScopedPairs, &result.TrustedIdentities,
 		&result.IdentifiedPairs, &rawMACs,

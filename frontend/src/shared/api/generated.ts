@@ -8613,6 +8613,11 @@ export interface components {
             as_of?: string;
             /**
              * Format: date-time
+             * @description Time at which binding validity and conflicts were evaluated.
+             */
+            evaluated_at: string;
+            /**
+             * Format: date-time
              * @description First source event covered by the mirror census.
              */
             available_from?: string;
@@ -8623,7 +8628,7 @@ export interface components {
             ipv4_total: number;
             /**
              * Format: int64
-             * @description Distinct local IPv4 values without a trusted device-side MAC binding in the window.
+             * @description Distinct local IPv4 values without a currently valid unambiguous device-side MAC binding.
              */
             ipv4_only: number;
             /**
@@ -8633,17 +8638,17 @@ export interface components {
             mac_total: number;
             /**
              * Format: int64
-             * @description Distinct trusted device-side MAC values without an IPv4 binding in the window.
+             * @description Distinct device-side MAC values without a currently valid unambiguous IPv4 binding.
              */
             mac_only: number;
             /**
              * Format: int64
-             * @description Distinct raw IPv4 and MAC combinations observed during the window
+             * @description Distinct raw IPv4 and MAC combinations observed in the window and still valid without withdrawal or scope conflict at evaluated_at.
              */
             ip_mac_pairs: number;
             /**
              * Format: int64
-             * @description IP and MAC combinations distinguished by access scope.
+             * @description Currently valid unambiguous IP and MAC combinations distinguished by access scope.
              */
             scoped_pairs: number;
             /**

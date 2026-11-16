@@ -20,6 +20,8 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
     const report = page.getByLabel('设备发现覆盖报表')
     await expect(report).toContainText('只有 IPv4')
     await expect(report).toContainText('有 IP 和 MAC')
+    await expect(report).toContainText('绑定状态截至')
+    await expect(report).not.toContainText('包含窗口内历史换绑')
     await expect(report).toContainText('已发现设备')
     await expect(report).toContainText('没有设备记录的组合')
     await expect(report.getByLabel('有设备记录的组合占比')).toContainText('80.0%')
