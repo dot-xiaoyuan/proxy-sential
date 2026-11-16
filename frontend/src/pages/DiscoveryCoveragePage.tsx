@@ -33,7 +33,9 @@ export function DiscoveryCoveragePage() {
       </div>
     </header>
     <DiscoveryCoverageReport report={coverage.data} loading={coverage.isPending} error={coverage.isError}/>
-    <DiscoveryCoverageDiagnostics/>
-    <CensusPanel/>
+    <details className="discovery-coverage-advanced"><summary>查看原因分析与镜像明细</summary>
+      <DiscoveryCoverageDiagnostics/>
+      <CensusPanel/>
+    </details>
   </main>
 }
