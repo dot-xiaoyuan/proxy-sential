@@ -21,6 +21,7 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
     await expect(report).toContainText('IPv4 地址')
     await expect(report).toContainText('为什么 IP–MAC 数量比 IP 多？')
     await expect(report).toContainText('设备类型识别进展：按 IP 统计')
+    await expect(report.getByLabel('已确认类型的 IP 占比')).toContainText('33.3%')
     await expect(page.getByLabel('设备事实原因分析')).toContainText('Fingerbank 采购判断')
     await expect(page.locator('.discovery-diagnostics-table tbody tr')).toHaveCount(46)
     await expect(page.getByLabel('镜像可见标识统计')).toBeVisible()
