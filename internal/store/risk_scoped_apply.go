@@ -56,6 +56,13 @@ func (s *DBStore) ListStreamRiskFeatureEvents(ctx context.Context, sensor string
 	return s.ch.ListStreamRiskFeatureEvents(ctx, sensor, claims, from, to, acceptedAfter, limit)
 }
 
+func (s *DBStore) StreamRiskFeatureEvents(ctx context.Context, sensor string, claims []RiskSubjectClaim, from, to, acceptedAfter time.Time, pageSize int, emit func(normalized.Event) error) (int, error) {
+	if s == nil || s.ch == nil {
+		return 0, errors.New("risk feature store unavailable")
+	}
+	return s.ch.StreamRiskFeatureEvents(ctx, sensor, claims, from, to, acceptedAfter, pageSize, emit)
+}
+
 func (s *DBStore) ApplyStreamRiskEvaluation(ctx context.Context, sensor string, claims []RiskSubjectClaim, facts []evidence.Evidence, snapshots []risk.Snapshot, asOf time.Time) (int, error) {
 	if s == nil || s.pg == nil || sensor == "" || asOf.IsZero() || len(claims) == 0 || len(claims) > maxRiskSubjectClaim {
 		return 0, errors.New("invalid scoped risk commit")

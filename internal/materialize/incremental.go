@@ -23,7 +23,7 @@ type IncrementalStore interface {
 	StreamRiskFreshCutoff(context.Context, string) (time.Time, error)
 	QueueExpiredStreamRiskSubjects(context.Context, string, time.Time, int) error
 	ClaimRiskSubjects(context.Context, string, int) ([]store.RiskSubjectClaim, error)
-	ListStreamRiskFeatureEvents(context.Context, string, []store.RiskSubjectClaim, time.Time, time.Time, time.Time, int) ([]normalized.Event, error)
+	StreamRiskFeatureEvents(context.Context, string, []store.RiskSubjectClaim, time.Time, time.Time, time.Time, int, func(normalized.Event) error) (int, error)
 	ApplyStreamRiskEvaluation(context.Context, string, []store.RiskSubjectClaim, []evidence.Evidence, []risk.Snapshot, time.Time) (int, error)
 	ReleaseRiskSubjects(context.Context, []store.RiskSubjectClaim) error
 }
@@ -51,6 +51,7 @@ func RunIncrementalOnce(ctx context.Context, backend IncrementalStore, opts Incr
 	if backend == nil || opts.SensorID == "" {
 		return IncrementalResult{}, errors.New("incremental risk needs a sensor and storage owner")
 	}
+	liveAsOf := opts.AsOf.IsZero()
 	if opts.AsOf.IsZero() {
 		opts.AsOf = time.Now().UTC()
 	}
@@ -73,17 +74,28 @@ func RunIncrementalOnce(ctx context.Context, backend IncrementalStore, opts Incr
 	if freshCutoff.IsZero() || freshCutoff.After(opts.AsOf) {
 		return IncrementalResult{}, errors.New("incremental risk requires an audited fresh cutoff")
 	}
+	// The PG lease is 15 seconds and the caller's batch deadline is 10 seconds.
+	// Claim only what one bounded risk commit can finish; otherwise later
+	// groups hold expiring leases while an earlier hot subject is scanned.
+	const maxClaimsPerLease = 8
+	claimLimit := min(opts.ClaimLimit, maxClaimsPerLease)
 	if !opts.SkipExpiry {
-		if err := backend.QueueExpiredStreamRiskSubjects(ctx, opts.SensorID, opts.AsOf.Add(-opts.Window), opts.ClaimLimit); err != nil {
+		if err := backend.QueueExpiredStreamRiskSubjects(ctx, opts.SensorID, opts.AsOf.Add(-opts.Window), claimLimit); err != nil {
 			return IncrementalResult{}, fmt.Errorf("queue expired risk subjects: %w", err)
 		}
 	}
-	claims, err := backend.ClaimRiskSubjects(ctx, opts.SensorID, opts.ClaimLimit)
+	claims, err := backend.ClaimRiskSubjects(ctx, opts.SensorID, claimLimit)
 	if err != nil || len(claims) == 0 {
 		return IncrementalResult{}, err
 	}
 	result = IncrementalResult{Claims: len(claims)}
 	claimedAt := time.Now().UTC()
+	// In live mode the snapshot must be no earlier than the PG claim. A source
+	// feature accepted before its dirty generation was claimed must be inside
+	// the accepted-time fence; later generations are rejected at apply time.
+	if liveAsOf {
+		opts.AsOf = claimedAt
+	}
 	for _, claim := range claims {
 		firstDirty := claim.FirstDirty
 		if firstDirty.Before(freshCutoff) {
@@ -93,12 +105,18 @@ func RunIncrementalOnce(ctx context.Context, backend IncrementalStore, opts Incr
 			result.OldestClaimAge = claimedAt.Sub(firstDirty)
 		}
 	}
-	committed := false
+	finished := make(map[string]bool, len(claims))
 	defer func() {
-		if !committed {
+		pending := make([]store.RiskSubjectClaim, 0, len(claims)-len(finished))
+		for _, claim := range claims {
+			if !finished[claim.Type+"\x00"+claim.ID] {
+				pending = append(pending, claim)
+			}
+		}
+		if len(pending) > 0 {
 			releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer cancel()
-			if releaseErr := backend.ReleaseRiskSubjects(releaseCtx, claims); releaseErr != nil {
+			if releaseErr := backend.ReleaseRiskSubjects(releaseCtx, pending); releaseErr != nil {
 				err = errors.Join(err, fmt.Errorf("release risk claims: %w", releaseErr))
 			}
 		}
@@ -114,22 +132,62 @@ func RunIncrementalOnce(ctx context.Context, backend IncrementalStore, opts Incr
 		}
 		selected[key] = true
 	}
-	features, err := backend.ListStreamRiskFeatureEvents(ctx, opts.SensorID, claims, opts.AsOf.Add(-opts.Window), opts.AsOf, freshCutoff, opts.FeatureLimit)
+	// A hot subject can produce more than 20,000 distinct rows by itself. Keep
+	// each read page and each commit small, and release any unprocessed lease if
+	// the context expires. A successful group has already acknowledged its own
+	// generations and must never be released again.
+	const claimGroupSize = 8
+	groups := make([][]store.RiskSubjectClaim, 0, (len(claims)+claimGroupSize-1)/claimGroupSize)
+	for start := 0; start < len(claims); start += claimGroupSize {
+		end := min(start+claimGroupSize, len(claims))
+		groups = append(groups, claims[start:end])
+	}
+	var boundErr error
+	for len(groups) > 0 {
+		group := groups[0]
+		groups = groups[1:]
+		groupResult, groupErr := evaluateRiskClaimGroup(ctx, backend, opts, freshCutoff, group)
+		if errors.Is(groupErr, store.ErrRiskFeatureStreamBound) {
+			if len(group) > 1 {
+				middle := len(group) / 2
+				groups = append([][]store.RiskSubjectClaim{group[:middle], group[middle:]}, groups...)
+				continue
+			}
+			// Keep this generation pending, but let other claimed subjects make
+			// progress instead of allowing one hot IP to monopolize the queue.
+			boundErr = errors.Join(boundErr, fmt.Errorf("risk subject %s/%s remains pending: %w", group[0].Type, group[0].ID, groupErr))
+			continue
+		}
+		if groupErr != nil {
+			return result, groupErr
+		}
+		result.Features += groupResult.Features
+		result.Evidence += groupResult.Evidence
+		result.Snapshots += groupResult.Snapshots
+		result.Committed += groupResult.Committed
+		result.Retried += groupResult.Retried
+		for _, claim := range group {
+			finished[claim.Type+"\x00"+claim.ID] = true
+		}
+	}
+	return result, boundErr
+}
+
+func evaluateRiskClaimGroup(ctx context.Context, backend IncrementalStore, opts IncrementalOptions, freshCutoff time.Time, claims []store.RiskSubjectClaim) (result IncrementalResult, err error) {
+	selected := make(map[string]bool, len(claims))
+	for _, claim := range claims {
+		selected[claim.Type+"\x00"+claim.ID] = true
+	}
+	analyzer, err := evidence.NewFixedWindowStreamAnalyzer(evidence.Options{Window: opts.Window, AsOf: opts.AsOf})
+	if err != nil {
+		return result, err
+	}
+	pageSize := min(opts.FeatureLimit, 5000)
+	result.Features, err = backend.StreamRiskFeatureEvents(ctx, opts.SensorID, claims, opts.AsOf.Add(-opts.Window), opts.AsOf, freshCutoff, pageSize, analyzer.Add)
 	if err != nil {
 		return result, fmt.Errorf("read affected risk features: %w", err)
 	}
-	result.Features = len(features)
-	var lines bytes.Buffer
-	encoder := json.NewEncoder(&lines)
-	for _, event := range features {
-		if err := encoder.Encode(event); err != nil {
-			return result, err
-		}
-	}
-	analyzed, err := evidence.Analyze(&lines, evidence.Options{Window: opts.Window, AsOf: opts.AsOf})
-	if err != nil {
-		return result, fmt.Errorf("analyze affected risk features: %w", err)
-	}
+	analyzed := analyzer.Result()
 	kept := make([]evidence.Evidence, 0, len(analyzed.Evidence))
 	seenEvidence := make(map[string]bool, len(analyzed.Evidence))
 	for _, item := range analyzed.Evidence {
@@ -171,7 +229,6 @@ func RunIncrementalOnce(ctx context.Context, backend IncrementalStore, opts Incr
 	}
 	result.Committed = committedCount
 	result.Retried = len(claims) - committedCount
-	committed = true
 	return result, nil
 }
 

@@ -3,6 +3,7 @@ package materialize
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -13,17 +14,25 @@ import (
 )
 
 type incrementalFake struct {
-	claims      []store.RiskSubjectClaim
-	events      []normalized.Event
-	readErr     error
-	applied     int
-	released    int
-	saved       []risk.Snapshot
-	facts       []evidence.Evidence
-	claimed     []store.RiskSubjectClaim
-	cutoff      time.Time
-	readCutoff  time.Time
-	expiryCalls int
+	claims         []store.RiskSubjectClaim
+	events         []normalized.Event
+	readErr        error
+	applied        int
+	released       int
+	saved          []risk.Snapshot
+	facts          []evidence.Evidence
+	claimed        []store.RiskSubjectClaim
+	claimLimit     int
+	cutoff         time.Time
+	readCutoff     time.Time
+	expiryCalls    int
+	streamN        int
+	streamCalls    int
+	failCall       int
+	boundGroupSize int
+	failBoundID    string
+	appliedGroups  [][]store.RiskSubjectClaim
+	releasedClaims []store.RiskSubjectClaim
 }
 
 func (f *incrementalFake) StreamRiskFreshCutoff(_ context.Context, _ string) (time.Time, error) {
@@ -43,16 +52,46 @@ func TestIncrementalRiskCanKeepExpiryOutOfRealtimeBatch(t *testing.T) {
 	}
 }
 
-func (f *incrementalFake) ClaimRiskSubjects(_ context.Context, _ string, _ int) ([]store.RiskSubjectClaim, error) {
-	return f.claims, nil
+func (f *incrementalFake) ClaimRiskSubjects(_ context.Context, _ string, limit int) ([]store.RiskSubjectClaim, error) {
+	f.claimLimit = limit
+	return f.claims[:min(limit, len(f.claims))], nil
 }
-func (f *incrementalFake) ListStreamRiskFeatureEvents(_ context.Context, _ string, claims []store.RiskSubjectClaim, _, _, acceptedAfter time.Time, _ int) ([]normalized.Event, error) {
+func (f *incrementalFake) StreamRiskFeatureEvents(_ context.Context, _ string, claims []store.RiskSubjectClaim, _, _, acceptedAfter time.Time, _ int, emit func(normalized.Event) error) (int, error) {
 	f.claimed = claims
 	f.readCutoff = acceptedAfter
-	return f.events, f.readErr
+	f.streamCalls++
+	if f.boundGroupSize > 0 && len(claims) > f.boundGroupSize {
+		return 0, store.ErrRiskFeatureStreamBound
+	}
+	if len(claims) == 1 && claims[0].ID == f.failBoundID {
+		return 0, store.ErrRiskFeatureStreamBound
+	}
+	if f.readErr != nil || f.failCall == f.streamCalls {
+		if f.readErr != nil {
+			return 0, f.readErr
+		}
+		return 0, errors.New("later risk page unavailable")
+	}
+	count := 0
+	for _, event := range f.events {
+		if err := emit(event); err != nil {
+			return count, err
+		}
+		count++
+	}
+	for index := 0; index < f.streamN; index++ {
+		claim := claims[0]
+		event := normalized.Event{EventID: "bulk-" + strconv.Itoa(index), Timestamp: time.Now().UTC().Format(time.RFC3339Nano), Type: "flow", Subject: map[string]any{"ip": claim.ID}}
+		if err := emit(event); err != nil {
+			return count, err
+		}
+		count++
+	}
+	return count, nil
 }
 func (f *incrementalFake) ApplyStreamRiskEvaluation(_ context.Context, _ string, claims []store.RiskSubjectClaim, facts []evidence.Evidence, snapshots []risk.Snapshot, _ time.Time) (int, error) {
 	f.applied++
+	f.appliedGroups = append(f.appliedGroups, append([]store.RiskSubjectClaim(nil), claims...))
 	f.facts = facts
 	f.saved = snapshots
 	return len(claims), nil
@@ -81,8 +120,9 @@ func TestIncrementalRiskKeepsStableEvidenceKeyAcrossRepeatedObservation(t *testi
 		t.Fatal("incremental risk read did not enforce the audited fresh cutoff")
 	}
 }
-func (f *incrementalFake) ReleaseRiskSubjects(_ context.Context, _ []store.RiskSubjectClaim) error {
+func (f *incrementalFake) ReleaseRiskSubjects(_ context.Context, claims []store.RiskSubjectClaim) error {
 	f.released++
+	f.releasedClaims = append(f.releasedClaims, claims...)
 	return nil
 }
 
@@ -107,5 +147,61 @@ func TestIncrementalRiskRefusesMissingFreshCutoff(t *testing.T) {
 	f := &incrementalFake{}
 	if _, err := RunIncrementalOnce(context.Background(), f, IncrementalOptions{SensorID: "sensor-a", AsOf: time.Now().UTC()}); err == nil {
 		t.Fatal("risk materializer silently processed old dirty subjects")
+	}
+}
+
+func TestIncrementalRiskProcessesSingleSubjectBeyondOldDistinctLimit(t *testing.T) {
+	now := time.Now().UTC()
+	claim := store.RiskSubjectClaim{SensorID: "sensor-a", Type: "ip", ID: "192.0.2.8", Generation: 4}
+	f := &incrementalFake{claims: []store.RiskSubjectClaim{claim}, cutoff: now.Add(-time.Hour), streamN: 20001}
+	result, err := RunIncrementalOnce(context.Background(), f, IncrementalOptions{SensorID: "sensor-a", AsOf: now, Window: 30 * time.Minute, SkipExpiry: true})
+	if err != nil || result.Features != 20001 || result.Committed != 1 || f.applied != 1 || f.released != 0 {
+		t.Fatalf("hot subject was truncated or not committed: result=%+v applied=%d released=%d err=%v", result, f.applied, f.released, err)
+	}
+}
+
+func TestIncrementalRiskReleasesOnlyUncommittedGroupAfterReadFailure(t *testing.T) {
+	now := time.Now().UTC()
+	claims := make([]store.RiskSubjectClaim, 8)
+	for index := range claims {
+		claims[index] = store.RiskSubjectClaim{SensorID: "sensor-a", Type: "ip", ID: "192.0.2." + strconv.Itoa(index+1), Generation: int64(index + 1)}
+	}
+	f := &incrementalFake{claims: claims, cutoff: now.Add(-time.Hour), boundGroupSize: 4, failCall: 3}
+	result, err := RunIncrementalOnce(context.Background(), f, IncrementalOptions{SensorID: "sensor-a", AsOf: now, Window: 30 * time.Minute, SkipExpiry: true})
+	if err == nil || result.Committed != 4 || len(f.appliedGroups) != 1 || len(f.appliedGroups[0]) != 4 || len(f.releasedClaims) != 4 || f.releasedClaims[0].ID != claims[4].ID {
+		t.Fatalf("partial failure released acknowledged subjects or lost a pending claim: result=%+v applied=%v released=%v err=%v", result, f.appliedGroups, f.releasedClaims, err)
+	}
+}
+
+func TestIncrementalRiskSplitsOversizedGroupWithoutSkippingClaims(t *testing.T) {
+	now := time.Now().UTC()
+	claims := make([]store.RiskSubjectClaim, 8)
+	for index := range claims {
+		claims[index] = store.RiskSubjectClaim{SensorID: "sensor-a", Type: "ip", ID: "192.0.2." + strconv.Itoa(index+1), Generation: int64(index + 1)}
+	}
+	f := &incrementalFake{claims: claims, cutoff: now.Add(-time.Hour), boundGroupSize: 2}
+	result, err := RunIncrementalOnce(context.Background(), f, IncrementalOptions{SensorID: "sensor-a", AsOf: now, Window: 30 * time.Minute, SkipExpiry: true})
+	if err != nil || result.Committed != 8 || f.applied != 4 || f.released != 0 {
+		t.Fatalf("group split lost risk claims: result=%+v groups=%v released=%v err=%v", result, f.appliedGroups, f.releasedClaims, err)
+	}
+	if f.claimLimit != 8 {
+		t.Fatalf("risk worker leased %d claims despite an eight-subject bound", f.claimLimit)
+	}
+}
+
+func TestIncrementalRiskHotSingletonStaysPendingWhileOtherClaimsCommit(t *testing.T) {
+	now := time.Now().UTC()
+	claims := []store.RiskSubjectClaim{
+		{SensorID: "sensor-a", Type: "ip", ID: "192.0.2.1", Generation: 1},
+		{SensorID: "sensor-a", Type: "ip", ID: "192.0.2.2", Generation: 2},
+	}
+	f := &incrementalFake{claims: claims, cutoff: now.Add(-time.Hour), boundGroupSize: 1}
+	f.readErr = nil
+	// The first singleton hits a deterministic capacity guard; the second can
+	// still be evaluated and committed in the same claimed batch.
+	f.failBoundID = claims[0].ID
+	result, err := RunIncrementalOnce(context.Background(), f, IncrementalOptions{SensorID: "sensor-a", AsOf: now, Window: 30 * time.Minute, SkipExpiry: true})
+	if !errors.Is(err, store.ErrRiskFeatureStreamBound) || result.Committed != 1 || len(f.releasedClaims) != 1 || f.releasedClaims[0].ID != claims[0].ID {
+		t.Fatalf("hot singleton was acked or blocked other subjects: result=%+v released=%v err=%v", result, f.releasedClaims, err)
 	}
 }
