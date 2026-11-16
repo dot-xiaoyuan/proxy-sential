@@ -6,6 +6,19 @@ import (
 	"proxy-sentinel/internal/streamlog"
 )
 
+func TestConfirmedRawRequiresSettledArchiveLane(t *testing.T) {
+	for _, item := range []struct {
+		lane    streamlog.Lane
+		settled bool
+	}{
+		{streamlog.Archive, false}, {streamlog.Search, true}, {"risk-feature", true},
+	} {
+		if err := runWithConfirmedRaw("journal", "segment", item.lane, item.settled, true); err == nil {
+			t.Fatalf("confirmed raw accepted outside settled archive: %+v", item)
+		}
+	}
+}
+
 func TestSettledPacketRiskRepairUsesFeatureLaneInsteadOfSearchAck(t *testing.T) {
 	state := streamlog.State{Committed: true, Segment: streamlog.Segment{RiskFeaturesRequired: true, SplitRiskFeatures: true},
 		Acks: map[streamlog.Lane]streamlog.Status{

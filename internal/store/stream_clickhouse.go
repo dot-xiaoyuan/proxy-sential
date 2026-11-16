@@ -382,6 +382,61 @@ func (s *ClickHouseStore) verifyStreamRaw(ctx context.Context, segmentID string,
 	return found, nil
 }
 
+// ReadConfirmedStreamRaw is an operator-only recovery source for an attempted
+// archive whose raw insert succeeded but whose body insert did not. The
+// immutable journal descriptor supplies the expected source interval and
+// hash; a missing, duplicate or conflicting ClickHouse row is never used.
+func (s *ClickHouseStore) ReadConfirmedStreamRaw(ctx context.Context, segmentID string, segment streamlog.Segment) ([]byte, error) {
+	if s == nil || segmentID == "" || segmentID != streamlog.SourceSegmentID(segment) ||
+		!segment.SourceBackedRaw || segment.Source != "zeek-dhcp-binding" || len(segment.Raw) != 0 ||
+		segment.StartOffset < 0 || segment.EndOffset <= segment.StartOffset ||
+		segment.EndOffset-segment.StartOffset > 1<<20 || len(segment.RawSHA256) != 64 ||
+		segment.ArchiveMonth != segment.AcceptedAt.UTC().Format("200601") {
+		return nil, streamlog.ErrContentConflict
+	}
+	month, err := strconv.ParseUint(segment.ArchiveMonth, 10, 32)
+	if err != nil || month == 0 {
+		return nil, streamlog.ErrContentConflict
+	}
+	query := fmt.Sprintf("SELECT raw_sha256,raw_base64,source,source_path,file_id,start_offset,end_offset,accepted_at FROM stream_source_raw WHERE archive_month=%d AND segment_id=%s LIMIT 2 SETTINGS max_result_rows=2,max_result_bytes=4194304,result_overflow_mode='throw' FORMAT JSONEachRow", month, chQuote(segmentID))
+	data, err := s.query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	lines := bytes.Split(bytes.TrimSpace(data), []byte{'\n'})
+	if len(data) == 0 || len(lines) != 1 || len(lines[0]) == 0 {
+		return nil, streamlog.ErrUnconfirmed
+	}
+	var row struct {
+		Hash        string `json:"raw_sha256"`
+		Raw         string `json:"raw_base64"`
+		Source      string `json:"source"`
+		SourcePath  string `json:"source_path"`
+		FileID      string `json:"file_id"`
+		StartOffset int64  `json:"start_offset"`
+		EndOffset   int64  `json:"end_offset"`
+		AcceptedAt  string `json:"accepted_at"`
+	}
+	if err := json.Unmarshal(lines[0], &row); err != nil {
+		return nil, err
+	}
+	if row.Hash != segment.RawSHA256 || row.Source != segment.Source ||
+		row.SourcePath != segment.SourcePath || row.FileID != segment.FileID ||
+		row.StartOffset != segment.StartOffset || row.EndOffset != segment.EndOffset ||
+		row.AcceptedAt != segment.AcceptedAt.UTC().Format("2006-01-02 15:04:05.000000") {
+		return nil, streamlog.ErrContentConflict
+	}
+	raw, err := base64.StdEncoding.DecodeString(row.Raw)
+	if err != nil || int64(len(raw)) != segment.EndOffset-segment.StartOffset {
+		return nil, streamlog.ErrContentConflict
+	}
+	sum := sha256.Sum256(raw)
+	if hex.EncodeToString(sum[:]) != segment.RawSHA256 {
+		return nil, streamlog.ErrContentConflict
+	}
+	return raw, nil
+}
+
 func (s *ClickHouseStore) missingStreamBodyEvents(ctx context.Context, segment streamlog.Segment) ([]int, error) {
 	prepared, err := prepareStreamEvents(segment)
 	if err != nil {

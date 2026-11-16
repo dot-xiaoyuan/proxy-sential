@@ -166,6 +166,65 @@ func TestReconcileSettledStreamBodyRequiresQuietQueueAndWritesOnlyMissingBody(t 
 	}
 }
 
+func TestConfirmedStreamRawRequiresOneExactJournalInterval(t *testing.T) {
+	segment := testStreamSegment()
+	segment.Source = "zeek-dhcp-binding"
+	segment.SourceBackedRaw = true
+	segment.SourcePath = "/zeek/current/device_dhcp_message.log"
+	raw := []byte("the exact source interval\n")
+	segment.EndOffset = segment.StartOffset + int64(len(raw))
+	sum := sha256.Sum256(raw)
+	segment.RawSHA256 = hex.EncodeToString(sum[:])
+	id := streamlog.SourceSegmentID(segment)
+	row := map[string]any{
+		"raw_sha256": segment.RawSHA256, "raw_base64": base64.StdEncoding.EncodeToString(raw),
+		"source": segment.Source, "source_path": segment.SourcePath, "file_id": segment.FileID,
+		"start_offset": segment.StartOffset, "end_offset": segment.EndOffset,
+		"accepted_at": segment.AcceptedAt.UTC().Format("2006-01-02 15:04:05.000000"),
+	}
+	var response []map[string]any
+	var query string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		query = string(body)
+		for _, item := range response {
+			encoded, _ := json.Marshal(item)
+			_, _ = w.Write(append(encoded, '\n'))
+		}
+	}))
+	defer server.Close()
+	ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response = []map[string]any{row}
+	got, err := ch.ReadConfirmedStreamRaw(context.Background(), id, segment)
+	if err != nil || string(got) != string(raw) || !strings.Contains(query, "segment_id='"+id+"'") || !strings.Contains(query, "LIMIT 2") {
+		t.Fatalf("confirmed raw mismatch: raw=%q query=%q err=%v", got, query, err)
+	}
+	response = []map[string]any{row, row}
+	if _, err := ch.ReadConfirmedStreamRaw(context.Background(), id, segment); !errors.Is(err, streamlog.ErrUnconfirmed) {
+		t.Fatalf("duplicate raw row accepted: %v", err)
+	}
+	for _, changed := range []map[string]any{
+		{"file_id": "another-inode"}, {"raw_sha256": strings.Repeat("f", 64)},
+		{"end_offset": segment.EndOffset + 1}, {"raw_base64": base64.StdEncoding.EncodeToString(raw[:len(raw)-1])},
+		{"accepted_at": "2026-10-24 11:00:00.000000"},
+	} {
+		bad := map[string]any{}
+		for key, value := range row {
+			bad[key] = value
+		}
+		for key, value := range changed {
+			bad[key] = value
+		}
+		response = []map[string]any{bad}
+		if _, err := ch.ReadConfirmedStreamRaw(context.Background(), id, segment); !errors.Is(err, streamlog.ErrContentConflict) {
+			t.Fatalf("conflicting raw row accepted: changed=%v err=%v", changed, err)
+		}
+	}
+}
+
 func TestReconcileSettledStandardEventRawRepairsOnlyMissingBody(t *testing.T) {
 	segment := testStreamSegment()
 	segment.Source = "device-signals"

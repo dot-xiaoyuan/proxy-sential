@@ -21,25 +21,45 @@ func main() {
 	id := flag.String("segment-id", "", "exact segment id")
 	laneName := flag.String("lane", "", "archive, search or risk-feature")
 	settledScoped := flag.Bool("settled-scoped", false, "repair a settled archive, birth-aware search or packet risk feature with scoped row proof")
+	confirmedRaw := flag.Bool("confirmed-raw", false, "load a source-backed attempted archive from its uniquely confirmed ClickHouse raw row")
 	flag.Parse()
-	if err := run(*journalDir, *id, streamlog.Lane(*laneName), *settledScoped); err != nil {
+	if err := runWithConfirmedRaw(*journalDir, *id, streamlog.Lane(*laneName), *settledScoped, *confirmedRaw); err != nil {
 		fmt.Fprintln(os.Stderr, "stream repair:", err)
 		os.Exit(1)
 	}
 }
 
 func run(directory, id string, lane streamlog.Lane, settledScoped bool) error {
+	return runWithConfirmedRaw(directory, id, lane, settledScoped, false)
+}
+
+func runWithConfirmedRaw(directory, id string, lane streamlog.Lane, settledScoped, confirmedRaw bool) error {
 	if directory == "" || id == "" || (lane != streamlog.Archive && lane != streamlog.Search && lane != "risk-feature") {
 		return errors.New("journal, segment-id and ClickHouse lane are required")
 	}
 	if settledScoped && lane != streamlog.Archive && lane != streamlog.Search && lane != "risk-feature" {
 		return errors.New("settled scoped repair supports only archive, search or packet risk-feature")
 	}
+	if confirmedRaw && (!settledScoped || lane != streamlog.Archive) {
+		return errors.New("confirmed raw recovery requires a settled archive attempt")
+	}
 	j, err := streamlog.Open(directory)
 	if err != nil {
 		return err
 	}
-	j.SetRawResolver(realtime.ResolveZeekSourceRaw)
+	ch, err := store.NewClickHouseStore(store.ClickHouseOptions{DSN: os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN")})
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if confirmedRaw {
+		j.SetRawResolver(func(segment streamlog.Segment) ([]byte, error) {
+			return ch.ReadConfirmedStreamRaw(ctx, id, segment)
+		})
+	} else {
+		j.SetRawResolver(realtime.ResolveZeekSourceRaw)
+	}
 	state, err := j.Load(id)
 	if err != nil {
 		return err
@@ -53,12 +73,6 @@ func run(directory, id string, lane streamlog.Lane, settledScoped bool) error {
 		return err
 	}
 	defer release()
-	ch, err := store.NewClickHouseStore(store.ClickHouseOptions{DSN: os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN")})
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
 	if settledScoped && lane == streamlog.Archive {
 		err = ch.ReconcileSettledStreamBody(ctx, id, state.Segment)
 	} else if settledScoped && lane == streamlog.Search {

@@ -94,6 +94,81 @@ func TestZeekBindingDrainsContiguousArchivesAcrossRestarts(t *testing.T) {
 	}
 }
 
+func TestZeekBindingRecoversCursorOlderThanLast72Archives(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "current", "device_dhcp_message.log")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	first := []byte("committed\n")
+	oldTail := []byte("unread\n")
+	if err := os.WriteFile(path, append(append([]byte(nil), first...), oldTail...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(first)
+	cursor := streamlog.SourceCursor{
+		FileID: fileIdentity(path, info), Offset: int64(len(first)),
+		TailBytes: len(first), TailSHA256: hex.EncodeToString(sum[:]),
+	}
+	begin := time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < 80; i++ {
+		start := begin.Add(time.Duration(i) * time.Hour)
+		end := start.Add(time.Hour)
+		archiveDir := filepath.Join(dir, start.Format("2006-01-02"))
+		if err := os.MkdirAll(archiveDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		archive := filepath.Join(archiveDir, "device_dhcp_message."+start.Format("15:04:05")+"-"+end.Format("15:04:05")+".log.gz")
+		body := []byte("later\n")
+		if i == 0 {
+			body = append(append([]byte(nil), first...), oldTail...)
+		}
+		writeZeekChainArchive(t, archive, body)
+	}
+	if err := os.WriteFile(path, []byte("current\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	chunk, err := readZeekBindingChunk(path, cursor, 1<<20)
+	if err != nil || !bytes.Equal(chunk.data, oldTail) || chunk.fileID != cursor.FileID || !chunk.archive {
+		t.Fatalf("old cursor must read its exact archived tail: chunk=%+v err=%v", chunk, err)
+	}
+	cursor.Offset = chunk.end
+	sum = sha256.Sum256(oldTail)
+	cursor.TailBytes, cursor.TailSHA256 = len(oldTail), hex.EncodeToString(sum[:])
+	chunk, err = readZeekBindingChunk(path, cursor, 1<<20)
+	if err != nil || !bytes.Equal(chunk.data, []byte("later\n")) || !chunk.verifiedRotation {
+		t.Fatalf("old archive must enter its adjacent successor: chunk=%+v err=%v", chunk, err)
+	}
+}
+
+func TestZeekBindingRejectsDuplicateArchivedTailWithoutHint(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "current", "device_dhcp_message.log")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	first := []byte("same-tail\n")
+	sum := sha256.Sum256(first)
+	cursor := streamlog.SourceCursor{FileID: "old-inode", Offset: int64(len(first)), TailBytes: len(first), TailSHA256: hex.EncodeToString(sum[:])}
+	for _, name := range []string{"device_dhcp_message.09:00:00-10:00:00.log.gz", "device_dhcp_message.10:00:00-11:00:00.log.gz"} {
+		archiveDir := filepath.Join(dir, "2026-11-10")
+		if err := os.MkdirAll(archiveDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeZeekChainArchive(t, filepath.Join(archiveDir, name), append(append([]byte(nil), first...), []byte("unread\n")...))
+	}
+	if err := os.WriteFile(path, []byte("current\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readZeekBindingChunk(path, cursor, 1<<20); !errors.Is(err, streamlog.ErrContentConflict) {
+		t.Fatalf("duplicate historical anchor was accepted: %v", err)
+	}
+}
+
 func TestZeekBindingRejectsMissingArchiveInChain(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "current", "device_dhcp_message.log")

@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -109,21 +110,9 @@ func readZeekBindingChunk(path string, cursor streamlog.SourceCursor, maxBytes i
 	if err != nil {
 		return sourceChunk{}, err
 	}
-	if len(archives) > 72 {
-		archives = archives[len(archives)-72:]
-	}
-	matched := -1
-	for i, archive := range archives {
-		valid, err := zeekArchiveMatchesCursor(archive, cursor)
-		if err != nil {
-			continue
-		} // A still-compressing archive is retried below.
-		if valid {
-			if matched >= 0 {
-				return sourceChunk{}, streamlog.ErrContentConflict
-			}
-			matched = i
-		}
+	matched, err := zeekArchiveIndexForCursor(path, cursor, archives)
+	if err != nil {
+		return sourceChunk{}, err
 	}
 	if matched < 0 {
 		return sourceChunk{}, ErrStreamArchivePending
@@ -178,6 +167,73 @@ func readZeekBindingChunk(path string, cursor streamlog.SourceCursor, maxBytes i
 	}
 	read.verifiedRotation = true
 	return read, nil
+}
+
+// A fixed last-N tail silently loses an older but still retained cursor.
+// Cache verified physical archives while draining them; otherwise search the
+// entire retained chain and require a unique tail match. Legacy cursors may
+// need one full scan after process restart; all later chunks reuse the proven
+// archive and new generations can be found by physical file identity.
+func zeekArchiveIndexForCursor(path string, cursor streamlog.SourceCursor, archives []string) (int, error) {
+	cacheKey := path + "\x00" + cursor.FileID
+	tryPath := func(candidate string) int {
+		if candidate == "" {
+			return -1
+		}
+		index := sort.SearchStrings(archives, candidate)
+		if index >= len(archives) || archives[index] != candidate {
+			return -1
+		}
+		if _, _, ok := zeekArchiveInterval(candidate); !ok {
+			return -1
+		}
+		valid, err := zeekArchiveMatchesCursor(candidate, cursor)
+		if err != nil || !valid {
+			return -1
+		}
+		rememberZeekArchive(cacheKey, candidate)
+		return index
+	}
+	if index := tryPath(cachedZeekArchive(cacheKey)); index >= 0 {
+		return index, nil
+	}
+	forgetZeekArchive(cacheKey)
+	// A cursor created from an archived successor carries that archive's
+	// physical inode/birth marker. Stat it before considering old legacy IDs.
+	identityMatch := -1
+	for index, candidate := range archives {
+		info, err := os.Stat(candidate)
+		if err != nil || fileIdentityAt(path, candidate, info) != cursor.FileID {
+			continue
+		}
+		valid, err := zeekArchiveMatchesCursor(candidate, cursor)
+		if err != nil || !valid {
+			continue
+		}
+		if identityMatch >= 0 {
+			return -1, streamlog.ErrContentConflict
+		}
+		identityMatch = index
+	}
+	if identityMatch >= 0 {
+		rememberZeekArchive(cacheKey, archives[identityMatch])
+		return identityMatch, nil
+	}
+	matched := -1
+	for index, candidate := range archives {
+		valid, err := zeekArchiveMatchesCursor(candidate, cursor)
+		if err != nil || !valid {
+			continue
+		}
+		if matched >= 0 {
+			return -1, streamlog.ErrContentConflict
+		}
+		matched = index
+	}
+	if matched >= 0 {
+		rememberZeekArchive(cacheKey, archives[matched])
+	}
+	return matched, nil
 }
 
 // A cursor can lag across several completed Zeek rotations. It must enter
@@ -271,7 +327,9 @@ func readFirstZeekArchiveChunk(sourcePath, archivePath string, maxBytes int64) (
 		return sourceChunk{}, ErrStreamArchivePending
 	}
 	data := buf[:last+1]
-	return sourceChunk{data: data, fileID: fileIdentityAt(sourcePath, archivePath, before), start: 0, end: int64(len(data)), archive: true, verifiedRotation: true}, nil
+	fileID := fileIdentityAt(sourcePath, archivePath, before)
+	rememberZeekArchive(sourcePath+"\x00"+fileID, archivePath)
+	return sourceChunk{data: data, fileID: fileID, start: 0, end: int64(len(data)), archive: true, verifiedRotation: true}, nil
 }
 
 func zeekArchiveMatchesCursor(path string, cursor streamlog.SourceCursor) (bool, error) {
