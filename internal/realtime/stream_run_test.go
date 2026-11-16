@@ -15,8 +15,9 @@ import (
 	"proxy-sentinel/internal/streamlog"
 )
 
-func TestRecoveryProjectionTimeoutOnlyForDeviceSignals(t *testing.T) {
+func TestRecoveryProjectionTimeoutForLargeOrContendedSources(t *testing.T) {
 	device := Source{Kind: "device-signals"}
+	dhcp := Source{Kind: "zeek-dhcp-binding"}
 	other := Source{Kind: "suricata"}
 	if got := recoveryProjectionTimeout(device); got != 30*time.Second {
 		t.Fatalf("normal device projection timeout = %v", got)
@@ -27,6 +28,18 @@ func TestRecoveryProjectionTimeoutOnlyForDeviceSignals(t *testing.T) {
 	}
 	if got := recoveryProjectionTimeout(other); got != 30*time.Second {
 		t.Fatalf("unrelated source projection timeout = %v", got)
+	}
+	if got := recoveryProjectionTimeout(dhcp); got != 120*time.Second {
+		t.Fatalf("DHCP message projection timeout = %v", got)
+	}
+	if got := recoveryFinalizationTimeout(dhcp); got != 120*time.Second {
+		t.Fatalf("DHCP message finalization timeout = %v", got)
+	}
+	if got := recoveryFinalizationTimeout(device); got != 30*time.Second {
+		t.Fatalf("device signal finalization timeout = %v", got)
+	}
+	if got := recoveryFinalizationTimeout(other); got != 30*time.Second {
+		t.Fatalf("unrelated source finalization timeout = %v", got)
 	}
 }
 

@@ -174,7 +174,8 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 	workerErrors := make(chan error, opts.ArchiveWorkers+opts.SearchWorkers+2)
 	projectionTimeout := recoveryProjectionTimeout(source)
 	processor := streamlog.Processor{Journal: journal, Writer: writer, SinkTimeout: 30 * time.Second,
-		ProjectionWriteTimeout: projectionTimeout, ProjectionRetryTimeout: projectionTimeout}
+		ProjectionWriteTimeout: projectionTimeout, ProjectionRetryTimeout: projectionTimeout,
+		FinalizeTimeout: recoveryFinalizationTimeout(source)}
 	startWorker := func(queue <-chan string, name string, run func(context.Context, string) error, release bool) {
 		drainWorker.Add(1)
 		go func() {
@@ -430,10 +431,27 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 }
 
 func recoveryProjectionTimeout(source Source) time.Duration {
+	// Each DHCP message segment can contain 100 projected events and receipts.
+	// Under I/O contention a 30-second deadline repeatedly cancels an otherwise
+	// valid PostgreSQL transaction. Keep the source journal and pending permit
+	// bounded, but let that single transaction finish before reconciliation.
+	if source.Kind == "zeek-dhcp-binding" {
+		return 120 * time.Second
+	}
 	// A protected device-signal archive can contain older 1,000-event segments.
 	// Give only that recoverable projection more time when PostgreSQL I/O is
 	// contended; journal permits and source order still bound in-flight work.
 	if source.Kind == "device-signals" && os.Getenv(deviceSignalRecoveryDirEnv) != "" {
+		return 120 * time.Second
+	}
+	return 30 * time.Second
+}
+
+func recoveryFinalizationTimeout(source Source) time.Duration {
+	// A DHCP segment may confirm 100 durable archive receipts before writing
+	// its final position witness. A canceled confirmation is retried from the
+	// journal, but repeatedly timing out creates avoidable PostgreSQL writes.
+	if source.Kind == "zeek-dhcp-binding" {
 		return 120 * time.Second
 	}
 	return 30 * time.Second
