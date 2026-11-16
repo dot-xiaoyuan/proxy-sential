@@ -10,32 +10,33 @@ import (
 // CoverageReport counts addresses from the bounded discovery index. A /24 is
 // an observation bucket, not a claim about the campus routing configuration.
 type CoverageReport struct {
-	AsOf                    time.Time  `json:"as_of"`
-	IdentityAsOf            time.Time  `json:"identity_as_of"`
-	Window                  string     `json:"window"`
-	Subnet24                int64      `json:"subnet24"`
-	IPv4                    int64      `json:"ipv4"`
-	IPv6                    int64      `json:"ipv6"`
-	MAC                     int64      `json:"mac"`
-	IPMACPairs              int64      `json:"ip_mac_pairs"`
-	IPv4WithMAC             int64      `json:"ipv4_with_mac"`
-	IPMACUniquePairs        int64      `json:"ip_mac_unique_pairs"`
-	IPMACValidScopedPairs   int64      `json:"ip_mac_valid_scoped_pairs"`
-	MultiMACIPv4            int64      `json:"multi_mac_ipv4"`
-	MultiScopeIPMACPairs    int64      `json:"multi_scope_ip_mac_pairs"`
-	BlankAndFilledVLANPairs int64      `json:"blank_and_filled_vlan_pairs"`
-	ScopedMAC               int64      `json:"scoped_mac"`
-	Identified              int64      `json:"identified"`
-	DumbTerminals           int64      `json:"dumb_terminals"`
-	IdentityTotal           int64      `json:"identity_total"`
-	DiagnosticAsOf          *time.Time `json:"diagnostic_as_of,omitempty"`
-	TypedIPv4               int64      `json:"typed_ipv4"`
-	IdentityNoTypeIPv4      int64      `json:"identity_no_type_ipv4"`
-	NoIdentityIPv4          int64      `json:"no_identity_ipv4"`
-	UntypedNetworkOnlyIPv4  int64      `json:"untyped_network_only_ipv4"`
-	UntypedDHCPOnlyIPv4     int64      `json:"untyped_dhcp_only_ipv4"`
-	UntypedApplicationIPv4  int64      `json:"untyped_application_ipv4"`
-	UntypedOtherIPv4        int64      `json:"untyped_other_ipv4"`
+	AsOf                    time.Time    `json:"as_of"`
+	IdentityAsOf            time.Time    `json:"identity_as_of"`
+	Window                  string       `json:"window"`
+	Subnet24                int64        `json:"subnet24"`
+	IPv4                    int64        `json:"ipv4"`
+	IPv6                    int64        `json:"ipv6"`
+	MAC                     int64        `json:"mac"`
+	IPMACPairs              int64        `json:"ip_mac_pairs"`
+	IPv4WithMAC             int64        `json:"ipv4_with_mac"`
+	IPMACUniquePairs        int64        `json:"ip_mac_unique_pairs"`
+	IPMACValidScopedPairs   int64        `json:"ip_mac_valid_scoped_pairs"`
+	MultiMACIPv4            int64        `json:"multi_mac_ipv4"`
+	MultiScopeIPMACPairs    int64        `json:"multi_scope_ip_mac_pairs"`
+	BlankAndFilledVLANPairs int64        `json:"blank_and_filled_vlan_pairs"`
+	ScopedMAC               int64        `json:"scoped_mac"`
+	Identified              int64        `json:"identified"`
+	DumbTerminals           int64        `json:"dumb_terminals"`
+	IdentityTotal           int64        `json:"identity_total"`
+	DiagnosticAsOf          *time.Time   `json:"diagnostic_as_of,omitempty"`
+	TypedIPv4               int64        `json:"typed_ipv4"`
+	IdentityNoTypeIPv4      int64        `json:"identity_no_type_ipv4"`
+	NoIdentityIPv4          int64        `json:"no_identity_ipv4"`
+	UntypedNetworkOnlyIPv4  int64        `json:"untyped_network_only_ipv4"`
+	UntypedDHCPOnlyIPv4     int64        `json:"untyped_dhcp_only_ipv4"`
+	UntypedApplicationIPv4  int64        `json:"untyped_application_ipv4"`
+	UntypedOtherIPv4        int64        `json:"untyped_other_ipv4"`
+	MirrorFunnel            MirrorFunnel `json:"mirror_funnel"`
 }
 
 var dumbHardwareTypes = map[string]bool{
@@ -64,6 +65,9 @@ func (r Repository) DiscoveryCoverageReport(ctx context.Context, sensor string, 
 	err = coverageAddressCounts(ctx, r.DB, sensor, out.AsOf.Add(-window), out.AsOf, &out)
 	if err == nil {
 		err = coverageEvidenceCounts(ctx, r.DB, sensor, out.AsOf.Add(-window), out.AsOf, &out)
+	}
+	if err == nil {
+		out.MirrorFunnel, err = mirrorFunnelCounts(ctx, r.DB, sensor, window)
 	}
 	return out, err
 }

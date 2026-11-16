@@ -8953,7 +8953,7 @@ components:
         observations: { type: array, items: { $ref: '#/components/schemas/DiscoveryObservation' } }
     DiscoveryCoverageReport:
       type: object
-      required: [as_of, identity_as_of, window, subnet24, ipv4, ipv6, mac, ip_mac_pairs, scoped_mac, identified, dumb_terminals, identity_total]
+      required: [as_of, identity_as_of, window, subnet24, ipv4, ipv6, mac, ip_mac_pairs, scoped_mac, identified, dumb_terminals, identity_total, mirror_funnel]
       properties:
         as_of: { type: string, format: date-time }
         identity_as_of: { type: string, format: date-time }
@@ -8981,6 +8981,26 @@ components:
         untyped_dhcp_only_ipv4: { type: integer, format: int64, minimum: 0 }
         untyped_application_ipv4: { type: integer, format: int64, minimum: 0 }
         untyped_other_ipv4: { type: integer, format: int64, minimum: 0 }
+        mirror_funnel: { $ref: '#/components/schemas/DiscoveryMirrorFunnel' }
+    DiscoveryMirrorFunnel:
+      type: object
+      required: [status, ipv4_total, ipv4_only, mac_total, mac_only, ip_mac_pairs, scoped_pairs, trusted_identities, identified_pairs, oui_matched, locally_administered_mac, no_oui_global_mac, oui_library_version]
+      properties:
+        status: { type: string, enum: [initializing, ready, partial, delayed] }
+        as_of: { type: string, format: date-time, description: Last mirrored source event included in this projection. }
+        available_from: { type: string, format: date-time, description: First source event covered by the mirror census. }
+        ipv4_total: { type: integer, format: int64, minimum: 0, description: Distinct local IPv4 values visible in mirrored flow or discovery events. }
+        ipv4_only: { type: integer, format: int64, minimum: 0, description: Distinct local IPv4 values without a trusted device-side MAC binding in the window. }
+        mac_total: { type: integer, format: int64, minimum: 0, description: Distinct trusted device-side MAC values. }
+        mac_only: { type: integer, format: int64, minimum: 0, description: Distinct trusted device-side MAC values without an IPv4 binding in the window. }
+        ip_mac_pairs: { type: integer, format: int64, minimum: 0, description: Distinct raw IPv4 and MAC combinations observed during the window, including expired or withdrawn bindings. }
+        scoped_pairs: { type: integer, format: int64, minimum: 0, description: IP and MAC combinations distinguished by access scope. }
+        trusted_identities: { type: integer, format: int64, minimum: 0, description: Distinct discovery hardware identities associated with these scoped pairs. }
+        identified_pairs: { type: integer, format: int64, minimum: 0, description: Distinct raw IP and MAC combinations associated with a discovery hardware identity. }
+        oui_matched: { type: integer, format: int64, minimum: 0, description: Distinct globally administered MAC values matched by the active IEEE OUI library. }
+        locally_administered_mac: { type: integer, format: int64, minimum: 0, description: Distinct MAC values with the locally administered bit, including but not proving randomized addresses. }
+        no_oui_global_mac: { type: integer, format: int64, minimum: 0, description: Distinct globally administered MAC values without a match in the active IEEE OUI library. }
+        oui_library_version: { type: string }
     DiscoveryDeviceMetadata:
       type: object
       required: [total, identified, candidate, conflict, expired, types, as_of, count_unit, window]

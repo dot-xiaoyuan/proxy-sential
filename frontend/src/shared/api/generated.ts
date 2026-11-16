@@ -8601,6 +8601,77 @@ export interface components {
             untyped_application_ipv4?: number;
             /** Format: int64 */
             untyped_other_ipv4?: number;
+            mirror_funnel: components["schemas"]["DiscoveryMirrorFunnel"];
+        };
+        DiscoveryMirrorFunnel: {
+            /** @enum {string} */
+            status: "initializing" | "ready" | "partial" | "delayed";
+            /**
+             * Format: date-time
+             * @description Last mirrored source event included in this projection.
+             */
+            as_of?: string;
+            /**
+             * Format: date-time
+             * @description First source event covered by the mirror census.
+             */
+            available_from?: string;
+            /**
+             * Format: int64
+             * @description Distinct local IPv4 values visible in mirrored flow or discovery events.
+             */
+            ipv4_total: number;
+            /**
+             * Format: int64
+             * @description Distinct local IPv4 values without a trusted device-side MAC binding in the window.
+             */
+            ipv4_only: number;
+            /**
+             * Format: int64
+             * @description Distinct trusted device-side MAC values.
+             */
+            mac_total: number;
+            /**
+             * Format: int64
+             * @description Distinct trusted device-side MAC values without an IPv4 binding in the window.
+             */
+            mac_only: number;
+            /**
+             * Format: int64
+             * @description Distinct raw IPv4 and MAC combinations observed during the window
+             */
+            ip_mac_pairs: number;
+            /**
+             * Format: int64
+             * @description IP and MAC combinations distinguished by access scope.
+             */
+            scoped_pairs: number;
+            /**
+             * Format: int64
+             * @description Distinct discovery hardware identities associated with these scoped pairs.
+             */
+            trusted_identities: number;
+            /**
+             * Format: int64
+             * @description Distinct raw IP and MAC combinations associated with a discovery hardware identity.
+             */
+            identified_pairs: number;
+            /**
+             * Format: int64
+             * @description Distinct globally administered MAC values matched by the active IEEE OUI library.
+             */
+            oui_matched: number;
+            /**
+             * Format: int64
+             * @description Distinct MAC values with the locally administered bit
+             */
+            locally_administered_mac: number;
+            /**
+             * Format: int64
+             * @description Distinct globally administered MAC values without a match in the active IEEE OUI library.
+             */
+            no_oui_global_mac: number;
+            oui_library_version: string;
         };
         DiscoveryDeviceMetadata: {
             classification_version?: string;

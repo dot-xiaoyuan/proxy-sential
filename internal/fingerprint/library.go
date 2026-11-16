@@ -188,26 +188,31 @@ func (l *Library) IdentifySignals(signals Signals) Result {
 	return l.identifySignalsMeasured(signals, nil)
 }
 
+// LookupOUIVendor checks only the active registration table. A locally
+// administered address cannot establish a globally registered vendor.
+func (l *Library) LookupOUIVendor(mac string) string {
+	if l == nil || IsRandomizedMAC(mac) {
+		return ""
+	}
+	prefix := normalizeMAC(mac)
+	for _, size := range []int{9, 7, 6} {
+		if len(prefix) >= size && l.ouis[prefix[:size]] != "" {
+			return l.ouis[prefix[:size]]
+		}
+	}
+	return ""
+}
+
 func (l *Library) identifySignalsMeasured(signals Signals, observe func(string, time.Duration)) Result {
 	lookupStarted := time.Now()
 	mac := signals.MAC
 	result := Result{Version: l.version, RandomizedMAC: IsRandomizedMAC(mac)}
-	if !result.RandomizedMAC {
-		prefix := normalizeMAC(mac)
-		if len(prefix) >= 6 {
-			for _, size := range []int{9, 7, 6} {
-				if len(prefix) >= size && l.ouis[prefix[:size]] != "" {
-					result.Vendor = l.ouis[prefix[:size]]
-					break
-				}
-			}
-			if result.Vendor != "" {
-				result.Source = "ieee_oui"
-				result.Confidence = 0.9
-				result.VendorConfidence = 0.9
-				result.Evidence = append(result.Evidence, "IEEE OUI: "+result.Vendor)
-			}
-		}
+	result.Vendor = l.LookupOUIVendor(mac)
+	if result.Vendor != "" {
+		result.Source = "ieee_oui"
+		result.Confidence = 0.9
+		result.VendorConfidence = 0.9
+		result.Evidence = append(result.Evidence, "IEEE OUI: "+result.Vendor)
 	}
 	// Keep MAC registration separate from product-vendor candidates. Neither
 	// an OUI nor an enterprise number alone confirms a model or physical role.
