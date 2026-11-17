@@ -20,6 +20,9 @@ func (p StreamDiscoveryProjector) MarkStreamSegmentFinalized(ctx context.Context
 		segment.FileID == "" || segment.StartOffset < 0 || segment.EndOffset <= segment.StartOffset {
 		return errors.New("stream finalization witness needs a projected source position")
 	}
+	if err := validateStreamProjectionPolicy(segment); err != nil {
+		return err
+	}
 	count := 0
 	for _, event := range segment.Events {
 		if normalized.IsDiscoveryProjectionEvent(event) {

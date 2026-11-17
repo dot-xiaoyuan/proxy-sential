@@ -56,6 +56,26 @@ const (
 	NotApplicable Status = "not_applicable"
 )
 
+// The empty value is the exact legacy full projection contract. A source
+// interval with an explicit responsibility remains immutable in the journal;
+// shared_only is reserved for a separately audited source cutover and must
+// not be treated as a completed full projection by older readers.
+const (
+	ProjectionPolicyFull       = "full"
+	ProjectionPolicySharedOnly = "shared_only"
+)
+
+func validProjectionPolicy(s Segment) bool {
+	if s.ProjectionPolicy == "" {
+		return true
+	}
+	if !s.NeedsProjection || (s.Source != "device-signals" && s.Source != "passive-discovery") {
+		return false
+	}
+	return s.ProjectionPolicy == ProjectionPolicyFull ||
+		s.ProjectionPolicy == ProjectionPolicySharedOnly
+}
+
 type Segment struct {
 	Epoch                string             `json:"epoch"`
 	Source               string             `json:"source"`
@@ -80,6 +100,7 @@ type Segment struct {
 	BodyLayout           string             `json:"body_layout,omitempty"`
 	AcceptedAt           time.Time          `json:"accepted_at"`
 	NeedsProjection      bool               `json:"needs_projection"`
+	ProjectionPolicy     string             `json:"projection_responsibility,omitempty"`
 	RiskFeaturesRequired bool               `json:"risk_features_required,omitempty"`
 	SplitRiskFeatures    bool               `json:"split_risk_features,omitempty"`
 	EventBusRequired     bool               `json:"eventbus_required,omitempty"`
@@ -160,13 +181,14 @@ func contentHash(s Segment) (string, error) {
 		RawTailSHA256        string             `json:"raw_tail_sha256,omitempty"`
 		Raw                  []byte             `json:"raw,omitempty"`
 		NeedsProjection      bool               `json:"needs_projection"`
+		ProjectionPolicy     string             `json:"projection_responsibility,omitempty"`
 		RiskFeaturesRequired bool               `json:"risk_features_required,omitempty"`
 		SplitRiskFeatures    bool               `json:"split_risk_features,omitempty"`
 		EventBusRequired     bool               `json:"eventbus_required,omitempty"`
 		Quarantined          bool               `json:"quarantined,omitempty"`
 		QuarantineReason     string             `json:"quarantine_reason,omitempty"`
 		Events               []normalized.Event `json:"events"`
-	}{s.SourcePath, s.PreviousFileID, s.PreviousOffset, s.ParserVersion, s.BodyLayout, s.KeyScheme, s.PreviousGeneration, s.SourceGeneration, s.EventOffsets, s.RawSHA256, s.SourceBackedRaw, s.RawIsStandardEvents, s.EarlyProcessing, s.RawTailBytes, s.RawTailSHA256, s.Raw, s.NeedsProjection, s.RiskFeaturesRequired, s.SplitRiskFeatures, s.EventBusRequired, s.Quarantined, s.QuarantineReason, s.Events})
+	}{s.SourcePath, s.PreviousFileID, s.PreviousOffset, s.ParserVersion, s.BodyLayout, s.KeyScheme, s.PreviousGeneration, s.SourceGeneration, s.EventOffsets, s.RawSHA256, s.SourceBackedRaw, s.RawIsStandardEvents, s.EarlyProcessing, s.RawTailBytes, s.RawTailSHA256, s.Raw, s.NeedsProjection, s.ProjectionPolicy, s.RiskFeaturesRequired, s.SplitRiskFeatures, s.EventBusRequired, s.Quarantined, s.QuarantineReason, s.Events})
 	if err != nil {
 		return "", err
 	}
@@ -184,6 +206,9 @@ func (j *Journal) append(s Segment, allowEarly bool) (string, error) {
 	}
 	if s.BodyLayout != "" && s.BodyLayout != "v2" {
 		return "", errors.New("unknown stream body layout")
+	}
+	if !validProjectionPolicy(s) {
+		return "", ErrContentConflict
 	}
 	if (s.KeyScheme == "generation-v2" && (s.Source != "zeek-dhcp-binding" || s.ParserVersion != "zeek-dhcp-binding-v2" && s.ParserVersion != "zeek-dhcp-message-v1" || s.PreviousGeneration == 0 || s.SourceGeneration < s.PreviousGeneration || s.SourceGeneration > s.PreviousGeneration+1)) ||
 		(s.KeyScheme != "generation-v2" && (s.PreviousGeneration != 0 || s.SourceGeneration != 0)) {

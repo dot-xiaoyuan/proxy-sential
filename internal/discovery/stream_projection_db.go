@@ -250,6 +250,9 @@ func (p StreamDiscoveryProjector) MarkStreamArchiveConfirmed(ctx context.Context
 	if p.DB == nil {
 		return errors.New("stream discovery archive confirmation needs DB")
 	}
+	if err := validateStreamProjectionPolicy(segment); err != nil {
+		return err
+	}
 	if hasSegmentKeyedPassiveEvent(segment) && !isSegmentKeyedPassiveSegment(segment) {
 		return streamlog.ErrContentConflict
 	}
@@ -599,6 +602,9 @@ func (p StreamDiscoveryProjector) ReconcileStreamProjection(ctx context.Context,
 	if p.DB == nil || id == "" || segment.ArchiveMonth == "" {
 		return errors.New("stream discovery projector needs DB, segment ID and archive month")
 	}
+	if err := validateStreamProjectionPolicy(segment); err != nil {
+		return err
+	}
 	for _, event := range segment.Events {
 		if event.Type == "identity" || event.Type == "risk" || event.Type == "router" {
 			return fmt.Errorf("%s: %w", event.Type, ErrUnsupportedStreamProjection)
@@ -645,6 +651,9 @@ func (p StreamDiscoveryProjector) ProjectStreamSegment(ctx context.Context, id s
 	validationStarted := time.Now()
 	if p.DB == nil || id == "" || segment.ArchiveMonth == "" {
 		return errors.New("stream discovery projector needs DB, segment ID and archive month")
+	}
+	if err := validateStreamProjectionPolicy(segment); err != nil {
+		return err
 	}
 	for _, event := range segment.Events {
 		if event.Type == "identity" || event.Type == "risk" || event.Type == "router" {
@@ -1040,9 +1049,23 @@ func streamProjectionSegmentHash(segment streamlog.Segment, prepared []streamPre
 	return contentHash(struct {
 		Epoch, Source, Path, File, RawSHA string
 		BodyLayout                        string `json:"body_layout,omitempty"`
+		ProjectionPolicy                  string `json:"projection_responsibility,omitempty"`
 		Start, End                        int64
 		Events                            []streamDiscoveryReceipt
-	}{segment.Epoch, segment.Source, segment.SourcePath, segment.FileID, segment.RawSHA256, segment.BodyLayout, segment.StartOffset, segment.EndOffset, streamReceiptList(prepared)})
+	}{segment.Epoch, segment.Source, segment.SourcePath, segment.FileID, segment.RawSHA256, segment.BodyLayout, segment.ProjectionPolicy, segment.StartOffset, segment.EndOffset, streamReceiptList(prepared)})
+}
+
+func validateStreamProjectionPolicy(segment streamlog.Segment) error {
+	switch segment.ProjectionPolicy {
+	case "", streamlog.ProjectionPolicyFull:
+		return nil
+	case streamlog.ProjectionPolicySharedOnly:
+		// The compatible reader understands the immutable marker, but does not
+		// claim state or downstream work has been projected for this mode.
+		return ErrUnsupportedStreamProjection
+	default:
+		return streamlog.ErrContentConflict
+	}
 }
 
 func streamDiscoveryBodyRef(segment streamlog.Segment, receipt streamDiscoveryReceipt) json.RawMessage {
