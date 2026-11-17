@@ -57,3 +57,29 @@ func TestPassiveTXTObservationSkipsLinkLocalResponder(t *testing.T) {
 		t.Fatal("link-local responder must not create a TXT observation")
 	}
 }
+
+// A link-local mDNS response still carries the responder's own L2 source MAC.
+// That MAC is frame-level ownership, so the TXT model must survive as a
+// MAC-only observation instead of being dropped for lacking a usable IP.
+func TestPassiveTXTObservationKeepsDirectMACForLinkLocalResponder(t *testing.T) {
+	scope, _ := parseParseScopeForTest(t)
+	at := time.Now().UTC()
+	text := "model=J817AP"
+	recordName := "霖的ipad._device-info._tcp.local"
+	event := passiveTestEvent("mdns", "fe80::1813:991:cb61:4405", "", map[string]any{
+		"is_response": true, "record_type": "TXT", "record_name": recordName, "record_text": text, "ttl": 4500,
+		"l2_source_mac_direct": true, "responder_l2_mac": "aa:bb:cc:dd:ee:ff",
+	})
+	event.Source = "zeek"
+	event.Flow = map[string]any{"dst_ip": "224.0.0.251"}
+	observation, ok := passiveTXTObservation(event, "campus-204", "enp3s0f0", recordName, text, at, at.Add(time.Hour), scope)
+	if !ok {
+		t.Fatal("direct-MAC link-local responder should create a MAC-only TXT observation")
+	}
+	if observation.IP != "" || observation.MAC != "aa:bb:cc:dd:ee:ff" || observation.DeviceType != "tablet" || observation.ModelName != "J817AP" {
+		t.Fatalf("unexpected MAC-only observation: %+v", observation)
+	}
+	if !passiveDirectResponderIdentity(observation) {
+		t.Fatal("direct MAC TXT observation must count as frame-level identity")
+	}
+}

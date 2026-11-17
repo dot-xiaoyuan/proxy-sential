@@ -11,6 +11,7 @@
 - [标准事件模型](event-model.md)
 - [风险引擎](risk-engine.md)
 - [网络设备发现](network-discovery.md)
+- [设备发现技术白皮书](device-discovery-technical-white-paper.md)
 - [被动哑终端识别边界](passive-dumb-terminal-identification.md)
 - [设备指纹离线能力](device-fingerprint-offline.md)
 - [前端架构](frontend-architecture.md)

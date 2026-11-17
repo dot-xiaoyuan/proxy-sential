@@ -241,7 +241,7 @@ func (s *DBStore) ListDeviceNameEvidence(ctx context.Context, id string, limit, 
 }
 
 func (s *PostgresStore) mdnsServiceOwners(ctx context.Context, n DeviceNameEvidence) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT evidence FROM (SELECT DISTINCT ON (coalesce(evidence->>'address','')) evidence FROM device_name_evidence WHERE sensor_id=$1 AND coalesce(evidence->>'campus_id','')=$2 AND source='mdns_hostname' AND lower(value)=lower($3) AND observed_at<=$4 ORDER BY coalesce(evidence->>'address',''),observed_at DESC,event_id DESC) latest`, n.SensorID, n.CampusID, n.ServiceTarget, n.ObservedAt)
+	rows, err := s.db.QueryContext(ctx, `SELECT evidence FROM (SELECT DISTINCT ON (coalesce(evidence->>'address','')) evidence FROM device_name_evidence WHERE sensor_id=$1 AND coalesce(evidence->>'campus_id','')=$2 AND source='mdns_hostname' AND lower(value)=lower($3) AND observed_at<=$4 AND observed_at>=$4 - interval '24 hours' ORDER BY coalesce(evidence->>'address',''),observed_at DESC,event_id DESC) latest`, n.SensorID, n.CampusID, n.ServiceTarget, n.ObservedAt)
 	if err != nil {
 		return nil, err
 	}

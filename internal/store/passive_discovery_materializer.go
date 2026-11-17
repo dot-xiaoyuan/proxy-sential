@@ -722,13 +722,17 @@ func passiveTXTObservation(event normalized.Event, sensor, iface, recordName, te
 	if address == "" {
 		address = passiveString(event.Subject, "ip")
 	}
-	// A link-local IPv6 responder address cannot identify the device across
-	// the page, so the TXT observation waits for the IPv4 responder event.
-	if address == "" || !scope.allows(address) {
-		return discovery.Observation{}, false
-	}
-	if !passiveUsableAddress(address) {
-		return discovery.Observation{}, false
+	directMAC := passiveDirectResponderMAC(event)
+	// A link-local or missing responder address cannot identify the device
+	// across the page. When the mDNS frame carries the responder's own L2
+	// source MAC, that MAC is frame-level ownership: keep the TXT observation
+	// as MAC-only so the identity linker can attach the model to the endpoint
+	// without inventing a page-visible link-local address.
+	if address == "" || !scope.allows(address) || !passiveUsableAddress(address) {
+		if directMAC == "" {
+			return discovery.Observation{}, false
+		}
+		address = ""
 	}
 	service := passiveServiceType(recordName)
 	capabilities := passiveCapabilities(service)
@@ -750,8 +754,10 @@ func passiveTXTObservation(event normalized.Event, sensor, iface, recordName, te
 	evidence := event
 	evidence.EventID = "dns-sd-txt-" + hex.EncodeToString(hash[:16])
 	evidence.Type, evidence.SourceEventType, evidence.Payload = "discovery", "dns_sd", payload
-	evidence.Subject = map[string]any{"ip": address, "campus_id": passiveString(event.Subject, "campus_id")}
-	directMAC := passiveDirectResponderMAC(event)
+	evidence.Subject = map[string]any{"campus_id": passiveString(event.Subject, "campus_id")}
+	if address != "" {
+		evidence.Subject["ip"] = address
+	}
 	if directMAC != "" {
 		evidence.Subject["mac"] = directMAC
 		evidence.Payload["l2_source_mac_direct"] = true
@@ -1239,7 +1245,7 @@ func (s *DBStore) passiveObservationLink(ctx context.Context, db passiveDiscover
 	if mac == "" {
 		return nil, nil
 	}
-	if passiveRandomMAC(mac) && o.IP == "" {
+	if passiveRandomMAC(mac) && o.IP == "" && !passiveDirectResponderIdentity(o) {
 		return nil, nil
 	}
 	endpointID := "mac:" + mac
@@ -1337,8 +1343,10 @@ func passiveDirectResponderIdentity(o discovery.Observation) bool {
 	if o.Origin != "dns_sd" || o.Evidence.Source != "zeek" ||
 		o.Evidence.Payload["l2_source_mac_direct"] != true ||
 		validPassiveMAC(passiveString(o.Evidence.Payload, "responder_l2_mac")) != validPassiveMAC(o.MAC) ||
-		validPassiveMAC(o.MAC) == "" || validPassiveMAC(passiveString(o.Evidence.Subject, "mac")) != validPassiveMAC(o.MAC) ||
-		passiveString(o.Evidence.Subject, "ip") != o.IP {
+		validPassiveMAC(o.MAC) == "" || validPassiveMAC(passiveString(o.Evidence.Subject, "mac")) != validPassiveMAC(o.MAC) {
+		return false
+	}
+	if o.IP != "" && passiveString(o.Evidence.Subject, "ip") != o.IP {
 		return false
 	}
 	destination, err := netip.ParseAddr(passiveString(o.Evidence.Flow, "dst_ip"))
