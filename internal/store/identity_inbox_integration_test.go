@@ -32,6 +32,78 @@ func inboxEvent(scope IdentityScope, id, sid, ip, status string, at time.Time) n
 	return normalized.Event{EventID: id, Type: "identity", Timestamp: at.UTC().Format(time.RFC3339Nano), Source: scope.Source, Observer: map[string]any{"sensor_id": scope.SensorID}, Subject: map[string]any{"entity_role": "endpoint", "account_id": "student", "ip": ip, "campus_id": scope.CampusID}, Payload: map[string]any{"campus_id": scope.CampusID, "origin": scope.Source, "session_id": sid, "session_status": status, "access_domain": scope.AccessDomain}}
 }
 
+func TestIdentityInboxConcurrentFirstSplitProgressBatches(t *testing.T) {
+	t.Setenv("PROXY_SENTINEL_IDENTITY_SPLIT_PROGRESS", "true")
+	t.Setenv("PROXY_SENTINEL_IDENTITY_FRAGMENT_WRITES", "false")
+	pg := inboxTestStore(t)
+	scope := IdentityScope{Source: "test-concurrent", SensorID: fmt.Sprintf("concurrent-%d", time.Now().UnixNano()), CampusID: "c", AccessDomain: "d"}
+	key := IdentityScopeKey(scope)
+	start := make(chan struct{})
+	errors := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func(i int) {
+			<-start
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			id := fmt.Sprintf("%s-batch-%d", scope.SensorID, i)
+			event := inboxEvent(scope, id, id, fmt.Sprintf("192.0.2.%d", i+1), "start", time.Now())
+			_, err := pg.acceptIdentityBatch(ctx, id, id, scope, []normalized.Event{event}, 1)
+			errors <- err
+		}(i)
+	}
+	close(start)
+	for i := 0; i < 2; i++ {
+		if err := <-errors; err != nil {
+			t.Fatal(err)
+		}
+	}
+	var receive, consume, export, sequence, total, batches int
+	err := pg.db.QueryRowContext(context.Background(), `SELECT
+	 (SELECT count(*) FROM identity_receive_progress WHERE scope_key=$1),
+	 (SELECT count(*) FROM identity_consume_progress WHERE scope_key=$1),
+	 (SELECT count(*) FROM identity_export_progress WHERE scope_key=$1),
+	 (SELECT accepted_sequence FROM identity_receive_progress WHERE scope_key=$1),
+	 (SELECT total_records FROM identity_receive_progress WHERE scope_key=$1),
+	 (SELECT count(*) FROM identity_ingest_batches WHERE scope_key=$1)`, key).
+		Scan(&receive, &consume, &export, &sequence, &total, &batches)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receive != 1 || consume != 1 || export != 1 || sequence != 2 || total != 2 || batches != 2 {
+		t.Fatalf("progress rows=%d/%d/%d sequence=%d total=%d batches=%d", receive, consume, export, sequence, total, batches)
+	}
+}
+
+func TestIdentityInboxRepairsPartialSplitProgress(t *testing.T) {
+	t.Setenv("PROXY_SENTINEL_IDENTITY_SPLIT_PROGRESS", "true")
+	t.Setenv("PROXY_SENTINEL_IDENTITY_FRAGMENT_WRITES", "false")
+	pg := inboxTestStore(t)
+	scope := IdentityScope{Source: "test-partial", SensorID: fmt.Sprintf("partial-%d", time.Now().UnixNano()), CampusID: "c", AccessDomain: "d"}
+	key := IdentityScopeKey(scope)
+	ctx := context.Background()
+	if _, err := pg.db.ExecContext(ctx, `INSERT INTO identity_pipeline_scopes(scope_key,source,sensor_id,campus_id,access_domain) VALUES($1,$2,$3,$4,$5)`, key, scope.Source, scope.SensorID, scope.CampusID, scope.AccessDomain); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pg.db.ExecContext(ctx, `INSERT INTO identity_receive_progress(scope_key,accepted_sequence,total_records,ip_tracking_after_sequence) VALUES($1,0,0,0)`, key); err != nil {
+		t.Fatal(err)
+	}
+	event := inboxEvent(scope, key+"-event", "session", "192.0.2.1", "start", time.Now())
+	if _, err := pg.acceptIdentityBatch(ctx, key+"-batch", "hash", scope, []normalized.Event{event}, 1); err != nil {
+		t.Fatal(err)
+	}
+	var receive, consume, export int
+	if err := pg.db.QueryRowContext(ctx, `SELECT
+	 (SELECT count(*) FROM identity_receive_progress WHERE scope_key=$1),
+	 (SELECT count(*) FROM identity_consume_progress WHERE scope_key=$1),
+	 (SELECT count(*) FROM identity_export_progress WHERE scope_key=$1)`, key).
+		Scan(&receive, &consume, &export); err != nil {
+		t.Fatal(err)
+	}
+	if receive != 1 || consume != 1 || export != 1 {
+		t.Fatalf("progress rows=%d/%d/%d", receive, consume, export)
+	}
+}
+
 // snapshotEvent is one complete-snapshot member: status reconcile, heartbeat equal to the interval.
 func snapshotEvent(scope IdentityScope, id, sid, ip string, at time.Time, interval int) normalized.Event {
 	event := inboxEvent(scope, id, sid, ip, "reconcile", at)

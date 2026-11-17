@@ -25,6 +25,21 @@ func IdentityScopeStatusSQL(query string) string {
 }
 
 func ensureIdentityProgress(ctx context.Context, tx *sql.Tx, key string) error {
+	// The three progress rows are created once per scope. Keep the repair path
+	// for partially initialized scopes, but avoid three conflicting INSERTs on
+	// every batch after initialization. The preceding scope INSERT serializes
+	// concurrent first batches on its unique key.
+	var receive, consume, export bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM identity_receive_progress WHERE scope_key=$1),
+	 EXISTS(SELECT 1 FROM identity_consume_progress WHERE scope_key=$1),
+	 EXISTS(SELECT 1 FROM identity_export_progress WHERE scope_key=$1)`, key).
+		Scan(&receive, &consume, &export)
+	if err != nil {
+		return err
+	}
+	if receive && consume && export {
+		return nil
+	}
 	for _, query := range []string{
 		`INSERT INTO identity_receive_progress SELECT scope_key,accepted_sequence,greatest(pending_records,export_pending_records),NULL,accepted_sequence FROM identity_pipeline_scopes WHERE scope_key=$1 ON CONFLICT DO NOTHING`,
 		`INSERT INTO identity_consume_progress SELECT scope_key,processed_sequence,greatest(pending_records,export_pending_records)-pending_records,current_generation,lease_epoch,lease_until,oldest_pending_at,processed_at,heartbeat_at,last_error FROM identity_pipeline_scopes WHERE scope_key=$1 ON CONFLICT DO NOTHING`,

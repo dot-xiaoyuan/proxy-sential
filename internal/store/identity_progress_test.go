@@ -7,6 +7,51 @@ import (
 	"testing"
 )
 
+func TestEnsureIdentityProgressSkipsCompleteScope(t *testing.T) {
+	db, m := newReconcileMock(t)
+	m.ExpectBegin()
+	m.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM identity_receive_progress`).WithArgs("scope").
+		WillReturnRows(sqlmock.NewRows([]string{"receive", "consume", "export"}).AddRow(true, true, true))
+	m.ExpectCommit()
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureIdentityProgress(context.Background(), tx, "scope"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnsureIdentityProgressRepairsPartialScope(t *testing.T) {
+	db, m := newReconcileMock(t)
+	m.ExpectBegin()
+	m.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM identity_receive_progress`).WithArgs("scope").
+		WillReturnRows(sqlmock.NewRows([]string{"receive", "consume", "export"}).AddRow(true, false, true))
+	for _, table := range []string{"identity_receive_progress", "identity_consume_progress", "identity_export_progress"} {
+		m.ExpectExec(`INSERT INTO ` + table).WithArgs("scope").WillReturnResult(sqlmock.NewResult(0, 0))
+	}
+	m.ExpectCommit()
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureIdentityProgress(context.Background(), tx, "scope"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSplitInboxApplyFencesAndCommitsResponsibility(t *testing.T) {
 	t.Setenv("PROXY_SENTINEL_IDENTITY_SPLIT_PROGRESS", "true")
 	db, m := newReconcileMock(t)
