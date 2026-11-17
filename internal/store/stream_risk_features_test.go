@@ -14,6 +14,54 @@ import (
 	"proxy-sentinel/internal/streamlog"
 )
 
+type ndpProjectionRecorder struct{ calls int }
+
+func (r *ndpProjectionRecorder) ProjectStreamSegment(context.Context, string, streamlog.Segment) error {
+	r.calls++
+	return nil
+}
+
+func (r *ndpProjectionRecorder) ReconcileStreamProjection(context.Context, string, streamlog.Segment) error {
+	return nil
+}
+
+func TestPlainNDPArchivesAndProjectsWithoutGenericRiskWrite(t *testing.T) {
+	segment := testStreamSegment()
+	segment.Source = "device-signals"
+	segment.RiskFeaturesRequired, segment.SplitRiskFeatures = true, true
+	segment.Events[0].Source = "packet-sidecar"
+	segment.Events[0].SourceEventType = "ndp"
+	segment.Events[0].Type = "device"
+	segment.Events[0].Subject = map[string]any{"campus_id": "site", "entity_role": "endpoint", "ip": "fe80::1234", "mac": "02:00:00:00:00:34"}
+	segment.Events[0].Payload = map[string]any{"access_domain": "bond0", "message": "neighbor_advertisement", "origin": "ndp", "target": "fe80::abcd"}
+	segment.Events[0].Flow = map[string]any{"direction": "inbound", "dst_ip": "fe80::abcd", "proto": "ndp", "src_ip": "fe80::1234"}
+	queries := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		queries = append(queries, string(body))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projector := &ndpProjectionRecorder{}
+	queue := &recordingRiskQueue{}
+	writer := StreamLaneWriter{ClickHouse: ch, Projector: projector, RiskQueue: queue}
+	ctx := context.Background()
+	for _, write := range []func(context.Context, string, streamlog.Segment) error{writer.WriteBody, writer.WriteSearch, writer.WriteRiskFeatures, writer.Project} {
+		if err := write(ctx, "ndp-segment", segment); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(queries) != 2 || !strings.HasPrefix(queries[0], "INSERT INTO stream_event_body") ||
+		!strings.HasPrefix(queries[1], "INSERT INTO stream_event_search") ||
+		!strings.Contains(queries[0], "neighbor_advertisement") || projector.calls != 1 || queue.calls != 0 {
+		t.Fatalf("NDP lost original/search/projection or caused generic risk wake: queries=%v project=%d risk=%d", queries, projector.calls, queue.calls)
+	}
+}
+
 func riskFeatureTestSegment() streamlog.Segment {
 	segment := testStreamSegment()
 	segment.RiskFeaturesRequired = true

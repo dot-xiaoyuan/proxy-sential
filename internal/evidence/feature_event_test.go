@@ -51,6 +51,56 @@ func TestFeatureEventPreservesEvidenceButDropsUnneededBody(t *testing.T) {
 	}
 }
 
+func TestPlainPacketNDPHasNoGenericRiskEvidence(t *testing.T) {
+	ndp := normalized.Event{
+		EventID: "ndp-1", Timestamp: "2026-11-17T02:00:00Z", Type: "device",
+		Source: "packet-sidecar", SourceEventType: "ndp",
+		Subject: map[string]any{"campus_id": "site", "entity_role": "endpoint", "ip": "fe80::1234", "mac": "02:00:00:00:00:34"},
+		Payload: map[string]any{"access_domain": "bond0", "message": "neighbor_advertisement", "origin": "ndp", "target": "fe80::abcd"},
+		Flow:    map[string]any{"direction": "inbound", "dst_ip": "fe80::abcd", "proto": "ndp", "src_ip": "fe80::1234"},
+	}
+	encoded, err := json.Marshal(ndp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Analyze(bytes.NewReader(append(encoded, '\n')), Options{Window: 10 * time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Evidence) != 0 {
+		t.Fatalf("plain NDP created generic risk evidence: %+v", result.Evidence)
+	}
+	if StreamRiskFeatureEligible(ndp) {
+		t.Fatal("plain NDP scheduled generic risk despite having no risk signal")
+	}
+	for name, mutate := range map[string]func(*normalized.Event){
+		"account":    func(event *normalized.Event) { event.Subject["account_id"] = "account-a" },
+		"risk_field": func(event *normalized.Event) { event.Payload["user_agent"] = "Example" },
+		"correction": func(event *normalized.Event) { event.Payload["revision"] = 2 },
+		"withdrawal": func(event *normalized.Event) { event.Payload["withdrawn"] = true },
+		"raw_ref":    func(event *normalized.Event) { event.RawRef = map[string]any{"corrects": "prior"} },
+		"source":     func(event *normalized.Event) { event.Source = "device-signals" },
+		"protocol":   func(event *normalized.Event) { event.SourceEventType = "ttl" },
+	} {
+		changed := ndp
+		changed.Subject = cloneFeatureTestMap(ndp.Subject)
+		changed.Payload = cloneFeatureTestMap(ndp.Payload)
+		changed.Flow = cloneFeatureTestMap(ndp.Flow)
+		mutate(&changed)
+		if !StreamRiskFeatureEligible(changed) {
+			t.Errorf("%s NDP expansion was silently removed from generic risk", name)
+		}
+	}
+}
+
+func cloneFeatureTestMap(source map[string]any) map[string]any {
+	result := make(map[string]any, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
+}
+
 func TestAffectedSubjectWindowUsesFixedAsOf(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	events := []normalized.Event{

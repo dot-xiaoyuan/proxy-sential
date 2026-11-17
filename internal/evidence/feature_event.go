@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"net/netip"
 	"strings"
 
 	"proxy-sentinel/internal/normalized"
@@ -20,8 +21,44 @@ func StreamRiskFeatureEligible(event normalized.Event) bool {
 		event.Source == "packet-sidecar" && (event.SourceEventType == "ssdp" || event.SourceEventType == "ieee1905_topology") {
 		return false
 	}
+	if plainPacketNDP(event) {
+		return false
+	}
 	ip, _ := event.Subject["ip"].(string)
 	return event.Type != "discovery" && strings.TrimSpace(ip) != ""
+}
+
+// The current packet NDP shape supplies only an IPv6 neighbor/address clue.
+// It contributes no generic risk evidence. Require the exact known shape so
+// later identity, correction or risk fields continue through the normal path.
+// Its original, search row and discovery projection remain independent.
+func plainPacketNDP(event normalized.Event) bool {
+	if event.Source != "packet-sidecar" || event.SourceEventType != "ndp" || event.Type != "device" ||
+		len(event.RawRef) != 0 ||
+		!exactFeatureFields(event.Subject, "campus_id", "entity_role", "ip", "mac") ||
+		!exactFeatureFields(event.Payload, "access_domain", "message", "origin", "target") ||
+		!exactFeatureFields(event.Flow, "direction", "dst_ip", "proto", "src_ip") ||
+		event.Payload["origin"] != "ndp" || event.Flow["proto"] != "ndp" {
+		return false
+	}
+	ip, ok := event.Subject["ip"].(string)
+	if !ok {
+		return false
+	}
+	address, err := netip.ParseAddr(ip)
+	return err == nil && address.Is6()
+}
+
+func exactFeatureFields(fields map[string]any, keys ...string) bool {
+	if len(fields) != len(keys) {
+		return false
+	}
+	for _, key := range keys {
+		if _, present := fields[key]; !present {
+			return false
+		}
+	}
+	return true
 }
 
 var featureSubjectKeys = []string{"ip", "account_id", "mac", "endpoint_id", "access_id", "entity_role"}
