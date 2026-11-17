@@ -16,6 +16,11 @@ import (
 	recog "github.com/runZeroInc/recog-go"
 )
 
+// hardwareMaxEvidenceSignals bounds evaluation work for one identity. Chatty
+// mDNS devices such as printers routinely advertise more than 128 records, so
+// the limit leaves headroom while still rejecting unbounded input.
+const hardwareMaxEvidenceSignals = 512
+
 // HardwareInput contains already attributed evidence for ONE scoped identity.
 // The caller owns scope separation, revocation and address lease validation.
 // Service TTL is deliberately not the lifetime of a hardware identity fact.
@@ -585,9 +590,9 @@ func (h *HardwareCatalog) Evaluate(input HardwareInput, now time.Time) HardwareR
 		a, b := evidence[i], evidence[j]
 		return a.EventID+"\x00"+a.Field+"\x00"+a.Value < b.EventID+"\x00"+b.Field+"\x00"+b.Value
 	})
-	if len(evidence) > 128 {
+	if len(evidence) > hardwareMaxEvidenceSignals {
 		out.Incomplete = true
-		out.Error = "hardware evidence exceeds 128 signals"
+		out.Error = fmt.Sprintf("hardware evidence exceeds %d signals", hardwareMaxEvidenceSignals)
 		deferReports()
 		return out
 	}

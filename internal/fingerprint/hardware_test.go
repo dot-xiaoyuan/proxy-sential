@@ -1,6 +1,7 @@
 package fingerprint
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -93,11 +94,11 @@ func TestHardwareCanonicalTypes(t *testing.T) {
 func TestHardwareInputLimitNeverSilentlyDropsConflict(t *testing.T) {
 	now := time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC)
 	s := hardwareSignal("sadp", "sadp_model", "DS-K1T6QT-F72M", "s")
-	items := make([]EvidenceSignal, 129)
+	items := make([]EvidenceSignal, 513)
 	for i := range items {
 		items[i] = s
 	}
-	items[128] = hardwareSignal("sadp", "sadp_model", "DS-2CD2143G2-I", "z")
+	items[512] = hardwareSignal("sadp", "sadp_model", "DS-2CD2143G2-I", "z")
 	r := EvaluateHardware(HardwareInput{IdentityTrusted: true, Evidence: items}, now)
 	if !r.Incomplete || r.Error == "" || r.Type != "" {
 		t.Fatalf("silently truncated: %+v", r)
@@ -106,6 +107,19 @@ func TestHardwareInputLimitNeverSilentlyDropsConflict(t *testing.T) {
 	r = EvaluateHardware(HardwareInput{IdentityTrusted: true, Evidence: []EvidenceSignal{s}}, now)
 	if !r.Incomplete || r.Type != "" {
 		t.Fatalf("oversized model accepted: %+v", r)
+	}
+}
+
+func TestHardwareChattyMDNSEvidenceWithinLimit(t *testing.T) {
+	now := time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC)
+	items := make([]EvidenceSignal, 205)
+	for i := range items {
+		items[i] = hardwareSignal("dns_sd", "service_type", "_ipps._tcp", fmt.Sprintf("e%d", i))
+	}
+	items[0] = hardwareSignal("dns_sd", "dns_sd_model", "HP LaserJet MFP M232-M237", "model")
+	r := EvaluateHardware(HardwareInput{IdentityTrusted: true, Evidence: items}, now)
+	if r.Incomplete || r.Error != "" {
+		t.Fatalf("chatty mDNS evidence rejected: %+v", r)
 	}
 }
 
