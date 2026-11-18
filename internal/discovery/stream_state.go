@@ -620,8 +620,11 @@ func publishStreamDiscoveryStatesCountWithRepeats(ctx context.Context, tx *sql.T
 				if canSkipStreamRepeatState(old, candidate, now) {
 					continue
 				}
-				if delta, ok := streamRepeatStateDelta(old, candidate, now); ok {
-					deltas = append(deltas, delta)
+				// A pure address heartbeat used to rewrite last_seen and bump
+				// result_version. That clock refresh is the write being removed:
+				// the stored summary stays until a semantic change or the expiry
+				// worker rebuilds it from the committed fact lease.
+				if _, ok := streamRepeatStateDelta(old, candidate, now); ok {
 					continue
 				}
 			}

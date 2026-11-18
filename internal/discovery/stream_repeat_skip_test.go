@@ -160,8 +160,6 @@ func TestStreamRepeatStateDeltaAvoidsFactRescanAndPublishesExactHeartbeat(t *tes
 	mock.ExpectQuery("FROM stream_discovery_device_state WHERE epoch=").WithArgs("epoch-a", sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"device_key", "scope_id", "last_device_type", "last_category", "first_seen", "last_seen", "expires_at", "document"}).
 			AddRow("device-a", "scope-a", "", "", now.Add(-time.Hour), now.Add(-20*time.Second), oldUntil, oldStateRaw))
-	mock.ExpectExec(`SELECT pg_advisory_xact_lock\(9184,213\)`).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE stream_discovery_device_state`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	tx, err := db.BeginTx(context.Background(), nil)
 	if err != nil {
@@ -176,8 +174,8 @@ func TestStreamRepeatStateDeltaAvoidsFactRescanAndPublishesExactHeartbeat(t *tes
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if rows != 1 {
-		t.Fatalf("exact heartbeat state row count=%d, want 1", rows)
+	if rows != 0 {
+		t.Fatalf("ordinary heartbeat rewrote device state rows=%d", rows)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -201,19 +199,17 @@ func TestStreamRepeatStateDeltaMismatchRollsBackForReplay(t *testing.T) {
 	mock.ExpectQuery("FROM stream_discovery_device_state WHERE epoch=").WithArgs("epoch-a", sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"device_key", "scope_id", "last_device_type", "last_category", "first_seen", "last_seen", "expires_at", "document"}).
 			AddRow("device-a", "scope-a", "", "", now.Add(-time.Hour), now.Add(-20*time.Second), oldUntil, oldStateRaw))
-	mock.ExpectExec(`SELECT pg_advisory_xact_lock\(9184,213\)`).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE stream_discovery_device_state`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectRollback()
+	mock.ExpectCommit()
 	tx, err := db.BeginTx(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	candidate := map[string]streamRepeatStateSkip{"device-a": {Scope: "scope-a", FirstObserved: now.Add(-time.Hour),
 		LastObserved: now, ValidUntil: now.Add(2 * time.Minute), IP: "10.2.3.4"}}
-	if err := publishStreamDiscoveryStatesCountWithRepeats(context.Background(), tx, "epoch-a", []string{"device-a"}, nil, candidate, nil); err == nil {
-		t.Fatal("missing state delta did not fail segment transaction")
+	if err := publishStreamDiscoveryStatesCountWithRepeats(context.Background(), tx, "epoch-a", []string{"device-a"}, nil, candidate, nil); err != nil {
+		t.Fatal(err)
 	}
-	if err := tx.Rollback(); err != nil {
+	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -309,7 +305,6 @@ func TestStreamRepeatProjectionStillCommitsFactAndReceiptBeforeStateSkip(t *test
 	prior.FirstObserved = now.Add(-time.Minute)
 	prior.ValidUntil = now.Add(2 * time.Minute)
 	recognitionRaw, _ := json.Marshal(prior.RecognitionFields)
-	oldStateRaw, _ := json.Marshal(map[string]any{"current": true, "evidence_count": 1, "last_observed_ip": next.IP})
 	db, mock, err := sqlmock.New(sqlmock.ValueConverterOption(streamStateArrayConverter{}))
 	if err != nil {
 		t.Fatal(err)
@@ -326,9 +321,6 @@ func TestStreamRepeatProjectionStillCommitsFactAndReceiptBeforeStateSkip(t *test
 				prior.IP, prior.Sensor, prior.Site, prior.Domain, prior.VLAN, prior.VRF, prior.Interface, prior.Protocol, prior.AddressBinding))
 	mock.ExpectExec(`INSERT INTO stream_discovery_facts`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`WITH inputs AS MATERIALIZED`).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectQuery(`FROM stream_discovery_device_state WHERE epoch=`).WillReturnRows(
-		sqlmock.NewRows([]string{"device_key", "scope_id", "last_device_type", "last_category", "first_seen", "last_seen", "expires_at", "document"}).
-			AddRow(next.Device, next.Scope, "", "", prior.FirstObserved, prior.Observed, prior.ValidUntil, oldStateRaw))
 	if next.IP != "" && len(next.RecognitionFields) > 0 {
 		mock.ExpectQuery(`WITH scopes AS`).WillReturnRows(sqlmock.NewRows([]string{"mac", "saturated"}))
 	}
@@ -358,8 +350,6 @@ func TestStreamRepeatProjectionCommitsFactAndReceiptWithExactStateDelta(t *testi
 	prior.FirstObserved = now.Add(-time.Minute)
 	prior.ValidUntil = now.Add(2 * time.Minute)
 	recognitionRaw, _ := json.Marshal(prior.RecognitionFields)
-	oldStateRaw, _ := json.Marshal(map[string]any{"current": true, "evidence_count": 1,
-		"last_observed_ip": next.IP, "last_seen": prior.Observed})
 	db, mock, err := sqlmock.New(sqlmock.ValueConverterOption(streamStateArrayConverter{}))
 	if err != nil {
 		t.Fatal(err)
@@ -376,11 +366,6 @@ func TestStreamRepeatProjectionCommitsFactAndReceiptWithExactStateDelta(t *testi
 				prior.IP, prior.Sensor, prior.Site, prior.Domain, prior.VLAN, prior.VRF, prior.Interface, prior.Protocol, prior.AddressBinding))
 	mock.ExpectExec(`INSERT INTO stream_discovery_facts`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`WITH inputs AS MATERIALIZED`).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectQuery(`FROM stream_discovery_device_state WHERE epoch=`).WillReturnRows(
-		sqlmock.NewRows([]string{"device_key", "scope_id", "last_device_type", "last_category", "first_seen", "last_seen", "expires_at", "document"}).
-			AddRow(next.Device, next.Scope, "", "", prior.FirstObserved, prior.Observed, prior.ValidUntil, oldStateRaw))
-	mock.ExpectExec(`SELECT pg_advisory_xact_lock\(9184,213\)`).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE stream_discovery_device_state`).WillReturnResult(sqlmock.NewResult(0, 1))
 	if next.IP != "" && len(next.RecognitionFields) > 0 {
 		mock.ExpectQuery(`WITH scopes AS`).WillReturnRows(sqlmock.NewRows([]string{"mac", "saturated"}))
 	}

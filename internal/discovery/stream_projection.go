@@ -229,3 +229,49 @@ func mergeStreamDiscoveryFact(previous *streamDiscoveryFact, next streamDiscover
 	}
 	return streamFactDecision{Result: "corrected", WriteFact: true, VisibleChanged: true, EvidenceEvent: next.Event}
 }
+
+// A pure lease extension below this threshold does not rewrite the fact row.
+// Receipts still record every observation. A longer extension, a shorter
+// lease, or any semantic change remains durable.
+const streamFactLeaseRefresh = 5 * time.Minute
+
+// streamFactRowMaterial reports whether the stored fact row must change.
+// Network clues always refresh so a short gateway lease cannot lapse while
+// announcements continue. The compared identity fields are the ones loaded
+// with the current fact version; the observation hash already covers name,
+// model and device type.
+func streamFactRowMaterial(previous *streamDiscoveryFact, next streamDiscoveryFact) bool {
+	if previous == nil {
+		return true
+	}
+	if passiveStreamNetworkType(next) != "" || passiveStreamNetworkType(*previous) != "" {
+		return true
+	}
+	if previous.SemanticHash != next.SemanticHash || previous.Withdrawn != next.Withdrawn || previous.AddressBinding != next.AddressBinding {
+		return true
+	}
+	if previous.Scope != next.Scope || previous.IP != next.IP || previous.MAC != next.MAC || previous.Protocol != next.Protocol ||
+		previous.Sensor != next.Sensor || previous.Site != next.Site || previous.Domain != next.Domain || previous.VLAN != next.VLAN ||
+		previous.VRF != next.VRF || previous.Interface != next.Interface || !streamRecognitionFieldsEqual(previous.RecognitionFields, next.RecognitionFields) {
+		return true
+	}
+	if next.ValidUntil.Before(previous.ValidUntil) || next.FirstObserved.Before(previous.FirstObserved) {
+		return true
+	}
+	return !next.ValidUntil.Before(previous.ValidUntil.Add(streamFactLeaseRefresh))
+}
+
+func streamRecognitionFieldsEqual(left, right map[string]string) bool {
+	if len(left) == 0 && len(right) == 0 {
+		return true
+	}
+	if len(left) != len(right) {
+		return false
+	}
+	for key, value := range left {
+		if right[key] != value {
+			return false
+		}
+	}
+	return true
+}

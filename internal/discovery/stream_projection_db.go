@@ -928,15 +928,24 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 		if !decision.WriteFact {
 			continue
 		}
+		material := streamFactRowMaterial(priorPtr, item.Fact)
+		if hasPrior && prior.FirstObserved.Before(item.Fact.FirstObserved) {
+			item.Fact.FirstObserved = prior.FirstObserved
+		}
+		// Same-hash address heartbeats keep their receipt. The fact row is
+		// rewritten only for a semantic change, a shorter lease, or a lease
+		// extended by at least five minutes. Device current state stays on
+		// the last material summary and is rebuilt when that lease comes due.
+		ordinaryRepeat := decision.Result == "repeat_observation" && passiveStreamNetworkType(item.Fact) == "" && (priorPtr == nil || passiveStreamNetworkType(*priorPtr) == "")
+		if !material {
+			continue
+		}
 		// The fact key predates capture-scope partitioning. When the same key
 		// moves to a new scope, it is a new member of that scope's summary.
 		if !hasPrior || prior.Scope != item.Fact.Scope {
 			newFactCounts[item.Fact.Device]++
 		}
-		if hasPrior && prior.FirstObserved.Before(item.Fact.FirstObserved) {
-			item.Fact.FirstObserved = prior.FirstObserved
-		}
-		if candidate, ok := streamRepeatStateCandidate(priorPtr, item.Fact, decision); ok && !repeatBlocked[item.Fact.Device] {
+		if candidate, ok := streamRepeatStateCandidate(priorPtr, item.Fact, decision); ok && !ordinaryRepeat && !repeatBlocked[item.Fact.Device] {
 			if accumulated, exists := repeatCandidates[item.Fact.Device]; exists {
 				if accumulated.Scope != candidate.Scope || accumulated.IP != candidate.IP {
 					repeatBlocked[item.Fact.Device] = true
@@ -963,7 +972,9 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 		versions[identity] = item.Fact
 		factWrites[identity] = item.Fact
 		routeRecognitionWake(dirty, deferredDirty, priorPtr, item.Fact, decision)
-		changedDevices[item.Fact.Device] = true
+		if !ordinaryRepeat {
+			changedDevices[item.Fact.Device] = true
+		}
 		if decision.VisibleChanged {
 			before := ""
 			if hasPrior {
@@ -1431,8 +1442,37 @@ func writeStreamDiscoveryFactsCount(ctx context.Context, tx *sql.Tx, facts map[s
  SELECT v.epoch,v.device_key,v.fact_key,v.scope_id,v.source_id,v.protocol,v.service_instance,v.event_key,v.visible_event_key,v.revision,v.first_observed_at,v.observed_at,v.valid_until,v.withdrawn,v.semantic_hash,v.ip,v.mac,v.name,v.manufacturer,v.model_name,v.device_type,v.candidate_type,v.candidate_reason,v.excluded,coalesce(v.capabilities,'{}'::text[]),v.address_binding,v.sensor_id,v.site,v.domain,v.vlan,v.vrf,v.interface_name,coalesce(v.recognition_fields,'{}'::jsonb)
  FROM jsonb_to_recordset($1::jsonb) AS v(epoch text,device_key text,fact_key text,scope_id text,source_id text,protocol text,service_instance text,event_key text,visible_event_key text,revision bigint,first_observed_at timestamptz,observed_at timestamptz,valid_until timestamptz,withdrawn boolean,semantic_hash text,ip text,mac text,name text,manufacturer text,model_name text,device_type text,candidate_type text,candidate_reason text,excluded boolean,capabilities text[],address_binding boolean,sensor_id text,site text,domain text,vlan text,vrf text,interface_name text,recognition_fields jsonb)
  ON CONFLICT(epoch,device_key,fact_key) DO UPDATE SET scope_id=EXCLUDED.scope_id,source_id=EXCLUDED.source_id,protocol=EXCLUDED.protocol,service_instance=EXCLUDED.service_instance,event_key=EXCLUDED.event_key,visible_event_key=EXCLUDED.visible_event_key,revision=EXCLUDED.revision,first_observed_at=least(stream_discovery_facts.first_observed_at,EXCLUDED.first_observed_at),observed_at=EXCLUDED.observed_at,valid_until=EXCLUDED.valid_until,withdrawn=EXCLUDED.withdrawn,semantic_hash=EXCLUDED.semantic_hash,ip=EXCLUDED.ip,mac=EXCLUDED.mac,name=EXCLUDED.name,manufacturer=EXCLUDED.manufacturer,model_name=EXCLUDED.model_name,device_type=EXCLUDED.device_type,candidate_type=EXCLUDED.candidate_type,candidate_reason=EXCLUDED.candidate_reason,excluded=EXCLUDED.excluded,capabilities=EXCLUDED.capabilities,address_binding=EXCLUDED.address_binding,sensor_id=EXCLUDED.sensor_id,site=EXCLUDED.site,domain=EXCLUDED.domain,vlan=EXCLUDED.vlan,vrf=EXCLUDED.vrf,interface_name=EXCLUDED.interface_name,recognition_fields=EXCLUDED.recognition_fields
- WHERE (EXCLUDED.event_key=stream_discovery_facts.event_key AND EXCLUDED.revision>stream_discovery_facts.revision)
- OR (EXCLUDED.event_key<>stream_discovery_facts.event_key AND (EXCLUDED.observed_at,EXCLUDED.event_key)>(stream_discovery_facts.observed_at,stream_discovery_facts.event_key))`, raw)
+ WHERE ((EXCLUDED.event_key=stream_discovery_facts.event_key AND EXCLUDED.revision>stream_discovery_facts.revision)
+ OR (EXCLUDED.event_key<>stream_discovery_facts.event_key AND (EXCLUDED.observed_at,EXCLUDED.event_key)>(stream_discovery_facts.observed_at,stream_discovery_facts.event_key)))
+ AND (stream_discovery_facts.semantic_hash IS DISTINCT FROM EXCLUDED.semantic_hash
+  OR stream_discovery_facts.address_binding IS DISTINCT FROM EXCLUDED.address_binding
+  OR stream_discovery_facts.withdrawn IS DISTINCT FROM EXCLUDED.withdrawn
+  OR stream_discovery_facts.scope_id IS DISTINCT FROM EXCLUDED.scope_id
+  OR stream_discovery_facts.ip IS DISTINCT FROM EXCLUDED.ip
+  OR stream_discovery_facts.mac IS DISTINCT FROM EXCLUDED.mac
+  OR stream_discovery_facts.name IS DISTINCT FROM EXCLUDED.name
+  OR stream_discovery_facts.manufacturer IS DISTINCT FROM EXCLUDED.manufacturer
+  OR stream_discovery_facts.model_name IS DISTINCT FROM EXCLUDED.model_name
+  OR stream_discovery_facts.device_type IS DISTINCT FROM EXCLUDED.device_type
+  OR stream_discovery_facts.candidate_type IS DISTINCT FROM EXCLUDED.candidate_type
+  OR stream_discovery_facts.candidate_reason IS DISTINCT FROM EXCLUDED.candidate_reason
+  OR stream_discovery_facts.excluded IS DISTINCT FROM EXCLUDED.excluded
+  OR stream_discovery_facts.capabilities IS DISTINCT FROM EXCLUDED.capabilities
+  OR stream_discovery_facts.recognition_fields IS DISTINCT FROM EXCLUDED.recognition_fields
+  OR stream_discovery_facts.sensor_id IS DISTINCT FROM EXCLUDED.sensor_id
+  OR stream_discovery_facts.site IS DISTINCT FROM EXCLUDED.site
+  OR stream_discovery_facts.domain IS DISTINCT FROM EXCLUDED.domain
+  OR stream_discovery_facts.vlan IS DISTINCT FROM EXCLUDED.vlan
+  OR stream_discovery_facts.vrf IS DISTINCT FROM EXCLUDED.vrf
+  OR stream_discovery_facts.interface_name IS DISTINCT FROM EXCLUDED.interface_name
+  OR stream_discovery_facts.source_id IS DISTINCT FROM EXCLUDED.source_id
+  OR stream_discovery_facts.protocol IS DISTINCT FROM EXCLUDED.protocol
+  OR stream_discovery_facts.service_instance IS DISTINCT FROM EXCLUDED.service_instance
+  OR EXCLUDED.first_observed_at<stream_discovery_facts.first_observed_at
+  OR EXCLUDED.valid_until<stream_discovery_facts.valid_until
+  OR EXCLUDED.valid_until>=stream_discovery_facts.valid_until+interval '5 minutes'
+  OR stream_discovery_facts.device_type IN ('router','gateway','access_point','switch','firewall')
+  OR EXCLUDED.device_type IN ('router','gateway','access_point','switch','firewall'))`, raw)
 	if err != nil {
 		return err
 	}
