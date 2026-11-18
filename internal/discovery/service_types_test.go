@@ -35,8 +35,8 @@ func TestParseServiceTypeCatalogRejectsInvalid(t *testing.T) {
 }
 
 func TestProductRulesAreDataDriven(t *testing.T) {
-	if len(campusProductRules) != 12 {
-		t.Fatalf("product rules must include four verified SADP models, got %d", len(campusProductRules))
+	if len(campusProductRules) != 14 {
+		t.Fatalf("product rules entry count changed unexpectedly, got %d", len(campusProductRules))
 	}
 	specs := []struct {
 		input string
@@ -47,6 +47,8 @@ func TestProductRulesAreDataDriven(t *testing.T) {
 		{"IPC-HDW5442T-ZE", "camera", "Dahua"},
 		{"AppleTV6,2", "media_player", "Apple"},
 		{"ZKTeco iClock880", "attendance", "ZKTeco"},
+		{"DS-IPC-B12V2-I", "camera", "Hikvision"},
+		{"DS-7808N-Q2", "recorder", "Hikvision"},
 	}
 	for _, spec := range specs {
 		matched := false

@@ -13,8 +13,16 @@ func TestProductRuleTableCarriesProvenance(t *testing.T) {
 	if table.Version == "" || table.Source == "" || table.SourceURL == "" || table.License == "" {
 		t.Fatalf("product rule table must declare version, source, source_url and license: %+v", table)
 	}
-	if len(table.Entries) != 12 {
-		t.Fatalf("product rule table must include four verified SADP models, got %d", len(table.Entries))
+	if len(table.Entries) != 14 {
+		t.Fatalf("product rule table entry count changed unexpectedly, got %d", len(table.Entries))
+	}
+}
+
+func TestExactSADPModelRulesRejectNearMatches(t *testing.T) {
+	for _, value := range []string{"DS-IPC-B12V2-I0", "DS-IPC-B12V2-I firmware", "DS-IPC-B12-I", "DS-IPC-T12-I", "DS-7808N-Q20", "DS-7808N-Q2/8P", "DS-7808N"} {
+		if kind, _, model := ProductModelType(value); model != "" {
+			t.Fatalf("%q must not match any product rule, got %s/%s", value, kind, model)
+		}
 	}
 }
 
