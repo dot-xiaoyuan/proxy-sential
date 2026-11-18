@@ -11,8 +11,24 @@ import (
 )
 
 const (
-	// openBucketRebuildDelay debounces rebuilds of the still-open five-minute bucket.
-	openBucketRebuildDelay = 2 * time.Minute
+	// activityBucketFinalizeDelay is how long a closed five-minute bucket waits for
+	// late receipts before it is published. An open bucket is not written at all:
+	// readers only use the newest published revision, so every rebuild before close
+	// appended a full copy that the next rebuild immediately superseded.
+	activityBucketFinalizeDelay = 90 * time.Second
+
+	// activityCoarseMaxRealtimeLag pauses the hourly and daily rollups while the
+	// five-minute lane is behind. activityCoarseClaimInterval spaces successful
+	// coarse claims so a long catch-up cannot monopolise the write path.
+	activityCoarseMaxRealtimeLag = 90 * time.Second
+	activityCoarseClaimInterval  = 30 * time.Second
+
+	// activityFiveMinuteStructuralLag is the coverage lag that close-gated
+	// publication always has: the newest published bucket ends at the previous
+	// close gate, so as_of trails wall clock by one bucket width plus the finalize
+	// delay even when the lane is completely caught up. The coarse gate compares
+	// the excess over this window, otherwise it would never open.
+	activityFiveMinuteStructuralLag = 5*time.Minute + activityBucketFinalizeDelay
 
 	activityV3FiveMinuteModel = "activity-5m-v3"
 	activityV3HourModel       = "activity-hour-v3"
@@ -154,27 +170,21 @@ func (s *DBStore) dispatchActivityV3Jobs(ctx context.Context) (int, error) {
 			continue
 		}
 		now := time.Now().UTC()
-		// A five-minute bucket stays open for its own width, and every dirty receipt used to
-		// schedule another rebuild, so one bucket was written ~10-13 times (field: closed
-		// buckets carry 20-30 revisions, and only the newest is ever read). Each rebuild
-		// appends a full copy of the bucket's facts under a new revision. Two minutes keeps
-		// the in-progress bar reasonably fresh while cutting those writes several-fold.
-		notBefore := now.Add(openBucketRebuildDelay)
-		historical := bucket.Add(5*time.Minute + 90*time.Second).Before(now)
-		if historical {
-			// Old buckets are normally produced while ingest catches up. Debounce
-			// them until receipts have been quiet for 90 seconds, instead of
-			// rebuilding the same immutable bucket after every replay batch.
-			notBefore = now.Add(90 * time.Second)
-		}
+		// An open bucket is written once, at its close gate. Rebuilding it while it is
+		// still receiving receipts appended a full copy of every dimension value under a
+		// new revision that the next rebuild immediately superseded, and readers only
+		// ever use the newest published revision. After close, late receipts are
+		// debounced until they have been quiet for the finalize delay.
+		notBefore := activityFiveMinuteSchedule(bucket, now)
+		closed := !activityFiveMinuteOpen(bucket, now)
 		if _, err = tx.ExecContext(ctx, `INSERT INTO read_model_jobs(model,bucket_start,sensor_id,campus_id,not_before)
 VALUES($1,$2,$3,$4,$5) ON CONFLICT(model,bucket_start,sensor_id,campus_id) DO UPDATE SET
 dirty_generation=CASE
  WHEN read_model_jobs.status='running' THEN GREATEST(read_model_jobs.dirty_generation,read_model_jobs.processed_generation+2)
  WHEN read_model_jobs.processed_generation<read_model_jobs.dirty_generation THEN read_model_jobs.dirty_generation
  ELSE read_model_jobs.dirty_generation+1 END,
-not_before=CASE WHEN $6 THEN GREATEST(read_model_jobs.not_before,EXCLUDED.not_before) ELSE LEAST(read_model_jobs.not_before,EXCLUDED.not_before) END,
-status=CASE WHEN read_model_jobs.status='running' THEN 'running' ELSE 'pending' END,updated_at=now()`, activityV3FiveMinuteModel, bucket, row.SensorID, row.CampusID, notBefore, historical); err != nil {
+not_before=CASE WHEN $6 THEN GREATEST(read_model_jobs.not_before,EXCLUDED.not_before) ELSE EXCLUDED.not_before END,
+status=CASE WHEN read_model_jobs.status='running' THEN 'running' ELSE 'pending' END,updated_at=now()`, activityV3FiveMinuteModel, bucket, row.SensorID, row.CampusID, notBefore, closed); err != nil {
 			return 0, err
 		}
 	}
@@ -185,6 +195,10 @@ status=CASE WHEN read_model_jobs.status='running' THEN 'running' ELSE 'pending' 
 	return len(seen), tx.Commit()
 }
 
+// claimReadModelJob takes the most recent five-minute bucket first, and the most
+// recent hour/day bucket first, so fresh chart data appears before the backlog
+// fills in. Hourly catch-up spends up to a couple of minutes per legacy bucket,
+// so newest-first is what makes 24h and 7d readable while history is rebuilt.
 func (s *DBStore) claimReadModelJob(ctx context.Context, models []string, worker string) (readModelJob, bool, error) {
 	row := s.pg.db.QueryRowContext(ctx, `WITH picked AS (
  SELECT model,bucket_start,sensor_id,campus_id FROM read_model_jobs
@@ -192,7 +206,7 @@ func (s *DBStore) claimReadModelJob(ctx context.Context, models []string, worker
  AND (status<>'running' OR lease_until<now())
  ORDER BY CASE model WHEN 'activity-5m-v3' THEN 0 WHEN 'activity-hour-v3' THEN 1 ELSE 2 END,
  CASE WHEN model='activity-5m-v3' THEN bucket_start END DESC,
- CASE WHEN model<>'activity-5m-v3' THEN bucket_start END ASC
+ CASE WHEN model<>'activity-5m-v3' THEN bucket_start END DESC
  FOR UPDATE SKIP LOCKED LIMIT 1)
 UPDATE read_model_jobs j SET status='running',lease_owner=$2,lease_until=now()+interval '2 minutes',updated_at=now()
 FROM picked p WHERE j.model=p.model AND j.bucket_start=p.bucket_start AND j.sensor_id=p.sensor_id AND j.campus_id=p.campus_id
@@ -252,6 +266,100 @@ func (s *DBStore) nextReadModelRevision(ctx context.Context) (uint64, error) {
 	return revision, err
 }
 
+// activityFiveMinuteCloseAt is the instant a five-minute bucket stops taking new
+// receipts. A single finalize delay covers the publish itself and the settle
+// window used for late data.
+func activityFiveMinuteCloseAt(bucket time.Time) time.Time {
+	return bucket.UTC().Add(5*time.Minute + activityBucketFinalizeDelay)
+}
+
+// activityFiveMinuteOpen reports whether the bucket is still open at now.
+func activityFiveMinuteOpen(bucket, now time.Time) bool {
+	return now.Before(activityFiveMinuteCloseAt(bucket))
+}
+
+// activityFiveMinuteSchedule returns when the bucket should next be built: the
+// close gate while it is still open, a quiet-window debounce once it is closed.
+func activityFiveMinuteSchedule(bucket, now time.Time) time.Time {
+	closeAt := activityFiveMinuteCloseAt(bucket)
+	if now.Before(closeAt) {
+		return closeAt
+	}
+	return now.Add(activityBucketFinalizeDelay)
+}
+
+// activityCoarseEffectiveLag removes the structural coverage window from the
+// reported realtime lag so the gate measures real backlog only.
+func activityCoarseEffectiveLag(lagSeconds float64) float64 {
+	structural := activityFiveMinuteStructuralLag.Seconds()
+	if lagSeconds <= structural {
+		return 0
+	}
+	return lagSeconds - structural
+}
+
+// activityCoarseGate decides whether the hourly and daily lanes may claim a job.
+// sinceSuccess is negative when no job has succeeded yet. The previous gate also
+// required the lag to stay below a lower threshold for five minutes, which the
+// five-minute lane can never satisfy because its watermark moves in multi-minute
+// steps; the hourly rollups therefore never ran. See docs/current-work.md.
+func activityCoarseGate(lagSeconds float64, lagErr error, sinceSuccess time.Duration) (bool, string) {
+	switch {
+	case lagErr != nil:
+		return true, "realtime checkpoint unavailable: " + lagErr.Error()
+	case lagSeconds > activityCoarseMaxRealtimeLag.Seconds():
+		return true, "realtime lag above limit"
+	case sinceSuccess >= 0 && sinceSuccess < activityCoarseClaimInterval:
+		return true, "claim rate limited"
+	}
+	return false, ""
+}
+
+// activityCoarseSourceExpired reports whether a rollup job reads a source table
+// that no longer holds the bucket. Only the hourly model depends on the retained
+// five-minute facts; the day model reads the hour table and the five-minute model
+// reads normalized events.
+func activityCoarseSourceExpired(model string, bucketStart, fiveMinuteFloor time.Time) bool {
+	if model != activityV3HourModel || fiveMinuteFloor.IsZero() {
+		return false
+	}
+	return bucketStart.UTC().Before(fiveMinuteFloor.UTC())
+}
+
+// activityFiveMinuteFloor returns the oldest partition still stored for the
+// five-minute facts. Partition level is enough: TTL drops whole parts and the
+// oldest partition is the only one that can straddle the retention boundary.
+// An empty table reports the zero time so the caller keeps the job queued.
+func (s *DBStore) activityFiveMinuteFloor(ctx context.Context) (time.Time, error) {
+	raw, err := s.ch.query(ctx, `SELECT toString(min(partition)) AS floor_partition FROM system.parts WHERE active AND database=currentDatabase() AND table='activity_chart_facts_5m_v3' FORMAT JSONEachRow`)
+	if err != nil {
+		return time.Time{}, err
+	}
+	rows := []struct {
+		Partition string `json:"floor_partition"`
+	}{}
+	if err = decodeJSONEachRow(raw, &rows); err != nil {
+		return time.Time{}, err
+	}
+	if len(rows) != 1 || rows[0].Partition == "" {
+		return time.Time{}, nil
+	}
+	floor, err := time.Parse("2006-01-02", rows[0].Partition)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return floor, nil
+}
+
+// cancelActivityV3Job records an unbuildable bucket without publishing a revision.
+// The generation is consumed so the job leaves the queue, and the reason stays on
+// the row: a cancelled bucket is a known gap, never a completed rollup.
+func (s *DBStore) cancelActivityV3Job(ctx context.Context, job readModelJob, reason string) error {
+	_, err := s.pg.db.ExecContext(ctx, `UPDATE read_model_jobs SET status='cancelled',processed_generation=dirty_generation,last_error=$5,attempts=0,lease_owner='',lease_until='-infinity',updated_at=now()
+WHERE model=$1 AND bucket_start=$2 AND sensor_id=$3 AND campus_id=$4`, job.Model, job.BucketStart, job.SensorID, job.CampusID, reason)
+	return err
+}
+
 func activityV3Scope(sensorID, campusID string) string {
 	return "sensor_id=" + chQuote(sensorID) + " AND campus_id=" + chQuote(campusID)
 }
@@ -281,12 +389,53 @@ func (s *DBStore) materializeActivityV3FiveMinute(ctx context.Context, job readM
 	return s.materializeActivityV3FiveMinuteAt(ctx, job, time.Now().UTC())
 }
 
+type activityV3FiveMinuteDelta struct {
+	Changed   uint64 `json:"changed"`
+	Revision  uint64 `json:"revision"`
+	Finalized uint8  `json:"stored_finalized"`
+	Revisions uint64 `json:"revisions"`
+}
+
+// activityV3FiveMinuteDeltaSQL compares the bucket that would be published with
+// the revision readers already use. Equality is dimension, value, and count.
+func activityV3FiveMinuteDeltaSQL(bucket time.Time, sensorID, campusID, sourceWhere string) string {
+	bucketSQL := chQuote(bucket.UTC().Format(time.RFC3339Nano))
+	scope := activityV3Scope(sensorID, campusID)
+	versionScope := "granularity='5m' AND bucket_start=parseDateTimeBestEffort(" + bucketSQL + ") AND " + scope
+	return `WITH next AS (
+ SELECT t.1 AS dimension, t.2 AS value, count() AS event_count
+ FROM (SELECT arrayJoin(` + activityChartArray + `) AS t FROM normalized_event_features WHERE ` + sourceWhere + `)
+ GROUP BY dimension, value
+), current AS (
+ SELECT dimension, value, event_count FROM activity_chart_facts_5m_v3
+ WHERE bucket_start=parseDateTimeBestEffort(` + bucketSQL + `) AND ` + scope + `
+  AND revision=(SELECT argMax(revision, published_at) FROM activity_chart_bucket_versions_v3 WHERE ` + versionScope + `)
+)
+SELECT (SELECT count() FROM (
+ SELECT * FROM next EXCEPT SELECT * FROM current
+ UNION ALL
+ SELECT * FROM current EXCEPT SELECT * FROM next
+)) AS changed,
+(SELECT argMax(revision, published_at) FROM activity_chart_bucket_versions_v3 WHERE ` + versionScope + `) AS revision,
+(SELECT argMax(finalized, published_at) FROM activity_chart_bucket_versions_v3 WHERE ` + versionScope + `) AS stored_finalized,
+(SELECT count() FROM activity_chart_bucket_versions_v3 WHERE ` + versionScope + `) AS revisions
+FORMAT JSONEachRow SETTINGS max_threads=4,max_memory_usage=536870912,max_bytes_before_external_group_by=134217728,max_execution_time=30`
+}
+
 func (s *DBStore) materializeActivityV3FiveMinuteAt(ctx context.Context, job readModelJob, now time.Time) error {
-	revision, err := s.nextReadModelRevision(ctx)
-	if err != nil {
-		return err
-	}
 	from, to := job.BucketStart.UTC(), job.BucketStart.UTC().Add(5*time.Minute)
+	if activityFiveMinuteOpen(job.BucketStart, now) {
+		// Defer the whole build to the close gate: nothing is inserted, no revision
+		// is allocated and no version is published. The claimed generation must stay
+		// behind, because finishReadModelJob advances processed_generation to the
+		// claimed value on a nil error and would otherwise mark the bucket completed
+		// without ever writing its facts.
+		if _, err := s.pg.db.ExecContext(ctx, `UPDATE read_model_jobs SET dirty_generation=GREATEST(dirty_generation,$5+1),not_before=GREATEST(not_before,$6),updated_at=now()
+WHERE model=$1 AND bucket_start=$2 AND sensor_id=$3 AND campus_id=$4`, job.Model, job.BucketStart, job.SensorID, job.CampusID, job.DirtyGeneration, activityFiveMinuteCloseAt(job.BucketStart)); err != nil {
+			return err
+		}
+		return s.updateActivityV3State(ctx, "5m", now)
+	}
 	sourceFrom := from
 	cutover, err := s.ensureActivityV3Cutover(ctx)
 	if err != nil {
@@ -296,14 +445,50 @@ func (s *DBStore) materializeActivityV3FiveMinuteAt(ctx context.Context, job rea
 		sourceFrom = cutover
 	}
 	sourceWhere := "timestamp>=parseDateTime64BestEffort(" + chQuote(sourceFrom.Format(time.RFC3339Nano)) + ",6) AND timestamp<parseDateTime64BestEffort(" + chQuote(to.Format(time.RFC3339Nano)) + ",6) AND " + activityV3Scope(job.SensorID, job.CampusID)
+	raw, err := s.ch.query(ctx, activityV3FiveMinuteDeltaSQL(from, job.SensorID, job.CampusID, sourceWhere))
+	if err != nil {
+		return err
+	}
+	delta := []activityV3FiveMinuteDelta{}
+	if err = decodeJSONEachRow(raw, &delta); err != nil {
+		return err
+	}
+	if len(delta) != 1 {
+		return fmt.Errorf("activity 5m delta returned %d rows", len(delta))
+	}
+	finalized := !now.Before(to.Add(90 * time.Second))
+	if delta[0].Changed == 0 && delta[0].Revisions > 0 {
+		if !finalized {
+			_, err = s.pg.db.ExecContext(ctx, `UPDATE read_model_jobs SET dirty_generation=GREATEST(dirty_generation,$5+1),not_before=GREATEST(not_before,$6),updated_at=now()
+WHERE model=$1 AND bucket_start=$2 AND sensor_id=$3 AND campus_id=$4`, job.Model, job.BucketStart, job.SensorID, job.CampusID, job.DirtyGeneration, to.Add(90*time.Second))
+			if err != nil {
+				return err
+			}
+		} else if delta[0].Finalized == 0 {
+			if err = s.publishActivityV3Version(ctx, "5m", from, job.SensorID, job.CampusID, delta[0].Revision, time.Now().UTC(), true); err != nil {
+				return err
+			}
+			if err = s.enqueueActivityV3HourParent(ctx, from, job, now); err != nil {
+				return err
+			}
+		}
+		asOf := to
+		if asOf.After(now) {
+			asOf = now
+		}
+		return s.updateActivityV3State(ctx, "5m", asOf)
+	}
+	revision, err := s.nextReadModelRevision(ctx)
+	if err != nil {
+		return err
+	}
 	// The read starts here: any receipt written before this instant is in the source table and
 	// therefore in the revision this build publishes.
 	sourceAsOf := time.Now().UTC()
-	query := fmt.Sprintf(`INSERT INTO activity_chart_facts_5m_v3 SELECT toStartOfFiveMinutes(timestamp) bucket_start,sensor_id,campus_id,toUInt64(%d) revision,t.1 dimension,t.2 value,count() event_count,min(timestamp) first_seen,max(timestamp) last_seen FROM(SELECT timestamp,sensor_id,campus_id,arrayJoin(%s) t FROM normalized_event_features WHERE %s) GROUP BY bucket_start,sensor_id,campus_id,dimension,value SETTINGS max_threads=1,max_memory_usage=536870912,max_bytes_before_external_group_by=134217728,max_execution_time=15`, revision, activityChartArray, sourceWhere)
+	query := fmt.Sprintf(`INSERT INTO activity_chart_facts_5m_v3 SELECT toStartOfFiveMinutes(timestamp) bucket_start,sensor_id,campus_id,toUInt64(%d) revision,t.1 dimension,t.2 value,count() event_count,min(timestamp) first_seen,max(timestamp) last_seen FROM(SELECT timestamp,sensor_id,campus_id,arrayJoin(%s) t FROM normalized_event_features WHERE %s) GROUP BY bucket_start,sensor_id,campus_id,dimension,value SETTINGS max_threads=4,max_memory_usage=536870912,max_bytes_before_external_group_by=134217728,max_execution_time=15`, revision, activityChartArray, sourceWhere)
 	if err = s.ch.exec(ctx, query); err != nil {
 		return err
 	}
-	finalized := !now.Before(to.Add(90 * time.Second))
 	if err = s.publishActivityV3Version(ctx, "5m", from, job.SensorID, job.CampusID, revision, sourceAsOf, finalized); err != nil {
 		return err
 	}
@@ -315,24 +500,8 @@ WHERE model=$1 AND bucket_start=$2 AND sensor_id=$3 AND campus_id=$4`, job.Model
 		if err != nil {
 			return err
 		}
-	} else {
-		hour := from.Truncate(time.Hour)
-		// Late and replayed receipts can finalize several child buckets for the
-		// same hour in quick succession. Push the parent job out after every
-		// child publication so the hour is rebuilt once after the stream is
-		// quiet, rather than once per child generation.
-		notBefore := activityParentNotBefore(hour.Add(time.Hour+5*time.Minute), now, 90*time.Second)
-		_, err = s.pg.db.ExecContext(ctx, `INSERT INTO read_model_jobs(model,bucket_start,sensor_id,campus_id,not_before)
-VALUES($1,$2,$3,$4,$5) ON CONFLICT(model,bucket_start,sensor_id,campus_id) DO UPDATE SET
-dirty_generation=CASE
- WHEN read_model_jobs.status='running' THEN GREATEST(read_model_jobs.dirty_generation,read_model_jobs.processed_generation+2)
- WHEN read_model_jobs.processed_generation<read_model_jobs.dirty_generation THEN read_model_jobs.dirty_generation
- ELSE read_model_jobs.dirty_generation+1 END,
-status=CASE WHEN read_model_jobs.status='running' THEN 'running' ELSE 'pending' END,
-not_before=GREATEST(read_model_jobs.not_before,EXCLUDED.not_before),updated_at=now()`, activityV3HourModel, hour, job.SensorID, job.CampusID, notBefore)
-		if err != nil {
-			return err
-		}
+	} else if err = s.enqueueActivityV3HourParent(ctx, from, job, now); err != nil {
+		return err
 	}
 	asOf := to
 	if asOf.After(now) {
@@ -378,6 +547,24 @@ func (s *DBStore) repairActivityV3Finalization(ctx context.Context) (int, error)
 		return 0, err
 	}
 	return count, tx.Commit()
+}
+
+func (s *DBStore) enqueueActivityV3HourParent(ctx context.Context, from time.Time, job readModelJob, now time.Time) error {
+	hour := from.Truncate(time.Hour)
+	// Late and replayed receipts can finalize several child buckets for the
+	// same hour in quick succession. Push the parent job out after every
+	// child publication so the hour is rebuilt once after the stream is
+	// quiet, rather than once per child generation.
+	notBefore := activityParentNotBefore(hour.Add(time.Hour+5*time.Minute), now, 90*time.Second)
+	_, err := s.pg.db.ExecContext(ctx, `INSERT INTO read_model_jobs(model,bucket_start,sensor_id,campus_id,not_before)
+VALUES($1,$2,$3,$4,$5) ON CONFLICT(model,bucket_start,sensor_id,campus_id) DO UPDATE SET
+dirty_generation=CASE
+ WHEN read_model_jobs.status='running' THEN GREATEST(read_model_jobs.dirty_generation,read_model_jobs.processed_generation+2)
+ WHEN read_model_jobs.processed_generation<read_model_jobs.dirty_generation THEN read_model_jobs.dirty_generation
+ ELSE read_model_jobs.dirty_generation+1 END,
+status=CASE WHEN read_model_jobs.status='running' THEN 'running' ELSE 'pending' END,
+not_before=GREATEST(read_model_jobs.not_before,EXCLUDED.not_before),updated_at=now()`, activityV3HourModel, hour, job.SensorID, job.CampusID, notBefore)
+	return err
 }
 
 func (s *DBStore) materializeActivityV3Coarse(ctx context.Context, job readModelJob) error {
@@ -435,8 +622,25 @@ func activityV3CoarseMaterializeSQL(job readModelJob, revision uint64) (string, 
 	// ClickHouse scan every superseded revision before it can apply the match;
 	// at campus traffic volume that turns a 2-3 second bucket rebuild into a
 	// repeatable 60 second timeout.
-	query := fmt.Sprintf(`INSERT INTO %s SELECT %s(f.bucket_start) bucket_start,f.sensor_id,f.campus_id,toUInt64(%d) revision,f.dimension,f.value,sum(f.event_count),min(f.first_seen),max(f.last_seen) FROM %s f PREWHERE f.bucket_start>=parseDateTimeBestEffort(%s) AND f.bucket_start<parseDateTimeBestEffort(%s) AND %s WHERE (f.bucket_start,f.sensor_id,f.campus_id,f.revision) IN(SELECT bucket_start,sensor_id,campus_id,argMax(revision,published_at) revision FROM activity_chart_bucket_versions_v3 WHERE granularity=%s AND bucket_start>=parseDateTimeBestEffort(%s) AND bucket_start<parseDateTimeBestEffort(%s) AND %s GROUP BY bucket_start,sensor_id,campus_id) GROUP BY bucket_start,sensor_id,campus_id,dimension,value SETTINGS max_threads=1,max_memory_usage=1073741824,max_bytes_before_external_group_by=268435456,max_execution_time=30`, targetTable, truncate, revision, sourceTable, fromSQL, toSQL, activityV3AliasedScope("f", job.SensorID, job.CampusID), chQuote(childGranularity), fromSQL, toSQL, activityV3Scope(job.SensorID, job.CampusID))
+	query := fmt.Sprintf(`INSERT INTO %s SELECT %s(f.bucket_start) bucket_start,f.sensor_id,f.campus_id,toUInt64(%d) revision,f.dimension,f.value,sum(f.event_count),min(f.first_seen),max(f.last_seen) FROM %s f PREWHERE f.bucket_start>=parseDateTimeBestEffort(%s) AND f.bucket_start<parseDateTimeBestEffort(%s) AND %s WHERE (f.bucket_start,f.sensor_id,f.campus_id,f.revision) IN(SELECT bucket_start,sensor_id,campus_id,argMax(revision,published_at) revision FROM activity_chart_bucket_versions_v3 WHERE granularity=%s AND bucket_start>=parseDateTimeBestEffort(%s) AND bucket_start<parseDateTimeBestEffort(%s) AND %s GROUP BY bucket_start,sensor_id,campus_id) GROUP BY bucket_start,sensor_id,campus_id,dimension,value SETTINGS max_threads=4,max_memory_usage=1073741824,max_bytes_before_external_group_by=268435456,max_execution_time=150`, targetTable, truncate, revision, sourceTable, fromSQL, toSQL, activityV3AliasedScope("f", job.SensorID, job.CampusID), chQuote(childGranularity), fromSQL, toSQL, activityV3Scope(job.SensorID, job.CampusID))
 	return query, granularity, from, nil
+}
+
+// recordActivityV3CoarseState publishes why the hourly/daily lane is idle. It is
+// written on transitions only, so a paused lane is visible in PostgreSQL without
+// adding a periodic write.
+func (s *DBStore) recordActivityV3CoarseState(ctx context.Context, reason string, lagSeconds float64, materialized bool, lastSuccess time.Time) error {
+	state := map[string]any{"reason": reason, "lag_seconds": int(lagSeconds), "paused": reason != ""}
+	if materialized {
+		state["last_success_at"] = lastSuccess.UTC().Format(time.RFC3339Nano)
+	}
+	raw, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	_, err = s.pg.db.ExecContext(ctx, `INSERT INTO read_model_runtime_state(name,state,updated_at) VALUES($1,$2,now())
+ON CONFLICT (name) DO UPDATE SET state=read_model_runtime_state.state||EXCLUDED.state,updated_at=EXCLUDED.updated_at`, "activity-v3-coarse", raw)
+	return err
 }
 
 func (s *DBStore) updateActivityV3State(ctx context.Context, granularity string, asOf time.Time) error {
@@ -571,37 +775,49 @@ func (s *DBStore) activityV3RealtimeLag(ctx context.Context, now time.Time) (flo
 
 func (s *DBStore) RunActivityV3Coarse(ctx context.Context) {
 	worker := fmt.Sprintf("coarse-%d", os.Getpid())
-	healthySince := time.Time{}
-	paused := true
+	lastSuccess := time.Time{}
+	lastReason := ""
 	for ctx.Err() == nil {
-		// Realtime lag pauses all coarse work without consuming a job lease.
-		lagSeconds, lagErr := s.activityV3RealtimeLag(ctx, time.Now().UTC())
-		if lagErr != nil || lagSeconds > 90 {
-			paused = true
-			healthySince = time.Time{}
-		} else if paused {
-			if lagSeconds <= 60 {
-				if healthySince.IsZero() {
-					healthySince = time.Now()
-				} else if time.Since(healthySince) >= 5*time.Minute {
-					paused = false
-				}
-			} else {
-				healthySince = time.Time{}
-			}
+		// Realtime lag pauses all coarse work without consuming a job lease. The
+		// five-minute lane advances its watermark in multi-minute steps, so the old
+		// dwell requirement could never be met and the rollups never ran.
+		now := time.Now().UTC()
+		lagSeconds, lagErr := s.activityV3RealtimeLag(ctx, now)
+		effectiveLag := activityCoarseEffectiveLag(lagSeconds)
+		sinceSuccess := time.Duration(-1)
+		if !lastSuccess.IsZero() {
+			sinceSuccess = now.Sub(lastSuccess)
 		}
-		if !paused {
-			workCtx, cancel := context.WithTimeout(ctx, 70*time.Second)
+		paused, reason := activityCoarseGate(effectiveLag, lagErr, sinceSuccess)
+		if paused {
+			if reason != lastReason {
+				lastReason = reason
+				fmt.Fprintf(os.Stderr, "activity v3 coarse paused: %s (realtime lag %.0fs, %.0fs over the coverage window)\n", reason, lagSeconds, effectiveLag)
+				_ = s.recordActivityV3CoarseState(ctx, reason, effectiveLag, false, time.Time{})
+			}
+		} else {
+			lastReason = ""
+			workCtx, cancel := context.WithTimeout(ctx, 180*time.Second)
 			job, found, err := s.claimReadModelJob(workCtx, []string{activityV3HourModel, activityV3DayModel}, worker)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "activity v3 coarse claim failed: %v\n", err)
 			}
 			if err == nil && found {
+				if expired, floorErr := s.activityFiveMinuteFloor(workCtx); floorErr == nil && activityCoarseSourceExpired(job.Model, job.BucketStart, expired) {
+					reason := fmt.Sprintf("five-minute facts for this hour expired before catch-up (retained from %s)", expired.UTC().Format(time.RFC3339))
+					fmt.Fprintf(os.Stderr, "activity v3 coarse cancelled %s/%s %s: %s\n", job.Model, job.SensorID, job.BucketStart.UTC().Format(time.RFC3339), reason)
+					_ = s.cancelActivityV3Job(context.WithoutCancel(workCtx), job, reason)
+					cancel()
+					continue
+				}
 				err = s.materializeActivityV3Coarse(workCtx, job)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "activity v3 coarse materialize failed: %v\n", err)
+				} else {
+					lastSuccess = time.Now().UTC()
 				}
 				_ = s.finishReadModelJob(context.WithoutCancel(workCtx), job, err)
+				_ = s.recordActivityV3CoarseState(ctx, "", effectiveLag, err == nil, lastSuccess)
 			}
 			cancel()
 		}

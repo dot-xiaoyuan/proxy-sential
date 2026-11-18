@@ -69,10 +69,22 @@ func TestActivityV3CoarseMaterializerPrunesSupersededRevisions(t *testing.T) {
 	if strings.Contains(query, " JOIN") || strings.Contains(query, " FINAL") {
 		t.Fatalf("coarse materializer must not scan superseded revisions: %s", query)
 	}
-	for _, required := range []string{"PREWHERE", "(f.bucket_start,f.sensor_id,f.campus_id,f.revision) IN(", "argMax(revision,published_at)", "max_execution_time=30"} {
+	for _, required := range []string{"PREWHERE", "(f.bucket_start,f.sensor_id,f.campus_id,f.revision) IN(", "argMax(revision,published_at)", "max_execution_time=150", "max_threads=4"} {
 		if !strings.Contains(query, required) {
 			t.Fatalf("coarse materializer omitted %q: %s", required, query)
 		}
+	}
+}
+
+func TestActivityV3FiveMinuteDeltaSkipsUnchangedBuckets(t *testing.T) {
+	query := activityV3FiveMinuteDeltaSQL(time.Date(2026, 11, 18, 5, 0, 0, 0, time.UTC), "sensor-a", "campus-a", "timestamp>=parseDateTime64BestEffort('2026-11-18T05:00:00Z',6)")
+	for _, required := range []string{"EXCEPT", "event_count", "argMax(revision, published_at)", "activity_chart_facts_5m_v3", "AS changed"} {
+		if !strings.Contains(query, required) {
+			t.Fatalf("delta query omitted %q", required)
+		}
+	}
+	if strings.Contains(query, "INSERT INTO activity_chart_facts_5m_v3") {
+		t.Fatal("unchanged comparison must not insert a revision")
 	}
 }
 
@@ -101,5 +113,113 @@ func TestActivitySuccessfulNotBeforeRateLimitsCoarseRebuilds(t *testing.T) {
 		if got := activitySuccessfulNotBefore(test.model, now); !got.Equal(test.want) {
 			t.Fatalf("model %s not_before=%s want=%s", test.model, got, test.want)
 		}
+	}
+}
+
+func TestActivityFiveMinuteScheduleDefersOpenBucket(t *testing.T) {
+	bucket := time.Date(2026, 11, 18, 7, 0, 0, 0, time.UTC)
+	closeAt := bucket.Add(5*time.Minute + activityBucketFinalizeDelay)
+	cases := []struct {
+		name string
+		now  time.Time
+		want time.Time
+	}{
+		{"just opened", bucket, closeAt},
+		{"one second before the gate", closeAt.Add(-time.Second), closeAt},
+		{"at the gate", closeAt, closeAt.Add(activityBucketFinalizeDelay)},
+		{"late receipt after close", closeAt.Add(10 * time.Minute), closeAt.Add(10*time.Minute + activityBucketFinalizeDelay)},
+	}
+	for _, c := range cases {
+		if got := activityFiveMinuteSchedule(bucket, c.now); !got.Equal(c.want) {
+			t.Fatalf("%s: not_before=%s want=%s", c.name, got, c.want)
+		}
+	}
+	for _, c := range []struct {
+		name string
+		now  time.Time
+		want bool
+	}{
+		{"open", bucket.Add(time.Minute), true},
+		{"last instant open", closeAt.Add(-time.Nanosecond), true},
+		{"closed at gate", closeAt, false},
+		{"closed later", closeAt.Add(time.Hour), false},
+	} {
+		if got := activityFiveMinuteOpen(bucket, c.now); got != c.want {
+			t.Fatalf("%s: open=%v want=%v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestActivityCoarseGatePausesOnlyOnCurrentReading(t *testing.T) {
+	cases := []struct {
+		name         string
+		lag          float64
+		err          error
+		sinceSuccess time.Duration
+		wantPaused   bool
+		wantReason   string
+	}{
+		{"no history yet and quiet", 3, nil, -1, false, ""},
+		{"lag over the limit", activityCoarseMaxRealtimeLag.Seconds() + 1, nil, -1, true, "realtime lag above limit"},
+		{"lag exactly at the limit", activityCoarseMaxRealtimeLag.Seconds(), nil, -1, false, ""},
+		{"unavailable checkpoint", 0, errActivityTestCheckpoint, -1, true, "realtime checkpoint unavailable: checkpoint missing"},
+		{"rate limited after success", 3, nil, 5 * time.Second, true, "claim rate limited"},
+		{"spacing satisfied", 3, nil, activityCoarseClaimInterval, false, ""},
+	}
+	for _, c := range cases {
+		paused, reason := activityCoarseGate(c.lag, c.err, c.sinceSuccess)
+		if paused != c.wantPaused || reason != c.wantReason {
+			t.Fatalf("%s: paused=%v reason=%q want paused=%v reason=%q", c.name, paused, reason, c.wantPaused, c.wantReason)
+		}
+	}
+}
+
+var errActivityTestCheckpoint = &activityTestError{"checkpoint missing"}
+
+type activityTestError struct{ msg string }
+
+func (e *activityTestError) Error() string { return e.msg }
+
+func TestActivityCoarseSourceExpiredOnlyAppliesToRetainedFiveMinuteFacts(t *testing.T) {
+	floor := time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
+	expired := floor.Add(-time.Hour)
+	inside := floor.Add(30 * time.Minute)
+	if !activityCoarseSourceExpired(activityV3HourModel, expired, floor) {
+		t.Fatal("hour before the retained floor must be treated as an unbuildable gap")
+	}
+	if activityCoarseSourceExpired(activityV3HourModel, inside, floor) {
+		t.Fatal("hour inside the retained floor must stay buildable")
+	}
+	if activityCoarseSourceExpired(activityV3HourModel, expired, time.Time{}) {
+		t.Fatal("an unknown floor must not cancel queued work")
+	}
+	for _, model := range []string{activityV3FiveMinuteModel, activityV3DayModel} {
+		if activityCoarseSourceExpired(model, expired, floor) {
+			t.Fatalf("%s does not read five-minute facts and must not be cancelled", model)
+		}
+	}
+}
+
+func TestActivityCoarseEffectiveLagSubtractsStructuralWindow(t *testing.T) {
+	structural := activityFiveMinuteStructuralLag.Seconds()
+	if got := activityCoarseEffectiveLag(structural); got != 0 {
+		t.Fatalf("caught-up lane must report no backlog, got %.0fs", got)
+	}
+	if got := activityCoarseEffectiveLag(structural + 1); got != 1 {
+		t.Fatalf("one second of real backlog must survive, got %.0fs", got)
+	}
+	if got := activityCoarseEffectiveLag(30); got != 0 {
+		t.Fatalf("a fresh publish must not look like backlog, got %.0fs", got)
+	}
+	if got := activityCoarseEffectiveLag(structural + 300); got != 300 {
+		t.Fatalf("five minutes of real backlog must be reported, got %.0fs", got)
+	}
+	// The gate must open with only the structural window, and pause once the real
+	// backlog passes the limit.
+	if paused, reason := activityCoarseGate(activityCoarseEffectiveLag(structural+30), nil, -1); paused {
+		t.Fatalf("structural lag alone must not pause the rollups: %s", reason)
+	}
+	if paused, _ := activityCoarseGate(activityCoarseEffectiveLag(structural+activityCoarseMaxRealtimeLag.Seconds()+1), nil, -1); !paused {
+		t.Fatal("real backlog beyond the limit must pause the rollups")
 	}
 }

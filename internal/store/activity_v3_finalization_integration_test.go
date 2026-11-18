@@ -104,6 +104,23 @@ func TestActivityV3QuietBucketSchedulesFinalization(t *testing.T) {
 	if status != "pending" || dirty <= processed || notBefore.Before(bucket.Add(5*time.Minute+90*time.Second)) {
 		t.Fatalf("quiet bucket will never finalize without a new receipt: status=%s dirty=%d processed=%d not_before=%s", status, dirty, processed, notBefore)
 	}
+	// While the bucket is still open nothing may be written: readers only use the
+	// newest published revision, so an insert now would be superseded immediately
+	// and the bucket would still have to be built again after close.
+	openRows, err := s.ch.query(ctx, `SELECT count() AS count FROM activity_chart_facts_5m_v3 WHERE sensor_id=`+chQuote(sensor)+` FORMAT JSONEachRow`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count, err := decodeSingleCount(openRows); err != nil || count != 0 {
+		t.Fatalf("open bucket was written before its close gate: count=%d err=%v", count, err)
+	}
+	openVersions, err := s.ch.query(ctx, `SELECT count() AS count FROM activity_chart_bucket_versions_v3 WHERE sensor_id=`+chQuote(sensor)+` AND granularity='5m' FORMAT JSONEachRow`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count, err := decodeSingleCount(openVersions); err != nil || count != 0 {
+		t.Fatalf("open bucket published a revision before its close gate: count=%d err=%v", count, err)
+	}
 	// Advance only the replay clock. No new dirty receipt or source packet is
 	// written between the live publication and final publication.
 	job.DirtyGeneration = dirty
