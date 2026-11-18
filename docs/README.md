@@ -3,6 +3,7 @@
 当前工作入口：
 
 - [当前版本、问题与下一步](current-work.md)
+- [204 单盘图表写入执行方案](204-chart-storage-execution.md)
 - [发现数据重置与采集窗口](discovery-data-reset-20261031.md)
 - [事件总线 184 运行手册](event-bus-184-runbook.md)
 - [高性能流式存储与投影方案](high-performance-streaming-architecture-20261030.md)
