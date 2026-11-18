@@ -28,6 +28,14 @@ type passiveDiscoveryCursor struct {
 	Timestamp time.Time
 	EventID   string
 	Owner     string
+	Source    string
+}
+
+func passiveDiscoverySources() []string {
+	if os.Getenv("PROXY_SENTINEL_PASSIVE_DISCOVERY_DHCP_ONLY") == "true" {
+		return []string{"dhcp"}
+	}
+	return []string{"dhcp", "arp", "ndp", "mdns", "ssdp", "ws_discovery", "sadp", "lldp", "cdp", "ieee1905_client_association", "ieee1905_topology", "ttl", "http-device", "snmp", "tls", "ssl", "x509", "sip", "rtsp", "bacnet", "modbus"}
 }
 
 type passiveDiscoveryRow struct {
@@ -184,6 +192,21 @@ func (s *DBStore) claimPassiveDiscovery(ctx context.Context, sensorID, owner str
 	if leased {
 		return passiveDiscoveryCursor{}, false, tx.Commit()
 	}
+	sources := passiveDiscoverySources()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO passive_discovery_source_cursors(sensor_id,source_event_type,cursor_timestamp,cursor_event_id)
+SELECT $1, source, cursor_timestamp, cursor_event_id
+FROM passive_discovery_state, unnest($2::text[]) AS source
+WHERE sensor_id=$1
+ON CONFLICT DO NOTHING`, sensorID, sources); err != nil {
+		return passiveDiscoveryCursor{}, false, err
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT source_event_type,cursor_timestamp,cursor_event_id
+FROM passive_discovery_source_cursors
+WHERE sensor_id=$1 AND source_event_type=ANY($2)
+ORDER BY cursor_timestamp,cursor_event_id,source_event_type
+LIMIT 1`, sensorID, sources).Scan(&cursor.Source, &cursor.Timestamp, &cursor.EventID); err != nil {
+		return passiveDiscoveryCursor{}, false, err
+	}
 	cursor.Owner = owner
 	if _, err = tx.ExecContext(ctx, `UPDATE passive_discovery_state SET lease_owner=$2,lease_until=now()+interval '90 seconds',updated_at=now() WHERE sensor_id=$1`, sensorID, owner); err != nil {
 		return passiveDiscoveryCursor{}, false, err
@@ -201,12 +224,7 @@ func (s *DBStore) passiveDiscoveryEvents(ctx context.Context, sensorID string, c
 	}
 	stamp := "parseDateTime64BestEffort(" + chQuote(cursor.Timestamp.UTC().Format(time.RFC3339Nano)) + ",6)"
 	upper := "parseDateTime64BestEffort(" + chQuote(cutoff.UTC().Format(time.RFC3339Nano)) + ",6)"
-	where := "sensor_id=" + chQuote(sensorID) + " AND timestamp>=" + stamp + " AND timestamp<" + upper + " AND (" + chAfterBound([]chBoundKey{{Expr: "timestamp", Value: stamp}, {Expr: "event_id", Value: chQuote(cursor.EventID)}}) + ")"
-	if os.Getenv("PROXY_SENTINEL_PASSIVE_DISCOVERY_DHCP_ONLY") == "true" {
-		where += " AND source_event_type='dhcp'"
-	} else {
-		where += " AND source_event_type IN ('dhcp','arp','ndp','mdns','ssdp','ws_discovery','sadp','lldp','cdp','ieee1905_client_association','ieee1905_topology','ttl','http-device','snmp','tls','ssl','x509','sip','rtsp','bacnet','modbus')"
-	}
+	where := "sensor_id=" + chQuote(sensorID) + " AND source_event_type=" + chQuote(cursor.Source) + " AND timestamp>=" + stamp + " AND timestamp<" + upper + " AND (" + chAfterBound([]chBoundKey{{Expr: "timestamp", Value: stamp}, {Expr: "event_id", Value: chQuote(cursor.EventID)}}) + ")"
 	query := fmt.Sprintf(`SELECT formatDateTime(timestamp,'%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ','UTC') event_timestamp,event_id,source,source_event_type,type,sensor_id,campus_id,subject_ip,subject_mac,observer_json,payload_json,flow_json,raw_ref_json,confidence FROM passive_discovery_events_v2 PREWHERE %s ORDER BY timestamp,event_id LIMIT %d SETTINGS max_threads=1,max_memory_usage=268435456,max_execution_time=20 FORMAT JSONEachRow`, where, limit)
 	raw, err := s.ch.query(ctx, query)
 	if err != nil {
@@ -237,6 +255,9 @@ func (s *DBStore) passiveDiscoveryEvents(ctx context.Context, sensorID string, c
 		event.Observer["sensor_id"] = row.SensorID
 		events = append(events, event)
 		next.Timestamp, next.EventID = stamp.UTC(), row.EventID
+	}
+	if len(events) == 0 && cutoff.After(cursor.Timestamp) {
+		next.Timestamp, next.EventID = cutoff.UTC(), ""
 	}
 	return events, next, truncated, nil
 }
@@ -675,6 +696,7 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 	if id := passiveRepeatableFactID(o); id != "" {
 		o.ID = id
 	}
+	o.SemanticHash = passiveObservationSemanticHash(o)
 	return o, ""
 }
 
@@ -688,6 +710,16 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 func passiveRepeatableFactID(o discovery.Observation) string {
 	switch o.Origin {
 	case "arp", "ndp", "dhcp", "dhcp_client", "ieee1905":
+	case "dns_sd":
+		service := passiveString(o.Evidence.Payload, "service_instance")
+		if service == "" {
+			service = passiveString(o.Evidence.Payload, "service_type") + "\x00" + o.Name
+		}
+		sum := sha256.Sum256([]byte(strings.Join([]string{o.Origin, o.SourceID, o.MAC, o.IP, service}, "\x00")))
+		return "fact-" + hex.EncodeToString(sum[:16])
+	case "ssdp", "sip", "snmp", "rtsp", "ttl", "tls_device", "ws_discovery", "lldp", "cdp", "sadp", "ieee1905_client", "bacnet", "modbus":
+		sum := sha256.Sum256([]byte(strings.Join([]string{o.Origin, o.SourceID, o.MAC, o.IP}, "\x00")))
+		return "fact-" + hex.EncodeToString(sum[:16])
 	default:
 		return ""
 	}
@@ -701,6 +733,21 @@ func passiveRepeatableFactID(o discovery.Observation) string {
 	}
 	sum := sha256.Sum256([]byte(key))
 	return "fact-" + hex.EncodeToString(sum[:16])
+}
+
+func passiveObservationSemanticHash(o discovery.Observation) string {
+	caps := append([]string(nil), o.Capabilities...)
+	sort.Strings(caps)
+	raw, _ := json.Marshal(struct {
+		Origin, Source, MAC, IP, Name, Manufacturer, Model, Type, OS, Confidence, Explanation, VLAN, Domain, Service, ServiceType string
+		Caps                                                                                                                      []string
+		Withdrawn                                                                                                                 bool
+	}{
+		o.Origin, o.SourceID, o.MAC, o.IP, o.Name, o.Manufacturer, o.ModelName, o.DeviceType, o.OSHint, o.Confidence, o.Explanation, o.VLAN, o.Domain,
+		passiveString(o.Evidence.Payload, "service_instance"), passiveString(o.Evidence.Payload, "service_type"), caps, o.Withdrawn,
+	})
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }
 
 // HTTP product responses can repeat on every request. Compact only after
@@ -1290,7 +1337,7 @@ ON CONFLICT(endpoint_id) DO NOTHING`, macs); err != nil {
 			}
 			var mac string
 			err := db.QueryRowContext(ctx, `SELECT lower(data->>'mac')
-FROM discovery_observations
+FROM discovery_observation_latest
 WHERE data->>'node'=$1 AND data->>'ip'=$2 AND coalesce(data->>'mac','')<>''
   AND origin IN ('dhcp','arp','ndp') AND observed_at<=$3 AND valid_until>$3
 ORDER BY observed_at DESC,id DESC LIMIT 1`, o.Node, o.IP, o.ObservedAt).Scan(&mac)
@@ -1320,6 +1367,10 @@ ORDER BY observed_at DESC,id DESC LIMIT 1`, o.Node, o.IP, o.ObservedAt).Scan(&ma
 	hardwareObservations := make([]discovery.Observation, 0, len(ids))
 	for _, id := range ids {
 		o := resolved[id]
+		if o.SemanticHash == "" {
+			o.SemanticHash = passiveObservationSemanticHash(o)
+			resolved[id] = o
+		}
 		hardwareObservations = append(hardwareObservations, o)
 		raw, _ := json.Marshal(o)
 		rows = append(rows, map[string]any{
@@ -1340,7 +1391,17 @@ ORDER BY observed_at DESC,id DESC LIMIT 1`, o.Node, o.IP, o.ObservedAt).Scan(&ma
 SELECT r.id,r.device_key,r.source_id,r.origin,r.observed_at,r.valid_until,r.withdrawn,r.data,r.service_instance
 FROM jsonb_to_recordset($1::jsonb) AS r(id text,device_key text,source_id text,origin text,observed_at timestamptz,valid_until timestamptz,withdrawn boolean,data jsonb,service_instance text)
 ORDER BY r.id
-ON CONFLICT(id) DO UPDATE SET device_key=EXCLUDED.device_key,source_id=EXCLUDED.source_id,origin=EXCLUDED.origin,observed_at=EXCLUDED.observed_at,valid_until=EXCLUDED.valid_until,withdrawn=EXCLUDED.withdrawn,data=EXCLUDED.data,service_instance=EXCLUDED.service_instance WHERE EXCLUDED.observed_at>=discovery_observations.observed_at+interval '60 seconds'`, string(payload)); err != nil {
+ON CONFLICT(id) DO UPDATE SET device_key=EXCLUDED.device_key,source_id=EXCLUDED.source_id,origin=EXCLUDED.origin,observed_at=EXCLUDED.observed_at,valid_until=EXCLUDED.valid_until,withdrawn=EXCLUDED.withdrawn,data=EXCLUDED.data,service_instance=EXCLUDED.service_instance
+ WHERE EXCLUDED.observed_at>=discovery_observations.observed_at
+  AND (coalesce(discovery_observations.data->>'semantic_hash','') IS DISTINCT FROM coalesce(EXCLUDED.data->>'semantic_hash','')
+   OR discovery_observations.withdrawn IS DISTINCT FROM EXCLUDED.withdrawn
+   OR EXCLUDED.valid_until<discovery_observations.valid_until)`, string(payload)); err != nil {
+		return nil, err
+	}
+	if err := touchPassiveLatest(ctx, db, rows); err != nil {
+		return nil, err
+	}
+	if err := upsertPassiveDeviceCurrent(ctx, db, resolved); err != nil {
 		return nil, err
 	}
 	if discovery.HardwareProjectionEnabled() {
@@ -1369,7 +1430,7 @@ func (s *DBStore) insertPassiveObservation(ctx context.Context, db passiveDiscov
 	} else if o.Origin != "sadp" && o.MAC == "" && o.IP != "" {
 		var mac string
 		err := db.QueryRowContext(ctx, `SELECT lower(data->>'mac')
-FROM discovery_observations
+FROM discovery_observation_latest
 WHERE data->>'node'=$1 AND data->>'ip'=$2 AND coalesce(data->>'mac','')<>''
   AND origin IN ('dhcp','arp','ndp') AND observed_at<=$3 AND valid_until>$3
 ORDER BY observed_at DESC,id DESC LIMIT 1`, o.Node, o.IP, o.ObservedAt).Scan(&mac)
@@ -1379,11 +1440,24 @@ ORDER BY observed_at DESC,id DESC LIMIT 1`, o.Node, o.IP, o.ObservedAt).Scan(&ma
 			return nil, err
 		}
 	}
+	if o.SemanticHash == "" {
+		o.SemanticHash = passiveObservationSemanticHash(o)
+	}
 	raw, _ := json.Marshal(o)
 	// service_instance is a plain column so the dedup does not need to extract
 	// the same JSON path for every row of a multi-gigabyte history.
 	serviceInstance := passiveString(o.Evidence.Payload, "service_instance")
-	if _, err := db.ExecContext(ctx, `INSERT INTO discovery_observations(id,device_key,source_id,origin,observed_at,valid_until,withdrawn,data,service_instance) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(id) DO UPDATE SET device_key=EXCLUDED.device_key,source_id=EXCLUDED.source_id,origin=EXCLUDED.origin,observed_at=EXCLUDED.observed_at,valid_until=EXCLUDED.valid_until,withdrawn=EXCLUDED.withdrawn,data=EXCLUDED.data,service_instance=EXCLUDED.service_instance WHERE EXCLUDED.observed_at>=discovery_observations.observed_at+interval '60 seconds'`, o.ID, o.Key(), o.SourceID, o.Origin, o.ObservedAt, o.ValidUntil, o.Withdrawn, raw, serviceInstance); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO discovery_observations(id,device_key,source_id,origin,observed_at,valid_until,withdrawn,data,service_instance) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(id) DO UPDATE SET device_key=EXCLUDED.device_key,source_id=EXCLUDED.source_id,origin=EXCLUDED.origin,observed_at=EXCLUDED.observed_at,valid_until=EXCLUDED.valid_until,withdrawn=EXCLUDED.withdrawn,data=EXCLUDED.data,service_instance=EXCLUDED.service_instance
+ WHERE EXCLUDED.observed_at>=discovery_observations.observed_at
+  AND (coalesce(discovery_observations.data->>'semantic_hash','') IS DISTINCT FROM coalesce(EXCLUDED.data->>'semantic_hash','')
+   OR discovery_observations.withdrawn IS DISTINCT FROM EXCLUDED.withdrawn
+   OR EXCLUDED.valid_until<discovery_observations.valid_until)`, o.ID, o.Key(), o.SourceID, o.Origin, o.ObservedAt, o.ValidUntil, o.Withdrawn, raw, serviceInstance); err != nil {
+		return nil, err
+	}
+	if err := touchPassiveLatest(ctx, db, []map[string]any{{"id": o.ID, "observed_at": o.ObservedAt, "valid_until": o.ValidUntil}}); err != nil {
+		return nil, err
+	}
+	if err := upsertPassiveDeviceCurrent(ctx, db, map[string]discovery.Observation{o.ID: o}); err != nil {
 		return nil, err
 	}
 	if discovery.HardwareProjectionEnabled() {
@@ -1544,7 +1618,7 @@ SELECT i.observation_id,i.endpoint_id,i.valid_until,i.basis
 FROM incoming i JOIN endpoint_entities e ON e.endpoint_id=i.endpoint_id AND e.entity_role='endpoint'
 ORDER BY i.endpoint_id,i.observation_id
 ON CONFLICT(observation_id) DO UPDATE SET endpoint_id=EXCLUDED.endpoint_id,valid_until=EXCLUDED.valid_until,basis=EXCLUDED.basis
-WHERE discovery_identity_links.endpoint_id IS DISTINCT FROM EXCLUDED.endpoint_id OR discovery_identity_links.basis IS DISTINCT FROM EXCLUDED.basis OR EXCLUDED.valid_until>discovery_identity_links.valid_until+interval '5 minutes'`, string(raw))
+WHERE discovery_identity_links.endpoint_id IS DISTINCT FROM EXCLUDED.endpoint_id OR discovery_identity_links.basis IS DISTINCT FROM EXCLUDED.basis`, string(raw))
 	return err
 }
 
@@ -1818,10 +1892,17 @@ func (s *DBStore) finishPassiveDiscovery(ctx context.Context, sensorID string, c
 	}
 	protocols, _ := json.Marshal(stats.Protocols)
 	reasons, _ := json.Marshal(stats.Reasons)
-	_, err := s.pg.db.ExecContext(ctx, `UPDATE passive_discovery_state SET cursor_timestamp=$3,cursor_event_id=$4,processed_events=processed_events+$5,emitted_observations=emitted_observations+$6,skipped_events=skipped_events+$7,
-protocol_counts=coalesce((SELECT jsonb_object_agg(key,total) FROM (SELECT key,sum(value::bigint) total FROM (SELECT * FROM jsonb_each_text(protocol_counts) UNION ALL SELECT * FROM jsonb_each_text($8::jsonb)) counts GROUP BY key) totals),'{}'::jsonb),
-skip_counts=coalesce((SELECT jsonb_object_agg(key,total) FROM (SELECT key,sum(value::bigint) total FROM (SELECT * FROM jsonb_each_text(skip_counts) UNION ALL SELECT * FROM jsonb_each_text($9::jsonb)) counts GROUP BY key) totals),'{}'::jsonb),
-lease_owner='',lease_until='-infinity',last_success_at=now(),last_error='',updated_at=now() WHERE sensor_id=$1 AND lease_owner=$2`, sensorID, cursor.Owner, cursor.Timestamp, cursor.EventID, stats.Processed, stats.Emitted, stats.Skipped, protocols, reasons)
+	if cursor.Source != "" {
+		if _, err := s.pg.db.ExecContext(ctx, `UPDATE passive_discovery_source_cursors SET cursor_timestamp=$3,cursor_event_id=$4,updated_at=now() WHERE sensor_id=$1 AND source_event_type=$2`, sensorID, cursor.Source, cursor.Timestamp, cursor.EventID); err != nil {
+			return err
+		}
+	}
+	_, err := s.pg.db.ExecContext(ctx, `UPDATE passive_discovery_state SET cursor_timestamp=slow.cursor_timestamp,cursor_event_id=slow.cursor_event_id,processed_events=processed_events+$3,emitted_observations=emitted_observations+$4,skipped_events=skipped_events+$5,
+protocol_counts=coalesce((SELECT jsonb_object_agg(key,total) FROM (SELECT key,sum(value::bigint) total FROM (SELECT * FROM jsonb_each_text(protocol_counts) UNION ALL SELECT * FROM jsonb_each_text($6::jsonb)) counts GROUP BY key) totals),'{}'::jsonb),
+skip_counts=coalesce((SELECT jsonb_object_agg(key,total) FROM (SELECT key,sum(value::bigint) total FROM (SELECT * FROM jsonb_each_text(skip_counts) UNION ALL SELECT * FROM jsonb_each_text($7::jsonb)) counts GROUP BY key) totals),'{}'::jsonb),
+lease_owner='',lease_until='-infinity',last_success_at=now(),last_error='',updated_at=now()
+FROM (SELECT cursor_timestamp,cursor_event_id FROM passive_discovery_source_cursors WHERE sensor_id=$1 ORDER BY cursor_timestamp,cursor_event_id LIMIT 1) slow
+WHERE passive_discovery_state.sensor_id=$1 AND lease_owner=$2`, sensorID, cursor.Owner, stats.Processed, stats.Emitted, stats.Skipped, protocols, reasons)
 	if err != nil {
 		return err
 	}
@@ -1948,6 +2029,19 @@ func (s *DBStore) RunPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 	go func() {
 		defer close(liveDone)
 		s.runPassiveLivePTRMaterializer(ctx, sensorID)
+	}()
+	go func() {
+		_ = s.adoptPassiveDeviceCurrent(ctx)
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				_ = s.adoptPassiveDeviceCurrent(ctx)
+			}
+		}
 	}()
 	// Discovery observations and their cascaded identity links are evidence.
 	// Do not start the old age-based deletion loop: it has no verified archive

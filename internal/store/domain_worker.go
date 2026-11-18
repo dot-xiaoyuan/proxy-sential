@@ -368,7 +368,8 @@ func (s *DBStore) reconcileDomainCursor(ctx context.Context, library *fingerprin
 	highCursor, highID := cursor, cursorID
 	cursor, cursorID = domainReconcileStart(kind, completed.Valid, cursor, cursorID, since)
 	for {
-		events, err := s.ch.ListDomainEventsAfter(ctx, s.pg.sensorID, since.Format(time.RFC3339Nano), cursor.Format(time.RFC3339Nano), cursorID, 10000)
+		until := cursor.Add(15 * time.Minute)
+		events, err := s.ch.ListDomainEventsAfter(ctx, s.pg.sensorID, since.Format(time.RFC3339Nano), until.Format(time.RFC3339Nano), cursor.Format(time.RFC3339Nano), cursorID, 10000)
 		if err != nil {
 			return err
 		}

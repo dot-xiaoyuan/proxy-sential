@@ -485,8 +485,11 @@ func TestPassiveRepeatableFactIDCollapsesWithinHour(t *testing.T) {
 	if first == passiveRepeatableFactID(otherScope) {
 		t.Fatal("a different capture scope must be a different fact")
 	}
-	if id := passiveRepeatableFactID(discovery.Observation{Origin: "ssdp", MAC: "00:11:22:33:44:55"}); id != "" {
-		t.Fatalf("non-repeatable origins keep their event id, got %q", id)
+	ssdp := discovery.Observation{Origin: "ssdp", SourceID: "passive:s204", MAC: "00:11:22:33:44:55", IP: "10.0.0.8"}
+	ssdpLater := ssdp
+	ssdpLater.ID = "other-event"
+	if passiveRepeatableFactID(ssdp) == "" || passiveRepeatableFactID(ssdp) != passiveRepeatableFactID(ssdpLater) {
+		t.Fatal("ssdp repeats must share a fact id")
 	}
 }
 
@@ -527,9 +530,26 @@ func TestPassiveLinkRefreshIsThrottled(t *testing.T) {
 			t.Fatal(err)
 		}
 		code := string(source)
-		if !strings.Contains(code, "EXCLUDED.valid_until>discovery_identity_links.valid_until+interval '5 minutes'") || !strings.Contains(code, "discovery_identity_links.endpoint_id IS DISTINCT FROM EXCLUDED.endpoint_id") {
-			t.Fatalf("%s must throttle repeated identity-link refreshes", path)
+		if strings.Contains(code, "EXCLUDED.valid_until>discovery_identity_links.valid_until+interval '5 minutes'") || strings.Contains(code, "EXCLUDED.valid_until>discovery_observations.valid_until+interval '5 minutes'") {
+			t.Fatalf("%s still rewrites rows to extend validity", path)
 		}
+		if !strings.Contains(code, "discovery_identity_links.endpoint_id IS DISTINCT FROM EXCLUDED.endpoint_id") || !strings.Contains(code, "EXCLUDED.valid_until<discovery_observations.valid_until") {
+			t.Fatalf("%s must keep endpoint changes and validity shrinks", path)
+		}
+	}
+}
+
+func TestPassiveClockRefreshDoesNotRewriteDeviceFacts(t *testing.T) {
+	source, err := os.ReadFile("passive_device_current.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := string(source)
+	if !strings.Contains(code, "valid_until=CASE WHEN r.valid_until<l.valid_until") || strings.Contains(code, "SET data=") {
+		t.Fatal("latest refresh must move time columns and leave the observation JSON alone")
+	}
+	if strings.Contains(code, "EXCLUDED.last_seen>=discovery_passive_device_current.last_seen+interval '60 seconds'") {
+		t.Fatal("device current still rewrites on a clock refresh")
 	}
 }
 

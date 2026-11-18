@@ -711,7 +711,13 @@ func (s *DBStore) RebuildDomainEvidenceVersion(ctx context.Context, version stri
 		if fingerprint.Default().Version() != version {
 			return result, fmt.Errorf("domain version %s was superseded", version)
 		}
-		events, queryErr := s.ch.ListDomainEventsAfter(ctx, s.pg.sensorID, since.Format(time.RFC3339Nano), result.CursorTimestamp, result.CursorEventID, batchSize)
+		lower := since
+		if result.CursorTimestamp != "" {
+			if parsed, parseErr := time.Parse(time.RFC3339Nano, result.CursorTimestamp); parseErr == nil {
+				lower = parsed
+			}
+		}
+		events, queryErr := s.ch.ListDomainEventsAfter(ctx, s.pg.sensorID, since.Format(time.RFC3339Nano), lower.Add(15*time.Minute).Format(time.RFC3339Nano), result.CursorTimestamp, result.CursorEventID, batchSize)
 		if queryErr != nil {
 			return result, queryErr
 		}

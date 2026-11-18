@@ -84,7 +84,10 @@ func (s *DBStore) insertPassiveARPBatch(ctx context.Context, db passiveDiscovery
  INSERT INTO discovery_observations(id,device_key,source_id,origin,observed_at,valid_until,withdrawn,data)
  SELECT id,device_key,source_id,'arp',observed_at,valid_until,false,data FROM incoming ORDER BY id
  ON CONFLICT(id) DO UPDATE SET device_key=EXCLUDED.device_key,source_id=EXCLUDED.source_id,origin=EXCLUDED.origin,observed_at=EXCLUDED.observed_at,valid_until=EXCLUDED.valid_until,withdrawn=EXCLUDED.withdrawn,data=EXCLUDED.data
- WHERE EXCLUDED.observed_at>=discovery_observations.observed_at+interval '60 seconds'
+ WHERE EXCLUDED.observed_at>=discovery_observations.observed_at
+  AND (coalesce(discovery_observations.data->>'semantic_hash','') IS DISTINCT FROM coalesce(EXCLUDED.data->>'semantic_hash','')
+   OR discovery_observations.withdrawn IS DISTINCT FROM EXCLUDED.withdrawn
+   OR EXCLUDED.valid_until<discovery_observations.valid_until)
  RETURNING id
 )
 INSERT INTO discovery_identity_links(observation_id,endpoint_id,valid_until,basis)
@@ -92,6 +95,21 @@ SELECT i.id,i.endpoint_id,i.valid_until,i.basis FROM incoming i JOIN stored s US
 JOIN endpoint_entities e ON e.endpoint_id=i.endpoint_id AND e.entity_role='endpoint'
 ORDER BY i.endpoint_id,i.id
 ON CONFLICT(observation_id) DO UPDATE SET endpoint_id=EXCLUDED.endpoint_id,valid_until=EXCLUDED.valid_until,basis=EXCLUDED.basis
-WHERE discovery_identity_links.endpoint_id IS DISTINCT FROM EXCLUDED.endpoint_id OR discovery_identity_links.basis IS DISTINCT FROM EXCLUDED.basis OR EXCLUDED.valid_until>discovery_identity_links.valid_until+interval '5 minutes'`, string(raw))
-	return refreshed, err
+WHERE discovery_identity_links.endpoint_id IS DISTINCT FROM EXCLUDED.endpoint_id OR discovery_identity_links.basis IS DISTINCT FROM EXCLUDED.basis`, string(raw))
+	if err != nil {
+		return nil, err
+	}
+	latest := make([]map[string]any, 0, len(observations))
+	pending := make(map[string]discovery.Observation, len(observations))
+	for _, o := range observations {
+		latest = append(latest, map[string]any{"id": o.ID, "observed_at": o.ObservedAt, "valid_until": o.ValidUntil})
+		pending[o.ID] = o
+	}
+	if err = touchPassiveLatest(ctx, db, latest); err != nil {
+		return nil, err
+	}
+	if err = upsertPassiveDeviceCurrent(ctx, db, pending); err != nil {
+		return nil, err
+	}
+	return refreshed, nil
 }

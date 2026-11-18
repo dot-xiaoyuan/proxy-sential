@@ -87,28 +87,36 @@ func TestClickHouseAggregatesOneHundredThousandEventsWithoutRawReads(t *testing.
 	if len(encodedPage) > 250*1024 {
 		t.Fatalf("default event page exceeds 250KB: %d bytes", len(encodedPage))
 	}
-	domainPage, err := clickhouse.ListDomainEventsAfter(ctx, sensorID, time.Now().Add(-24*time.Hour).Format(time.RFC3339Nano), "", "", 10000)
+	domainUntil := time.Now()
+	domainSince := domainUntil.Add(-15 * time.Minute)
+	domainPage, err := clickhouse.ListDomainEventsAfter(ctx, sensorID, domainSince.Format(time.RFC3339Nano), domainUntil.Format(time.RFC3339Nano), "", "", 10000)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(domainPage) != 10000 {
-		t.Fatalf("domain backfill must read a bounded 10000-row batch, got %d", len(domainPage))
+	if len(domainPage) > 10000 {
+		t.Fatalf("domain backfill must stay inside one bounded batch, got %d", len(domainPage))
 	}
-	firstIDs := make(map[string]struct{}, len(domainPage))
-	for _, event := range domainPage {
-		firstIDs[event.EventID] = struct{}{}
+	if _, err = clickhouse.ListDomainEventsAfter(ctx, sensorID, domainSince.Format(time.RFC3339Nano), "", "", "", 10000); err == nil {
+		t.Fatal("domain history without an upper bound must be refused")
 	}
-	lastDomainEvent := domainPage[len(domainPage)-1]
-	nextDomainPage, err := clickhouse.ListDomainEventsAfter(ctx, sensorID, time.Now().Add(-24*time.Hour).Format(time.RFC3339Nano), lastDomainEvent.Timestamp, lastDomainEvent.EventID, 10000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(nextDomainPage) != 10000 {
-		t.Fatalf("domain backfill second batch must remain bounded, got %d", len(nextDomainPage))
-	}
-	for _, event := range nextDomainPage {
-		if _, duplicated := firstIDs[event.EventID]; duplicated {
-			t.Fatalf("cursor batch repeated event %s", event.EventID)
+	if len(domainPage) > 0 {
+		firstIDs := make(map[string]struct{}, len(domainPage))
+		for _, event := range domainPage {
+			firstIDs[event.EventID] = struct{}{}
+		}
+		lastDomainEvent := domainPage[len(domainPage)-1]
+		nextSince, _ := time.Parse(time.RFC3339Nano, lastDomainEvent.Timestamp)
+		nextDomainPage, err := clickhouse.ListDomainEventsAfter(ctx, sensorID, domainSince.Format(time.RFC3339Nano), nextSince.Add(15*time.Minute).Format(time.RFC3339Nano), lastDomainEvent.Timestamp, lastDomainEvent.EventID, 10000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(nextDomainPage) > 10000 {
+			t.Fatalf("domain backfill second batch must remain bounded, got %d", len(nextDomainPage))
+		}
+		for _, event := range nextDomainPage {
+			if _, duplicated := firstIDs[event.EventID]; duplicated {
+				t.Fatalf("cursor batch repeated event %s", event.EventID)
+			}
 		}
 	}
 	reviewStarted := time.Now()

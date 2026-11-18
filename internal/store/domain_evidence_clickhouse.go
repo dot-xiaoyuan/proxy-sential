@@ -15,7 +15,10 @@ import (
 // MaxDomainBatchSize bounds memory while amortizing historical ClickHouse scans.
 const MaxDomainBatchSize = 100000
 
-func (s *ClickHouseStore) ListDomainEventsAfter(ctx context.Context, sensorID, since, cursorTimestamp, cursorEventID string, limit int) ([]normalized.Event, error) {
+func (s *ClickHouseStore) ListDomainEventsAfter(ctx context.Context, sensorID, since, until, cursorTimestamp, cursorEventID string, limit int) ([]normalized.Event, error) {
+	if strings.TrimSpace(until) == "" {
+		return nil, fmt.Errorf("domain history requires an upper bound")
+	}
 	if limit <= 0 || limit > MaxDomainBatchSize {
 		limit = MaxDomainBatchSize
 	}
@@ -23,15 +26,29 @@ func (s *ClickHouseStore) ListDomainEventsAfter(ctx context.Context, sensorID, s
 	if err != nil {
 		return nil, fmt.Errorf("invalid domain backfill start: %w", err)
 	}
-	clauses := []string{"timestamp >= parseDateTime64BestEffort(" + chQuote(start.UTC().Format(time.RFC3339Nano)) + ",6,'UTC')", "type IN ('dns','tls','quic','http')", "multiIf(type='dns',JSONExtractString(payload_json,'query'),type='http',JSONExtractString(payload_json,'host'),JSONExtractString(payload_json,'sni')) != ''"}
-	if strings.TrimSpace(sensorID) != "" {
-		clauses = append(clauses, "sensor_id="+chQuote(strings.TrimSpace(sensorID)))
+	end, err := time.Parse(time.RFC3339Nano, until)
+	if err != nil {
+		return nil, fmt.Errorf("invalid domain backfill end: %w", err)
 	}
+	lower := start
 	if strings.TrimSpace(cursorTimestamp) != "" {
 		cursor, parseErr := time.Parse(time.RFC3339Nano, cursorTimestamp)
 		if parseErr != nil {
 			return nil, fmt.Errorf("invalid domain backfill cursor: %w", parseErr)
 		}
+		if cursor.After(lower) {
+			lower = cursor
+		}
+	}
+	if !end.After(lower) || end.Sub(lower) > 15*time.Minute {
+		return nil, fmt.Errorf("domain history window must be within 15 minutes")
+	}
+	clauses := []string{"timestamp >= parseDateTime64BestEffort(" + chQuote(start.UTC().Format(time.RFC3339Nano)) + ",6,'UTC')", "timestamp < parseDateTime64BestEffort(" + chQuote(end.UTC().Format(time.RFC3339Nano)) + ",6,'UTC')", "type IN ('dns','tls','quic','http')", "multiIf(type='dns',JSONExtractString(payload_json,'query'),type='http',JSONExtractString(payload_json,'host'),JSONExtractString(payload_json,'sni')) != ''"}
+	if strings.TrimSpace(sensorID) != "" {
+		clauses = append(clauses, "sensor_id="+chQuote(strings.TrimSpace(sensorID)))
+	}
+	if strings.TrimSpace(cursorTimestamp) != "" {
+		cursor, _ := time.Parse(time.RFC3339Nano, cursorTimestamp)
 		stamp := "parseDateTime64BestEffort(" + chQuote(cursor.UTC().Format(time.RFC3339Nano)) + ",6,'UTC')"
 		clauses = append(clauses, "timestamp>="+stamp,
 			"("+chAfterBound([]chBoundKey{{Expr: "timestamp", Value: stamp}, {Expr: "event_id", Value: chQuote(cursorEventID)}})+")")

@@ -144,6 +144,8 @@ func TestPassiveDiscoveryBatchesRepeatedARPSenderWrites(t *testing.T) {
 	mock.ExpectExec("INSERT INTO endpoint_entities").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("SELECT id,observed_at FROM discovery_observations").WithArgs(sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"id", "observed_at"}))
 	mock.ExpectExec("WITH incoming").WithArgs(passiveARPFactBatchArgument{}).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("discovery_observation_latest").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("discovery_passive_device_current").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	stats, err := store.processPassiveDiscoveryBatch(context.Background(), events, scope)
 	if err != nil {
@@ -178,6 +180,8 @@ func TestPassiveDiscoveryFlushesDuplicateARPEventIDs(t *testing.T) {
 	mock.ExpectExec("INSERT INTO endpoint_entities").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("SELECT id,observed_at FROM discovery_observations").WithArgs(sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"id", "observed_at"}))
 	mock.ExpectExec("WITH incoming").WithArgs(passiveARPFactBatchArgument{}).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("discovery_observation_latest").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("discovery_passive_device_current").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	stats, err := store.processPassiveDiscoveryBatch(context.Background(), []normalized.Event{event, replay}, scope)
 	if err != nil {
@@ -206,6 +210,8 @@ func TestPassiveARPBatchRefreshesOnlyDueFacts(t *testing.T) {
 	mock.ExpectQuery("SELECT id,observed_at FROM discovery_observations").WithArgs(sqlmock.AnyArg()).WillReturnRows(
 		sqlmock.NewRows([]string{"id", "observed_at"}).AddRow("recent", at.Add(-30*time.Second)).AddRow("due", at.Add(-time.Minute)))
 	mock.ExpectExec("WITH incoming AS").WithArgs(passiveARPBatchIDs{"due", "new"}).WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec("discovery_observation_latest").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("discovery_passive_device_current").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	written, err := (&DBStore{}).insertPassiveARPBatch(context.Background(), db, observations)
 	if err != nil || len(written) != 2 || written[0].ID != "due" || written[1].ID != "new" {
 		t.Fatalf("ARP refresh selection = %+v, %v", written, err)

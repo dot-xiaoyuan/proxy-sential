@@ -22,7 +22,10 @@ func TestClickHouseDomainEventCursorQueryIsBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	events, err := store.ListDomainEventsAfter(context.Background(), "sensor-campus-a", "2026-09-01T00:00:00Z", "2026-09-02T09:00:00Z", "cursor-1", 500000)
+	if _, err = store.ListDomainEventsAfter(context.Background(), "sensor-campus-a", "2026-09-02T09:00:00Z", "", "", "", 100); err == nil {
+		t.Fatal("domain history without an upper bound must be refused")
+	}
+	events, err := store.ListDomainEventsAfter(context.Background(), "sensor-campus-a", "2026-09-02T09:00:00Z", "2026-09-02T09:15:00Z", "2026-09-02T09:00:00Z", "cursor-1", 500000)
 	if err != nil || len(events) != 1 || events[0].Subject["endpoint_id"] != "endpoint-1" || events[0].Payload["session_id"] != "session-1" {
 		t.Fatalf("unexpected cursor result: %+v err=%v", events, err)
 	}
@@ -30,6 +33,7 @@ func TestClickHouseDomainEventCursorQueryIsBounded(t *testing.T) {
 		"type IN ('dns','tls','quic','http')",
 		"sensor_id='sensor-campus-a'",
 		// 续读点必须用可索引的析取式，元组比较会让 ClickHouse 放弃主键索引。
+		"timestamp < parseDateTime64BestEffort('2026-09-02T09:15:00Z',6,'UTC')",
 		"timestamp>=parseDateTime64BestEffort('2026-09-02T09:00:00Z',6,'UTC')",
 		"OR (timestamp=parseDateTime64BestEffort('2026-09-02T09:00:00Z',6,'UTC') AND (event_id>'cursor-1'))",
 		"LIMIT 100000",

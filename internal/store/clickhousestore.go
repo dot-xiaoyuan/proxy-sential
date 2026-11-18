@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -182,7 +184,24 @@ func (s *ClickHouseStore) insertNormalizedEvents(ctx context.Context, events []n
 			return err
 		}
 	}
-	return s.exec(ctx, body.String())
+	_, err := s.queryWithSettings(ctx, body.String(), map[string]string{
+		"insert_deduplicate":         "1",
+		"insert_deduplication_token": normalizedInsertToken(ctx, events),
+	})
+	return err
+}
+
+func normalizedInsertToken(ctx context.Context, events []normalized.Event) string {
+	if id, ok := ctx.Value(sharedIngestBatchKey{}).(string); ok && strings.TrimSpace(id) != "" {
+		return strings.TrimSpace(id)
+	}
+	ids := make([]string, 0, len(events))
+	for _, event := range events {
+		ids = append(ids, event.EventID)
+	}
+	sort.Strings(ids)
+	sum := sha256.Sum256([]byte(strings.Join(ids, "\n")))
+	return hex.EncodeToString(sum[:])
 }
 
 // eventIDScanDisabled 报告重放批次是否改由 ClickHouse 插入级去重兜底。
