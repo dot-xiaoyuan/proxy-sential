@@ -16,7 +16,7 @@ func TestObservationHistoryMetadataCountsRetainedObservations(t *testing.T) {
 	defer db.Close()
 	at := time.Now().UTC()
 	mock.ExpectQuery(`SELECT s.epoch FROM stream_discovery_device_state`).WithArgs("device-a").WillReturnRows(sqlmock.NewRows([]string{"epoch"}))
-	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM discovery_device_changes_v2`).WithArgs("device-a").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM discovery_observations WHERE device_key`).WithArgs("device-a").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 	mock.ExpectQuery(`SELECT count\(\*\) FROM \(SELECT 1 FROM discovery_observations`).WithArgs("device-a", at, 5001).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(7))
 	metadata, err := (Repository{DB: db}).DiscoveryHistoryMetadata(context.Background(), "device-a", at)
 	if err != nil {
@@ -74,7 +74,7 @@ func TestObservationHistoryPositionLocatesPreviousPageBoundary(t *testing.T) {
 	defer db.Close()
 	at := time.Now().UTC()
 	mock.ExpectQuery(`SELECT s.epoch FROM stream_discovery_device_state`).WithArgs("device-a").WillReturnRows(sqlmock.NewRows([]string{"epoch"}))
-	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM discovery_device_changes_v2`).WithArgs("device-a").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM discovery_observations WHERE device_key`).WithArgs("device-a").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 	mock.ExpectQuery(`SELECT observed_at,id FROM discovery_observations`).WithArgs("device-a", at, int64(39)).WillReturnRows(sqlmock.NewRows([]string{"observed_at", "id"}).AddRow(at, "fact-39"))
 	position, err := (Repository{DB: db}).DiscoveryHistoryPosition(context.Background(), "device-a", at, 3, 20)
 	if err != nil {

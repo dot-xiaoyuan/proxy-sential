@@ -19,11 +19,9 @@ import (
 // evidence the detail view uses, and the 30-day retention bounds the read.
 // Devices that do have change rows keep the existing change-index behaviour.
 func (r Repository) historyUsesObservations(ctx context.Context, key string) (bool, error) {
-	var hasChanges bool
-	if err := r.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM discovery_device_changes_v2 WHERE device_key=$1)`, key).Scan(&hasChanges); err != nil {
-		return false, err
-	}
-	return !hasChanges, nil
+	var hasObservations bool
+	err := r.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM discovery_observations WHERE device_key=$1)`, key).Scan(&hasObservations)
+	return hasObservations, err
 }
 
 type observationHistoryCursor struct {
@@ -71,7 +69,7 @@ const observationHistoryCountCap = 5000
 func (r Repository) ObservationHistoryMetadata(ctx context.Context, key string, snapshot time.Time) (HistoryMetadata, error) {
 	result := HistoryMetadata{Metadata: pagination.Metadata{AsOf: snapshot}, Snapshot: snapshot}
 	var total int
-	err := r.DB.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT 1 FROM discovery_observations WHERE device_key=$1 AND observed_at<=$2 LIMIT $3) capped`, key, snapshot, observationHistoryCountCap+1).Scan(&total)
+	err := r.DB.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT 1 FROM discovery_observations WHERE device_key=$1 AND observed_at<=$2 UNION ALL SELECT 1 FROM discovery_device_changes_v2 WHERE device_key=$1 AND observed_at<=$2 LIMIT $3) capped`, key, snapshot, observationHistoryCountCap+1).Scan(&total)
 	if total > observationHistoryCountCap {
 		total = observationHistoryCountCap
 	}
@@ -91,8 +89,11 @@ func (r Repository) ObservationHistoryPosition(ctx context.Context, key string, 
 	var observed time.Time
 	var id string
 	err = r.DB.QueryRowContext(ctx, `
-SELECT observed_at,id FROM discovery_observations
-WHERE device_key=$1 AND observed_at<=$2
+SELECT observed_at,id FROM (
+ SELECT observed_at,id FROM discovery_observations WHERE device_key=$1 AND observed_at<=$2
+ UNION ALL
+ SELECT observed_at, 'change:'||change_id::text FROM discovery_device_changes_v2 WHERE device_key=$1 AND observed_at<=$2
+) history
 ORDER BY observed_at DESC,id DESC LIMIT 1 OFFSET $3`, key, snapshot, offset).Scan(&observed, &id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -124,14 +125,17 @@ func (r Repository) ObservationHistoryAt(ctx context.Context, key, cursor string
 		limit = 20
 	}
 	args := []any{key, snapshot, limit + 1}
-	where := "device_key=$1 AND observed_at<=$2"
+	filter := ""
 	if !afterObserved.IsZero() {
-		where += " AND (observed_at,id)<($4::timestamptz,$5::text)"
+		filter = " WHERE (observed_at,id)<($4::timestamptz,$5::text)"
 		args = append(args, afterObserved, afterID)
 	}
 	rows, err := r.DB.QueryContext(ctx, `
-SELECT id,origin,observed_at,data FROM discovery_observations
-WHERE `+where+`
+SELECT id,origin,observed_at,data FROM (
+ SELECT id,origin,observed_at,data FROM discovery_observations WHERE device_key=$1 AND observed_at<=$2
+ UNION ALL
+ SELECT 'change:'||change_id::text, change_kind, observed_at, document FROM discovery_device_changes_v2 WHERE device_key=$1 AND observed_at<=$2
+) history`+filter+`
 ORDER BY observed_at DESC,id DESC LIMIT $3`, args...)
 	if err != nil {
 		return nil, err

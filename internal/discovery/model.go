@@ -57,6 +57,7 @@ type Observation struct {
 	ReportedAt      *time.Time       `json:"reported_at,omitempty"`
 	ValidUntil      time.Time        `json:"valid_until"`
 	Withdrawn       bool             `json:"withdrawn"`
+	SemanticHash    string           `json:"semantic_hash,omitempty"`
 	Evidence        normalized.Event `json:"evidence"`
 }
 
