@@ -166,6 +166,11 @@ function DebouncedInput({label,placeholder,value,onChange}:{label:string;placeho
   return <Input aria-label={label} placeholder={placeholder} allowClear value={draft} onChange={event=>setDraft(event.target.value)}/>
 }
 
+function barBucket(value:number,max:number) {
+  if(value<=0||max<=0)return 0
+  return Math.min(10,Math.max(1,Math.ceil(value/max*10)))
+}
+
 function trendBucket(value:number,max:number) {
   if(value<=0)return 0
   if(max<=0)return 1
@@ -342,6 +347,13 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
     {title:'操作',key:'action',width:140,fixed:'right' as const,render:(_:unknown,item:Device)=><div className="terminal-row-actions"><Button type="link" onClick={()=>show(item)}>查看详情</Button></div>},
   ]
 
+  const typeMax=Math.max(1,...(discoveryMetadata.data?.types??[]).map(item=>item.count))
+  const statCard=(state:string,label:string,value?:number)=>{
+    const total=discoveryMetadata.data?.total
+    const active=params.get('discovery_state')===state
+    const rate=value!==undefined&&total?Math.round(value/total*100):undefined
+    return <Button key={state} type="text" className={`discovery-stat-card${active?' is-active':''}`} aria-pressed={active} onClick={()=>toggleState(state)}><span className="discovery-stat-label">{label}</span>{' '}<strong>{metadataValue(value)}</strong>{rate!==undefined&&<span className="discovery-stat-rate">占 {rate}%</span>}</Button>
+  }
   return <section className="passive-discovery-panel terminal-workspace">
     <div className="workspace-topbar">
     <header className="terminal-workspace-header"><div><span className="terminal-eyebrow">设备中心 / 204 独立管理</span><Typography.Title level={3}>发现设备</Typography.Title><Typography.Text type="secondary">发现镜像中的设备，核对类型与识别依据。</Typography.Text></div><div className="terminal-header-actions"><Button icon={<ReloadOutlined aria-hidden="true"/>} onClick={refreshWorkspace}>刷新数据</Button></div></header>
@@ -388,31 +400,22 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
           <Button type={dumbFilter?'primary':'default'} aria-pressed={dumbFilter} onClick={()=>shortcut('',dumbFilter?'':'dumb')}>哑终端线索</Button>
         </nav>
       </div>
-      {hardwareFresh?.status==='failed'&&<div className="discovery-hardware-progress" aria-label="硬件分类处理进度"><Typography.Text type="warning">硬件分类处理异常：{hardwareFresh.error||'处理状态读取失败'}</Typography.Text></div>}
-      <AppTable className="passive-ledger-table" rowKey={discoveryTableRowKey} columns={columns} dataSource={items} tableLayout="fixed" loading={{spinning:listUpdating,delay:150}} scroll={{x:1125}} locale={{emptyText:listUpdating?'正在加载设备…':'当前筛选下暂无符合条件的设备'}}/>
-      <AppServerPagination disabled={devices.isFetching||position.isLocating} page={page+1} pageSize={pageSize} total={discoveryMetadata.data?.total} onChange={(nextPage,nextSize)=>{
-        if(nextSize!==pageSize){setPageSize(nextSize);setPaging({key:filterKey,page:0});return}
-        setPaging({key:filterKey,page:nextPage-1})
-      }} totalText={discoveryMetadata.data?`共 ${discoveryMetadata.data.total} 个设备`:(discoveryMetadata.isError?'数量读取失败':'正在统计数量')} />
-      <details className="discovery-overview-details"><summary>类型与处理状态快捷筛选</summary><div className="discovery-overview-strip" aria-label="发现设备总览" title={`${params.get('discovery_window')==='15m'?'近 15 分钟':params.get('discovery_window')==='168h'?'近 7 天':params.get('discovery_window')==='720h'?'近 30 天':'近 24 小时'} · 按采集范围与可信身份去重${discoveryMetadata.data?.as_of?` · 统计于 ${observedTimeTitle(discoveryMetadata.data.as_of)}`:''}`}>
+      <section className="discovery-overview" aria-label="发现设备总览" title={`${params.get('discovery_window')==='15m'?'近 15 分钟':params.get('discovery_window')==='168h'?'近 7 天':params.get('discovery_window')==='720h'?'近 30 天':'近 24 小时'} · 按采集范围与可信身份去重${discoveryMetadata.data?.as_of?` · 统计于 ${observedTimeTitle(discoveryMetadata.data.as_of)}`:''}`}>
         <div className="discovery-overview-line">
           <strong>共 {metadataValue(discoveryMetadata.data?.total)} 个设备</strong>
-          <Button type="text" size="small" className={`discovery-overview-count${params.get('discovery_state')==='identified'?' is-active':''}`} onClick={()=>toggleState('identified')}>{confirmedTypesLabel} <strong>{metadataValue(discoveryMetadata.data?.identified)}</strong></Button>
-          <Button type="text" size="small" className={`discovery-overview-count${params.get('discovery_state')==='candidate'?' is-active':''}`} onClick={()=>toggleState('candidate')}>待核实 <strong>{metadataValue(discoveryMetadata.data?.candidate)}</strong></Button>
-          <Button type="text" size="small" className={`discovery-overview-count${params.get('discovery_state')==='conflict'?' is-active':''}`} onClick={()=>toggleState('conflict')}>类型冲突 <strong>{metadataValue(discoveryMetadata.data?.conflict)}</strong></Button>
-          <Button type="text" size="small" className={`discovery-overview-count${params.get('discovery_state')==='expired'?' is-active':''}`} onClick={()=>toggleState('expired')}>{hardwareV2?'硬件结论已撤销':'证据过期'} <strong>{metadataValue(discoveryMetadata.data?.expired)}</strong></Button>{fresh?.status==='ready'&&<Typography.Text type="secondary" className="discovery-freshness">{fresh.lag_seconds<60?'数据实时':`数据延迟 ${Math.round(fresh.lag_seconds/60)} 分钟`}</Typography.Text>}
+          {fresh?.status==='ready'&&<Typography.Text type="secondary" className="discovery-freshness">{fresh.lag_seconds<60?'数据实时':`数据延迟 ${Math.round(fresh.lag_seconds/60)} 分钟`}</Typography.Text>}
           <Typography.Text className="discovery-overview-caption" type="secondary">{params.get('discovery_window')==='168h'?'近 7 天':params.get('discovery_window')==='720h'?'近 30 天':'近 24 小时'} · 按采集范围与可信身份去重{discoveryMetadata.data?.as_of?` · 统计于 ${observedTimeTitle(discoveryMetadata.data.as_of)}`:''}{discoveryMetadata.isFetching?' · 统计更新中':''}</Typography.Text>
         </div>
-        {hardwareFresh&&hardwareFresh.status!=='failed'&&<div className="discovery-hardware-progress" aria-label="硬件分类处理进度"><Typography.Text type="secondary">硬件分类{hardwareFresh.coverage==='live_input_only'?'仅含启用后输入':hardwareFresh.backfill_complete?'保留观测回填完成':'保留观测回填中'}{hardwareFresh.available_from?` · 可用起点 ${observedTimeTitle(hardwareFresh.available_from)}`:''} · 待处理 {hardwareFresh.pending_identities??0} · 处理失败 {hardwareFresh.failed_identities??0}{hardwareFresh.oldest_pending_at?` · 最早积压 ${observedTimeTitle(hardwareFresh.oldest_pending_at)}`:''}{hardwareFresh.missing_source_refs?` · 缺少原文引用 ${hardwareFresh.missing_source_refs}`:''}{hardwareFresh.changed_after_backfill_start?` · 回填窗口被新观测替换 ${hardwareFresh.changed_after_backfill_start}`:''}</Typography.Text></div>}
-        {fresh?.source==='passive-discovery-batch-v3'&&<div className="discovery-batch-progress" aria-label="存储处理进度">
-          {fresh.ingested_at&&<Typography.Text type="secondary">采集入库 {observedTimeTitle(fresh.ingested_at)}</Typography.Text>}
-          {fresh.processed_at&&<Typography.Text type="secondary">设备发现 {observedTimeTitle(fresh.processed_at)}</Typography.Text>}
-          {fresh.pending_batches!==undefined&&<Typography.Text type="secondary">待发现批次 {fresh.pending_batches}</Typography.Text>}
-          {fresh.archive_verified_at&&<Typography.Text type="secondary">证据归档 {observedTimeTitle(fresh.archive_verified_at)}</Typography.Text>}
-          {fresh.archive_pending_batches!==undefined&&<Typography.Text type="secondary">待归档批次 {fresh.archive_pending_batches}</Typography.Text>}
-          {fresh.archive_oldest_pending_at&&<Typography.Text type="secondary">最早待归档 {observedTimeTitle(fresh.archive_oldest_pending_at)}</Typography.Text>}
-        </div>}
-        <div className="discovery-overview-types"><Typography.Text type="secondary">{confirmedTypesLabel}{discoveryMetadata.data?`（合计 ${discoveryMetadata.data.types.reduce((sum,item)=>sum+item.count,0)}）`:''}</Typography.Text>{discoveryMetadata.data?.types.length?[...discoveryMetadata.data.types].sort((a,b)=>b.count-a.count||a.device_type.localeCompare(b.device_type)).map(item=><Button key={item.device_type} type="text" size="small" className="discovery-overview-type" onClick={()=>shortcut(item.device_type,'','identified')}>{types[item.device_type]??deviceTypeLabel(item.device_type)} <strong>{item.count}</strong></Button>):<Typography.Text type="secondary">{discoveryMetadata.data?`当前筛选下暂无${confirmedTypesLabel}`:discoveryMetadata.isError?'统计读取失败':'统计中'}</Typography.Text>}</div>
+        <div className="discovery-stat-cards">
+          {statCard('identified',confirmedTypesLabel,discoveryMetadata.data?.identified)}
+          {statCard('candidate','待核实',discoveryMetadata.data?.candidate)}
+          {statCard('conflict','类型冲突',discoveryMetadata.data?.conflict)}
+          {statCard('expired',hardwareV2?'硬件结论已撤销':'证据过期',discoveryMetadata.data?.expired)}
+        </div>
+        <div className="discovery-type-chart">
+          <Typography.Text type="secondary" className="discovery-type-chart-head">{confirmedTypesLabel}{discoveryMetadata.data?`（合计 ${discoveryMetadata.data.types.reduce((sum,item)=>sum+item.count,0)}）`:''}</Typography.Text>
+          {discoveryMetadata.data?.types.length?[...discoveryMetadata.data.types].sort((a,b)=>b.count-a.count||a.device_type.localeCompare(b.device_type)).map(item=><Button key={item.device_type} type="text" size="small" className="discovery-type-row" onClick={()=>shortcut(item.device_type,'','identified')}><span className="discovery-type-row-body">{types[item.device_type]??deviceTypeLabel(item.device_type)} <span className="discovery-type-track" aria-hidden="true"><span className={`discovery-type-fill is-${barBucket(item.count,typeMax)}`}/></span><strong className="discovery-type-count">{item.count}</strong></span></Button>):<Typography.Text type="secondary">{discoveryMetadata.data?`当前筛选下暂无${confirmedTypesLabel}`:discoveryMetadata.isError?'统计读取失败':'统计中'}</Typography.Text>}
+        </div>
         {!!discoveryMetadata.data?.candidate_types?.length&&<div className="discovery-overview-types discovery-overview-candidates" aria-label="画像类型线索">
           <Typography.Text type="secondary">画像类型线索</Typography.Text>
           {[...discoveryMetadata.data.candidate_types].sort((a,b)=>b.count-a.count||a.device_type.localeCompare(b.device_type)).map(item=>
@@ -425,7 +428,22 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
             <Button key={item.device_type} type="text" size="small" className="discovery-overview-type" onClick={()=>shortcut(item.device_type,'','candidate')}>{types[item.device_type]??deviceTypeLabel(item.device_type)} <strong>{item.count}</strong></Button>
           )}
         </div>}
-      </div></details>
+        {hardwareFresh&&hardwareFresh.status!=='failed'&&<div className="discovery-hardware-progress" aria-label="硬件分类处理进度"><Typography.Text type="secondary">硬件分类{hardwareFresh.coverage==='live_input_only'?'仅含启用后输入':hardwareFresh.backfill_complete?'保留观测回填完成':'保留观测回填中'}{hardwareFresh.available_from?` · 可用起点 ${observedTimeTitle(hardwareFresh.available_from)}`:''} · 待处理 {hardwareFresh.pending_identities??0} · 处理失败 {hardwareFresh.failed_identities??0}{hardwareFresh.oldest_pending_at?` · 最早积压 ${observedTimeTitle(hardwareFresh.oldest_pending_at)}`:''}{hardwareFresh.missing_source_refs?` · 缺少原文引用 ${hardwareFresh.missing_source_refs}`:''}{hardwareFresh.changed_after_backfill_start?` · 回填窗口被新观测替换 ${hardwareFresh.changed_after_backfill_start}`:''}</Typography.Text></div>}
+        {fresh?.source==='passive-discovery-batch-v3'&&<div className="discovery-batch-progress" aria-label="存储处理进度">
+          {fresh.ingested_at&&<Typography.Text type="secondary">采集入库 {observedTimeTitle(fresh.ingested_at)}</Typography.Text>}
+          {fresh.processed_at&&<Typography.Text type="secondary">设备发现 {observedTimeTitle(fresh.processed_at)}</Typography.Text>}
+          {fresh.pending_batches!==undefined&&<Typography.Text type="secondary">待发现批次 {fresh.pending_batches}</Typography.Text>}
+          {fresh.archive_verified_at&&<Typography.Text type="secondary">证据归档 {observedTimeTitle(fresh.archive_verified_at)}</Typography.Text>}
+          {fresh.archive_pending_batches!==undefined&&<Typography.Text type="secondary">待归档批次 {fresh.archive_pending_batches}</Typography.Text>}
+          {fresh.archive_oldest_pending_at&&<Typography.Text type="secondary">最早待归档 {observedTimeTitle(fresh.archive_oldest_pending_at)}</Typography.Text>}
+        </div>}
+      </section>
+      {hardwareFresh?.status==='failed'&&<div className="discovery-hardware-progress" aria-label="硬件分类处理进度"><Typography.Text type="warning">硬件分类处理异常：{hardwareFresh.error||'处理状态读取失败'}</Typography.Text></div>}
+      <AppTable className="passive-ledger-table" rowKey={discoveryTableRowKey} columns={columns} dataSource={items} tableLayout="fixed" loading={{spinning:listUpdating,delay:150}} scroll={{x:1125}} locale={{emptyText:listUpdating?'正在加载设备…':'当前筛选下暂无符合条件的设备'}}/>
+      <AppServerPagination disabled={devices.isFetching||position.isLocating} page={page+1} pageSize={pageSize} total={discoveryMetadata.data?.total} onChange={(nextPage,nextSize)=>{
+        if(nextSize!==pageSize){setPageSize(nextSize);setPaging({key:filterKey,page:0});return}
+        setPaging({key:filterKey,page:nextPage-1})
+      }} totalText={discoveryMetadata.data?`共 ${discoveryMetadata.data.total} 个设备`:(discoveryMetadata.isError?'数量读取失败':'正在统计数量')} />
     </section>}
     <details className="terminal-diagnostics" open={qualityOpen}><summary onClick={event=>{event.preventDefault();setQualityOpen(value=>!value)}}>采集与识别状态</summary>    <section className="surface center-list-toolbar">
       {qualityOpen&&<div className="recognition-quality-strip" aria-label="识别质量">

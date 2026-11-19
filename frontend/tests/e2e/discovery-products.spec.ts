@@ -10,7 +10,6 @@ test('IP product evidence stays separate from physical confirmation at three vie
   await expect(page.locator('.passive-ledger-table')).toBeVisible()
   await page.evaluate(async () => { const path = '/src/mocks/hardwareReplay.ts'; const fixture = await import(path); fixture.installHardwareReplay() })
   await page.getByRole('button', { name: '刷新数据' }).click()
-  await page.locator('.discovery-overview-details > summary').click()
   await expect(page.getByLabel('发现设备总览')).toContainText('已确认硬件类型（合计 2）')
   for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }, { width: 1440, height: 900 }]) {
     await page.setViewportSize(viewport)
