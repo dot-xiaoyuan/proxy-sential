@@ -29,6 +29,13 @@
 - **已修两处健壮性缺陷（代码，未发布）**：设备事实计数漂移不再阻塞整条有序投影车道，完整读取时以实际事实数为准并把漂移写入日志（`internal/discovery/stream_state.go`），新增回归测试 `internal/discovery/stream_state_count_drift_test.go`；风险物化租约续期遇到瞬时超时改为有界重试（最多 8 次、单次 8 秒）后才退出（`cmd/proxy-sentinel/main.go`）。`go test ./internal/discovery`、`go build ./...`、`go vet` 均通过。
 - **待解决且无法用配置绕过**：`ttl.jsonl` 中确有新的 `ieee1905_topology`/`ssdp` 事件（样本 `control-1a3c2b36…` 时间 2026-11-19T02:28:00Z），但 ClickHouse `stream_event_search` 的 `packet-sidecar` 源在 11-17 02:33 之后只有 `ttl`，同期 2 小时 263,820 条全部是 `ttl`，说明设备信号入库路径丢弃了非 `ttl` 记录；这是共享强锚点缺失的直接原因，属于代码层选择逻辑，需定位后修复并补回放测试。停止发现期间 `shared_observation_decision` 仍以 `expired` 为主，判定时延中位约 200–500 秒，超过 180 秒新鲜度窗口。
 
+## 阶段 1 执行记录（2026-11-19）
+
+- **共享强锚点丢在一条被单段卡死的流车道上，不是协议过滤**。报文流车道 `proxy-sentinel-ingest-stream-packet-layered-r7` 自 11-17 08:19 起卡在同一段 `939607a9…`（内含 760 ttl、238 `ieee1905_topology`、2 `ieee1905_client_association`），archive 每 3 秒超时后无限重试，累计 9,906 次。`stream-run` 单次存储预算默认 3 秒且上限也是 3 秒，ClickHouse 在保留规则合并期间单次写入常超 3 秒，于是一个段就把整条有序车道永久钉住，控制面自此只能看到 `packet-sidecar` 的 `ttl`。
+- **已发布应用更新 `2026.11.19-89853113`**（仅后端二进制，前端资产未变，目录用硬链接复制，`bin/proxy-sentinel` sha256 `64533882f1a75b1606c6e3e4ecae0a15c6a98074736fc9fcee2b79e55329a150`）：`current=2026.11.19-89853113`，`previous=2026.11.18-dbb58e4c`，无新增迁移。含三项修复：设备计数漂移自愈、风险物化租约有界重试、`ingest stream-run` 单次存储预算默认 15 秒且上限放宽到 120 秒。
+- **现场参数与修复**：报文流车道与 DHCP 流车道各加 drop-in `--store-timeout 45s`；用 `stream-repair --settled-scoped --lane archive` 按作用域行证明确认了卡死段（1,000 事件）及其后续 1 段，车道已越过卡点。`risk-materializer` 已换新二进制并重启，重启计数归零，持续提交 features/evidence/snapshots。
+- **当前进展**：报文车道正在回放 43 个轮转文件（共 4.3 GB）的历史积压，ClickHouse 中 `packet-sidecar` 的非 `ttl` 协议已从 11-17 02:33 恢复到 11-17 02:34 并继续推进；`/readyz=200`（12 毫秒）。回放追平前共享判定仍只能看到 11-17 之前的新鲜度，`matched` 还不会出现；判定时延仍超过 180 秒新鲜度窗口，属于阶段 2 的范围。
+
 ## 数据边界与待办
 
 - 固定来源 epoch：被动发现 `discovery-fresh-20261031T092000Z`，报文 `packet-birth-20261111T022159Z`，握手 `handshake-birth-20261111T022159Z`，TCP SYN `flow-syn-birth-20261113T104500Z`；身份派生新起点 `2026-10-29T05:11:29Z`。不移动起点，不把旧段或取消任务计作完成。11 月 12 日约七小时无 PCAP 窗口及既有套接字丢包仍是未恢复证据缺口。Redpanda 仍是影子链路。

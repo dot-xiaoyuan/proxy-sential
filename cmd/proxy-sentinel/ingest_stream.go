@@ -144,7 +144,7 @@ func runIngestStream(args []string) error {
 	clickhouseDSN := fs.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP DSN")
 	poll := fs.Duration("poll-interval", 500*time.Millisecond, "source polling interval")
 	maxBytes := fs.Int64("max-batch-bytes", 1<<20, "source bytes per durable segment")
-	storeTimeout := fs.Duration("store-timeout", 3*time.Second, "individual storage attempt budget")
+	storeTimeout := fs.Duration("store-timeout", 15*time.Second, "individual storage attempt budget")
 	pending := fs.Int("max-pending-segments", 16, "bounded queued segments")
 	drainOnly := fs.Bool("drain-only", false, "finish only previously accepted journal segments")
 	deviceManifestWrites := fs.Bool("device-signal-manifest-writes", false, "use segment receipt manifests for device-signals after compatible reader release")
@@ -161,7 +161,7 @@ func runIngestStream(args []string) error {
 	if *path != "" && *bindingPath != "" {
 		return errors.New("aggregate and verified DHCP bindings cannot be consumed together")
 	}
-	if *maxBytes <= 0 || *maxBytes > 1<<20 || *poll <= 0 || *storeTimeout <= 0 || *storeTimeout > 3*time.Second || *pending < 1 || *pending > 64 {
+	if *maxBytes <= 0 || *maxBytes > 1<<20 || *poll <= 0 || *storeTimeout <= 0 || *storeTimeout > 120*time.Second || *pending < 1 || *pending > 64 {
 		return errors.New("stream-run bounds are invalid")
 	}
 	library, err := fingerprint.OpenInstalledRuntime()

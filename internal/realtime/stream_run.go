@@ -34,7 +34,7 @@ func RunStream(ctx context.Context, journal *streamlog.Journal, writer streamlog
 		opts.Capture.PollInterval = 500 * time.Millisecond
 	}
 	if opts.Capture.StoreTimeout <= 0 {
-		opts.Capture.StoreTimeout = 3 * time.Second
+		opts.Capture.StoreTimeout = 15 * time.Second
 	}
 	if opts.MaxPendingSegments <= 0 || opts.MaxPendingSegments > 64 {
 		opts.MaxPendingSegments = 16
