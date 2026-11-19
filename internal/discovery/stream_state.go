@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"reflect"
 	"sort"
 	"time"
@@ -743,7 +744,15 @@ func publishStreamDiscoveryStatesCountWithRepeats(ctx context.Context, tx *sql.T
 			if !valid || newFactCounts[key] < 0 {
 				return fmt.Errorf("stream device fact count invalid; repair required")
 			}
-			totalCount = previousCount + newFactCounts[key]
+			var drift bool
+			totalCount, drift = streamStateTotalCount(previousCount, newFactCounts[key], len(facts), truncated)
+			if drift {
+				// A complete fact read is the ground truth for the scope. A stored
+				// count that disagrees with it must not stop the ordered projection
+				// lane for every later device and segment.
+				log.Printf("stream discovery state count drift repaired: epoch=%s device=%s stored=%d sampled=%d truncated=%t",
+					epoch, key, previousCount+newFactCounts[key], len(facts), truncated)
+			}
 		} else if transitioned {
 			totalCount = transitionCounts[key]
 		}
@@ -905,6 +914,19 @@ func writeStreamRepeatStateDeltas(ctx context.Context, tx *sql.Tx, epoch string,
 		*affected += count
 	}
 	return nil
+}
+
+// streamStateTotalCount resolves the fact count stored on a device summary.
+// A complete read (not truncated) is authoritative for the scope, so a stored
+// count that drifted from the committed facts is repaired from the sample
+// instead of blocking the projection lane. Truncated reads keep the stored
+// count because the sample only carries the bounded subset.
+func streamStateTotalCount(previousCount, newFacts, sampled int, truncated bool) (int, bool) {
+	total := previousCount + newFacts
+	if !truncated && total != sampled {
+		return sampled, true
+	}
+	return total, false
 }
 
 func streamDiscoveryEvidenceCount(document map[string]any) (int, bool) {

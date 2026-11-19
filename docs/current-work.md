@@ -1,19 +1,33 @@
-# 当前工作（2026-11-17，北京时间）
+# 当前工作（2026-11-18，北京时间）
 
 本页记录当前现场版本、数据边界、未完成缺口和下一步。现场瞬时状态以再次只读检查为准；已结束的试验和发布细节保留在 Git 历史。
 
 ## 184 发布与验收
 
-- 当前源码与发布目录为 `2026.11.16-5b23c764`，源码提交 `5b23c764dcd9b22fa9ff7a714784c707713304a4`，发布包 SHA256 为 `171569a709f7cc6cf362ffc609077c04c8b1d48571fc0dcfedd1bd15c79dd135`。2026-11-17 约 10:06 通过应用更新流程切换；PG 252 条、ClickHouse 75 条已应用迁移及校验值一致。受影响服务进程与 systemd 生效路径已核对，切换时 `/readyz` 通过。路由读源生效环境为 `DISCOVERY_CURRENT_SOURCE=stream` 与 `ROUTER_ASSET_CURRENT_SOURCE=stream`。
+- **2026-11-18 16:23 投影减写已切到发现进程，整包重启没有做。** `current` 为 `2026.11.18-dbb58e4c`（源码 `dbb58e4c1228ce9a39c11dbc05f36838855cf127`，包 SHA256 `35f6d96e80da4b3b1f05ce8640ca8d0c3c5c5b01b62fbebe870112bb8bc3fa75`），`previous` 为 `2026.11.16-5b23c764`。PostgreSQL 252 条、ClickHouse 75 条候选迁移与账本校验一致。全量 `upgrade-application.sh` 因风险物化进程没有稳定主进程号而在切换前退出，16:05 的一次全量重启又被就绪检查退回。16:23 只重启了 `proxy-sentinel-discovery`，进程 `3913506` 的可执行文件位于新目录，启动后继续完成 `write_facts` 投影；`/readyz=200`，NCU `18082/readyz=200`。控制面、入库、身份和被动发现仍是已加载的 `5b23c764` 程序。风险物化启动项使用 `current`，它下次自行退出再拉起时会带上新程序。现场配置未改，旧发布目录未清理。这是观察投影减写的短时混版，不是单版本验收。
+- **2026-11-18 18:50 只读复核：减写已见效，投影仍追不上采集。** 进程仍是混版：`discovery`（16:23 起）、`flow-syn-signal`（18:45 崩溃重启后）、`risk-materializer`（18:48 崩溃重启后）运行 `2026.11.18-dbb58e4c`，控制面、入库、身份、被动发现仍是 `5b23c764`；`/readyz=200`（0.8 秒），NCU `18082/readyz=200`。发现投影每 30 秒窗口的设备当前态写入 38–62 行、事实写入 423–660 行，10 分钟窗口为 1,333/12,839，约为改动前同口径的 1/10（11-17 10:09–10:13 为 3,860/3,866）。风险脏队列 37,509（10:11）→16,071（16:49）→10,699（18:51），风险物化每轮 `claims=8 committed=8`。但投影队列从 29 段（16:24）持续涨到 656 段（18:49），约 +4.3 段/分钟；采集约 10–14 段/分钟、投影约 10 段/分钟，单段平均 4.6 秒（`commit` 1.71 秒、`begin_tx` 1.93 秒、`publish_state` 1.02 秒），17:44 出现一次 30 秒 `projection.write` 超时失败。PG 采样仍有 11–25 个后端阻塞在 `LWLock:WALWrite`。这是混版短时观察，不构成单版本验收，也不能据此认定投影瓶颈已经解决。
+- 最近一次全量应用更新的源码与发布目录为 `2026.11.16-5b23c764`，源码提交 `5b23c764dcd9b22fa9ff7a714784c707713304a4`，发布包 SHA256 为 `171569a709f7cc6cf362ffc609077c04c8b1d48571fc0dcfedd1bd15c79dd135`。2026-11-17 约 10:06 通过应用更新流程切换；PG 252 条、ClickHouse 75 条已应用迁移及校验值一致。受影响服务进程与 systemd 生效路径已核对，切换时 `/readyz` 通过。路由读源生效环境为 `DISCOVERY_CURRENT_SOURCE=stream` 与 `ROUTER_ASSET_CURRENT_SOURCE=stream`。
 - 当前 `previous=2026.11.16-fa046d27` 仅供问题未验收期间回退；尚未按单版本约定清理。登录态页面验收按用户要求暂缓，本地前端测试、类型检查、构建与三视口检查不能替代现场页面验收。一次健康检查也不构成状态接口 P95/P99 验收。
 - 处置动作与上报记录继续是“仅记录、未执行”；不实际发送通知或执行处置。
 
 ## 当前数据问题与原因
 
+- **2026-11-19 10:10 只读复核：发现投影完全停摆，共享判定零命中。** 发现投影队列自 06:08 起冻结在 7,934 段、durable backlog 7,935 段，采集已因 `recovery_backlog`（low_water 3,967）暂停；卡点是设备 `642047043d5b372f85a22887b2a96b9b` 的事实计数漂移（存储 `evidence_count=89`，最新 scope 实际 90 行），`buildStreamDiscoveryStateSummary` 的 fail-closed 校验使该段永远无法投影，单线程有序车道随之停摆，且没有可用修复入口。`risk-materializer` 重启 282 次，仍是 `renew incremental risk window lease: timeout`。load 降到 24.6 是采集停下的结果，不是优化效果。
+- 同一时点共享识别没有产出：`proxy-sentinel-control-plane-eventbus` 09:00–10:03 共 19,129 条 `shared_observation_decision`，其中 18,724 `expired`、405 `insufficient`、0 `matched`；时延 914 条 <180 秒、12,704 条 180–300 秒、4,325 条 600–1,800 秒，而 `shared-access-observe.json` 的 `freshness_seconds=180`。11-18 21:00–21:30 同为全 `expired`，不是今晚才出现。
+- 共享强锚点缺失：ClickHouse 中 `ieee1905_client_association` 最后一条为 11-17 02:32（UTC），运行中的 `discovery-collection-stream-dnssd-b3.json` 把 `ieee1905_client_association`、`dhcp`、`ndp` 都设为 `false`，只开 `dns_sd/ssdp/arp/lldp`。`NewObservationDecision` 要求 `StrongAnchor` 非空才可能 `matched`，因此当前配置下共享命中不可能出现。`packet-sidecar` 自 11-17 02:33 起只产出 `ttl`，`ssdp/arp/ndp` 改由发现进程以 `source=passive` 写入，并在今日 05:20 后中断。`router_assessments` 11,206 行全部过期（live=0，最后 `last_seen` 为 11-16 19:06 UTC）。磁盘使用 93%、剩余 120 GB。
 - 路由资产已改读稀疏 `stream_discovery_network_state`，以协议网关线索展示，不把路由角色候选当成确认资产。10:00 左右同源有 35 条有效网关线索；10:16 只读检查仅剩 48 条已过期网关线索、当前有效 0 条。默认列表 SQL 在当前无命中时约 0.3 毫秒，因此此刻空白不是慢查询或旧影子读源。`ttl.jsonl` 在 10:17 仍持续收到 SSDP，PG 网关最新观测却停在 09:40，10 分钟租约已自然过期。报文源读取及发现投影滞后约 38 分钟；不能延长租约或把过期线索伪装成当前路由器。
 - 10:19 报文源 `ttl.jsonl` 文件约 1.036 GB、游标约 675 MB，未读约 361 MB；多段 journal 已完成 archive 但 projection 待完成。10:21 的短窗输入约 401 KB/s、游标仅约 65 KB/s，未读增至约 370 MB。最近尾部约 4 MB 样本以不同 IP/MAC 的 NDP 为主，另有 SSDP，不能把整条源当成单个重复热点。被动发现 10:09–10:13 的连续窗口接纳 64 段、7,630 标准事件，投影 43 段、3,873 事件，PG 事实与设备状态分别写 3,866、3,860 行，持久待办 889→908 段。最近 20 个未完成段的 2,206 条事件中，ARP 2,116、DNS-SD 67、SSDP 23；此协议分布只代表该样本。普通发现当前态写入是可量化的负担，但不能据此把所有 PG `WALWrite` 归于发现链路。
 - DHCP 历史源的一个已确认原文段已按唯一正文、哈希和落点修复，读指针随后从旧代 34 推进至代 50；10:11 仍约 1.64 GB 未读。握手源保护轮转链同刻仍约 4.48 GB 未读，报文源另约 326 MB。风险脏队列同刻约 37,509 项，部分 `commit affected risk facts` 与租约续期仍因 PG 等待超时。身份接收曾在 5 秒预算内多次 503，阶段日志明确为 `identity_inbox_failed stage=accept`；Redis 仍重试，不把失败记作已接收。各来源积压独立，不能称为单一 Redpanda 积压。
 - PG 抽样仍有多条 `WALWrite`，并有数据读取及长时自动清理；这些等待会随瞬时负载变化。ClickHouse 正在执行必要保留规则的 `stream_event_search` 大块 TTL 重写，磁盘 IO 也在竞争。一次受控诊断日志清理仅移除已过期且无活动引用的约 30.8 GB `system.text_log` 块；没有清空 `query_log` 或必要原文。`/readyz` 可短时返回 200，过去亦曾间歇超时，尚无持续延迟验收。
+
+- **2026-11-18 18:50 只读复核的未解决项。** 风险物化累计重启 163 次，失败原因是 `renew incremental risk window lease: timeout: context deadline exceeded`；`flow-syn-signal` 重启 18 次，报 `invalid flow SYN ring block header`，并伴随每批 1,105–24,810 的 `kernel_drops`，TCP SYN 采集有丢包。DHCP 流车道自 10:00 起卡在同一段 `90d3bfe2…` 的 `archive stage=reconcile`，累计 479 次重试，同期 Zeek DHCP 日志仍增长到 31 MB。`stream_discovery_network_state` 50 行全部过期、最后更新停在 11-17 03:47（UTC），路由资产仍为空窗。发现设备当前态存活 2,402 行、10 分钟内有更新的只有 1,333 行，当前态依靠每秒 100 条的过期车道重建，需持续观察是否掉设备。自动清理落后：`stream_discovery_receipts_202611` 死元组 5.04M、上次自动清理为 11-11，`stream_discovery_facts` 的 VACUUM 已运行 41 分钟未结束。根盘使用 92%、剩余 138 GB（16:31 为 115 GB），相对 100 GiB 最小保留线只剩约 38 GB 余量。
+
+## 阶段 0 执行记录（2026-11-19）
+
+- **10:22 已按用户授权停掉发现类服务**：`proxy-sentinel-discovery`、`proxy-sentinel-inventory`、`proxy-sentinel-inventory-backfill`、`proxy-sentinel-recognition-minute-shadow` 全部 `disable --now`，原始启停状态记录在 `/opt/proxy-sentinel/data/ops/20261119-stage0-stop.json`。保留 `recognition-materializer`（同一进程负责共享设备画像）、`passive-discovery`、`router-prober`、读模型与控制面。停服后 `shared_behavior_observations`、`stream_discovery_facts`、`stream_discovery_device_state`、`stream_discovery_changes`、`stream_discovery_receipts_202611` 的 60 秒写入增量均为 0，`/readyz` 在无 IO 风暴时返回 200。
+- **积压按审计口径取消，不计作完成**：7,935 段、430,552,709 字节全部导出到 `/opt/proxy-sentinel/data/audit-cancelled-source/20261119T021840Z-passive-projection-backlog.jsonl`，含 `segment_id`、`content_sha256`、字节数、来源文件与偏移、`accepted_at`、取消原因 `passive_projection_lane_deadlocked_device_fact_count_drift`，清单哈希 `8c73b40cbf5e73d8045b8732740ee0087543724c328b250ce74e5e451b9857ad`；原始 `.segment` 仍保留在 journal 目录，未删除唯一原文。停服前后 journal 段数均为 7,935，增量审计为空。
+- **已修两处健壮性缺陷（代码，未发布）**：设备事实计数漂移不再阻塞整条有序投影车道，完整读取时以实际事实数为准并把漂移写入日志（`internal/discovery/stream_state.go`），新增回归测试 `internal/discovery/stream_state_count_drift_test.go`；风险物化租约续期遇到瞬时超时改为有界重试（最多 8 次、单次 8 秒）后才退出（`cmd/proxy-sentinel/main.go`）。`go test ./internal/discovery`、`go build ./...`、`go vet` 均通过。
+- **待解决且无法用配置绕过**：`ttl.jsonl` 中确有新的 `ieee1905_topology`/`ssdp` 事件（样本 `control-1a3c2b36…` 时间 2026-11-19T02:28:00Z），但 ClickHouse `stream_event_search` 的 `packet-sidecar` 源在 11-17 02:33 之后只有 `ttl`，同期 2 小时 263,820 条全部是 `ttl`，说明设备信号入库路径丢弃了非 `ttl` 记录；这是共享强锚点缺失的直接原因，属于代码层选择逻辑，需定位后修复并补回放测试。停止发现期间 `shared_observation_decision` 仍以 `expired` 为主，判定时延中位约 200–500 秒，超过 180 秒新鲜度窗口。
 
 ## 数据边界与待办
 

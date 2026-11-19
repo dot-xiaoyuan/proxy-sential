@@ -1340,19 +1340,37 @@ func runRiskMaterialize(args []string) error {
 			go func() {
 				ticker := time.NewTicker(15 * time.Second)
 				defer ticker.Stop()
+				// A single 5s timeout on a busy database used to exit the process and
+				// drop the whole rolling window. Keep retrying while the lease can
+				// still be renewed, and fail only after a bounded outage.
+				const maxConsecutiveLeaseFailures = 8
+				failures := 0
 				for {
 					select {
 					case <-ctx.Done():
 						return
 					case <-ticker.C:
-						leaseCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+						leaseCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 						err := backend.RegisterStreamRiskWindow(leaseCtx, *sensorID, *window)
 						cancel()
-						if err != nil {
-							windowLeaseErrors <- fmt.Errorf("renew incremental risk window lease: %w", err)
-							stop()
+						if err == nil {
+							if failures > 0 {
+								fmt.Fprintf(os.Stderr, "risk window lease renewed after %d failed attempts\n", failures)
+							}
+							failures = 0
+							continue
+						}
+						if ctx.Err() != nil {
 							return
 						}
+						failures++
+						if failures < maxConsecutiveLeaseFailures {
+							fmt.Fprintf(os.Stderr, "risk window lease renewal attempt %d failed, retrying: %v\n", failures, err)
+							continue
+						}
+						windowLeaseErrors <- fmt.Errorf("renew incremental risk window lease after %d attempts: %w", failures, err)
+						stop()
+						return
 					}
 				}
 			}()
