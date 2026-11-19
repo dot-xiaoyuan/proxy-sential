@@ -36,6 +36,8 @@
 - **现场参数与修复**：报文流车道与 DHCP 流车道各加 drop-in `--store-timeout 45s`；用 `stream-repair --settled-scoped --lane archive` 按作用域行证明确认了卡死段（1,000 事件）及其后续 1 段，车道已越过卡点。`risk-materializer` 已换新二进制并重启，重启计数归零，持续提交 features/evidence/snapshots。
 - **当前进展**：报文车道正在回放 43 个轮转文件（共 4.3 GB）的历史积压，ClickHouse 中 `packet-sidecar` 的非 `ttl` 协议已从 11-17 02:33 恢复到 11-17 02:34 并继续推进；`/readyz=200`（12 毫秒）。回放追平前共享判定仍只能看到 11-17 之前的新鲜度，`matched` 还不会出现；判定时延仍超过 180 秒新鲜度窗口，属于阶段 2 的范围。
 
+- **2026-11-19 12:20 走"提高入库吞吐"路线（A）**。发布 `2026.11.19-8e8c87e6`（`previous=2026.11.19-89853113`）：归档/搜索车道工作数上限 2→8，新增 `--archive-workers/--search-workers`；ClickHouse 写入启用 `async_insert_busy_timeout_ms=2000` 与 32 MiB 合并窗口，减少每次段提交新建 part。handshake 与 flow-syn 车道改为 24 段待办、45 秒单次预算、4+4 工作线程。实测 handshake 滞后自 12:13 的 99 分钟收敛到 12:27 的 73.9 分钟（约 1.4 倍追赶速度），flow-syn 与身份均为亚分钟级；`stream_event_search` 上 46.59 GiB 合并已到 100%，活跃 part 22 个（此前持续翻倍）。入库速率已高于采集速率，但共享判定仍全为 `expired`：报文车道按用户要求停用，`ieee1905` 无新鲜数据，且 handshake 证据追平前窗口必然过期。
+
 ## 数据边界与待办
 
 - 固定来源 epoch：被动发现 `discovery-fresh-20261031T092000Z`，报文 `packet-birth-20261111T022159Z`，握手 `handshake-birth-20261111T022159Z`，TCP SYN `flow-syn-birth-20261113T104500Z`；身份派生新起点 `2026-10-29T05:11:29Z`。不移动起点，不把旧段或取消任务计作完成。11 月 12 日约七小时无 PCAP 窗口及既有套接字丢包仍是未恢复证据缺口。Redpanda 仍是影子链路。
