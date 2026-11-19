@@ -707,3 +707,38 @@ it('shows hardware projection failure instead of inventing zero backlog', async 
   expect(await screen.findByText('硬件分类处理异常：规则包版本尚未就绪')).toBeVisible()
   expect(screen.getByLabelText('硬件分类处理进度')).not.toHaveTextContent('待处理 0')
 })
+
+it('shows dumb terminal categories with confirmed counts, clue counts and a category filter', async () => {
+  mockReads()
+  const normalRead = request.getMockImplementation()!
+  request.mockImplementation((path: string) => {
+    if (path.startsWith('/discovery/devices/metadata?')) return Promise.resolve({ total: 20, identified: 9, candidate: 6, conflict: 0, expired: 0, types: [{ device_type: 'printer', count: 5 }, { device_type: 'scanner', count: 1 }, { device_type: 'camera', count: 3 }], candidate_types: [{ device_type: 'printer', count: 2 }], as_of: '2026-11-05T14:00:00Z', count_unit: 'trusted_discovery_identity' })
+    if (path === '/device-recognition/summary') return Promise.resolve({ total_endpoints: 1, coverage: {}, top_type_brands: [{ device_type: 'printer', brand: 'HP', count: 4 }, { device_type: 'camera', brand: 'Hikvision', count: 3 }, { device_type: 'router', brand: 'TP-Link', count: 9 }] })
+    return normalRead(path)
+  })
+  renderPanel(['/?discovery_capability=dumb'])
+  const overview = await screen.findByLabelText('哑终端总览')
+  await waitFor(() => expect(overview).toHaveTextContent('打印/扫描 6'))
+  expect(overview).toHaveTextContent('另有线索 2')
+  expect(overview).toHaveTextContent('视频监控 3')
+  expect(overview).not.toHaveTextContent('TP-Link')
+  expect(within(overview).getByRole('button', { name: 'HP 4' })).toBeInTheDocument()
+  fireEvent.click(within(overview).getByRole('button', { name: /打印\/扫描/ }))
+  await waitFor(() => expect(request.mock.calls.some(([path]) => {
+    const url = new URL(String(path), 'http://x')
+    return url.pathname === '/discovery/devices' && url.searchParams.get('type') === 'printer,scanner' && !url.searchParams.get('capability')
+  })).toBe(true))
+})
+
+it('groups device details into labelled sections', async () => {
+  mockReads({ items: {} }, { ...device, mac: '02:00:00:20:40:01', name: 'lobby-printer', device_type: 'printer', classification_status: 'identified', recognition: { confidence: 0.9, device_type: 'printer', rule_version: 'rule-1' } })
+  renderPanel()
+  fireEvent.click(await screen.findByRole('button', { name: '查看详情' }))
+  await waitFor(() => expect(document.querySelector('.discovery-detail-section')).toBeTruthy())
+  const modal = document.querySelector('.discovery-evidence-modal') as HTMLElement
+  expect(within(modal).getByRole('heading', { name: '网络与时效' })).toBeInTheDocument()
+  expect(within(modal).getByRole('heading', { name: '类型结论' })).toBeInTheDocument()
+  expect(within(modal).getByText('MAC', { selector: 'dt' }).closest('.discovery-detail-section')).toHaveTextContent('网络与时效')
+  expect(within(modal).getByText('识别规则', { selector: 'dt' }).closest('.discovery-detail-section')).toHaveTextContent('识别规则')
+  expect(modal.querySelector('.discovery-detail-diagnostics')).toBeNull()
+})

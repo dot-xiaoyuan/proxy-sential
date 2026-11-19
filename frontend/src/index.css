@@ -5191,6 +5191,14 @@ pre.wrap-code {
 .discovery-type-fill.is-9 { width: 90%; }
 .discovery-type-fill.is-10 { width: 100%; }
 .discovery-type-count { color: #0f172a; font-variant-numeric: tabular-nums; text-align: right; }
+.discovery-dumb-overview { display: flex; flex-direction: column; gap: 12px; margin: 12px 0 0; padding: 14px 16px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; min-width: 0; }
+.discovery-dumb-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; min-width: 0; }
+.discovery-dumb-brands { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
+.discovery-dumb-brands > .ant-typography { flex-shrink: 0; }
+.discovery-detail-section { margin-top: 14px; }
+.discovery-detail-section h5 { margin-bottom: 6px; color: #0f172a; font-size: 14px; }
+.discovery-detail-diagnostics { margin-top: 14px; }
+.discovery-detail-diagnostics > summary { cursor: pointer; color: #475569; font-size: 13px; }
 @media (max-width: 560px) {
   .discovery-overview { padding: 14px; }
   .discovery-stat-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
