@@ -4,6 +4,8 @@
 
 ## 本轮待办与现场观察
 
+- **204 旧版本清理（2026-11-19 09:55 北京时间，单版本约定）**：删除 `2026.11.16-8102ad51`、`2026.11.17-615a18c1`、`2026.11.18-615a18c1` 至 `.6` 共 8 个程序目录、`previous` 链接及 `staging` 暂存；删除前核对 `current` 为 `3cc97f2f`，无进程可执行文件、挂载或单元路径引用旧目录。根目录一份当前包已换为 `3cc97f2f` 包（SHA256 核验通过）。升级日志与清理审计记录在 `data/release-retirement-audit/`。保留未核验的 `prepared/hardware-*` 与 `config/collector-trim-20261117`。**代价**：清理后无即时回退版本，`previous` 为空。
+- **现场就绪状态波动（2026-11-19 09:57）**：`readyz` 三次采样中 `application_read_model`、`identity_pipeline` 在 delayed 与 ready 间切换，首次请求 5 秒超时（机器 load average 约 21）。清理未影响任何运行进程，控制面仍为 `3cc97f2f` 且 `read_only=true`。
 - **204 应用更新至 `2026.11.18-3cc97f2f`（2026-11-18 17:27 北京时间，application-only 升级，代码测试 + 现场只读验收）**：包由干净提交 `3cc97f2f` 构建（`git_worktree_modified=false`），SHA256 `84263ae94c63da0d3c46b71434f31907df5d37ef16af8d6b5547829729582488`。升级前 `.6` 空闲、无失败单元，迁移 248 PostgreSQL / 72 ClickHouse 校验一致。切换后 11 个应用进程均指向 `.3cc97f2f`，`proxy-sentinel-passive-discovery` 为新版本，`control-plane` 仍 `--read-only=true`，`/readyz=200`，首页 200，无失败单元。`previous` = `.6`。Suricata/Zeek 为外部程序，不在应用版本范围内。`proxy-sentinel-ncu-identity-sync.service` 在该主机不存在，无法核对。
 - **已知未就绪项**：`readyz` 的 `statistics_read_model` 处于 `delayed`，原因“activity v3 statistics event coverage is older than five minutes with unfinished work”。`activity-5m-v3` 的 pending 桶由 09:32Z 的 51 个降至 09:34Z 的 46 个（另有 2 个 running），最早仍为 2026-11-18 03:15Z，与 11-17 合并停止后的积压一致；下降速度约每分钟 2 个，按此速度需较长时间。realtime lane `ready`，coarse lag 36 秒。此项尚不能判定为完成，未达 `ready` 不计为验收通过。
 
