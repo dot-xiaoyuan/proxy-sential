@@ -557,3 +557,39 @@ func TestHardwareProjectionPostgresSpecialScopeAndLateTime(t *testing.T) {
 		t.Fatal("revoked first fact kept activity alive")
 	}
 }
+
+func TestHardwareMetadataVLANFacetCountsTrustedIdentitiesPerVLAN(t *testing.T) {
+	db := hardwareIntegrationDB(t)
+	ctx := context.Background()
+	at := time.Now().UTC().Add(-time.Minute)
+	for i, vlan := range []string{"201", "201", "101", ""} {
+		o := hardwareTestObservation(at)
+		o.ID, o.EventID = fmt.Sprintf("vlan-facet-%d", i), fmt.Sprintf("vlan-facet-%d", i)
+		o.MAC = fmt.Sprintf("02:33:44:55:66:%02x", i)
+		o.IP = fmt.Sprintf("10.9.0.%d", i+2)
+		o.VLAN = vlan
+		o.Origin = "arp"
+		o.Evidence.Payload = nil
+		o.ValidUntil = at.Add(time.Hour)
+		raw, err := json.Marshal(o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec("INSERT INTO discovery_observation_latest VALUES($1,$2,$3,$4,$5,false,$6)", o.ID, o.Key(), o.Origin, o.ObservedAt, o.ValidUntil, raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	meta, err := (Repository{DB: db, HardwareV2: true}).DevicesIndexedMetadata(ctx, DeviceQuery{Mode: "passive"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []IndexedVLANCount{{VLAN: "201", Count: 2}, {VLAN: "101", Count: 1}}
+	if meta.Total != 4 || len(meta.VLANs) != len(want) {
+		t.Fatalf("metadata=%+v", meta)
+	}
+	for i := range want {
+		if meta.VLANs[i] != want[i] {
+			t.Fatalf("vlan %d=%+v want %+v", i, meta.VLANs[i], want[i])
+		}
+	}
+}

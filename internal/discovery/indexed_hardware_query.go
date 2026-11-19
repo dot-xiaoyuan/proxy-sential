@@ -105,7 +105,7 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 ), seed_rows AS MATERIALIZED (
  SELECT l.observation_tid,l.id,l.device_key,l.origin,l.observed_at,l.valid_until,
  l.search_ip,l.search_mac,l.search_name,l.search_device_type,l.search_manufacturer,l.search_model,
- ` + identitySQL + ` identity_key,l.observation_capabilities,l.product_type,l.service_clue_valid,
+ ` + identitySQL + ` identity_key,l.vlan,l.observation_capabilities,l.product_type,l.service_clue_valid,
  (l.capture_scope_valid AND l.sensor_id<>'' AND l.site_id<>'' AND l.access_domain<>''
   AND lower(l.raw_mac) ~ '^[0-9a-f][02468ace](:[0-9a-f]{2}){5}$' AND lower(l.raw_mac)<>'00:00:00:00:00:00'
   AND (coalesce(l.display_endpoint,'')='' OR lower(l.display_endpoint)='mac:'||lower(l.raw_mac))) profile_identity_verified,
@@ -117,14 +117,14 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 ), candidate_rows AS MATERIALIZED (
  SELECT l.observation_tid,l.id,l.device_key,l.origin,l.observed_at,l.valid_until,
  l.search_ip,l.search_mac,l.search_name,l.search_device_type,l.search_manufacturer,l.search_model,
- l.identity_key,l.observation_capabilities,l.product_type,l.service_clue_valid,l.linked_endpoint,l.recognition_endpoint,l.profile_identity_verified,
+ l.identity_key,l.vlan,l.observation_capabilities,l.product_type,l.service_clue_valid,l.linked_endpoint,l.recognition_endpoint,l.profile_identity_verified,
  coalesce(rec.role,'') profile_role,coalesce(rec.profile_confidence,0) profile_confidence,
  ` + profileOS + ` profile_os,` + profileType + ` profile_type,
  coalesce(rec.profile_conflict,false) AND coalesce(rec.role,'')<>'' profile_conflict,
  ` + hardwareProfileCandidateSQL("rec.role", "coalesce(rec.profile_confidence,0)", "coalesce(rec.profile_conflict,false)", "rec.profile_seen") + ` profile_candidate_role
  FROM seed_rows l LEFT JOIN recognition rec ON rec.endpoint_id=l.recognition_endpoint
 ), candidate_grouped AS (
- SELECT identity_key COLLATE "C" identity_key,coalesce(min(device_key COLLATE "C") FILTER (WHERE search_mac<>''),min(device_key COLLATE "C")) device_key,
+ SELECT identity_key COLLATE "C" identity_key,max(vlan) vlan,coalesce(min(device_key COLLATE "C") FILTER (WHERE search_mac<>''),min(device_key COLLATE "C")) device_key,
  max(observed_at) last_seen,max(profile_os) profile_os,
  coalesce(array_agg(DISTINCT product_type) FILTER (WHERE product_type<>''),'{}'::text[]) product_types,
  bool_or(service_clue_valid AND observation_capabilities ?| ARRAY['printing','scanning','casting','media_rendering','network_video','voice']) has_iot_service,

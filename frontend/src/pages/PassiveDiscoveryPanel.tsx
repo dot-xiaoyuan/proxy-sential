@@ -275,6 +275,8 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const statistics=useQuery({queryKey:['discovery-statistics'],queryFn:({signal})=>request<Statistics>('/discovery/statistics',{signal}),enabled:coverage.data?.enabled===true})
   const metadataQuery=new URLSearchParams(query);metadataQuery.delete('cursor');metadataQuery.delete('limit')
   const discoveryMetadata=useQuery({queryKey:['discovery-metadata',metadataQuery.toString()],queryFn:({signal})=>request<components['schemas']['DiscoveryDeviceMetadata']>(`/discovery/devices/metadata?${metadataQuery}`,{signal}),refetchInterval:autoRefresh?60_000:false,refetchOnWindowFocus:autoRefresh})
+  const vlanFacetQuery=new URLSearchParams(metadataQuery);vlanFacetQuery.delete('vlan')
+  const vlanFacets=useQuery({queryKey:['discovery-vlan-facets',vlanFacetQuery.toString()],queryFn:({signal})=>request<components['schemas']['DiscoveryDeviceMetadata']>(`/discovery/devices/metadata?${vlanFacetQuery}`,{signal}),enabled:moreOpen,staleTime:60_000})
   const hardwareV2=discoveryMetadata.data?.classification_version==='passive-hardware/v2'
   const confirmedTypesLabel=hardwareV2?'已确认硬件类型':'已识别类型'
   const viewStates=hardwareV2?{...states,identified:'已知硬件类型',expired:'硬件结论已撤销'}:states
@@ -425,7 +427,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
           <Select aria-label="发现协议" mode="multiple" allowClear placeholder="全部协议" value={(params.get('discovery_protocol')||'').split(',').filter(Boolean)} options={Object.entries(protocols).map(([value,label])=>({value,label}))} onChange={values=>setParams(current=>{const next=new URLSearchParams(current);if(values.length)next.set('discovery_protocol',values.join(','));else next.delete('discovery_protocol');return next},{replace:true})}/>
           <Select aria-label="最近观测范围" value={params.get('discovery_window')==='all'?'720h':params.get('discovery_window')||''} options={[{value:'',label:'近 24 小时'},{value:'15m',label:'近 15 分钟'},{value:'168h',label:'近 7 天'},{value:'720h',label:'近 30 天'}]} onChange={v=>change('window',v)}/>
           <DebouncedInput label="网络域" placeholder="网络域（逗号分隔）" value={params.get('discovery_domain')||''} onChange={value=>change('domain',value)}/>
-          <DebouncedInput label="VLAN" placeholder="VLAN（逗号分隔）" value={params.get('discovery_vlan')||''} onChange={value=>change('vlan',value)}/>
+          <Select aria-label="VLAN" mode="tags" allowClear placeholder="VLAN（可选择或输入）" value={(params.get('discovery_vlan')||'').split(',').filter(Boolean)} options={(vlanFacets.data?.vlans??[]).map(item=>({value:item.vlan,label:`VLAN ${item.vlan} · ${item.count}`}))} onChange={values=>change('vlan',values.map(value=>String(value).trim()).filter(Boolean).join(','))}/>
           <DebouncedInput label="操作系统" placeholder="操作系统" value={params.get('discovery_os')||''} onChange={value=>change('os',value)}/>
           <Checkbox checked={params.get('discovery_random_mac')==='true'} onChange={e=>change('random_mac',e.target.checked?'true':'')}>本地管理 MAC</Checkbox>
           <div className="discovery-view-bar">

@@ -9040,6 +9040,15 @@ components:
             properties:
               device_type: { type: string }
               count: { type: integer, format: int64, minimum: 0 }
+        vlans:
+          type: array
+          description: Trusted identities per non-empty VLAN in the same filtered window, ordered by count then VLAN. A filter facet only; it is not added to device totals and is capped at 100 entries.
+          items:
+            type: object
+            required: [vlan, count]
+            properties:
+              vlan: { type: string }
+              count: { type: integer, format: int64, minimum: 0 }
         as_of: { type: string, format: date-time }
         count_unit: { type: string, enum: [trusted_discovery_identity], description: A discovered device grouped by source scope and trusted endpoint or MAC identity; unresolved identity falls back to the discovery key. }
         window: { type: string }

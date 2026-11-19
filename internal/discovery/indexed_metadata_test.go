@@ -175,3 +175,49 @@ func TestIndexedWindowIsBoundedAndSharedWithMetadata(t *testing.T) {
 		}
 	}
 }
+
+func TestHardwareMetadataReportsVLANFacetWithoutCountingItAsDevices(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	at := time.Now().UTC()
+	mock.ExpectQuery(`(?s)GROUP BY classification_status.*UNION ALL SELECT 'vlan',vlan,n,now\(\) FROM \(SELECT vlan,count\(\*\) n FROM matched WHERE vlan<>'' GROUP BY vlan ORDER BY count\(\*\) DESC,vlan LIMIT 100\) v`).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "type", "count", "as_of"}).
+			AddRow("identified", "printer", 3, at).
+			AddRow("vlan", "201", 4, at).
+			AddRow("vlan", "101", 12, at).
+			AddRow("vlan", "102", 4, at))
+	metadata, err := (Repository{HardwareV2: true}).devicesIndexedMetadata(context.Background(), db, DeviceQuery{Mode: "passive"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Total != 3 || metadata.Identified != 3 {
+		t.Fatalf("vlan rows must not change device totals: %+v", metadata)
+	}
+	want := []IndexedVLANCount{{VLAN: "101", Count: 12}, {VLAN: "102", Count: 4}, {VLAN: "201", Count: 4}}
+	if len(metadata.VLANs) != len(want) {
+		t.Fatalf("vlans=%+v", metadata.VLANs)
+	}
+	for i := range want {
+		if metadata.VLANs[i] != want[i] {
+			t.Fatalf("vlan %d=%+v want %+v", i, metadata.VLANs[i], want[i])
+		}
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHardwareSelectionCarriesVLANIntoIdentityGroups(t *testing.T) {
+	selection, err := buildIndexedDeviceSelection(DeviceQuery{Mode: "passive", HardwareV2: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{"max(vlan) vlan", "identity_key,l.vlan,l.observation_capabilities", "l.identity_key,l.vlan,l.observation_capabilities"} {
+		if !strings.Contains(selection.CTE, fragment) {
+			t.Fatalf("hardware selection does not expose vlan for the facet: missing %q", fragment)
+		}
+	}
+}

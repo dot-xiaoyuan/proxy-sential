@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"database/sql"
+	"sort"
 	"time"
 )
 
@@ -16,6 +17,7 @@ type IndexedDeviceMetadata struct {
 	Types                 []IndexedDeviceTypeCount `json:"types"`
 	CandidateTypes        []IndexedDeviceTypeCount `json:"candidate_types,omitempty"`
 	IPProductTypes        []IndexedDeviceTypeCount `json:"ip_product_types,omitempty"`
+	VLANs                 []IndexedVLANCount       `json:"vlans,omitempty"`
 	AsOf                  time.Time                `json:"as_of"`
 	CountUnit             string                   `json:"count_unit"`
 	Window                string                   `json:"window"`
@@ -25,6 +27,15 @@ type IndexedDeviceTypeCount struct {
 	DeviceType string `json:"device_type"`
 	Count      int64  `json:"count"`
 }
+
+// IndexedVLANCount counts trusted identities per VLAN inside the same filtered
+// window. It is a facet for choosing filters, not a device-total breakdown.
+type IndexedVLANCount struct {
+	VLAN  string `json:"vlan"`
+	Count int64  `json:"count"`
+}
+
+const indexedVLANFacetLimit = 100
 
 // DevicesIndexedMetadata counts the same filtered trusted-identity groups as
 // DevicesIndexed, independently of cursor/limit. Only the count is returned to
@@ -60,6 +71,7 @@ func (r Repository) devicesIndexedMetadata(ctx context.Context, db indexedQuerye
 		counts += ` UNION ALL SELECT 'ip_product',kind,count(DISTINCT identity_key),now()
  FROM matched CROSS JOIN LATERAL unnest(product_types) kind
  WHERE classification_status='candidate' GROUP BY kind`
+		counts += ` UNION ALL SELECT 'vlan',vlan,n,now() FROM (SELECT vlan,count(*) n FROM matched WHERE vlan<>'' GROUP BY vlan ORDER BY count(*) DESC,vlan LIMIT 100) v`
 	}
 	rows, err := db.QueryContext(ctx, selection.CTE+counts+` ORDER BY 1,2`, selection.Args...)
 	if err != nil {
@@ -72,6 +84,10 @@ func (r Repository) devicesIndexedMetadata(ctx context.Context, db indexedQuerye
 		var at time.Time
 		if err := rows.Scan(&state, &kind, &count, &at); err != nil {
 			return IndexedDeviceMetadata{}, err
+		}
+		if state == "vlan" {
+			result.VLANs = append(result.VLANs, IndexedVLANCount{VLAN: kind, Count: count})
+			continue
 		}
 		if state == "ip_product" {
 			result.IPProductTypes = append(result.IPProductTypes, IndexedDeviceTypeCount{DeviceType: kind, Count: count})
@@ -97,6 +113,12 @@ func (r Repository) devicesIndexedMetadata(ctx context.Context, db indexedQuerye
 	if err := rows.Err(); err != nil {
 		return IndexedDeviceMetadata{}, err
 	}
+	sort.SliceStable(result.VLANs, func(i, j int) bool {
+		if result.VLANs[i].Count != result.VLANs[j].Count {
+			return result.VLANs[i].Count > result.VLANs[j].Count
+		}
+		return result.VLANs[i].VLAN < result.VLANs[j].VLAN
+	})
 	// Report the data cutoff rather than the query time: the page prints this as
 	// the statistics timestamp, and the discovery projection intentionally runs
 	// one holdback behind the newest mirrored event.

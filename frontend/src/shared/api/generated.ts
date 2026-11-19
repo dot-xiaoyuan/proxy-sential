@@ -8716,6 +8716,12 @@ export interface components {
                 /** Format: int64 */
                 count: number;
             }[];
+            /** @description Trusted identities per non-empty VLAN in the same filtered window, ordered by count then VLAN. A filter facet only; it is not added to device totals and is capped at 100 entries. */
+            vlans?: {
+                vlan: string;
+                /** Format: int64 */
+                count: number;
+            }[];
             /** Format: date-time */
             as_of: string;
             /**

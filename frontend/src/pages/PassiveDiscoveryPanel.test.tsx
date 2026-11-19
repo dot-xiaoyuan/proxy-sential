@@ -617,12 +617,19 @@ it('filters multiple device types', async () => {
 })
 
 
-it('filters multiple VLANs from one input', async () => {
+it('chooses VLANs from the facet counts and filters the list by them', async () => {
   mockReads()
+  const normalRead = request.getMockImplementation()!
+  request.mockImplementation((path: string) => path.startsWith('/discovery/devices/metadata?')
+    ? normalRead(path).then((data: unknown) => ({ ...(data as object), vlans: [{ vlan: '32', count: 5 }, { vlan: '33', count: 2 }] }))
+    : normalRead(path))
   renderPanel()
   fireEvent.click(screen.getByRole('button', { name: /更多筛选/ }))
-  fireEvent.change(screen.getByRole('textbox', { name: 'VLAN' }), { target: { value: '32,33' } })
-  await waitFor(() => expect(request.mock.calls.some(([path]) => new URL(String(path), 'http://x').searchParams.get('vlan') === '32,33')).toBe(true))
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: 'VLAN' }))
+  await waitFor(() => expect(Array.from(document.querySelectorAll<HTMLElement>('.ant-select-item-option')).some(option => option.textContent === 'VLAN 32 · 5')).toBe(true))
+  fireEvent.click(Array.from(document.querySelectorAll<HTMLElement>('.ant-select-item-option')).find(option => option.textContent === 'VLAN 32 · 5')!)
+  await waitFor(() => expect(request.mock.calls.some(([path]) => new URL(String(path), 'http://x').searchParams.get('vlan') === '32')).toBe(true))
+  expect(request.mock.calls.some(([path]) => String(path).startsWith('/discovery/devices/metadata?') && !new URL(String(path), 'http://x').searchParams.has('vlan'))).toBe(true)
 })
 
 
