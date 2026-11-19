@@ -269,8 +269,13 @@ func (s *ClickHouseStore) WriteStreamSearch(ctx context.Context, segmentID strin
 
 func streamInsertSettings(segmentID, table string) map[string]string {
 	sum := sha256.Sum256([]byte(segmentID + "\x00" + table))
+	// Concurrent lane workers each commit one segment at a time. A short busy
+	// timeout makes ClickHouse coalesce those inserts into fewer parts, which
+	// keeps the part count and merge pressure down without changing per-segment
+	// idempotency (the deduplication token stays segment-scoped).
 	return map[string]string{
 		"async_insert": "1", "wait_for_async_insert": "1", "async_insert_deduplicate": "1",
+		"async_insert_busy_timeout_ms": "2000", "async_insert_max_data_size": "33554432",
 		"insert_deduplicate": "1", "insert_deduplication_token": hex.EncodeToString(sum[:]),
 	}
 }

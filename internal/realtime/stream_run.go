@@ -22,6 +22,11 @@ type StreamRunOptions struct {
 	OnSourceError      func(Source, error)
 }
 
+// Up to this many independent archive or search workers may run per source.
+// Segments are ordered only per source, so extra workers raise throughput
+// without reordering a segment's own stages; finalization stays serial.
+const maxStreamLaneWorkers = 8
+
 // RunStream keeps source capture and segment consumption independent. Every
 // source must already have an audited fresh cursor; this function never picks
 // a cutoff or silently skips legacy input. A bounded in-memory channel is only
@@ -39,10 +44,10 @@ func RunStream(ctx context.Context, journal *streamlog.Journal, writer streamlog
 	if opts.MaxPendingSegments <= 0 || opts.MaxPendingSegments > 64 {
 		opts.MaxPendingSegments = 16
 	}
-	if opts.ArchiveWorkers < 1 || opts.ArchiveWorkers > 2 {
+	if opts.ArchiveWorkers < 1 || opts.ArchiveWorkers > maxStreamLaneWorkers {
 		opts.ArchiveWorkers = 1
 	}
-	if opts.SearchWorkers < 1 || opts.SearchWorkers > 2 {
+	if opts.SearchWorkers < 1 || opts.SearchWorkers > maxStreamLaneWorkers {
 		opts.SearchWorkers = 1
 	}
 	if opts.OnSourceError == nil {

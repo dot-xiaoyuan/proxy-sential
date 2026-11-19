@@ -146,6 +146,8 @@ func runIngestStream(args []string) error {
 	maxBytes := fs.Int64("max-batch-bytes", 1<<20, "source bytes per durable segment")
 	storeTimeout := fs.Duration("store-timeout", 15*time.Second, "individual storage attempt budget")
 	pending := fs.Int("max-pending-segments", 16, "bounded queued segments")
+	archiveWorkers := fs.Int("archive-workers", 0, "independent archive workers per source; 0 selects the source default")
+	searchWorkers := fs.Int("search-workers", 0, "independent search workers per source; 0 selects the source default")
 	drainOnly := fs.Bool("drain-only", false, "finish only previously accepted journal segments")
 	deviceManifestWrites := fs.Bool("device-signal-manifest-writes", false, "use segment receipt manifests for device-signals after compatible reader release")
 	deviceStream4Keys := fs.Bool("device-signal-stream4-keys", false, "emit segment-located device signal keys only after the PG248 compatible reader is the rollback release")
@@ -161,7 +163,8 @@ func runIngestStream(args []string) error {
 	if *path != "" && *bindingPath != "" {
 		return errors.New("aggregate and verified DHCP bindings cannot be consumed together")
 	}
-	if *maxBytes <= 0 || *maxBytes > 1<<20 || *poll <= 0 || *storeTimeout <= 0 || *storeTimeout > 120*time.Second || *pending < 1 || *pending > 64 {
+	if *maxBytes <= 0 || *maxBytes > 1<<20 || *poll <= 0 || *storeTimeout <= 0 || *storeTimeout > 120*time.Second || *pending < 1 || *pending > 64 ||
+		*archiveWorkers < 0 || *archiveWorkers > 8 || *searchWorkers < 0 || *searchWorkers > 8 {
 		return errors.New("stream-run bounds are invalid")
 	}
 	library, err := fingerprint.OpenInstalledRuntime()
@@ -277,15 +280,21 @@ WHERE state='active' AND sensor_id=$1 AND (source_kind='zeek-dhcp' OR source_kin
 	}
 	projector := discovery.StreamDiscoveryProjector{DB: db, DeviceSignalManifestWrites: *deviceManifestWrites}
 	writer := store.StreamLaneWriter{ClickHouse: ch, Projector: projector, RiskQueue: projector, SharedQueue: store.StreamSharedJobQueue{DB: db}}
-	archiveWorkers, searchWorkers := 1, 1
+	archiveLanes, searchLanes := 1, 1
 	if *ttlPath != "" || *handshakePath != "" {
-		archiveWorkers, searchWorkers = 2, 2
+		archiveLanes, searchLanes = 2, 2
+	}
+	if *archiveWorkers > 0 {
+		archiveLanes = *archiveWorkers
+	}
+	if *searchWorkers > 0 {
+		searchLanes = *searchWorkers
 	}
 	return realtime.RunStream(ctx, journal, writer, realtime.StreamRunOptions{
 		Capture:            realtime.Options{SensorID: *sensor, Sources: sources, PollInterval: *poll, MaxBatchBytes: *maxBytes, StoreTimeout: *storeTimeout, DeviceSignalStream4Keys: *deviceStream4Keys},
 		MaxPendingSegments: *pending,
-		ArchiveWorkers:     archiveWorkers,
-		SearchWorkers:      searchWorkers,
+		ArchiveWorkers:     archiveLanes,
+		SearchWorkers:      searchLanes,
 		DrainOnly:          *drainOnly,
 	})
 }
