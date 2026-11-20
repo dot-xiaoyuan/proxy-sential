@@ -101,7 +101,8 @@
 - **14:24 验收（只读）**：CH 已出现当日 `observed_at` 的 `ieee1905_topology`/`ssdp`/`ndp`；14:25 起有当日 `ieee1905_client_association`（至少 3 条）。共享判定仍以 `expired`/`insufficient` 为主、`matched=0`，时延中位仍常 >180s；packet 未读约数 MiB、pending 段仍高，需继续追平后观察 matched。
 - **14:28 投影仍慢于采集**：新鲜 epoch 上单段 `write_facts` 约 84 秒，pending 顶满，未读从数 MiB 涨到约 18 MiB。活跃写入落在 `stream_discovery_device_state`。`stream_discovery_network_state` 仍是旧 epoch `packet-birth-20261111T022159Z` 的 50 行过期网关，没有新鲜路由线索。
 - **窄投影**：packet-sidecar 的新 `ndp`/`arp`/`ttl`/`hop_limit` 不再进入发现热路径，仍进 ClickHouse 正文。已经编成 `stream4-` 的段保持原收据子集，邻居事实不再写设备当前态；段内尚未编号的 `ieee1905_topology` 留到下一段再投影，避免改变已提交段哈希。新捕获的拓扑和客户端快照适配为接入点线索。`shared_only` 仍拒绝确认。
-- **14:39 发布回退**：`2026.11.20-25755dc6` 曾切到 current，packet 在投影段 `b7a3301f…` 上报内容冲突后退出；升级脚本已把 current 恢复为 `2026.11.20-03eb8c70` 并核对进程。候选目录仍在，未作为 current。阶段 C 未开始。
+- **14:39 发布回退**：`2026.11.20-25755dc6` 曾切到 current，packet 在投影段 `b7a3301f…` 上报内容冲突后退出；升级脚本已把 current 恢复为 `2026.11.20-03eb8c70` 并核对进程。该候选目录仍留在磁盘，不是 current。
+- **14:44 已发布 `2026.11.20-be34e6d2`**（previous=`2026.11.20-03eb8c70`）。packet 保持 active，发布后没有新的源内容冲突。已编号旧段仍整段出收据，新段里 1000 条事件只投影几十到几百条路由线索；`write_facts` 从约 84 秒降到数秒。`stream_discovery_network_state` 新鲜 epoch 现有 24 行（1 条 gateway clue，23 条已过期，`type_last_seen` 仍停在 06:25Z），要等游标追到近实时后才会保持有效。阶段 C 未开始。
 
 ## 数据边界与待办
 
