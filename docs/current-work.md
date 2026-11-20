@@ -94,7 +94,11 @@
 - **13:43 启停前只读水位**：版本 `2026.11.19-8e8c87e6`；packet inactive（Restart=no）；packet 未读约 **707 MiB**、handshake 未读 0；近 2 小时 CH `packet-sidecar` 仅 `ttl`；根盘 95%/剩 92G；load ~19。
 - **13:44 已启动 packet stream-run**：drop-in 先为 `--store-timeout 45s --archive-workers 4 --search-workers 4 --max-pending-segments 24`；随后提到 workers **8+8**、pending **32**。采集端 `ttl.jsonl` 游标附近事件时间约为当日 `04:02Z`（落后实时约 1.5–2h），尾部持续有 `ieee1905_*`/`ssdp`/`ndp`。
 - **卡点**：有序投影车道钉在旧段 `891ea2fc…`（`accepted_at=11-19T04:05Z`，`needs_projection=true`）。`write_facts` 常耗时 ~119s，恢复投影预算仅 120s，于是 `projection reconcile` 每 2 分钟超时重试；pending 顶满后源游标净推进为 0，未读继续涨。search/archive 可前进，但不能释放段。`event_key_scheme_mismatch` 收据仍 `projected=1000`，不是“未投影”，是超时未 ACK。
-- **代码修复（待发布）**：`recoveryProjectionTimeout` 在存在 device-signal recovery dir 时由 120s 提到 **5m**，并更新单测；目标是让该段一次写完事实、解开有序投影，使游标重新追赶。不改 freshness、不跳游标、不把取消计完成。
+- **14:03 已发布 `2026.11.20-03eb8c70`**（`previous=2026.11.19-8e8c87e6`）：恢复投影超时 5m；发布前先把 18 个混版进程对齐到旧 `current`，并把 `service-expectations.json` 中 discovery 改为 `stopped`（与阶段0一致）。`/readyz=200`。卡段 `891ea2fc` 随后释放，投影可在 ~1–2 分钟/段推进。
+- **14:10 只读发现更严重卡点（出生代恢复读错）**：journal 段 `ab78fc9a…`（offset 247093081–247865270，`accepted_at` 今日）内嵌 1000 条事件全是 **`2026-11-17T03:06:30Z` 的 ndp**；同偏移在 `ttl.jsonl.1` 上实际是今日 `04:04Z` 的 ttl/ieee1905。段 `raw_sha256` 与文件切片哈希不一致。CH 中 **没有任何** `observed_at>=2026-11-20` 的 packet-sidecar 非 ttl 行。轮转发生在约 06:07Z，随后 catch-up 经 birth/recovery 写入了错误代际正文。
+- **14:12 已停止 packet unit**，避免继续写入错代数据。`stream-cancel` 因 birth `file_id` 与轮转后尾校验无法锚定、解码预算耗尽而失败；改为保留旧 journal，另做审计清单。
+- **14:22 `stream-prepare` 新鲜切入**：epoch `packet-fresh-20261120T062000Z`，`replace-closed-epoch=packet-birth-20261111T022159Z`，`cancel-id=packet-birth-wrong-generation-rehydrate-20261120`，`start_offset=121802597`（当时文件尾），丢弃记录 157,526/121,802,597 字节（审计取消、不计完成）；pending 段清单 `.../20261120T062000Z-packet-birth-pending-segments.jsonl` 哈希 `a8ad5ccf…`。unit 改指向新 journal，recovery 目录换新空目录。
+- **14:24 验收（只读）**：CH 已出现当日 `observed_at` 的 `ieee1905_topology`/`ssdp`/`ndp`；14:25 起有当日 `ieee1905_client_association`（至少 3 条）。共享判定仍以 `expired`/`insufficient` 为主、`matched=0`，时延中位仍常 >180s；packet 未读约数 MiB、pending 段仍高，需继续追平后观察 matched。阶段 B/C 未开始。
 
 ## 数据边界与待办
 
