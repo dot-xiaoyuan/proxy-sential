@@ -102,7 +102,7 @@ func (r Repository) streamSegmentReceiptsWithChecks(ctx context.Context, epoch, 
 		if wantedScheme == "stream4" {
 			wantedSource = "device-signals"
 		}
-		if source != wantedSource || path == "" || mode != "manifest" || wantedScheme == "stream4" && eventCount > streamlog.MaxSegmentEvents ||
+		if source != wantedSource || path == "" || mode != "manifest" || wantedScheme == "stream4" && eventCount > streamlog.MaxPassiveSegmentEvents ||
 			sourceGeneration < 0 || eventCount < 1 || eventCount > streamlog.MaxPassiveSegmentEvents || accepted.IsZero() || projected.IsZero() ||
 			!fileID.Valid || fileID.String == "" || !start.Valid || start.Int64 < 0 || !end.Valid || end.Int64 <= start.Int64 ||
 			!month.Valid || month.String != accepted.UTC().Format("200601") || !layout.Valid || (layout.String != "" && layout.String != "v2") ||

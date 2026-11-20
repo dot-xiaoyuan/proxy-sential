@@ -30,8 +30,10 @@ var (
 // mechanical-disk journal syncs without allowing an oversized segment.
 const MaxSegmentEvents = 1000
 
-// Passive packet capture uses a larger segment to amortize durable journal
-// barriers. File-backed and shared sources retain the existing bound.
+// Passive capture and the file-backed packet source use a larger segment to
+// amortize durable journal barriers on a mechanical disk. Shared signal
+// sources retain the smaller bound. MaxSegmentBytes still rejects an
+// oversized body before it is renamed into place.
 const MaxPassiveSegmentEvents = 2000
 const MaxSegmentBytes = 4 << 20
 
@@ -258,7 +260,7 @@ func (j *Journal) append(s Segment, allowEarly bool) (string, error) {
 		s.AcceptedAt = time.Now().UTC()
 	}
 	maxEvents := MaxSegmentEvents
-	if s.Source == "passive-discovery" {
+	if s.Source == "passive-discovery" || s.Source == "device-signals" {
 		maxEvents = MaxPassiveSegmentEvents
 	}
 	if len(s.Events) > maxEvents {

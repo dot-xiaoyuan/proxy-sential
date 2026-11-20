@@ -55,7 +55,7 @@ type preparedStreamSharedJobs struct {
 // One source file has one producer owner. The receipt belongs to the fixed
 // source position, while work is coalesced by business key inside that segment.
 func prepareStreamSharedJobs(segment streamlog.Segment) (preparedStreamSharedJobs, error) {
-	if segment.Source != "device-signals" || segment.Epoch == "" || segment.SourcePath == "" || len(segment.Events) == 0 || len(segment.Events) > streamlog.MaxSegmentEvents {
+	if segment.Source != "device-signals" || segment.Epoch == "" || segment.SourcePath == "" || len(segment.Events) == 0 || len(segment.Events) > streamlog.MaxPassiveSegmentEvents {
 		return preparedStreamSharedJobs{}, errors.New("invalid shared stream segment")
 	}
 	encoded, err := json.Marshal(struct {

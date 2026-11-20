@@ -27,7 +27,13 @@ const streamReadLimit = 1 << 20
 const streamLineLimit = streamlog.MaxSegmentEvents
 const discoveryStreamLineLimit = 50
 const dhcpBindingStreamLineLimit = 100
-const deviceSignalProjectionLineLimit = streamlog.MaxSegmentEvents
+
+// Packet jsonl on the 184 mechanical disk was fsync-bound at 1000 events:
+// capture kept pace with the writer and the unread tail did not shrink.
+// Two thousand events stays inside the 4 MiB segment ceiling and the
+// existing stream4 ordinal width.
+const deviceSignalReadLimit = 2 << 20
+const deviceSignalLineLimit = streamlog.MaxPassiveSegmentEvents
 
 // CaptureStreamOnce only advances a pre-established fresh source cursor after
 // its exact raw bytes and normalized events are fsynced in an immutable segment.
@@ -59,8 +65,12 @@ func captureStreamOnceWithReady(ctx context.Context, journal *streamlog.Journal,
 		}
 	}
 	maxBytes := opts.MaxBatchBytes
-	if maxBytes <= 0 || maxBytes > streamReadLimit {
-		maxBytes = streamReadLimit
+	readLimit := int64(streamReadLimit)
+	if source.Kind == "device-signals" {
+		readLimit = deviceSignalReadLimit
+	}
+	if maxBytes <= 0 || maxBytes > readLimit {
+		maxBytes = readLimit
 	}
 	checkpoint := ingest.Checkpoint{FileID: cursor.FileID, Offset: cursor.Offset}
 	var read sourceChunk
@@ -103,6 +113,8 @@ func captureStreamOnceWithReady(ctx context.Context, journal *streamlog.Journal,
 		// A larger bounded binding segment amortizes mechanical-disk journal
 		// barriers while keeping projection work under its own event ceiling.
 		lineLimit = dhcpBindingStreamLineLimit
+	} else if source.Kind == "device-signals" {
+		lineLimit = deviceSignalLineLimit
 	}
 	if end := lineBoundary(chunk, lineLimit); end < len(chunk) {
 		chunk = chunk[:end]
@@ -121,11 +133,9 @@ func captureStreamOnceWithReady(ctx context.Context, journal *streamlog.Journal,
 		}
 		projectionLimit := discoveryStreamLineLimit
 		if source.Kind == "device-signals" {
-			// Selected packet-sidecar discovery records need a PostgreSQL
-			// projection, but 50 records per segment cannot keep pace with the
-			// verified source. Keep the global event and byte ceilings while
-			// amortizing the durable journal barriers over a larger batch.
-			projectionLimit = deviceSignalProjectionLineLimit
+			// Router clues still project inside the segment. The larger batch
+			// only reduces how often the mechanical disk syncs the journal.
+			projectionLimit = deviceSignalLineLimit
 		} else if source.Kind == "zeek-dhcp-binding" {
 			projectionLimit = dhcpBindingStreamLineLimit
 		}
@@ -142,7 +152,11 @@ func captureStreamOnceWithReady(ctx context.Context, journal *streamlog.Journal,
 				return quarantineStreamChunk(journal, cursor, source, read, chunk, "capture_scope_mismatch", err)
 			}
 		}
-		if len(events) > streamlog.MaxSegmentEvents {
+		eventLimit := streamlog.MaxSegmentEvents
+		if source.Kind == "device-signals" {
+			eventLimit = deviceSignalLineLimit
+		}
+		if len(events) > eventLimit {
 			if chunk, err = smallerWholeLineChunk(chunk); err != nil {
 				return "", false, err
 			}

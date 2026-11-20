@@ -34,7 +34,7 @@ type signalFile struct {
 }
 
 func readDeviceSignalChunk(path string, cursor streamlog.SourceCursor, maxBytes int64) (sourceChunk, error) {
-	if maxBytes <= 0 || maxBytes > streamReadLimit {
+	if maxBytes <= 0 || maxBytes > deviceSignalReadLimit {
 		return sourceChunk{}, fmt.Errorf("invalid device signal read bound")
 	}
 	files, err := deviceSignalFiles(path)

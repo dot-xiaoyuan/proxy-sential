@@ -97,7 +97,7 @@ func TestJournalEncodedBodySurvivesInterruptedSourceCommit(t *testing.T) {
 }
 
 func TestJournalEncodedBodyRejectsBoundsBeforePersistence(t *testing.T) {
-	for _, kind := range []string{"events", "passive_events", "bytes"} {
+	for _, kind := range []string{"events", "device_events", "passive_events", "bytes"} {
 		t.Run(kind, func(t *testing.T) {
 			j, err := Open(t.TempDir())
 			if err != nil {
@@ -106,6 +106,9 @@ func TestJournalEncodedBodyRejectsBoundsBeforePersistence(t *testing.T) {
 			segment := encodingSegment(1)
 			if kind == "events" {
 				segment = encodingSegment(MaxSegmentEvents + 1)
+			} else if kind == "device_events" {
+				segment = encodingSegment(MaxPassiveSegmentEvents + 1)
+				segment.Source = "device-signals"
 			} else if kind == "passive_events" {
 				segment = encodingSegment(MaxPassiveSegmentEvents + 1)
 				segment.Source = "passive-discovery"

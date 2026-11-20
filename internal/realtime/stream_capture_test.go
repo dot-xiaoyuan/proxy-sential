@@ -779,7 +779,7 @@ func TestControlledDeviceSignalRequiresOriginalMatchingScope(t *testing.T) {
 	}
 }
 
-func TestControlledDeviceSignalCaptureKeepsThousandEventBoundAcrossRestart(t *testing.T) {
+func TestControlledDeviceSignalCaptureKeepsMechanicalDiskBatchAcrossRestart(t *testing.T) {
 	t.Setenv("PROXY_SENTINEL_DEVICE_SIGNAL_BODY_LAYOUT_V2", "false")
 	path := filepath.Join(t.TempDir(), "signals.jsonl")
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
@@ -798,7 +798,7 @@ func TestControlledDeviceSignalCaptureKeepsThousandEventBoundAcrossRestart(t *te
 	}
 	scope := &normalized.CaptureScope{SchemaVersion: "capture-scope/v1", SensorID: "sensor-a", CollectorInstanceID: "signal-owner", CampusID: "campus-a", AccessDomain: "bond0", InterfaceName: "bond0", ValidFrom: time.Now().Add(-time.Hour), ValidUntil: time.Now().Add(time.Hour)}
 	var input bytes.Buffer
-	for i := 0; i < 1025; i++ {
+	for i := 0; i < 2025; i++ {
 		event := normalized.Event{SchemaVersion: "v1", EventID: "signal-" + strconv.Itoa(i), Source: "device-signals", SourceEventType: "ssdp", Type: "device", Timestamp: time.Now().UTC().Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": "sensor-a", "collector_instance_id": "signal-owner", "interface": "bond0"}, Subject: map[string]any{"ip": "192.0.2.8"}, Payload: map[string]any{"origin": "ssdp"}}
 		if err := json.NewEncoder(&input).Encode(scope.Apply(event)); err != nil {
 			t.Fatal(err)
@@ -808,7 +808,7 @@ func TestControlledDeviceSignalCaptureKeepsThousandEventBoundAcrossRestart(t *te
 		t.Fatal(err)
 	}
 	source := Source{Kind: "device-signals", Path: path, CaptureScope: scope, ControlledInterface: "bond0"}
-	for index, want := range []int{1000, 25} {
+	for index, want := range []int{2000, 25} {
 		if index == 1 {
 			journal, err = streamlog.Open(journal.Directory())
 			if err != nil {

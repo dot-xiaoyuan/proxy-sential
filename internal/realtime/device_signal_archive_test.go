@@ -372,7 +372,7 @@ func TestDeviceSignalCompressedRotationReusesReaderAcrossProjectionSegments(t *t
 	}
 	first := line("first")
 	old := append([]byte{}, first...)
-	for i := 0; i < 2025; i++ {
+	for i := 0; i < 4025; i++ {
 		old = append(old, line("unread-"+strconv.Itoa(i))...)
 	}
 	if err := os.WriteFile(path, old, 0o600); err != nil {
@@ -399,7 +399,7 @@ func TestDeviceSignalCompressedRotationReusesReaderAcrossProjectionSegments(t *t
 	}
 	source := Source{Kind: "device-signals", Path: path}
 	var firstInflater *signalGzipReader
-	for index, want := range []int{1000, 1000, 25} {
+	for index, want := range []int{2000, 2000, 25} {
 		if index == 2 {
 			clearSignalGzip(path)
 			j, err = streamlog.Open(j.Directory())

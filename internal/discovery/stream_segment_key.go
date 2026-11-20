@@ -18,7 +18,7 @@ func ParsePassiveStream3Key(epoch, key string) (string, int, bool) {
 // immutable source segment. Ordinals count only discovery projection events.
 func ParseDeviceStream4Key(epoch, key string) (string, int, bool) {
 	id, ordinal, ok := parseStreamSegmentKey(epoch, key, "stream4")
-	return id, ordinal, ok && ordinal < streamlog.MaxSegmentEvents
+	return id, ordinal, ok && ordinal < streamlog.MaxPassiveSegmentEvents
 }
 
 func parseStreamSegmentKey(epoch, key, scheme string) (string, int, bool) {

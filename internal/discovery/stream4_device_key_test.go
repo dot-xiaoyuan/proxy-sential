@@ -32,10 +32,10 @@ func TestDeviceStream4KeyCanonicalParser(t *testing.T) {
 	if got, ordinal, ok := ParseDeviceStream4Key("fresh", good); !ok || got != id || ordinal != 0 {
 		t.Fatalf("valid locator rejected: %s %d %v", got, ordinal, ok)
 	}
-	if got, ordinal, ok := ParseDeviceStream4Key("fresh", "fresh:stream4-"+id+"-999"); !ok || got != id || ordinal != 999 {
+	if got, ordinal, ok := ParseDeviceStream4Key("fresh", "fresh:stream4-"+id+"-1999"); !ok || got != id || ordinal != 1999 {
 		t.Fatal("last valid device ordinal rejected")
 	}
-	for _, key := range []string{"fresh:stream4-" + id + "-00", "fresh:stream4-" + strings.ToUpper(id) + "-0", "fresh:stream4-" + id + "-1000", "wrong:stream4-" + id + "-0", "fresh:stream4-" + id + "--1"} {
+	for _, key := range []string{"fresh:stream4-" + id + "-00", "fresh:stream4-" + strings.ToUpper(id) + "-0", "fresh:stream4-" + id + "-2000", "wrong:stream4-" + id + "-0", "fresh:stream4-" + id + "--1"} {
 		if _, _, ok := ParseDeviceStream4Key("fresh", key); ok {
 			t.Fatalf("noncanonical locator accepted: %s", key)
 		}

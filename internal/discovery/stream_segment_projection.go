@@ -73,7 +73,7 @@ func hasSegmentKeyedDeviceEvent(segment streamlog.Segment) bool {
 }
 
 func verifyStream4PreparedSegment(id string, segment streamlog.Segment, prepared []streamPreparedDiscovery) error {
-	if !isSegmentKeyedDeviceSegment(segment) || len(prepared) == 0 || len(prepared) > streamlog.MaxSegmentEvents || len(segment.Events) > streamlog.MaxSegmentEvents ||
+	if !isSegmentKeyedDeviceSegment(segment) || len(prepared) == 0 || len(prepared) > streamlog.MaxPassiveSegmentEvents || len(segment.Events) > streamlog.MaxPassiveSegmentEvents ||
 		segment.SourcePath == "" || segment.FileID == "" || segment.StartOffset < 0 || segment.EndOffset <= segment.StartOffset ||
 		segment.SourceGeneration > math.MaxInt64 || segment.AcceptedAt.IsZero() ||
 		segment.ArchiveMonth != segment.AcceptedAt.UTC().Format("200601") ||
