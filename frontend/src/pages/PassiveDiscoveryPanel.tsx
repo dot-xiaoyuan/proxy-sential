@@ -25,7 +25,6 @@ import { request } from '../shared/api/client'
 import type { components } from '../shared/api/generated'
 import type { InventoryDetail } from '../shared/api/types'
 import { DiscoveryDeviceIcon } from '../entities/device/DiscoveryDeviceIcon'
-import { BrandLogo } from '../entities/device/BrandLogo'
 import { resolveDeviceBrand } from '../entities/device/brandMatcher'
 import { isLocallyAdministeredMAC } from '../entities/device/mac'
 import { DiscoveryEvidenceSummary } from './DiscoveryEvidenceSummary'
@@ -92,6 +91,14 @@ function discoveryClueTitle(item: Device, address: string) {
 function hardwareStatusLabel(item: Device): string {
   if (item.hardware_type_status === 'candidate' && item.product_clues?.length) return item.product_clues.some(clue => clue.type) ? '产品类型有依据，设备归属待核实' : '已有产品字段，类型待匹配'
   return hardwareStates[item.hardware_type_status ?? ''] ?? ''
+}
+
+function ipProductTypeLabel(item: Device, types: Record<string, string>) {
+  if (item.hardware_type_status !== 'candidate' || !item.product_clues?.length) return ''
+  if (item.product_clues.some(clue => clue.product_status === 'conflict')) return ''
+  const hints = new Set(item.product_clues.map(clue => clue.type).filter(Boolean))
+  const type = hints.size === 1 ? [...hints][0] : undefined
+  return type ? types[type] ?? deviceTypeLabel(type) : ''
 }
 
 const states: Record<string,string> = { identified:'证据有效', expired:'证据已过期', conflict:'类型证据冲突', candidate:'发现线索' }
@@ -387,8 +394,33 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
     }
     return <div className="terminal-identity"><DiscoveryDeviceIcon type={type} capabilities={item.capabilities}/><div><Button type="link" className="terminal-device-link" onClick={()=>show(item)}>{item.name||label||item.mac||item.primary_ip}</Button>{item.mac&&<span className="terminal-mac">{item.mac}{isLocallyAdministeredMAC(item.mac)?' · 本地管理':''}</span>}{item.name&&label&&<span className="terminal-kind-caption">{label}</span>}{discoveryNameClue(item.name)&&<Typography.Text type="secondary" className="terminal-kind-caption" title={discoveryNameClue(item.name)?.detail}>{discoveryNameClue(item.name)?.label}</Typography.Text>}</div></div>
   }
-  const kind=(item:Device)=>{const label=typeLabel(item,types);return <>{label?<Typography.Text strong={!!confirmedDeviceType(item)} title={item.type_evidence_at?`类型依据于 ${observedTimeTitle(item.type_evidence_at)}`:item.last_product_at&&item.classification_status==='candidate'?`型号自报于 ${observedTimeTitle(item.last_product_at)}；当前类型证据已过期`:undefined}>{label}</Typography.Text>:null}<DiscoveryProductClues clues={item.product_clues} compact/></>}
-  const vendor=(item:Device)=>{const brand=item.manufacturer||((item.recognition?.confidence??0)>=.8?item.recognition?.brand:'');return <div className="terminal-vendor">{brand&&(resolveDeviceBrand({brand}).key!=='unknown'?<BrandLogo brandKey={brand}/>:<Typography.Text>{brand}</Typography.Text>)}{(item.hardware_type_status?item.hardware_model:item.model_name)&&<Typography.Text type="secondary">{item.hardware_type_status?item.hardware_model:item.model_name}</Typography.Text>}</div>}
+  const kind = (item: Device) => {
+    const label = typeLabel(item, types)
+    const productHint = label ? '' : ipProductTypeLabel(item, types)
+    if (productHint) {
+      return <Typography.Text type="secondary" title="IP 自报产品类型，设备归属待核实">{productHint} · 线索</Typography.Text>
+    }
+    if (!label) return null
+    const title = item.type_evidence_at
+      ? `类型依据于 ${observedTimeTitle(item.type_evidence_at)}`
+      : item.last_product_at && item.classification_status==='candidate'
+        ? `型号自报于 ${observedTimeTitle(item.last_product_at)}，当前类型证据已过期`
+        : undefined
+    return <Typography.Text strong={Boolean(confirmedDeviceType(item))} title={title}>{label}</Typography.Text>
+  }
+  const vendor = (item: Device) => {
+    const manufacturer = item.manufacturer || ((item.recognition?.confidence ?? 0) >= .8 ? item.recognition?.brand : '')
+    const brand = resolveDeviceBrand({brand:manufacturer})
+    const brandLabel = brand.key === 'unknown' ? brand.name : brand.nameEn
+    const model = item.hardware_type_status ? item.hardware_model : item.model_name
+    const os = osFor(item).label
+    if (!(brandLabel || model || os)) return null
+    return <div className="terminal-vendor">
+      {brandLabel&&<Typography.Text className="terminal-vendor-value" title={manufacturer}>{brandLabel}</Typography.Text>}
+      {model&&<Typography.Text className="terminal-vendor-value" type="secondary" title={model}>{model}</Typography.Text>}
+      {os&&<Typography.Text className="terminal-vendor-value" type="secondary" title={os}>{os} · 线索</Typography.Text>}
+    </div>
+  }
   const location=(item:Device)=><Space orientation="vertical" size={0}><Typography.Text>{item.vlan?`VLAN ${item.vlan}`:item.domain}</Typography.Text><Typography.Text type="secondary">{item.vlan?[item.domain,item.sensor_id].filter(Boolean).join(' · '):item.sensor_id}</Typography.Text></Space>
   const servicesFor=(item:Device)=>{const list=serviceClues.data?.items?.[`${item.sensor_id}|${(item.mac||'').toLowerCase()}`]??[];const seen=new Set<string>();return list.filter(clue=>{if(!serviceBelongsToDevice(item,clue))return false;const key=`${clue.service_type}:${clue.port}`;if(seen.has(key))return false;seen.add(key);return true})}
   const portsFor=(item:Device)=>{const seen=new Set<string>();return (portReadEnabled?observedPorts.data?.items?.[detailFlowTarget]??[]:[]).filter(clue=>{if(!flowBelongsToDevice(item,clue))return false;const key=`${clue.proto}:${clue.dst_port}`;if(seen.has(key))return false;seen.add(key);return true}).slice(0,8)}
@@ -445,7 +477,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
         {location(item)}
       </div>
     }},
-    {title:'厂商 / 系统',key:'vendor',width:160,render:(_:unknown,item:Device)=><div>{vendor(item)}{osFor(item).label&&<Typography.Text type="secondary">{osFor(item).label} · 线索</Typography.Text>}</div>},
+    {title:'厂商 / 系统',key:'vendor',width:160,render:(_:unknown,item:Device)=>vendor(item)},
     {title:'识别依据',key:'clues',width:145,render:(_:unknown,item:Device)=><div className="discovery-ledger-stack"><div className="discovery-desktop-clues">{clues(item)}{secondaryTypeClue(item,types,signalFor(item))&&<Typography.Text type="secondary">{secondaryTypeClue(item,types,signalFor(item))}</Typography.Text>}</div>{state(item)}</div>},
     {title:'最近观测',key:'seen',width:110,render:(_:unknown,item:Device)=><span title={observedTimeTitle(item.last_seen)}>{observedTimeLabel(item.last_seen)}</span>},
     {title:'操作',key:'action',width:140,fixed:'right' as const,render:(_:unknown,item:Device)=><div className="terminal-row-actions"><Button type="link" onClick={()=>show(item)}>查看详情</Button></div>},

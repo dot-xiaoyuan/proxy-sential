@@ -399,11 +399,12 @@ it('labels address-only observations and keeps the same IP in different VLANs in
 it('uses an observed product model for the title while retaining its IP and ownership status', async () => {
   mockReads()
   const read = request.getMockImplementation()!
+  const manufacturer = 'Ruijie Networks Co., Ltd. (formerly Start Network Technology Co., Ltd.)'
   request.mockImplementation((path: string) => path.startsWith('/discovery/devices?')
     ? Promise.resolve({ items: [{
       ...device, primary_ip: '10.161.255.2', current_addresses: [], hardware_type_status: 'candidate',
       protocols: ['snmp'], product_clues: [{
-        ip: '10.161.255.2', type: 'switch', manufacturer: 'Ruijie', model: 'S5310-24SFP4XS-E',
+        ip: '10.161.255.2', type: 'switch', manufacturer, model: 'S5310-24SFP4XS-E',
         event_id: 'snmp-model', observed_at: device.last_seen, attribution: 'response_ip', rule_version: 'fixture',
       }],
     }], has_more: false })
@@ -412,6 +413,22 @@ it('uses an observed product model for the title while retaining its IP and owne
   const row = (await screen.findByRole('button',{name:'S5310-24SFP4XS-E'})).closest('tr')!
   expect(within(row).getByText('10.161.255.2')).toBeVisible()
   expect(within(row).getByText('产品线索 · 归属待核实')).toBeVisible()
+  expect(row.querySelector('[data-label="设备类型"]')?.textContent).toBe('交换机 · 线索')
+  expect(row).not.toHaveTextContent(manufacturer)
+  fireEvent.click(within(row).getByRole('button', {name:'查看详情'}))
+  expect(await screen.findByLabelText('IP 产品证据')).toHaveTextContent(manufacturer)
+})
+
+it('uses plain brand text with the original manufacturer and model available', async () => {
+  const printer = {
+    ...device, manufacturer:'Hewlett-Packard', hardware_type:'printer',
+    hardware_type_status:'identified', hardware_model:'HP LaserJet Pro M202dw',
+  }
+  mockReads({items:{}},printer)
+  renderPanel()
+  expect(await screen.findByText('HP', {exact:true})).toHaveAttribute('title','Hewlett-Packard')
+  expect(screen.getByText('HP LaserJet Pro M202dw')).toBeVisible()
+  expect(document.querySelector('.terminal-vendor .brand-logo-tag')).toBeNull()
 })
 
 it('does not count expired or conflicting recognition as an explicit current type', async()=>{

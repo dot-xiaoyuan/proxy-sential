@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }, { width: 1440, height: 900 }, { width: 1481, height: 1169 }]) {
+for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }, { width: 1440, height: 900 }, { width: 1379, height: 1169 }]) {
   test(`discovery overview ${viewport.width}x${viewport.height}`, async ({ page }) => {
     const errors: string[] = []
     page.on('pageerror', error => errors.push(error.message))
@@ -28,7 +28,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
           const productRow = {
             ...addressRows[0], id:'product-switch', vlan:'4005', protocols:['snmp'], capabilities:[],
             primary_ip:'192.0.2.52', last_observed_ip:'192.0.2.52', addresses:['192.0.2.52'],
-            product_clues:[{ip:'192.0.2.52',type:'switch',manufacturer:'Ruijie',model:'S5310-24SFP4XS-E',
+            product_clues:[{ip:'192.0.2.52',type:'switch',manufacturer:'Ruijie Networks Co., Ltd. (formerly Start Network Technology Co., Ltd.)',model:'S5310-24SFP4XS-E',
               event_id:'fixture-snmp',observed_at:at,attribution:'response_ip',rule_version:'fixture'}],
           }
           return Response.json({ ...sample, items: [...addressRows, productRow, ...sample.items] })
@@ -63,6 +63,23 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await expect(firstRow.getByText('VLAN 3193/20')).toBeVisible()
     const productRow = page.getByRole('row').filter({ has: page.getByRole('button', { name: 'S5310-24SFP4XS-E', exact: true }) })
     await expect(productRow.getByText('产品线索 · 归属待核实')).toBeVisible()
+    await expect(productRow.locator('td[data-label="设备类型"]')).toHaveText('交换机 · 线索')
+    await expect(productRow).not.toContainText('Ruijie Networks')
+    const printer = page.getByRole('row').filter({has:page.getByRole('button',{name:'HP LaserJet Pro MFP',exact:true})})
+    const vendor = printer.locator('td[data-label="厂商 / 系统"]')
+    await expect(vendor.getByText('HP',{exact:true})).toBeVisible()
+    await expect(vendor.locator('.brand-logo-tag')).toHaveCount(0)
+    const cellProbe = await vendor.evaluate(cell => ({
+      overflow: cell.scrollWidth > cell.clientWidth+2,
+      vendorRows: [...cell.querySelectorAll('.terminal-vendor-value')].map(el => ({
+        whiteSpace:getComputedStyle(el).whiteSpace, textOverflow:getComputedStyle(el).textOverflow,
+      })),
+    }))
+    expect(cellProbe.overflow).toBe(false)
+    expect(cellProbe.vendorRows).toEqual([
+      {whiteSpace:'nowrap',textOverflow:'ellipsis'},
+      {whiteSpace:'nowrap',textOverflow:'ellipsis'},
+    ])
     if (viewport.width <= 560) {
       const toolbar = page.getByLabel('发现设备筛选工具栏')
       const filters = await toolbar.getByRole('button', {name:'筛选',exact:true}).boundingBox()
@@ -70,6 +87,11 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
       expect(Math.abs(filters!.y-actions!.y)).toBeLessThan(3)
     }
     await page.screenshot({ path: test.info().outputPath('list-first.png'), animations: 'disabled' })
+    await productRow.getByRole('button', {name:'查看详情'}).click()
+    const productDialog = page.getByRole('dialog', {name:'设备详情'})
+    await expect(productDialog.getByLabel('IP 产品证据')).toContainText('Ruijie Networks Co., Ltd.')
+    await page.keyboard.press('Escape')
+    await expect(productDialog).not.toBeVisible()
     const typePicker = page.getByRole('combobox', { name: '设备类型' })
     await typePicker.click()
     const popup = page.locator('.discovery-type-popup:visible')

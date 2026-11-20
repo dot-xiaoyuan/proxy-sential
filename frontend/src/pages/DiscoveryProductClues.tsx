@@ -5,18 +5,13 @@ import { observedTimeTitle } from '../shared/ui/observedTime'
 
 type Clue = components['schemas']['DiscoveryProductClue']
 
-export function productClueLabel(clue: Clue) {
+function productClueLabel(clue: Clue) {
   return [clue.type ? deviceTypeLabel(clue.type) : '', clue.manufacturer, clue.model].filter(Boolean).join(' · ')
 }
 
-export function DiscoveryProductClues({ clues, compact = false }: { clues?: Clue[]; compact?: boolean }) {
+export function DiscoveryProductClues({ clues }: { clues?: Clue[] }) {
   if (!clues?.length) return null
   const ordered = [...clues].sort((a, b) => b.observed_at.localeCompare(a.observed_at))
-  if (compact) {
-    const labels = [...new Set(ordered.map(productClueLabel).filter(Boolean))]
-    if (!labels.length) return null
-    return <div className="discovery-product-summary"><Typography.Text type="secondary">IP 产品线索</Typography.Text>{labels.slice(0, 2).map(label => <span key={label}>{label}</span>)}</div>
-  }
   return <section className="discovery-product-clues" aria-label="IP 产品证据">
     <Typography.Title level={5}>IP 产品证据</Typography.Title>
     <Typography.Paragraph type="secondary">产品来自该作用域内设备端点的自报；物理设备归属按独立的地址绑定证据核实。</Typography.Paragraph>
