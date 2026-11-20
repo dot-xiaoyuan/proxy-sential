@@ -116,6 +116,22 @@ func TestHandshakeSummaryRetainsJA3AndJA4FromOnePacket(t *testing.T) {
 	}
 }
 
+func TestHandshakeFingerprintsIgnoreFollowingTLSRecord(t *testing.T) {
+	mac := [6]byte{2, 0, 0, 0, 0, 1}
+	ip := [4]byte{192, 0, 2, 1}
+	hello := clientHello("test.example", "h2")
+	want, ok := parseHandshakeFrame(buildTCPFrame(mac, ip, 443, hello))
+	if !ok || want.JA3 == "" || want.JA4 == "" {
+		t.Fatal("ClientHello did not produce both fingerprints")
+	}
+	changeCipherSpec := []byte{20, 3, 3, 0, 1, 1}
+	frame := buildTCPFrame(mac, ip, 443, append(hello, changeCipherSpec...))
+	got, ok := parseHandshakeFrame(frame)
+	if !ok || got.Truncated || got.JA3 != want.JA3 || got.JA4 != want.JA4 || got.SNI != want.SNI || got.ALPN != want.ALPN {
+		t.Fatalf("following TLS record changed ClientHello fields: %+v", got)
+	}
+}
+
 func TestHandshakeRealFrameRetransmissionAndBucketBudget(t *testing.T) {
 	mac := [6]byte{2, 0, 0, 0, 0, 1}
 	frame := buildTCPFrame(mac, [4]byte{192, 0, 2, 1}, 80, []byte("GET / HTTP/1.1\r\nHost: test.example\r\nUser-Agent: Mozilla/5.0 (Linux; Android 14; SM-S9280 Build/TEST)\r\n\r\n"))

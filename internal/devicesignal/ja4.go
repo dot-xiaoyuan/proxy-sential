@@ -20,7 +20,8 @@ func clientHelloJA4(record []byte) string {
 
 // The caller already verified the complete record with clientHelloJA3.
 func clientHelloJA4Validated(record []byte) string {
-	body := record[9:]
+	recordEnd := 5 + int(binary.BigEndian.Uint16(record[3:5]))
+	body := record[9:recordEnd]
 	version := binary.BigEndian.Uint16(body[:2])
 	hasSupportedVersions := false
 	pos := 34
