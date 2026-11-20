@@ -266,6 +266,28 @@ it('counts recent observations beyond the configured five-minute discovery holdb
   await waitFor(()=>expect(summary).toHaveTextContent('本页近15分钟观测 1'))
 })
 
+it('shows a MAC fallback once and explains the virtualisation hint in details', async () => {
+  const mac = 'bc:24:11:ed:70:89'
+  mockReads()
+  const read = request.getMockImplementation()!
+  request.mockImplementation((path: string) => {
+    if (path.startsWith('/discovery/devices?')) return Promise.resolve({
+      items:[{...device, name:'BC-24-11-ED-70-89', mac, endpoint_id:`mac:${mac}`, hardware_type_status:'candidate', candidate_device_type:'virtual_machine'}], has_more:false,
+    })
+    if (path.startsWith('/device-inventory/')) return Promise.resolve({profile:{recognition:{
+      vendor:'Proxmox Server Solutions GmbH',
+      dimension_evidence:[{dimension:'device_type', value:'virtual_machine', layer:'hypervisor_oui', confidence:.75}],
+    }}})
+    return read(path)
+  })
+  renderPanel()
+  const row = (await screen.findByRole('button',{name:'BC-24-11-ED-70-89'})).closest('tr')!
+  expect(within(row).queryByText(mac,{exact:true})).not.toBeInTheDocument()
+  expect(within(row).getByText('虚拟化线索')).toBeInTheDocument()
+  fireEvent.click(within(row).getByRole('button',{name:'查看详情'}))
+  expect(await screen.findByText(/MAC 前缀匹配网卡厂商 Proxmox/)).toHaveTextContent('可能来自虚拟机或虚拟网卡')
+})
+
 it('keeps type filters visible and collection diagnostics behind a disclosure', async () => {
   mockReads();renderPanel()
   expect(screen.getByRole('combobox',{name:'设备类型'})).toBeVisible()

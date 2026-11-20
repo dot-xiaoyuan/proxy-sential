@@ -25,9 +25,9 @@ func indexedDeviceSignature(q DeviceQuery) string {
 		View, Mode, Search, DeviceType, Category, Capability, Protocol, State, Domain, VLAN, ReviewReason string
 		Window                                                                                            int64
 		HardwareV2                                                                                        bool
-		Subnet, From, To                                                                                  string `json:",omitempty"`
+		Subnet, From, To, IdentityScope                                                                   string `json:",omitempty"`
 		FirstSeenWithin                                                                                   int64  `json:",omitempty"`
-	}{q.View, q.Mode, q.Search, q.DeviceType, q.Category, q.Capability, q.Protocol, q.State, q.Domain, q.VLAN, q.ReviewReason, int64(q.Window), q.HardwareV2, q.Subnet, indexedDate(q.LastSeenFrom), indexedDate(q.LastSeenTo), int64(q.FirstSeenWithin)})
+	}{q.View, q.Mode, q.Search, q.DeviceType, q.Category, q.Capability, q.Protocol, q.State, q.Domain, q.VLAN, q.ReviewReason, int64(q.Window), q.HardwareV2, q.Subnet, indexedDate(q.LastSeenFrom), indexedDate(q.LastSeenTo), q.IdentityScope, int64(q.FirstSeenWithin)})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }

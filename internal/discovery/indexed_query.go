@@ -127,6 +127,22 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 		having = append(having, "bool_or(lower(profile_type) LIKE "+searchArg+" ESCAPE '\\' OR coalesce(search_ip,'') LIKE "+searchArg+" ESCAPE '\\' OR coalesce(search_mac,'') LIKE "+searchArg+" ESCAPE '\\' OR coalesce(search_name,'') LIKE "+searchArg+" ESCAPE '\\' OR coalesce(search_device_type,'') LIKE "+searchArg+" ESCAPE '\\' OR coalesce(search_manufacturer,'') LIKE "+searchArg+" ESCAPE '\\' OR coalesce(search_model,'') LIKE "+searchArg+" ESCAPE '\\')")
 	}
 	classifiedWhere := []string{}
+	switch query.IdentityScope {
+	case "":
+	case "devices":
+		if query.HardwareV2 && query.Mode == "passive" {
+			classifiedWhere = append(classifiedWhere, "NOT has_observed_ip OR has_device_evidence")
+		} else {
+			query.IdentityScope = ""
+		}
+	case "address_clues":
+		if !query.HardwareV2 || query.Mode != "passive" {
+			return indexedDeviceSelection{}, fmt.Errorf("unsupported discovery filter for address clues")
+		}
+		classifiedWhere = append(classifiedWhere, "has_observed_ip AND NOT has_device_evidence")
+	default:
+		return indexedDeviceSelection{}, fmt.Errorf("invalid discovery filter for identity scope")
+	}
 	if customRange {
 		args = append(args, query.LastSeenTo)
 		classifiedWhere = append(classifiedWhere, fmt.Sprintf("last_seen<$%d", len(args)))

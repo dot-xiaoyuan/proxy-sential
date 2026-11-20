@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }, { width: 1440, height: 900 }, { width: 1379, height: 1169 }]) {
+for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }, { width: 1440, height: 900 }, { width: 1175, height: 1169 }]) {
   test(`discovery overview ${viewport.width}x${viewport.height}`, async ({ page }) => {
     const errors: string[] = []
     page.on('pageerror', error => errors.push(error.message))
@@ -15,7 +15,8 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
         const response = await fetchMock(input, init)
         const requested = input instanceof Request ? input.url : input
         if (!response.ok) return response
-        const path = new URL(requested, location.origin).pathname
+        const {pathname:path, searchParams} = new URL(requested, location.origin)
+        const addressView = searchParams.get('identity_scope') === 'address_clues'
         if (path.endsWith('/discovery/devices')) {
           const sample = await response.json()
           const at = new Date().toISOString()
@@ -31,14 +32,19 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
             product_clues:[{ip:'192.0.2.52',type:'switch',manufacturer:'Ruijie Networks Co., Ltd. (formerly Start Network Technology Co., Ltd.)',model:'S5310-24SFP4XS-E',
               event_id:'fixture-snmp',observed_at:at,attribution:'response_ip',rule_version:'fixture'}],
           }
-          return Response.json({ ...sample, items: [...addressRows, productRow, ...sample.items] })
+          const virtualRow = {
+            ...addressRows[0], id:'fixture-virtual-nic', vlan:'2706', mac:'bc:24:11:ed:70:89',
+            primary_ip:'192.0.2.53', last_observed_ip:'192.0.2.53', addresses:['192.0.2.53'], current_addresses:['192.0.2.53'],
+            protocols:['arp'], capabilities:[], candidate_device_type:'virtual_machine',
+          }
+          return Response.json({ ...sample, items: addressView ? addressRows : [productRow, virtualRow, ...sample.items] })
         }
         if (!path.endsWith('/discovery/devices/metadata')) return response
         const sample = await response.json()
         const typeCounts = (types: Record<string, number>) =>
           Object.entries(types).map(([device_type, count]) => ({ device_type, count }))
         return Response.json({
-          ...sample, total: 6872, identified: 341, candidate: 6494, conflict: 0, expired: 37,
+          ...sample, ...(addressView?{total:2,identified:0,candidate:2,conflict:0,expired:0}:{total:6872,identified:341,candidate:6494,conflict:0,expired:37}),
           classification_version: 'passive-hardware/v2',
           types: typeCounts({access_point:238, camera:33, printer:31, router:11, laptop:10, access_control:5, media_player:5, recorder:4, desktop:2, voip_phone:2}),
           candidate_types: typeCounts({mobile:1290, desktop:579, tablet:192, router:108, access_point:29, virtual:27, printer:10, switch:4, server:2, firewall:1, iot_device:1, smart_tv:1}),
@@ -57,10 +63,15 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     const rowTop = await firstRow.evaluate(row => row.getBoundingClientRect().top)
     expect(rowTop).toBeGreaterThan(collapsed.top)
     expect(rowTop).toBeLessThan(viewport.width === 390 ? viewport.height : 550)
-    await expect(firstRow.getByRole('button', { name: '192.168.1.1' })).toBeVisible()
-    await expect(firstRow.getByText('地址线索')).toBeVisible()
-    await expect(firstRow.getByText('192.168.1.1', { exact: true })).toHaveCount(1)
-    await expect(firstRow.getByText('VLAN 3193/20')).toBeVisible()
+    await expect(page.getByRole('button', { name: '192.168.1.1', exact:true })).toHaveCount(0)
+    const virtualRow = page.getByRole('row').filter({has:page.getByRole('button',{name:'bc:24:11:ed:70:89',exact:true})})
+    await expect(virtualRow.getByText('bc:24:11:ed:70:89', {exact:true})).toHaveCount(1)
+    await expect(virtualRow.getByText('虚拟化线索')).toBeVisible()
+    await virtualRow.getByRole('button',{name:'查看详情'}).click()
+    const detail = page.getByRole('dialog', {name:'设备详情'})
+    await expect(detail).toContainText('可能来自虚拟机或虚拟网卡')
+    await page.keyboard.press('Escape')
+    await expect(detail).not.toBeVisible()
     const productRow = page.getByRole('row').filter({ has: page.getByRole('button', { name: 'S5310-24SFP4XS-E', exact: true }) })
     await expect(productRow.getByText('产品线索 · 归属待核实')).toBeVisible()
     await expect(productRow.locator('td[data-label="设备类型"]')).toHaveText('交换机 · 线索')
@@ -96,6 +107,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await typePicker.click()
     const popup = page.locator('.discovery-type-popup:visible')
     await expect(popup.getByRole('option', { name: /^打印机/ })).toBeVisible()
+    await expect.poll(() => popup.evaluate(el => el.getBoundingClientRect().width)).toBeGreaterThanOrEqual(240)
     const pickerProbe = await popup.evaluate(panel => {
       const box = panel.getBoundingClientRect()
       return {
@@ -119,12 +131,28 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await page.screenshot({path:test.info().outputPath('filter-drawer.png'),animations:'disabled'})
     await filter.getByRole('button',{name:'查看结果'}).click()
     await expect(filter).not.toBeVisible()
+    await page.getByRole('button',{name:'视图',exact:true}).click()
+    await page.getByRole('menuitem',{name:'地址线索',exact:true}).click()
+    await expect(page).toHaveURL(/discovery_identity_scope=address_clues/)
+    await expect(page.getByRole('button', {name:'192.168.1.1',exact:true})).toHaveCount(2)
+    await expect(firstRow.getByText('192.168.1.1',{exact:true})).toHaveCount(1)
+    await expect(firstRow.getByText('VLAN 3193/20')).toBeVisible()
+    await expect(firstRow.getByText('SSDP',{exact:true})).toBeVisible()
+    await expect(firstRow.locator('td[data-label="设备类型"], td[data-label="厂商 / 系统"]')).toHaveCount(0)
+    await expect(productRow).toHaveCount(0)
+    const addressOverflow = await firstRow.evaluate(row=>({
+      document: document.documentElement.scrollWidth > innerWidth+2,
+      row: row.scrollWidth > row.clientWidth+2,
+    }))
+    expect(addressOverflow).toEqual({document:false,row:false})
+    await page.screenshot({path:test.info().outputPath('address-clues.png'),animations:'disabled'})
     await firstRow.getByRole('button', { name: '192.168.1.1' }).click()
-    const detail = page.getByRole('dialog', { name: '设备详情' })
     await expect(detail).toContainText('不同 VLAN 可以重复使用同一地址')
     await expect(detail.getByText('当前地址', { exact: true })).toHaveCount(0)
     await page.keyboard.press('Escape')
     await expect(detail).not.toBeVisible()
+    await page.getByRole('button',{name:'视图',exact:true}).click()
+    await page.getByRole('menuitem',{name:'全部发现',exact:true}).click()
     await overview.getByRole('button', { name: '统计与类型线索' }).click()
     await expect(overview.getByRole('button', { name: '收起统计' })).toHaveAttribute('aria-expanded', 'true')
     await expect(overview.locator('.discovery-stat-card')).toHaveCount(7)

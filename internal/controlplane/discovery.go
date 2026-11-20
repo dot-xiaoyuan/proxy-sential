@@ -529,6 +529,19 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 		}
 		query := discovery.DeviceQuery{View: r.URL.Query().Get("view"), Mode: r.URL.Query().Get("mode"), Window: window, Search: r.URL.Query().Get("search"), DeviceType: r.URL.Query().Get("type"), Category: r.URL.Query().Get("category"), Capability: r.URL.Query().Get("capability"), ReviewReason: r.URL.Query().Get("review_reason"), RandomMAC: r.URL.Query().Get("random_mac") == "true", OSFamily: r.URL.Query().Get("os"), Limit: limit, Offset: offset, Cursor: r.URL.Query().Get("cursor"), Protocol: r.URL.Query().Get("protocol"), State: r.URL.Query().Get("state"), Domain: r.URL.Query().Get("domain"), VLAN: r.URL.Query().Get("vlan")}
 		query.Subnet = r.URL.Query().Get("subnet")
+		query.IdentityScope = r.URL.Query().Get("identity_scope")
+		switch query.IdentityScope {
+		case "", "devices":
+		case "address_clues":
+			if path == "/discovery/devices/coverage-report" || !repo.HardwareV2 || query.Mode != "passive" ||
+				repo.ActiveStreamOnly || repo.PipelineV2 || os.Getenv("PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ") == "true" {
+				writeError(w, 409, "identity_scope_read_path", "当前发现读取路径不支持地址线索视图")
+				return
+			}
+		default:
+			writeError(w, 400, "bad_identity_scope", "发现记录范围无效")
+			return
+		}
 		query.SkipOverview = r.URL.Query().Get("overview") == "false"
 		from, to := r.URL.Query().Get("last_seen_from"), r.URL.Query().Get("last_seen_to")
 		freshWindow := r.URL.Query().Get("first_seen_within")

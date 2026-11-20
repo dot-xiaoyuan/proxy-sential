@@ -98,3 +98,83 @@ func TestHardwareOverviewPostgresCountsAndFiltersScopedIdentities(t *testing.T) 
 		t.Fatalf("list did not match overview: %+v", page)
 	}
 }
+
+func TestHardwareIdentityScopeKeepsAddressCluesSearchable(t *testing.T) {
+	db := hardwareIntegrationDB(t)
+	ctx := context.Background()
+	at := time.Now().UTC().Add(-2 * time.Minute)
+	insert := func(o Observation) {
+		t.Helper()
+		raw, err := json.Marshal(o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec("INSERT INTO discovery_observation_latest VALUES($1,$2,$3,$4,$5,false,$6)",
+			o.ID, o.Key(), o.Origin, o.ObservedAt, o.ValidUntil, raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	device := hardwareTestObservation(at)
+	device.ValidUntil, device.Origin, device.IP = at.Add(time.Hour), "arp", "192.168.1.1"
+	insert(device)
+	withoutVLAN := device
+	withoutVLAN.ID, withoutVLAN.EventID, withoutVLAN.VLAN = "arp-no-vlan", "arp-no-vlan", ""
+	insert(withoutVLAN)
+	clue := device
+	clue.ID, clue.EventID, clue.MAC, clue.Origin, clue.VLAN = "ssdp-1", "ssdp-1", "", "ssdp", "2809/7"
+	insert(clue)
+	clue.ID, clue.EventID, clue.VLAN = "ssdp-2", "ssdp-2", "2809/8"
+	insert(clue)
+	product := clue
+	product.ID, product.EventID, product.Origin, product.IP = "snmp", "snmp", "snmp", "10.0.0.3"
+	product.ProductClue = &IPProductClue{
+		IP: product.IP, SensorID: product.Node, Site: product.Site, Domain: product.Domain, VLAN: product.VLAN,
+		EventID: product.EventID, ObservedAt: at, Attribution: "response_ip", ProductStatus: "no_type_match", Manufacturer: "Fixture",
+	}
+	insert(product)
+	service := clue
+	service.ID, service.EventID, service.Origin, service.IP = "service", "service", "dns_sd", ""
+	insert(service)
+
+	repo := Repository{DB: db, HardwareV2: true}
+	for _, tc := range []struct {
+		scope, search string
+		total         int
+	}{
+		{"", "", 6},
+		{"devices", "", 4},
+		{"devices", "192.168.1.1", 2},
+		{"address_clues", "192.168.1.1", 2},
+		{"address_clues", "10.0.0.3", 0},
+	} {
+		t.Run(tc.scope+"/"+tc.search, func(t *testing.T) {
+			q := DeviceQuery{Mode: "passive", IdentityScope: tc.scope, Search: tc.search, Limit: 1}
+			metadata, err := repo.DevicesIndexedMetadata(ctx, q)
+			if err != nil || metadata.Total != int64(tc.total) {
+				t.Fatalf("total=%d want=%d err=%v", metadata.Total, tc.total, err)
+			}
+			var count int
+			for page := 1; page <= max(1, tc.total); page++ {
+				position, err := repo.DevicesIndexedPosition(ctx, q, page)
+				if err != nil {
+					t.Fatal(err)
+				}
+				q.Cursor = position.Cursor
+				result, err := repo.DevicesIndexed(ctx, q)
+				if err != nil {
+					t.Fatal(err)
+				}
+				items := result["items"].([]DeviceView)
+				count += len(items)
+				for _, item := range items {
+					if tc.scope == "address_clues" && (item.MAC != "" || item.EndpointID != "" || item.PrimaryIP != tc.search) {
+						t.Fatalf("unexpected address clue: %+v", item)
+					}
+				}
+			}
+			if count != tc.total {
+				t.Fatalf("read %d rows, want %d", count, tc.total)
+			}
+		})
+	}
+}

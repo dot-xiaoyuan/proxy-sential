@@ -237,6 +237,7 @@ type DeviceQuery struct {
 	includeCandidateTypes         bool
 	Protocol, State, Domain, VLAN string
 	ReviewReason                  string
+	IdentityScope                 string
 	View                          string
 	Mode                          string
 	Window                        time.Duration

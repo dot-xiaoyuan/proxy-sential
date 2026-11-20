@@ -367,6 +367,7 @@ paths:
       parameters:
         - { name: last_seen_from, in: query, description: Inclusive absolute observation bound, paired with last_seen_to, schema: { type: string, format: date-time } }
         - { name: last_seen_to, in: query, description: Exclusive absolute observation bound, paired with last_seen_from, schema: { type: string, format: date-time } }
+        - { name: identity_scope, in: query, description: Passive hardware view for device evidence or address-only clues. Omit to keep the existing combined scope., schema: { type: string, enum: [devices, address_clues] } }
         - { name: first_seen_within, in: query, description: The latest seven Beijing calendar days, schema: { type: string, enum: [168h] } }
         - { name: subnet, in: query, description: A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address, schema: { type: string } }
         - { name: type, in: query, schema: { type: string } }
@@ -401,6 +402,7 @@ paths:
         - { name: overview, in: query, description: Set false for facet-only reads, schema: { type: boolean, default: true } }
         - { name: last_seen_from, in: query, description: Inclusive absolute observation bound, paired with last_seen_to, schema: { type: string, format: date-time } }
         - { name: last_seen_to, in: query, description: Exclusive absolute observation bound, paired with last_seen_from, schema: { type: string, format: date-time } }
+        - { name: identity_scope, in: query, description: Passive hardware view for device evidence or address-only clues. Omit to keep the existing combined scope., schema: { type: string, enum: [devices, address_clues] } }
         - { name: first_seen_within, in: query, description: The latest seven Beijing calendar days, schema: { type: string, enum: [168h] } }
         - { name: subnet, in: query, description: A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address, schema: { type: string } }
         - { name: type, in: query, schema: { type: string } }
@@ -447,6 +449,7 @@ paths:
       parameters:
         - { name: last_seen_from, in: query, description: Inclusive absolute observation bound, paired with last_seen_to, schema: { type: string, format: date-time } }
         - { name: last_seen_to, in: query, description: Exclusive absolute observation bound, paired with last_seen_from, schema: { type: string, format: date-time } }
+        - { name: identity_scope, in: query, description: Passive hardware view for device evidence or address-only clues. Omit to keep the existing combined scope., schema: { type: string, enum: [devices, address_clues] } }
         - { name: first_seen_within, in: query, description: The latest seven Beijing calendar days, schema: { type: string, enum: [168h] } }
         - { name: subnet, in: query, description: A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address, schema: { type: string } }
         - { name: type, in: query, schema: { type: string } }
@@ -4527,6 +4530,7 @@ paths:
       parameters:
         - { name: last_seen_from, in: query, description: Inclusive absolute observation bound, paired with last_seen_to, schema: { type: string, format: date-time } }
         - { name: last_seen_to, in: query, description: Exclusive absolute observation bound, paired with last_seen_from, schema: { type: string, format: date-time } }
+        - { name: identity_scope, in: query, description: Passive hardware view for device evidence or address-only clues. Omit to keep the existing combined scope., schema: { type: string, enum: [devices, address_clues] } }
         - { name: first_seen_within, in: query, description: The latest seven Beijing calendar days, schema: { type: string, enum: [168h] } }
         - { name: subnet, in: query, description: A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address, schema: { type: string } }
         - name: type

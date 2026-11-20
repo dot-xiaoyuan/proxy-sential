@@ -34,6 +34,11 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 	if query.DeviceType != "" || query.includeCandidateTypes || query.View == "iot" || query.Capability == "dumb" {
 		productType = indexedValidProductTypeSQL
 	}
+	productEvidence := "false"
+	if query.IdentityScope != "" {
+		productEvidence = `coalesce((` + indexedProductAttributionSQL + `
+ AND l.data->'product_clue'->>'product_status' IN ('identified','no_type_match','conflict')),false)`
+	}
 	subnet, subnets := "''::text", "'{}'::text[]"
 	if query.includeOverview || query.Subnet != "" {
 		subnets = `coalesce(array_agg(DISTINCT subnet) FILTER (WHERE subnet<>''),'{}'::text[])`
@@ -104,7 +109,7 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
  ` + searchName + ` search_name,` + searchType + ` search_device_type,
  ` + searchManufacturer + ` search_manufacturer,` + searchModel + ` search_model,
  ` + caps + ` observation_capabilities,
- ` + productType + ` product_type,
+ ` + productType + ` product_type,` + productEvidence + ` product_evidence,
  ` + dhcpType + ` dhcp_candidate_type,
  (l.valid_until>now() AND l.data->>'confidence' IN ('strong','confirmed') AND coalesce(l.data->'evidence'->'observer'->>'capture_scope_issue','')='') service_clue_valid
  FROM discovery_observation_latest l WHERE ` + strings.Join(baseWhere, " AND ") + `
@@ -125,7 +130,7 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 ), seed_rows AS MATERIALIZED (
  SELECT l.observation_tid,l.id,l.device_key,l.origin,l.observed_at,l.valid_until,
  l.search_ip,l.search_mac,l.search_name,l.search_device_type,` + searchManufacturerSQL + ` search_manufacturer,l.search_model,
- ` + identitySQL + ` identity_key,l.vlan,l.raw_ip,l.observation_capabilities,l.product_type,l.dhcp_candidate_type,l.service_clue_valid,
+ ` + identitySQL + ` identity_key,l.vlan,l.raw_ip,l.observation_capabilities,l.product_type,l.product_evidence,l.dhcp_candidate_type,l.service_clue_valid,
  (l.capture_scope_valid AND l.sensor_id<>'' AND l.site_id<>'' AND l.access_domain<>''
   AND lower(l.raw_mac) ~ '^[0-9a-f][02468ace](:[0-9a-f]{2}){5}$' AND lower(l.raw_mac)<>'00:00:00:00:00:00'
   AND (coalesce(l.display_endpoint,'')='' OR lower(l.display_endpoint)='mac:'||lower(l.raw_mac))) profile_identity_verified,
@@ -137,7 +142,7 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 ), candidate_rows AS MATERIALIZED (
  SELECT l.observation_tid,l.id,l.device_key,l.origin,l.observed_at,l.valid_until,
  l.search_ip,l.search_mac,l.search_name,l.search_device_type,l.search_manufacturer,l.search_model,
- l.identity_key,l.vlan,l.observation_capabilities,l.product_type,l.service_clue_valid,l.linked_endpoint,l.recognition_endpoint,l.profile_identity_verified,
+ l.identity_key,l.vlan,l.observation_capabilities,l.raw_ip,l.product_type,l.product_evidence,l.service_clue_valid,l.linked_endpoint,l.recognition_endpoint,l.profile_identity_verified,
  ` + subnet + ` subnet,
  coalesce(rec.role,'') profile_role,coalesce(rec.profile_confidence,0) profile_confidence,
  ` + profileOS + ` profile_os,` + profileType + ` profile_type,
@@ -151,6 +156,8 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
  max(observed_at) last_seen,max(profile_os) profile_os,
  ` + subnets + ` subnets,
  coalesce(array_agg(DISTINCT product_type) FILTER (WHERE product_type<>''),'{}'::text[]) product_types,
+ bool_or(raw_ip<>'') has_observed_ip,
+ bool_or(search_mac<>'' OR linked_endpoint<>'' OR product_evidence) has_device_evidence,
  bool_or(service_clue_valid AND observation_capabilities ?| ARRAY['printing','scanning','casting','media_rendering','network_video','voice']) has_iot_service,
  bool_or(observation_capabilities ?| ARRAY['printing','scanning']) has_printing,
  bool_or(observation_capabilities ? 'network_video') has_video,

@@ -4427,6 +4427,8 @@ export interface paths {
                     last_seen_from?: string;
                     /** @description Exclusive absolute observation bound */
                     last_seen_to?: string;
+                    /** @description Passive hardware view for device evidence or address-only clues. Omit to keep the existing combined scope. */
+                    identity_scope?: "devices" | "address_clues";
                     /** @description The latest seven Beijing calendar days */
                     first_seen_within?: "168h";
                     /** @description A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address */
@@ -10679,6 +10681,8 @@ export interface operations {
                 last_seen_from?: string;
                 /** @description Exclusive absolute observation bound */
                 last_seen_to?: string;
+                /** @description Passive hardware view for device evidence or address-only clues. Omit to keep the existing combined scope. */
+                identity_scope?: "devices" | "address_clues";
                 /** @description The latest seven Beijing calendar days */
                 first_seen_within?: "168h";
                 /** @description A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address */
@@ -10737,6 +10741,8 @@ export interface operations {
                 last_seen_from?: string;
                 /** @description Exclusive absolute observation bound */
                 last_seen_to?: string;
+                /** @description Passive hardware view for device evidence or address-only clues. Omit to keep the existing combined scope. */
+                identity_scope?: "devices" | "address_clues";
                 /** @description The latest seven Beijing calendar days */
                 first_seen_within?: "168h";
                 /** @description A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address */
@@ -10840,6 +10846,8 @@ export interface operations {
                 last_seen_from?: string;
                 /** @description Exclusive absolute observation bound */
                 last_seen_to?: string;
+                /** @description Passive hardware view for device evidence or address-only clues. Omit to keep the existing combined scope. */
+                identity_scope?: "devices" | "address_clues";
                 /** @description The latest seven Beijing calendar days */
                 first_seen_within?: "168h";
                 /** @description A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address */
