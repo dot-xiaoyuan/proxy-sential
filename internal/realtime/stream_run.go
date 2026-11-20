@@ -446,8 +446,10 @@ func recoveryProjectionTimeout(source Source) time.Duration {
 	// A protected device-signal archive can contain older 1,000-event segments.
 	// Give only that recoverable projection more time when PostgreSQL I/O is
 	// contended; journal permits and source order still bound in-flight work.
+	// 184 field: write_facts regularly needs ~119s under WALWrite pressure, so
+	// a 120s budget retries forever and freezes the ordered projection lane.
 	if source.Kind == "device-signals" && os.Getenv(deviceSignalRecoveryDirEnv) != "" {
-		return 120 * time.Second
+		return 5 * time.Minute
 	}
 	return 30 * time.Second
 }

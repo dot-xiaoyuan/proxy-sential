@@ -23,7 +23,7 @@ func TestRecoveryProjectionTimeoutForLargeOrContendedSources(t *testing.T) {
 		t.Fatalf("normal device projection timeout = %v", got)
 	}
 	t.Setenv(deviceSignalRecoveryDirEnv, t.TempDir())
-	if got := recoveryProjectionTimeout(device); got != 120*time.Second {
+	if got := recoveryProjectionTimeout(device); got != 5*time.Minute {
 		t.Fatalf("protected device recovery timeout = %v", got)
 	}
 	if got := recoveryProjectionTimeout(other); got != 30*time.Second {

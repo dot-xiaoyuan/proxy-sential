@@ -38,6 +38,64 @@
 
 - **2026-11-19 12:20 走"提高入库吞吐"路线（A）**。发布 `2026.11.19-8e8c87e6`（`previous=2026.11.19-89853113`）：归档/搜索车道工作数上限 2→8，新增 `--archive-workers/--search-workers`；ClickHouse 写入启用 `async_insert_busy_timeout_ms=2000` 与 32 MiB 合并窗口，减少每次段提交新建 part。handshake 与 flow-syn 车道改为 24 段待办、45 秒单次预算、4+4 工作线程。实测 handshake 滞后自 12:13 的 99 分钟收敛到 12:27 的 73.9 分钟（约 1.4 倍追赶速度），flow-syn 与身份均为亚分钟级；`stream_event_search` 上 46.59 GiB 合并已到 100%，活跃 part 22 个（此前持续翻倍）。入库速率已高于采集速率，但共享判定仍全为 `expired`：报文车道按用户要求停用，`ieee1905` 无新鲜数据，且 handshake 证据追平前窗口必然过期。
 
+## 2026-11-20 执行计划与落地（路由器 + 共享）
+
+### 目标与必要链路
+
+184 只验收两项目标：**识别路由器（网络线索）**、**识别共享行为（强锚点确认）**。
+
+| 目标 | 必需信号 | 采集 | 入库 | 消费者 | 验收口径 |
+| --- | --- | --- | --- | --- | --- |
+| 共享命中 | `ieee1905_client_association`/`snapshot`；handshake 佐证；ttl 弱线索；身份 | device-signal packet/handshake | **packet stream-run** + handshake stream-run | shared_observation worker | 出现 `matched`；`latency_ms` 多数 <180s |
+| 路由线索 | ssdp / ieee1905_topology / ndp / lldp / dhcp 网关事实 | device-signal + Zeek DHCP | packet + dhcp stream-run → **窄网络投影** | `stream_discovery_network_state` | live gateway/router clue >0 |
+| 已追平佐证 | handshake、flow-syn | 对应 sidecar | 对应 stream-run | 共享弱信号 | 未读近 0，保持即可 |
+
+硬条件：`NewObservationDecision` 要求 `StrongAnchor` 非空；现场 `freshness_seconds=180`。不移动 epoch、不把取消积压计作完成、不造数。
+
+### 问题待办
+
+| ID | 问题 | 优先级 | 阶段 |
+| --- | --- | --- | --- |
+| P1 | packet stream-run 自 11-19 12:05 停用 | P0 | A |
+| P2 | CH 无新鲜 ieee1905 → 共享 matched=0 | P0 | A |
+| P3 | packet 当前未读约 0.7 GiB（另有轮转 `.1`） | P0 | A |
+| P4 | 约 19% 判定 ≥180s → expired；PG `WALWrite` | P1 | A 观察 / 必要时调优 |
+| P5 | discovery/inventory 停服 → 路由空窗 | P1 | B |
+| P6 | 无安全的 shared/network-only 窄投影配置 | P1 | B（需代码） |
+| P7 | 旧 `ingest run` 与 stream-run 双读 `ttl.jsonl` | P2 | C |
+| P8 | 根盘 95%、剩约 92–94G | P2 | C |
+| P9 | DHCP 游标跨轮转 | P2 | C 观察 |
+| P10 | inventory stale / 身份 delayed | P2 | C |
+
+### 阶段划分
+
+**阶段 A（今天落地）— 恢复强锚点入库**
+
+1. 记录启停前水位：packet/handshake 未读、CH 各 protocol 最新 `observed_at`、共享 decision 分布、磁盘/load、`/readyz`。
+2. 为 packet unit 对齐握手车道追赶参数：`--store-timeout 45s --archive-workers 4 --search-workers 4 --max-pending-segments 24`（原仅 45s/8 pending；`Restart=no` 保持，便于异常即停）。
+3. `systemctl start proxy-sentinel-ingest-stream-packet-layered-r7`，连续观察：进程存活、未读净斜率、CH 是否出现当日 `ieee1905_*`/`ssdp`/`ndp`、段提交是否再被单段钉死。
+4. 追平到近实时后，统计 30–60 分钟 `shared_observation_decision`：`matched`/`insufficient`/`expired` 与 `latency_ms` 分位；handshake 未读保持近 0。
+5. 失败回退：`systemctl stop` 该 unit，保留 journal/原文，记录卡点段与错误；不改 freshness、不跳游标。
+
+**阶段 B — 窄路由线索（A 验收后再动）**
+
+1. 不恢复全量 discovery/inventory 热写。
+2. 优先启用/补齐仅写 `stream_discovery_network_state` 的窄路径（已有 network backfill/state 代码则现场验证；缺配置则补 `shared_only`/network clue 职责标记与回归测试后发布）。
+3. 验收：network_state live>0、路由页非空窗、PG WAL 不明显回到停服前风暴。
+
+**阶段 C — 稳态**
+
+1. 明确 stream-run 为报文权威路径；收敛旧 `ingest run` 对同文件的搜索写入，避免“只有 ttl”错觉。
+2. 容量：清无引用过期日志块、控制 CH part；根盘留出 >100GiB 余量，不删唯一原文/案件证据。
+3. 保持单段超时有界、计数漂移自愈、风险租约有界重试。
+
+### 阶段 A 执行记录（2026-11-20）
+
+- **13:43 启停前只读水位**：版本 `2026.11.19-8e8c87e6`；packet inactive（Restart=no）；packet 未读约 **707 MiB**、handshake 未读 0；近 2 小时 CH `packet-sidecar` 仅 `ttl`；根盘 95%/剩 92G；load ~19。
+- **13:44 已启动 packet stream-run**：drop-in 先为 `--store-timeout 45s --archive-workers 4 --search-workers 4 --max-pending-segments 24`；随后提到 workers **8+8**、pending **32**。采集端 `ttl.jsonl` 游标附近事件时间约为当日 `04:02Z`（落后实时约 1.5–2h），尾部持续有 `ieee1905_*`/`ssdp`/`ndp`。
+- **卡点**：有序投影车道钉在旧段 `891ea2fc…`（`accepted_at=11-19T04:05Z`，`needs_projection=true`）。`write_facts` 常耗时 ~119s，恢复投影预算仅 120s，于是 `projection reconcile` 每 2 分钟超时重试；pending 顶满后源游标净推进为 0，未读继续涨。search/archive 可前进，但不能释放段。`event_key_scheme_mismatch` 收据仍 `projected=1000`，不是“未投影”，是超时未 ACK。
+- **代码修复（待发布）**：`recoveryProjectionTimeout` 在存在 device-signal recovery dir 时由 120s 提到 **5m**，并更新单测；目标是让该段一次写完事实、解开有序投影，使游标重新追赶。不改 freshness、不跳游标、不把取消计完成。
+
 ## 数据边界与待办
 
 - 固定来源 epoch：被动发现 `discovery-fresh-20261031T092000Z`，报文 `packet-birth-20261111T022159Z`，握手 `handshake-birth-20261111T022159Z`，TCP SYN `flow-syn-birth-20261113T104500Z`；身份派生新起点 `2026-10-29T05:11:29Z`。不移动起点，不把旧段或取消任务计作完成。11 月 12 日约七小时无 PCAP 窗口及既有套接字丢包仍是未恢复证据缺口。Redpanda 仍是影子链路。
