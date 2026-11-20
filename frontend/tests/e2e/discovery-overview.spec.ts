@@ -25,7 +25,13 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
             hardware_type_status: 'candidate', classification_status: 'candidate', category: 'identity_only',
             protocols: ['ssdp'], capabilities: ['routing'], observations: [], current: true, first_seen: at, last_seen: at,
           }))
-          return Response.json({ ...sample, items: [...addressRows, ...sample.items] })
+          const productRow = {
+            ...addressRows[0], id:'product-switch', vlan:'4005', protocols:['snmp'], capabilities:[],
+            primary_ip:'192.0.2.52', last_observed_ip:'192.0.2.52', addresses:['192.0.2.52'],
+            product_clues:[{ip:'192.0.2.52',type:'switch',manufacturer:'Ruijie',model:'S5310-24SFP4XS-E',
+              event_id:'fixture-snmp',observed_at:at,attribution:'response_ip',rule_version:'fixture'}],
+          }
+          return Response.json({ ...sample, items: [...addressRows, productRow, ...sample.items] })
         }
         if (!path.endsWith('/discovery/devices/metadata')) return response
         const sample = await response.json()
@@ -51,11 +57,47 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     const rowTop = await firstRow.evaluate(row => row.getBoundingClientRect().top)
     expect(rowTop).toBeGreaterThan(collapsed.top)
     expect(rowTop).toBeLessThan(viewport.width === 390 ? viewport.height : 550)
-    await expect(firstRow.getByRole('button', { name: '地址线索' })).toBeVisible()
+    await expect(firstRow.getByRole('button', { name: '192.168.1.1' })).toBeVisible()
+    await expect(firstRow.getByText('地址线索')).toBeVisible()
     await expect(firstRow.getByText('192.168.1.1', { exact: true })).toHaveCount(1)
     await expect(firstRow.getByText('VLAN 3193/20')).toBeVisible()
+    const productRow = page.getByRole('row').filter({ has: page.getByRole('button', { name: 'S5310-24SFP4XS-E', exact: true }) })
+    await expect(productRow.getByText('产品线索 · 归属待核实')).toBeVisible()
+    if (viewport.width <= 560) {
+      const toolbar = page.getByLabel('发现设备筛选工具栏')
+      const filters = await toolbar.getByRole('button', {name:'筛选',exact:true}).boundingBox()
+      const actions = await toolbar.getByRole('button', {name:'操作',exact:true}).boundingBox()
+      expect(Math.abs(filters!.y-actions!.y)).toBeLessThan(3)
+    }
     await page.screenshot({ path: test.info().outputPath('list-first.png'), animations: 'disabled' })
-    await firstRow.getByRole('button', { name: '地址线索' }).click()
+    const typePicker = page.getByRole('combobox', { name: '设备类型' })
+    await typePicker.click()
+    const popup = page.locator('.discovery-type-popup:visible')
+    await expect(popup.getByRole('option', { name: /^打印机/ })).toBeVisible()
+    const pickerProbe = await popup.evaluate(panel => {
+      const box = panel.getBoundingClientRect()
+      return {
+        left: box.left, right: box.right, width: box.width, viewport: innerWidth,
+        clipped: [...panel.querySelectorAll<HTMLElement>('.discovery-type-option > span')].some(label => label.scrollWidth > label.clientWidth+1),
+        wraps: [...panel.querySelectorAll('.discovery-type-option > span')].some(label => getComputedStyle(label).whiteSpace !== 'nowrap'),
+      }
+    })
+    expect(pickerProbe.width).toBeGreaterThanOrEqual(240)
+    expect(pickerProbe.left).toBeGreaterThanOrEqual(0)
+    expect(pickerProbe.right).toBeLessThanOrEqual(pickerProbe.viewport+1)
+    expect(pickerProbe).toMatchObject({ clipped: false, wraps: false })
+    await page.screenshot({ path: test.info().outputPath('type-picker.png'), animations: 'disabled' })
+    await page.keyboard.press('Escape')
+    await expect(popup).not.toBeVisible()
+    await page.getByRole('button', {name:'筛选',exact:true}).click()
+    const filter = page.getByRole('dialog', {name:'筛选发现记录'})
+    await expect(filter.getByLabel('证据状态')).toBeVisible()
+    const filterOverflow = await filter.evaluate(el => el.scrollWidth > el.clientWidth+2)
+    expect(filterOverflow).toBe(false)
+    await page.screenshot({path:test.info().outputPath('filter-drawer.png'),animations:'disabled'})
+    await filter.getByRole('button',{name:'查看结果'}).click()
+    await expect(filter).not.toBeVisible()
+    await firstRow.getByRole('button', { name: '192.168.1.1' }).click()
     const detail = page.getByRole('dialog', { name: '设备详情' })
     await expect(detail).toContainText('不同 VLAN 可以重复使用同一地址')
     await expect(detail.getByText('当前地址', { exact: true })).toHaveCount(0)
@@ -74,12 +116,6 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
       const chart = panel.querySelector('.discovery-type-chart')!.getBoundingClientRect()
       const profiles = panel.querySelector('[aria-label="画像类型线索"]')!.getBoundingClientRect()
       const products = panel.querySelector('[aria-label="IP 产品类型线索"]')!.getBoundingClientRect()
-      const selected = document.querySelector('.terminal-type-shortcuts [aria-pressed="true"]')!
-      const luminance = (color: string) => (color.match(/[\d.]+/g) ?? []).slice(0,3).map(value=>Number(value)/255)
-        .map(value=>value<=0.04045?value/12.92:((value+0.055)/1.055)**2.4)
-        .reduce((sum,value,i)=>sum+value*[0.2126,0.7152,0.0722][i],0)
-      const foreground = luminance(getComputedStyle(selected).color)
-      const background = luminance(getComputedStyle(selected).backgroundColor)
       return {
         documentOverflow: document.documentElement.scrollWidth > innerWidth + 2,
         panelOverflow: panel.scrollWidth > panel.clientWidth + 2,
@@ -89,7 +125,6 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
         cardsNoWrap: cards.every(card => getComputedStyle(card).whiteSpace === 'nowrap' && getComputedStyle(card).flexShrink === '0'),
         rowsInsidePanel: rows.every(row => row.getBoundingClientRect().right <= panel.getBoundingClientRect().right + 1),
         clueGroupsHaveCompactSpacing: [profiles.top-chart.bottom, products.top-profiles.bottom].every(gap => gap <= 16),
-        selectedContrastPasses: (Math.max(foreground,background)+0.05)/(Math.min(foreground,background)+0.05)>=4.5,
       }
     })
     expect(probe).toEqual({
@@ -101,7 +136,6 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
       cardsNoWrap: true,
       rowsInsidePanel: true,
       clueGroupsHaveCompactSpacing: true,
-      selectedContrastPasses: true,
     })
     await test.info().attach('dom-audit', {body:JSON.stringify({viewport, collapsed, rowTop, probe, errors}, null, 2), contentType:'application/json'})
     await page.screenshot({ path: test.info().outputPath('statistics-expanded.png'), animations: 'disabled' })

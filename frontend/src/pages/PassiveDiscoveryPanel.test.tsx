@@ -64,6 +64,16 @@ function observedCalls() {
   return request.mock.calls.map(([path]) => String(path)).filter(path => path.startsWith('/discovery/observed-ports?'))
 }
 
+async function clickDiscoveryMenu(buttonName: string, itemName: string) {
+  fireEvent.click(screen.getByRole('button', { name: buttonName }))
+  fireEvent.click(await screen.findByRole('menuitem', { name: itemName }))
+}
+
+async function selectDiscoveryType(name: RegExp) {
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: '设备类型' }))
+  fireEvent.click(await screen.findByRole('option', { name }))
+}
+
 afterEach(() => { cleanup(); request.mockReset() })
 
 it('keeps the discovery page focused on its list and leaves coverage on its own page', async () => {
@@ -129,12 +139,12 @@ it('shows a loading status while the first page loads and a search status as soo
     ? new Promise(resolve => { resolveDevices = resolve })
     : normalRead(path))
   renderPanel()
-  expect(await screen.findByRole('status')).toHaveTextContent('正在加载')
+  expect(await screen.findByRole('status')).toHaveAccessibleName('正在加载')
   resolveDevices({ items: [device], has_more: false })
   await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
 
   fireEvent.change(screen.getByLabelText('搜索 IP、MAC、名称或型号'), { target: { value: 'router' } })
-  expect(screen.getByRole('status')).toHaveTextContent('正在搜索')
+  expect(screen.getByRole('status')).toHaveAccessibleName('正在搜索')
 })
 
 it('shows complete discovery and confirmed type counts using the same metadata scope', async () => {
@@ -258,7 +268,7 @@ it('counts recent observations beyond the configured five-minute discovery holdb
 
 it('keeps type filters visible and collection diagnostics behind a disclosure', async () => {
   mockReads();renderPanel()
-  expect(screen.getByRole('navigation',{name:'快捷设备类型'})).toBeVisible()
+  expect(screen.getByRole('combobox',{name:'设备类型'})).toBeVisible()
   expect(screen.getByText('采集与识别状态').closest('details')).not.toHaveAttribute('open')
 })
 
@@ -305,15 +315,17 @@ it('distinguishes an empty current IP port read from a failed read', async () =>
   expect(screen.queryByText('读取目标端口线索失败')).not.toBeInTheDocument()
 })
 
-it('switches shortcut types atomically and clears the dumb capability filter', async()=>{
+it('combines a printer filter with the dumb view and clears the scope when switching to all records', async()=>{
   mockReads();renderPanel(['/?discovery_capability=dumb'])
-  fireEvent.click(screen.getByRole('button',{name:'无线 AP'}))
+  await selectDiscoveryType(/^打印机/)
   await waitFor(()=>{
     const paths=request.mock.calls.map(([p])=>String(p)).filter(p=>p.startsWith('/discovery/devices?'))
     const query=new URLSearchParams(paths.at(-1)!.split('?')[1])
-    expect(query.get('type')).toBe('access_point')
-    expect(query.has('capability')).toBe(false)
+    expect(query.get('type')).toBe('printer')
+    expect(query.get('capability')).toBe('dumb')
   })
+  await clickDiscoveryMenu('视图', '全部发现')
+  await waitFor(()=>expect(screen.queryByLabelText('已应用筛选')).not.toBeInTheDocument())
 })
 
 it('keeps V8 profile type clues visible without counting them as hardware confirmations', async () => {
@@ -370,17 +382,36 @@ it('labels address-only observations and keeps the same IP in different VLANs in
     ], has_more: false })
     : read(path))
   renderPanel()
-  const remarks = await screen.findAllByRole('button', { name: '地址线索' })
+  const remarks = await screen.findAllByRole('button', { name: '192.168.1.1' })
   expect(remarks).toHaveLength(2)
   const row = remarks[0].closest('tr')!
   expect(within(row).getAllByText('192.168.1.1')).toHaveLength(1)
   expect(within(row).getByText('观测地址')).toBeVisible()
+  expect(within(row).getByText('地址线索')).toBeVisible()
   expect(within(row).getByText('VLAN 3193/20')).toBeVisible()
   expect(within(remarks[1].closest('tr')!).getByText('VLAN 2851/22')).toBeVisible()
   fireEvent.click(remarks[0])
   const explanation = await screen.findByText(/不同 VLAN 可以重复使用同一地址/)
   expect(explanation).toBeInTheDocument()
   expect(within(explanation.closest('.discovery-evidence-modal') as HTMLElement).queryByText('当前地址', { exact: true })).toBeNull()
+})
+
+it('uses an observed product model for the title while retaining its IP and ownership status', async () => {
+  mockReads()
+  const read = request.getMockImplementation()!
+  request.mockImplementation((path: string) => path.startsWith('/discovery/devices?')
+    ? Promise.resolve({ items: [{
+      ...device, primary_ip: '10.161.255.2', current_addresses: [], hardware_type_status: 'candidate',
+      protocols: ['snmp'], product_clues: [{
+        ip: '10.161.255.2', type: 'switch', manufacturer: 'Ruijie', model: 'S5310-24SFP4XS-E',
+        event_id: 'snmp-model', observed_at: device.last_seen, attribution: 'response_ip', rule_version: 'fixture',
+      }],
+    }], has_more: false })
+    : read(path))
+  renderPanel()
+  const row = (await screen.findByRole('button',{name:'S5310-24SFP4XS-E'})).closest('tr')!
+  expect(within(row).getByText('10.161.255.2')).toBeVisible()
+  expect(within(row).getByText('产品线索 · 归属待核实')).toBeVisible()
 })
 
 it('does not count expired or conflicting recognition as an explicit current type', async()=>{
@@ -398,7 +429,7 @@ it('removes previous rows when a filter changes after one discovery key was spli
   request.mockImplementation((path:string,options?:unknown)=>path.startsWith('/discovery/devices?')?Promise.resolve({items:path.includes('type=access_point')?[{...device,id:'ap-key',name:'筛选后的 AP',device_type:'access_point',observations:[{id:'ap-evidence',origin:'arp',observed_at:device.last_seen}]}]:splitRows,has_more:false}):read(path,options))
   renderPanel()
   await screen.findByRole('button',{name:'打印机 three'})
-  fireEvent.click(screen.getByRole('button',{name:'无线 AP'}))
+  await selectDiscoveryType(/^无线接入点/)
   await screen.findByRole('button',{name:'筛选后的 AP'})
   expect(screen.queryByRole('button',{name:'打印机 one'})).not.toBeInTheDocument()
   expect(screen.queryByRole('button',{name:'打印机 two'})).not.toBeInTheDocument()
@@ -462,7 +493,7 @@ it('filters the list from the triage counts', async () => {
 it('filters VoIP phones from the quick types', async () => {
   mockReads()
   renderPanel()
-  fireEvent.click(screen.getByRole('button', { name: 'VoIP 话机' }))
+  await selectDiscoveryType(/^VoIP 话机/)
   await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).startsWith('/discovery/devices?') && String(path).includes('type=voip_phone'))).toBe(true))
 })
 
@@ -483,7 +514,7 @@ it('exports the filtered discovery rows as CSV', async () => {
   const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {})
   try {
     renderPanel()
-    fireEvent.click(screen.getByRole("button", { name: '导出全部筛选结果' }))
+    await clickDiscoveryMenu('操作', '导出全部筛选结果')
     await waitFor(() => expect(blobs.length).toBe(1))
     const csv = await blobs[0].text()
     expect(csv).toContain("标识,名称,MAC")
@@ -511,7 +542,7 @@ it('shows fingerprint matches for linked discovery devices', async () => {
 it('filters randomized MAC devices from the advanced filters', async () => {
   mockReads()
   renderPanel()
-  fireEvent.click(screen.getByRole('button', { name: /更多筛选/ }))
+  fireEvent.click(screen.getByRole('button', { name: /^筛选/ }))
   fireEvent.click(screen.getByRole('checkbox', { name: '本地管理 MAC' }))
   await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).startsWith('/discovery/devices?') && String(path).includes('random_mac=true'))).toBe(true))
 })
@@ -520,7 +551,7 @@ it('filters randomized MAC devices from the advanced filters', async () => {
 it('filters by device category from advanced filters', async () => {
   mockReads()
   renderPanel()
-  fireEvent.click(screen.getByRole('button', { name: /更多筛选/ }))
+  fireEvent.click(screen.getByRole('button', { name: /^筛选/ }))
   fireEvent.mouseDown(screen.getByRole('combobox', { name: '设备分类' }))
   fireEvent.click(screen.getByText('网络设备'))
   await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).startsWith('/discovery/devices?') && String(path).includes('category=network'))).toBe(true))
@@ -541,24 +572,22 @@ it('saves and applies discovery views', async () => {
   localStorage.clear()
   mockReads()
   renderPanel(['/devices?tab=discovery&discovery_type=printer'])
-  fireEvent.click(await screen.findByRole('button', { name: /更多筛选/ }))
-  fireEvent.click(screen.getByRole('button', { name: '保存视图' }))
+  await clickDiscoveryMenu('视图', '保存视图')
   fireEvent.change(screen.getByRole('textbox', { name: '视图名称' }), { target: { value: '打印机视图' } })
   fireEvent.click(screen.getByRole('button', { name: '保 存' }))
   await waitFor(() => expect(localStorage.getItem('proxy-sentinel.discovery.views.v1')).toContain('打印机视图'))
   expect(localStorage.getItem('proxy-sentinel.discovery.views.v1')).toContain('discovery_type=printer')
   fireEvent.click(screen.getByRole('button', { name: '清除筛选' }))
-  fireEvent.mouseDown(screen.getByRole('combobox', { name: '保存的视图' }))
-  fireEvent.click(screen.getByText('打印机视图'))
+  await clickDiscoveryMenu('视图', '打印机视图')
   await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).includes('type=printer'))).toBe(true))
-  expect(screen.getByRole('button', { name: '删除视图' })).toBeInTheDocument()
+  expect(screen.getByLabelText('已应用筛选')).toHaveTextContent('打印机')
 })
 
 
 it('filters by operating system from advanced filters', async () => {
   mockReads()
   renderPanel()
-  fireEvent.click(screen.getByRole('button', { name: /更多筛选/ }))
+  fireEvent.click(screen.getByRole('button', { name: /^筛选/ }))
   fireEvent.change(screen.getByRole('textbox', { name: '操作系统' }), { target: { value: 'Apple OS' } })
   await waitFor(() => expect(request.mock.calls.some(([path]) => new URL(String(path), 'http://x').searchParams.get('os') === 'Apple OS')).toBe(true))
 })
@@ -605,18 +634,17 @@ it('toggles automatic refresh and remembers it', async () => {
   localStorage.clear()
   mockReads()
   renderPanel()
-  const toggle = await screen.findByRole('switch', { name: '自动刷新' })
-  expect(toggle.getAttribute('aria-checked')).toBe('false')
-  fireEvent.click(toggle)
-  await waitFor(() => expect(toggle.getAttribute('aria-checked')).toBe('true'))
-  expect(localStorage.getItem('proxy-sentinel.discovery.auto-refresh')).toBe('true')
+  await clickDiscoveryMenu('操作', '开启自动刷新')
+  await waitFor(() => expect(localStorage.getItem('proxy-sentinel.discovery.auto-refresh')).toBe('true'))
+  await clickDiscoveryMenu('操作', '关闭自动刷新')
+  expect(localStorage.getItem('proxy-sentinel.discovery.auto-refresh')).toBe('false')
 })
 
 
 it('filters the last 15 minutes from the window select', async () => {
   mockReads()
   renderPanel()
-  fireEvent.click(screen.getByRole('button', { name: /更多筛选/ }))
+  fireEvent.click(screen.getByRole('button', { name: /^筛选/ }))
   fireEvent.mouseDown(screen.getByRole('combobox', { name: '最近观测范围' }))
   fireEvent.click(screen.getByText('近 15 分钟'))
   await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).startsWith('/discovery/devices?') && String(path).includes('window=15m'))).toBe(true))
@@ -626,7 +654,7 @@ it('filters the last 15 minutes from the window select', async () => {
 it('debounces the operating system input', async () => {
   mockReads()
   renderPanel()
-  fireEvent.click(screen.getByRole('button', { name: /更多筛选/ }))
+  fireEvent.click(screen.getByRole('button', { name: /^筛选/ }))
   const input = screen.getByRole('textbox', { name: '操作系统' })
   fireEvent.change(input, { target: { value: 'A' } })
   fireEvent.change(input, { target: { value: 'Ap' } })
@@ -640,14 +668,13 @@ it('debounces the operating system input', async () => {
 it('filters multiple device types', async () => {
   mockReads()
   renderPanel()
-  fireEvent.click(screen.getByText('更多类型', { exact: true }))
   fireEvent.mouseDown(screen.getByRole('combobox', { name:'设备类型' }))
   await waitFor(() => expect(document.querySelectorAll('.ant-select-item-option').length).toBeGreaterThan(0))
   const typeOptions = Array.from(document.querySelectorAll<HTMLElement>('.ant-select-item-option'))
-  fireEvent.click(typeOptions.find(option => option.textContent === '打印机')!)
-  await waitFor(() => expect(Array.from(document.querySelectorAll<HTMLElement>('.ant-select-item-option')).some(option => option.textContent === '摄像头')).toBe(true))
+  fireEvent.click(typeOptions.find(option => option.textContent?.startsWith('打印机'))!)
+  await waitFor(() => expect(Array.from(document.querySelectorAll<HTMLElement>('.ant-select-item-option')).some(option => option.textContent?.startsWith('摄像头'))).toBe(true))
   const nextTypeOptions = Array.from(document.querySelectorAll<HTMLElement>('.ant-select-item-option'))
-  fireEvent.click(nextTypeOptions.find(option => option.textContent === '摄像头')!)
+  fireEvent.click(nextTypeOptions.find(option => option.textContent?.startsWith('摄像头'))!)
   await waitFor(() => expect(request.mock.calls.some(([path]) => new URL(String(path), 'http://x').searchParams.get('type') === 'printer,camera')).toBe(true))
 })
 
@@ -659,7 +686,7 @@ it('chooses VLANs from the facet counts and filters the list by them', async () 
     ? normalRead(path).then((data: unknown) => ({ ...(data as object), vlans: [{ vlan: '32', count: 5 }, { vlan: '33', count: 2 }] }))
     : normalRead(path))
   renderPanel()
-  fireEvent.click(screen.getByRole('button', { name: /更多筛选/ }))
+  fireEvent.click(screen.getByRole('button', { name: /^筛选/ }))
   fireEvent.mouseDown(screen.getByRole('combobox', { name: 'VLAN' }))
   await waitFor(() => expect(Array.from(document.querySelectorAll<HTMLElement>('.ant-select-item-option')).some(option => option.textContent === 'VLAN 32 · 5')).toBe(true))
   fireEvent.click(Array.from(document.querySelectorAll<HTMLElement>('.ant-select-item-option')).find(option => option.textContent === 'VLAN 32 · 5')!)
@@ -671,6 +698,7 @@ it('chooses VLANs from the facet counts and filters the list by them', async () 
 it('filters to current evidence without expired', async () => {
   mockReads()
   renderPanel()
+  fireEvent.click(screen.getByRole('button', { name: /^筛选/ }))
   fireEvent.mouseDown(screen.getByRole('combobox', { name: '证据状态' }))
   fireEvent.click(screen.getByText('当前有效（不含过期）'))
   await waitFor(() => expect(request.mock.calls.some(([path]) => new URL(String(path), 'http://x').searchParams.get('state') === 'identified,candidate,conflict')).toBe(true))
@@ -680,7 +708,7 @@ it('filters to current evidence without expired', async () => {
 it('filters multiple protocols', async () => {
   mockReads()
   renderPanel()
-  fireEvent.click(screen.getByRole('button', { name: /更多筛选/ }))
+  fireEvent.click(screen.getByRole('button', { name: /^筛选/ }))
   fireEvent.mouseDown(screen.getByRole('combobox', { name: '发现协议' }))
   await waitFor(() => expect(document.querySelectorAll('.ant-select-item-option').length).toBeGreaterThan(0))
   const protocolOptions = Array.from(document.querySelectorAll<HTMLElement>('.ant-select-item-option'))
@@ -696,18 +724,16 @@ it('manages saved discovery views', async () => {
   localStorage.clear()
   mockReads()
   renderPanel()
-  fireEvent.click(await screen.findByRole('button', { name: /更多筛选/ }))
   const saveView = async (name: string) => {
-    fireEvent.click(screen.getByRole('button', { name: '保存视图' }))
+    await clickDiscoveryMenu('视图', '保存视图')
     fireEvent.change(screen.getByRole('textbox', { name: '视图名称' }), { target: { value: name } })
     fireEvent.click(screen.getByRole('button', { name: '保 存' }))
     await waitFor(() => expect(localStorage.getItem('proxy-sentinel.discovery.views.v1')).toContain(name))
   }
   await saveView('视图A')
   await saveView('视图B')
-  fireEvent.click(screen.getByRole('button', { name: '管理' }))
-  await screen.findByText('管理视图')
-  const rowA = screen.getByText('视图A').closest('.discovery-view-manage-row')
+  await clickDiscoveryMenu('视图', '管理视图')
+  const rowA = (await screen.findByText('视图A', {selector:'.discovery-view-manage-row span'})).closest('.discovery-view-manage-row')
   expect(rowA).toBeTruthy()
   fireEvent.click(within(rowA as HTMLElement).getByRole('button', { name: '删除' }))
   await waitFor(() => expect(localStorage.getItem('proxy-sentinel.discovery.views.v1')).not.toContain('视图A'))

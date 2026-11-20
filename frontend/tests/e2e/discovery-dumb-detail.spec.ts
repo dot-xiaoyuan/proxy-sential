@@ -29,11 +29,11 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     const vlan = page.getByRole('combobox', { name: 'VLAN' })
     await expect(vlan).toBeVisible()
     const panelProbe = await page.evaluate(() => {
-      const panel = document.querySelector('.app-filter-panel') as HTMLElement
+      const panel = document.querySelector('.discovery-filter-drawer .ant-drawer-body') as HTMLElement
       return { overflow: panel.scrollWidth > panel.clientWidth + 2, documentOverflow: document.documentElement.scrollWidth > innerWidth + 2 }
     })
     expect(panelProbe).toEqual({ overflow: false, documentOverflow: false })
-    await page.getByRole('button', { name: viewport.width === 390 ? '关闭筛选' : '收起筛选' }).click()
+    await page.getByRole('button', { name: '关闭筛选' }).click()
     await page.getByRole('button', { name: '查看详情' }).first().click()
     const modal = page.locator('.discovery-evidence-modal')
     await expect(modal.locator('.discovery-detail-section').first()).toBeVisible()
