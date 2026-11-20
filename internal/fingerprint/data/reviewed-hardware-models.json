@@ -3,7 +3,7 @@
   "entries": [
     {
       "id": "canon-mf260-series",
-      "pattern": "(?i)^(?:Canon )?MF260(?: Series)?$",
+      "pattern": "(?i)^(?:(?:Canon )?MF260(?: Series)?|Canon MF260 Series UUID=[0-9a-f]{12} MFG=Canon MDL=MF260 Series scannerAvailable=1)$",
       "type": "printer",
       "model": "Canon MF260 Series",
       "manufacturer": "Canon",
@@ -14,14 +14,18 @@
       "rationale": "Canon's MF260 series datasheet identifies this model family as multifunction monochrome printers with scanning; series-level self-report does not select a specific MF264/MF267/MF269 variant.",
       "positive": [
         "Canon MF260 Series",
-        "MF260 Series"
+        "MF260 Series",
+        "Canon MF260 Series UUID=0123456789ab MFG=Canon MDL=MF260 Series scannerAvailable=1"
       ],
       "negative": [
         "Canon",
         "Canon scanner",
         "Canon MF2600",
-        "MF260 firmware"
-      ]
+        "MF260 firmware",
+        "Canon MF260 Series UUID=0123456789ab MFG=Canon MDL=MF264 Series scannerAvailable=1",
+        "Canon MF260 Series UUID=0123456789ab MFG=Other MDL=MF260 Series scannerAvailable=1"
+      ],
+      "version": "hardware-model-review-2026-11-20.1"
     },
     {
       "id": "kyocera-ecosys-m8124cidn",
@@ -1101,6 +1105,46 @@
         "Huawei eSpace U1981 V200R003C00",
         "Mozilla Huawei eSpace 7910 V200R003C00",
         "Huawei eSpace 79100 V200R003C00"
+      ]
+    },
+    {
+      "id": "hikvision-ds-ipc-t12-i",
+      "pattern": "(?i)^DS-IPC-T12-I$",
+      "field": "sadp_model",
+      "type": "camera",
+      "model": "DS-IPC-T12-I",
+      "manufacturer": "Hikvision",
+      "version": "hardware-model-review-2026-11-20.1",
+      "source_url": "https://dealer-static.hikvision.com/upload/file/doc/DOC000060711-DS-IPC-T12-I%28D%29.pdf",
+      "rationale": "The manufacturer identifies the DS-IPC-T12-I family as a network camera; keep the model string reported by the scoped SADP responder.",
+      "positive": [
+        "DS-IPC-T12-I"
+      ],
+      "negative": [
+        "DS-IPC-T12-I firmware",
+        "DS-IPC-T12-IX",
+        "DS-IPC",
+        "Hikvision"
+      ]
+    },
+    {
+      "id": "apple-mac17-2",
+      "pattern": "(?i)^Mac17,2$",
+      "field": "dns_sd_model",
+      "type": "laptop",
+      "model": "MacBook Pro (14-inch, M5)",
+      "manufacturer": "Apple",
+      "version": "hardware-model-review-2026-11-20.1",
+      "source_url": "https://support.apple.com/en-bn/108052",
+      "rationale": "Apple identifies Mac17,2 as MacBook Pro (14-inch, M5). Only the exact DNS-SD identifier is accepted. Generic AirPlay implementation strings remain separate.",
+      "positive": [
+        "Mac17,2"
+      ],
+      "negative": [
+        "Mac17,3",
+        "Mac17,20",
+        "Mac17",
+        "MacSamba"
       ]
     }
   ]

@@ -6151,3 +6151,37 @@ pre.wrap-code {
   .discovery-diagnostics-table td:first-child, .discovery-diagnostics-table td:last-child { display: block; }
   .discovery-diagnostics-table td:first-child::before, .discovery-diagnostics-table td:last-child::before { display: block; margin-bottom: 3px; }
 }
+
+.discovery-stat-cards { grid-template-columns: repeat(auto-fit, minmax(156px, 1fr)); }
+.discovery-type-track { position: relative; }
+.discovery-type-track .discovery-type-fill { position: absolute; inset: 0 auto 0 0; }
+.discovery-type-candidate { background: #93c5fd; }
+.discovery-extra-types { min-width: 0; }
+.discovery-extra-types .ant-collapse-header { padding: 4px 8px; white-space: nowrap; }
+.discovery-extra-types .ant-collapse-content-box { padding: 8px; }
+.discovery-view-bar { margin: 8px 0; }
+.discovery-date-range { margin: 0; padding: 8px; border: 1px solid #e2e8f0; border-radius: 8px; display: flex; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.discovery-date-range legend { float: none; width: auto; margin: 0; padding: 0 4px; color: #475569; font-size: 12px; }
+.discovery-date-range .ant-input { width: auto; max-width: 100%; min-width: 0; }
+.discovery-detail-groups { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.discovery-detail-groups > .discovery-detail-section { grid-column: 1 / -1; }
+.discovery-detail-groups > .discovery-detail-half { grid-column: auto; }
+.discovery-detail-half .discovery-detail-facts { grid-template-columns: minmax(0,1fr); }
+.discovery-distribution { border: 1px solid #e2e8f0; padding: 10px 12px; border-radius: 8px; min-width: 0; }
+.discovery-distribution summary { cursor: pointer; font-weight: 600; color: #334155; }
+.discovery-filter-drawer .ant-drawer-content-wrapper { max-width: 100vw; }
+.discovery-distribution-chart { height: 260px; width: 100%; min-width: 0; }
+.discovery-distribution-bubbles { height: 228px; }
+.discovery-distribution-keys { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.discovery-distribution-keys .ant-btn { max-width: 100%; }
+@media (max-width: 560px) {
+  .discovery-stat-cards { display: flex; overflow-x: auto; padding: 0 2px 6px; }
+  .discovery-stat-cards > button { flex: 0 0 auto; min-width: 142px; }
+  .discovery-type-row-body { grid-template-columns: minmax(0,1fr) auto; }
+  .discovery-type-track { display: none; }
+  .discovery-detail-groups { grid-template-columns: minmax(0,1fr); }
+  .passive-ledger-table .discovery-desktop-clues { display: none; }
+  .passive-ledger-table .ant-table-tbody > tr.ant-table-row > td[data-label='操作']::before,
+  .passive-ledger-table .ant-table-tbody > tr.ant-table-row > td[data-label='设备']::before { display: none; }
+  .discovery-date-range { width: 100%; }
+}

@@ -1,9 +1,11 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Button, Select, Typography } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { request } from '../shared/api/client'
 import type { components } from '../shared/api/generated'
+import { DiscoveryDistribution } from './DiscoveryDistribution'
 import { DiscoveryCoverageReport } from './DiscoveryCoverageReport'
 import { DiscoveryCoverageDiagnostics } from './DiscoveryCoverageDiagnostics'
 import { CensusPanel } from './CensusPanel'
@@ -17,12 +19,19 @@ const windows = [
 
 export function DiscoveryCoveragePage() {
   const [params, setParams] = useSearchParams()
+  const navigate = useNavigate()
+  const [distributionOpen,setDistributionOpen] = useState(false)
   const requested = params.get('window') || '24h'
   const window = windows.some(item => item.value === requested) ? requested : '24h'
   const coverage = useQuery({
     queryKey: ['discovery-coverage-report', window],
     queryFn: ({signal}) => request<components['schemas']['DiscoveryCoverageReport']>(`/discovery/devices/coverage-report?window=${window}`, {signal}),
     staleTime: 60_000,
+  })
+  const distribution = useQuery({
+    queryKey: ['discovery-coverage-distribution', window],
+    queryFn: ({signal}) => request<components['schemas']['DiscoveryDeviceMetadata']>(`/discovery/devices/metadata?mode=passive&window=${window}`, {signal}),
+    enabled: distributionOpen, staleTime: 60_000,
   })
   return <main className="page device-center-page discovery-coverage-page">
     <header className="discovery-report-page-header">
@@ -33,6 +42,13 @@ export function DiscoveryCoveragePage() {
       </div>
     </header>
     <DiscoveryCoverageReport report={coverage.data} loading={coverage.isPending} error={coverage.isError}/>
+    <details className="discovery-coverage-advanced" onToggle={event=>setDistributionOpen(event.currentTarget.open)}>
+      <summary>查看设备分布</summary>
+      {distribution.isFetching&&<Typography.Text type="secondary">正在读取设备分布</Typography.Text>}
+      {distribution.isError&&<Button size="small" onClick={()=>void distribution.refetch()}>读取分布失败 · 重试</Button>}
+      {distribution.data&&<DiscoveryDistribution data={distribution.data} onSelect={(key,value)=>
+        navigate(`/discovery?${new URLSearchParams({discovery_window:window,[`discovery_${key}`]:value})}`)}/>}
+    </details>
     <details className="discovery-coverage-advanced"><summary>查看原因分析与镜像明细</summary>
       <DiscoveryCoverageDiagnostics/>
       <CensusPanel/>

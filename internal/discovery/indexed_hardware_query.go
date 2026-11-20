@@ -13,6 +13,10 @@ func hardwareProfileCandidateSQL(role, confidence, conflict, seen string) string
 // No ctid is persisted, exported, or used across statements/snapshots.
 func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []string, candidateHaving, matchedWhere string) indexedDeviceSelection {
 	searchIP, searchName, searchType, searchManufacturer, searchModel := "''::text", "''::text", "''::text", "''::text", "''::text"
+	dhcpType := "''::text"
+	if query.DeviceType != "" || query.includeCandidateTypes || query.View == "iot" || query.Capability == "dumb" {
+		dhcpType = `CASE WHEN l.origin='dhcp_client' AND l.valid_until>now() THEN coalesce(l.data->'evidence'->'payload'->>'dhcp_candidate_type','') ELSE '' END`
+	}
 	profileType := "''::text"
 	if query.Search != "" {
 		searchIP = "lower(coalesce(l.data->>'ip',''))"
@@ -30,12 +34,27 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 	if query.DeviceType != "" || query.includeCandidateTypes || query.View == "iot" || query.Capability == "dumb" {
 		productType = indexedValidProductTypeSQL
 	}
+	subnet, subnets := "''::text", "'{}'::text[]"
+	if query.includeOverview || query.Subnet != "" {
+		subnets = `coalesce(array_agg(DISTINCT subnet) FILTER (WHERE subnet<>''),'{}'::text[])`
+		// Use only currently valid address facts with directly observed hardware
+		// identity. IP-only product and profile clues do not define a subnet.
+		subnet = `CASE WHEN l.profile_identity_verified AND l.valid_until>now() AND l.origin IN ('arp','ndp','dhcp')
+ AND pg_input_is_valid(l.raw_ip,'inet') THEN
+ network(set_masklen(l.raw_ip::inet,CASE family(l.raw_ip::inet) WHEN 4 THEN 24 ELSE 64 END))::text ELSE '' END`
+	}
 	identitySQL := strings.NewReplacer(
 		"coalesce(l.data->>'mac','')", "l.raw_mac", "l.data->>'mac'", "l.raw_mac",
 		"coalesce(l.data->>'node','')", "l.sensor_id", "coalesce(l.data->>'site','')", "l.site_id",
 		"coalesce(l.data->>'domain','')", "l.access_domain", "coalesce(l.data->>'vlan','')", "l.vlan",
 		"coalesce(l.data->>'vrf','')", "l.vrf",
 	).Replace(indexedIdentitySQL)
+	searchManufacturerSQL := "l.search_manufacturer"
+	searchBrandJoin := ""
+	if query.Search != "" {
+		searchManufacturerSQL = "concat_ws(' ',nullif(lower(search_hardware.data->>'manufacturer'),''),nullif(l.search_manufacturer,''))"
+		searchBrandJoin = " LEFT JOIN passive_hardware_current search_hardware ON search_hardware.identity_key=" + identitySQL
+	}
 	profileOS := "''::text"
 	if query.OSFamily != "" {
 		profileOS = "coalesce(rec.os_family,'')"
@@ -86,6 +105,7 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
  ` + searchManufacturer + ` search_manufacturer,` + searchModel + ` search_model,
  ` + caps + ` observation_capabilities,
  ` + productType + ` product_type,
+ ` + dhcpType + ` dhcp_candidate_type,
  (l.valid_until>now() AND l.data->>'confidence' IN ('strong','confirmed') AND coalesce(l.data->'evidence'->'observer'->>'capture_scope_issue','')='') service_clue_valid
  FROM discovery_observation_latest l WHERE ` + strings.Join(baseWhere, " AND ") + `
 ), missing_mac_links AS MATERIALIZED (
@@ -104,28 +124,32 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
  FROM candidate_links l LEFT JOIN trusted_address t ON t.observation_id=l.id
 ), seed_rows AS MATERIALIZED (
  SELECT l.observation_tid,l.id,l.device_key,l.origin,l.observed_at,l.valid_until,
- l.search_ip,l.search_mac,l.search_name,l.search_device_type,l.search_manufacturer,l.search_model,
- ` + identitySQL + ` identity_key,l.vlan,l.observation_capabilities,l.product_type,l.service_clue_valid,
+ l.search_ip,l.search_mac,l.search_name,l.search_device_type,` + searchManufacturerSQL + ` search_manufacturer,l.search_model,
+ ` + identitySQL + ` identity_key,l.vlan,l.raw_ip,l.observation_capabilities,l.product_type,l.dhcp_candidate_type,l.service_clue_valid,
  (l.capture_scope_valid AND l.sensor_id<>'' AND l.site_id<>'' AND l.access_domain<>''
   AND lower(l.raw_mac) ~ '^[0-9a-f][02468ace](:[0-9a-f]{2}){5}$' AND lower(l.raw_mac)<>'00:00:00:00:00:00'
   AND (coalesce(l.display_endpoint,'')='' OR lower(l.display_endpoint)='mac:'||lower(l.raw_mac))) profile_identity_verified,
  coalesce(l.display_endpoint,'') linked_endpoint,
  coalesce(l.display_endpoint,'mac:'||lower(l.raw_mac)) recognition_endpoint
- FROM display_links l
+ FROM display_links l` + searchBrandJoin + `
 ), recognition AS MATERIALIZED (
  ` + recognitionSource + `
 ), candidate_rows AS MATERIALIZED (
  SELECT l.observation_tid,l.id,l.device_key,l.origin,l.observed_at,l.valid_until,
  l.search_ip,l.search_mac,l.search_name,l.search_device_type,l.search_manufacturer,l.search_model,
  l.identity_key,l.vlan,l.observation_capabilities,l.product_type,l.service_clue_valid,l.linked_endpoint,l.recognition_endpoint,l.profile_identity_verified,
+ ` + subnet + ` subnet,
  coalesce(rec.role,'') profile_role,coalesce(rec.profile_confidence,0) profile_confidence,
  ` + profileOS + ` profile_os,` + profileType + ` profile_type,
  coalesce(rec.profile_conflict,false) AND coalesce(rec.role,'')<>'' profile_conflict,
- ` + hardwareProfileCandidateSQL("rec.role", "coalesce(rec.profile_confidence,0)", "coalesce(rec.profile_conflict,false)", "rec.profile_seen") + ` profile_candidate_role
+ CASE WHEN l.profile_identity_verified AND l.dhcp_candidate_type<>'' AND NOT coalesce(rec.profile_conflict,false)
+  AND coalesce(rec.role,'') IN ('',l.dhcp_candidate_type) THEN l.dhcp_candidate_type
+ ELSE ` + hardwareProfileCandidateSQL("rec.role", "coalesce(rec.profile_confidence,0)", "coalesce(rec.profile_conflict,false)", "rec.profile_seen") + ` END profile_candidate_role
  FROM seed_rows l LEFT JOIN recognition rec ON rec.endpoint_id=l.recognition_endpoint
 ), candidate_grouped AS (
  SELECT identity_key COLLATE "C" identity_key,max(vlan) vlan,coalesce(min(device_key COLLATE "C") FILTER (WHERE search_mac<>''),min(device_key COLLATE "C")) device_key,
  max(observed_at) last_seen,max(profile_os) profile_os,
+ ` + subnets + ` subnets,
  coalesce(array_agg(DISTINCT product_type) FILTER (WHERE product_type<>''),'{}'::text[]) product_types,
  bool_or(service_clue_valid AND observation_capabilities ?| ARRAY['printing','scanning','casting','media_rendering','network_video','voice']) has_iot_service,
  bool_or(observation_capabilities ?| ARRAY['printing','scanning']) has_printing,

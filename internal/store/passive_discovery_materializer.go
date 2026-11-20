@@ -418,6 +418,7 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 				return discovery.Observation{}, "dhcp_client_mac_source_unverified"
 			}
 			o.ValidUntil = at.Add(10 * time.Minute)
+			annotatePassiveDHCPClientCandidate(&o)
 			break
 		}
 		if discovery.HardwareProjectionEnabled() && (strings.Contains(action, "RELEASE") || strings.Contains(action, "NAK")) && mac != "" && scope.allows(ip) {
@@ -844,6 +845,20 @@ var mdnsInstanceAddress = regexp.MustCompile(`\(([0-9]{1,3}(?:\.[0-9]{1,3}){3})\
 
 // passiveTXTObservation turns a TXT record with a self-reported model into an
 // observation when the service instance embeds its own IPv4 address.
+func annotatePassiveDHCPClientCandidate(o *discovery.Observation) {
+	p := o.Evidence.Payload
+	kind := discovery.PassiveDHCPClientCandidate(passiveString(p, "vendor_class"), passiveString(p, "hostname"), passiveString(p, "requested_options"))
+	if kind == "" {
+		return
+	}
+	fields := make(map[string]any, len(p)+1)
+	for key, value := range p {
+		fields[key] = value
+	}
+	fields["dhcp_candidate_type"] = kind
+	o.Evidence.Payload = fields
+}
+
 func passiveTXTObservation(event normalized.Event, sensor, iface, recordName, text string, at, validUntil time.Time, scope passiveDiscoveryScope) (discovery.Observation, bool) {
 	model := discovery.DNSSDModelFromTXT(text)
 	address := ""
@@ -1921,6 +1936,10 @@ func (s *DBStore) runPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 	if os.Getenv("PROXY_SENTINEL_PASSIVE_DISCOVERY_DISABLED") == "true" {
 		return
 	}
+	behaviorContext, stopBehavior := context.WithCancel(ctx)
+	behaviorDone := make(chan struct{})
+	go func() { defer close(behaviorDone); s.runPassiveBehavior(behaviorContext, sensorID) }()
+	defer func() { stopBehavior(); <-behaviorDone }()
 	hardwareDone := make(chan struct{})
 	go func() { defer close(hardwareDone); s.runPassiveHardwareProjection(ctx, sensorID) }()
 	defer func() { <-hardwareDone }()

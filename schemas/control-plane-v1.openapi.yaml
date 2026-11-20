@@ -156,6 +156,21 @@ paths:
               schema: { $ref: '#/components/schemas/DiscoveryTrends' }
         '400': { description: Invalid window }
         '500': { description: Read failed }
+  /discovery/behavior:
+    get:
+      operationId: readDiscoveryBehavior
+      description: Read bounded recent passive behavior evidence for a discovery identity or scoped IP. Requires identity:read.
+      parameters:
+        - { name: key, in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Passive behavior clues
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DiscoveryBehavior' }
+        '400': { description: Invalid owner key }
+        '409': { description: Optional behavior reader is disabled }
+        '500': { description: Behavior evidence could not be read }
   /discovery/passive-signals:
     get:
       operationId: getDiscoveryPassiveSignals
@@ -350,6 +365,10 @@ paths:
       operationId: getDiscoveryDevices
       description: Versioned device state with optional last-observation window; requires identity:read. Does not claim online state or create terminal identities.
       parameters:
+        - { name: last_seen_from, in: query, description: Inclusive absolute observation bound, paired with last_seen_to, schema: { type: string, format: date-time } }
+        - { name: last_seen_to, in: query, description: Exclusive absolute observation bound, paired with last_seen_from, schema: { type: string, format: date-time } }
+        - { name: first_seen_within, in: query, description: The latest seven Beijing calendar days, schema: { type: string, enum: [168h] } }
+        - { name: subnet, in: query, description: A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address, schema: { type: string } }
         - { name: type, in: query, schema: { type: string } }
         - { name: protocol, in: query, schema: { type: string } }
         - { name: state, in: query, schema: { type: string, enum: [identified, expired, conflict, candidate] } }
@@ -379,6 +398,11 @@ paths:
       operationId: getDiscoveryDeviceMetadata
       description: Exact filtered count of discovered devices grouped by source scope and trusted endpoint or MAC identity, falling back to the discovery key. Uses the same current-index grouping and filters as the indexed discovery list. Does not claim a physical terminal census. Cursor, offset and limit are ignored. Requires identity:read.
       parameters:
+        - { name: overview, in: query, description: Set false for facet-only reads, schema: { type: boolean, default: true } }
+        - { name: last_seen_from, in: query, description: Inclusive absolute observation bound, paired with last_seen_to, schema: { type: string, format: date-time } }
+        - { name: last_seen_to, in: query, description: Exclusive absolute observation bound, paired with last_seen_from, schema: { type: string, format: date-time } }
+        - { name: first_seen_within, in: query, description: The latest seven Beijing calendar days, schema: { type: string, enum: [168h] } }
+        - { name: subnet, in: query, description: A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address, schema: { type: string } }
         - { name: type, in: query, schema: { type: string } }
         - { name: protocol, in: query, schema: { type: string } }
         - { name: state, in: query, schema: { type: string, enum: [identified, expired, conflict, candidate] } }
@@ -421,6 +445,10 @@ paths:
       operationId: streamDiscoveryDevicesExport
       description: Complete filtered discovery export from one read-only repeatable-read snapshot. NDJSON starts with a manifest and ends with a complete count record; clients must reject a missing end record or an error record. At most 200000 devices. Requires identity:read.
       parameters:
+        - { name: last_seen_from, in: query, description: Inclusive absolute observation bound, paired with last_seen_to, schema: { type: string, format: date-time } }
+        - { name: last_seen_to, in: query, description: Exclusive absolute observation bound, paired with last_seen_from, schema: { type: string, format: date-time } }
+        - { name: first_seen_within, in: query, description: The latest seven Beijing calendar days, schema: { type: string, enum: [168h] } }
+        - { name: subnet, in: query, description: A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address, schema: { type: string } }
         - { name: type, in: query, schema: { type: string } }
         - { name: protocol, in: query, schema: { type: string } }
         - { name: state, in: query, schema: { type: string } }
@@ -4497,6 +4525,10 @@ paths:
         does not load preceding record payloads. An out-of-range page returns 400; it never silently falls back to the
         first page.
       parameters:
+        - { name: last_seen_from, in: query, description: Inclusive absolute observation bound, paired with last_seen_to, schema: { type: string, format: date-time } }
+        - { name: last_seen_to, in: query, description: Exclusive absolute observation bound, paired with last_seen_from, schema: { type: string, format: date-time } }
+        - { name: first_seen_within, in: query, description: The latest seven Beijing calendar days, schema: { type: string, enum: [168h] } }
+        - { name: subnet, in: query, description: A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address, schema: { type: string } }
         - name: type
           in: query
           schema:
@@ -8890,10 +8922,37 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/DiscoveryChassisCandidate' }
+    DiscoveryBehavior:
+      type: object
+      required: [rule_version, status, attribution, as_of, items]
+      properties:
+        rule_version: { type: string }
+        status: { type: string, enum: [ready, partial] }
+        attribution: { type: string, enum: [device, ip] }
+        candidate_type: { type: string }
+        os_hint: { type: string }
+        ntp_target: { type: string }
+        cadence_minutes: { type: integer }
+        as_of: { type: string, format: date-time }
+        items:
+          type: array
+          items:
+            type: object
+            required: [kind, value, bucket_at, observed_at, event_id]
+            properties:
+              kind: { type: string }
+              value: { type: string }
+              bucket_at: { type: string, format: date-time }
+              observed_at: { type: string, format: date-time }
+              event_id: { type: string }
     DiscoveryDevice:
       type: object
       required: [id, observations, category, identity_kind, capabilities, protocols, first_seen, last_seen, current, evidence_count]
       properties:
+        behavior_keys:
+          type: array
+          description: Opaque keys for opted-in behavior evidence.
+          items: { type: string }
         product_clues: { type: array, items: { $ref: '#/components/schemas/DiscoveryProductClue' } }
         hardware_type: { type: string, description: "可信作用域身份的持久硬件类型；服务 TTL 到期不清除" }
         candidate_device_type: { type: string, description: A scoped candidate device type supported by a recent endpoint profile. This field does not confirm a hardware type. }
@@ -9049,6 +9108,39 @@ components:
             properties:
               vlan: { type: string }
               count: { type: integer, format: int64, minimum: 0 }
+        overview:
+          type: object
+          required: [active, dumb_terminals, new_seven_days, new_by_day]
+          properties:
+            active: { type: integer, format: int64, minimum: 0 }
+            previous_active: { type: integer, format: int64, minimum: 0 }
+            dumb_terminals: { type: integer, format: int64, minimum: 0 }
+            new_seven_days: { type: integer, format: int64, minimum: 0 }
+            new_by_day:
+              type: array
+              items:
+                type: object
+                required: [date, count]
+                properties:
+                  date: { type: string, format: date }
+                  count: { type: integer, format: int64, minimum: 0 }
+            brands:
+              type: array
+              items:
+                type: object
+                required: [brand, device_type, count]
+                properties:
+                  brand: { type: string }
+                  device_type: { type: string }
+                  count: { type: integer, format: int64, minimum: 0 }
+            subnets:
+              type: array
+              items:
+                type: object
+                required: [subnet, count]
+                properties:
+                  subnet: { type: string }
+                  count: { type: integer, format: int64, minimum: 0 }
         as_of: { type: string, format: date-time }
         count_unit: { type: string, enum: [trusted_discovery_identity], description: A discovered device grouped by source scope and trusted endpoint or MAC identity; unresolved identity falls back to the discovery key. }
         window: { type: string }

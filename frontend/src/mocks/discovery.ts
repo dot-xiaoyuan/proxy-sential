@@ -43,7 +43,12 @@ export const discoveryHandlers=[
   const byType=new Map<string,number>()
   for(const item of items)if(item.classification_status==='identified'&&item.device_type)byType.set(item.device_type,(byType.get(item.device_type)??0)+1)
   const identified=[...byType.values()].reduce((sum,count)=>sum+count,0)
-  return HttpResponse.json({total:items.length,identified,candidate:items.length-identified,conflict:0,expired:0,types:[...byType].map(([device_type,count])=>({device_type,count})),as_of:now,count_unit:'trusted_discovery_identity',window:'24h0m0s'})
+  return HttpResponse.json({total:items.length,identified,candidate:items.length-identified,conflict:0,expired:0,types:[...byType].map(([device_type,count])=>({device_type,count})),
+    vlans:items.length?[{vlan:'32',count:items.length}]:[],
+    overview:{active:items.length,previous_active:0,dumb_terminals:identified,new_seven_days:identified,
+      new_by_day:[{date:now.slice(0,10),count:identified}],brands:byType.has('printer')?[{brand:'HP',device_type:'printer',count:byType.get('printer')}]:[],
+      subnets:items.length?[{subnet:'192.0.2.0/24',count:items.length}]:[]},
+    as_of:now,count_unit:'trusted_discovery_identity',window:'24h0m0s'})
  }),
  http.get('*/discovery/types',()=>HttpResponse.json({version:'device-types-v1',items:[{id:'printer',label:'打印机',category:'printer'},{id:'camera',label:'摄像机',category:'camera'},{id:'access_control',label:'门禁设备',category:'access_control'},{id:'sensor',label:'传感设备',category:'sensor'},{id:'access_point',label:'无线接入点',category:'network'},{id:'router',label:'路由器',category:'network'},{id:'switch',label:'交换机',category:'network'},{id:'desktop',label:'桌面终端',category:'desktop'},{id:'mobile',label:'手机',category:'mobile'}]})),
  http.get('*/discovery/coverage',()=>HttpResponse.json({enabled:true,scope:'private',quarantine:{status:'blocked',count_at_least:1},capture_scope:{status:'expiring',valid_until:new Date(Date.now()+7*24*60*60*1000).toISOString()},items:[{sensor_id:'sensor-test',protocol:'dns_sd',enabled:true,received:12,parsed:10,rejected:2,admitted:10,error:''}]})),

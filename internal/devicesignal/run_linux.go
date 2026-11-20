@@ -93,7 +93,8 @@ func Run(ctx context.Context, opts Options) error {
 	defer syscall.Close(fd)
 	// Discovery bindings must retain the same VLAN scope as Zeek/libpcap.
 	// Keep the separate shared-access and handshake collectors unchanged.
-	if opts.RouterProtocolsOnly {
+	recvVLAN := opts.RouterProtocolsOnly || (!opts.HandshakeOnly && !opts.SharedSignalsOnly && os.Getenv("PROXY_SENTINEL_PASSIVE_BEHAVIOR_WRITE") == "true")
+	if recvVLAN {
 		if err := unix.SetsockoptInt(fd, unix.SOL_PACKET, unix.PACKET_AUXDATA, 1); err != nil {
 			return fmt.Errorf("enable discovery VLAN metadata: %w", err)
 		}
@@ -210,7 +211,7 @@ func Run(ctx context.Context, opts Options) error {
 		for processed < 4096 {
 			var n, oobn, flags int
 			var recvErr error
-			if opts.RouterProtocolsOnly {
+			if recvVLAN {
 				n, oobn, flags, _, recvErr = unix.Recvmsg(fd, buffer, ancillary, 0)
 			} else {
 				n, _, recvErr = syscall.Recvfrom(fd, buffer, 0)
@@ -227,7 +228,7 @@ func Run(ctx context.Context, opts Options) error {
 				continue
 			}
 			frame := buffer[:n]
-			if opts.RouterProtocolsOnly {
+			if recvVLAN {
 				frame, recvErr = restoreControlVLAN(frame, ancillary[:oobn], restoredBuffer)
 				if recvErr != nil {
 					droppedScopeFrames++

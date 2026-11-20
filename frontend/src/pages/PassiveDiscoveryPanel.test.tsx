@@ -256,7 +256,7 @@ it('counts recent observations beyond the configured five-minute discovery holdb
 
 it('keeps type filters visible and collection diagnostics behind a disclosure', async () => {
   mockReads();renderPanel()
-  expect(screen.getByRole('combobox',{name:'设备类型'})).toBeVisible()
+  expect(screen.getByRole('navigation',{name:'快捷设备类型'})).toBeVisible()
   expect(screen.getByText('采集与识别状态').closest('details')).not.toHaveAttribute('open')
 })
 
@@ -402,7 +402,7 @@ it('shows identification quality when the status section opens', async () => {
   expect(screen.getByText('HP · LaserJet Pro MFP 1')).toBeInTheDocument()
   expect(screen.getByText('系统 Top')).toBeInTheDocument()
   expect(screen.getByText('Apple OS 2')).toBeInTheDocument()
-  expect(screen.getByText('未识别原因')).toBeInTheDocument()
+  expect(screen.getAllByText('待核实原因')[0]).toBeInTheDocument()
   expect(screen.getByText('Apple 系统线索 2')).toBeInTheDocument()
   expect(screen.getByText('全局识别画像 · 不随列表筛选变化')).toBeInTheDocument()
   expect(await screen.findByText('近 7 天新增')).toBeInTheDocument()
@@ -606,7 +606,8 @@ it('debounces the operating system input', async () => {
 it('filters multiple device types', async () => {
   mockReads()
   renderPanel()
-  fireEvent.mouseDown(screen.getByRole('combobox', { name: '设备类型' }))
+  fireEvent.click(screen.getByText('更多类型', { exact: true }))
+  fireEvent.mouseDown(screen.getByRole('combobox', { name:'设备类型' }))
   await waitFor(() => expect(document.querySelectorAll('.ant-select-item-option').length).toBeGreaterThan(0))
   const typeOptions = Array.from(document.querySelectorAll<HTMLElement>('.ant-select-item-option'))
   fireEvent.click(typeOptions.find(option => option.textContent === '打印机')!)
@@ -733,7 +734,7 @@ it('shows dumb terminal categories with confirmed counts, clue counts and a cate
   fireEvent.click(within(overview).getByRole('button', { name: /打印\/扫描/ }))
   await waitFor(() => expect(request.mock.calls.some(([path]) => {
     const url = new URL(String(path), 'http://x')
-    return url.pathname === '/discovery/devices' && url.searchParams.get('type') === 'printer,scanner' && !url.searchParams.get('capability')
+    return url.pathname === '/discovery/devices' && url.searchParams.get('type') === 'printer,scanner' && url.searchParams.get('capability') === 'dumb'
   })).toBe(true))
 })
 

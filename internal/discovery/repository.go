@@ -240,6 +240,11 @@ type DeviceQuery struct {
 	View                          string
 	Mode                          string
 	Window                        time.Duration
+	LastSeenFrom, LastSeenTo      time.Time
+	FirstSeenWithin               time.Duration
+	Subnet                        string
+	includeOverview               bool
+	SkipOverview                  bool
 	Search                        string
 	DeviceType                    string
 	Category                      string
@@ -269,6 +274,7 @@ type HistoricalAddress struct {
 type DeviceView struct {
 	HardwareDetails
 	ProductClues         []IPProductClue `json:"product_clues,omitempty"`
+	BehaviorKeys         []string        `json:"behavior_keys,omitempty"`
 	reviewProjectionAt   *time.Time
 	indexedIdentityKey   string
 	SensorID             string              `json:"sensor_id,omitempty"`

@@ -3,6 +3,7 @@ package discovery
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"strings"
 	"time"
 )
@@ -54,12 +55,27 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 	}
 	args := []any{}
 	baseWhere := []string{"l.observed_at<=now()", "NOT l.withdrawn"}
+	at := query.SnapshotAt
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	customRange := !query.LastSeenFrom.IsZero() || !query.LastSeenTo.IsZero()
+	if customRange && (query.LastSeenFrom.IsZero() || !query.LastSeenFrom.Before(query.LastSeenTo) ||
+		query.LastSeenFrom.Before(at.Add(-30*24*time.Hour)) || query.LastSeenTo.After(at)) {
+		return indexedDeviceSelection{}, fmt.Errorf("invalid discovery filter time range")
+	}
+	if (query.Subnet != "" || query.FirstSeenWithin != 0) && !query.HardwareV2 {
+		return indexedDeviceSelection{}, fmt.Errorf("unsupported discovery filter on this read path")
+	}
+	if query.FirstSeenWithin != 0 && query.FirstSeenWithin != 168*time.Hour {
+		return indexedDeviceSelection{}, fmt.Errorf("invalid discovery filter for first observation")
+	}
 	if query.Window > 0 {
-		at := query.SnapshotAt
-		if at.IsZero() {
-			at = time.Now().UTC()
+		lower := at.Add(-query.Window)
+		if customRange {
+			lower = query.LastSeenFrom
 		}
-		args = append(args, at.Add(-query.Window))
+		args = append(args, lower)
 		baseWhere = append(baseWhere, "l.observed_at>=$1")
 	}
 	for _, filter := range []struct{ key, value string }{{"domain", query.Domain}, {"vlan", query.VLAN}} {
@@ -111,6 +127,24 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 		having = append(having, "bool_or(lower(profile_type) LIKE "+searchArg+" ESCAPE '\\' OR coalesce(search_ip,'') LIKE "+searchArg+" ESCAPE '\\' OR coalesce(search_mac,'') LIKE "+searchArg+" ESCAPE '\\' OR coalesce(search_name,'') LIKE "+searchArg+" ESCAPE '\\' OR coalesce(search_device_type,'') LIKE "+searchArg+" ESCAPE '\\' OR coalesce(search_manufacturer,'') LIKE "+searchArg+" ESCAPE '\\' OR coalesce(search_model,'') LIKE "+searchArg+" ESCAPE '\\')")
 	}
 	classifiedWhere := []string{}
+	if customRange {
+		args = append(args, query.LastSeenTo)
+		classifiedWhere = append(classifiedWhere, fmt.Sprintf("last_seen<$%d", len(args)))
+	}
+	if query.FirstSeenWithin > 0 {
+		day := at.In(discoveryCalendar)
+		args = append(args, time.Date(day.Year(), day.Month(), day.Day()-6, 0, 0, 0, 0, discoveryCalendar))
+		classifiedWhere = append(classifiedWhere, fmt.Sprintf("projection_first_seen>=$%d", len(args)))
+	}
+	if query.Subnet != "" {
+		subnet, e := netip.ParsePrefix(query.Subnet)
+		if e != nil || subnet != subnet.Masked() ||
+			(subnet.Addr().Is4() && subnet.Bits() != 24) || (!subnet.Addr().Is4() && subnet.Bits() != 64) {
+			return indexedDeviceSelection{}, fmt.Errorf("invalid discovery filter subnet")
+		}
+		args = append(args, subnet.String())
+		classifiedWhere = append(classifiedWhere, fmt.Sprintf("$%d = ANY(subnets)", len(args)))
+	}
 	if query.DeviceType != "" {
 		// Comma-separated types stay parameterized; the indexed path matches any
 		// of them against the identified/expired/candidate type columns.

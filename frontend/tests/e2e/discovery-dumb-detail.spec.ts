@@ -25,7 +25,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await page.screenshot({ path: `/tmp/204-dumb-overview-${viewport.width}x${viewport.height}.png`, fullPage: true, animations: 'disabled' })
 
     await page.goto('/devices?tab=discovery')
-    await page.getByRole('button', { name: '更多筛选' }).click()
+    await page.getByRole('button', { name: /^(筛选|更多筛选)/ }).click()
     const vlan = page.getByRole('combobox', { name: 'VLAN' })
     await expect(vlan).toBeVisible()
     const panelProbe = await page.evaluate(() => {
@@ -33,7 +33,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
       return { overflow: panel.scrollWidth > panel.clientWidth + 2, documentOverflow: document.documentElement.scrollWidth > innerWidth + 2 }
     })
     expect(panelProbe).toEqual({ overflow: false, documentOverflow: false })
-    await page.getByRole('button', { name: '收起筛选' }).click()
+    await page.getByRole('button', { name: viewport.width === 390 ? '关闭筛选' : '收起筛选' }).click()
     await page.getByRole('button', { name: '查看详情' }).first().click()
     const modal = page.locator('.discovery-evidence-modal')
     await expect(modal.locator('.discovery-detail-section').first()).toBeVisible()

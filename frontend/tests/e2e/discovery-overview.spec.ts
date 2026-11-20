@@ -11,7 +11,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await page.goto('/devices?tab=discovery')
     const overview = page.getByLabel('发现设备总览')
     await expect(overview).toBeVisible()
-    await expect(overview.locator('.discovery-stat-card')).toHaveCount(4)
+    await expect(overview.locator('.discovery-stat-card')).toHaveCount(7)
     await expect(overview.locator('.discovery-type-row').first()).toBeVisible()
     const probe = await page.evaluate(() => {
       const panel = document.querySelector('.discovery-overview') as HTMLElement

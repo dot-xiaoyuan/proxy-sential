@@ -252,7 +252,7 @@ func ParseHardwareCatalog(data, provenance []byte, extra ...[]byte) (*HardwareCa
 		if err := verifyRaw(r.RawRef, r.RawSHA256); err != nil {
 			return nil, err
 		}
-		if r.Field != "" && r.Field != "dhcp_product_model" && r.Field != "sip_user_agent" && r.Field != "rtsp_user_agent" {
+		if r.Field != "" && r.Field != "dhcp_product_model" && r.Field != "sip_user_agent" && r.Field != "rtsp_user_agent" && r.Field != "sadp_model" && r.Field != "dns_sd_model" {
 			return nil, fmt.Errorf("model %s has unsupported model field %q", r.ID, r.Field)
 		}
 		if r.TypeOnly && (r.Model != "" || CanonicalHardwareType(r.Type) == "") {

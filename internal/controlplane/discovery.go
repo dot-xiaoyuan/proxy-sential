@@ -237,6 +237,23 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 			return
 		}
 		writeJSON(w, 200, page)
+	case path == "/discovery/behavior" && r.Method == "GET":
+		if !repo.HardwareV2 || !discovery.PassiveBehaviorReadEnabled() {
+			writeError(w, 409, "behavior_read_path", "当前未启用流量行为线索")
+			return
+		}
+		key := r.URL.Query().Get("key")
+		owner, ok := discovery.ParsePassiveBehaviorKey(key)
+		if !ok {
+			writeError(w, 400, "bad_behavior_key", "设备或地址作用域无效")
+			return
+		}
+		result, err := store.ReadPassiveBehavior(ctx, repo.DB, key, owner)
+		if err != nil {
+			writeError(w, 500, "behavior_read", "读取流量行为线索失败")
+			return
+		}
+		writeJSON(w, 200, result)
 	case path == "/discovery/passive-signals" && r.Method == "GET":
 		s.handleDiscoveryPassiveSignals(w, r, repo)
 	case path == "/discovery/handshake-clues" && r.Method == "GET":
@@ -511,6 +528,33 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 			}
 		}
 		query := discovery.DeviceQuery{View: r.URL.Query().Get("view"), Mode: r.URL.Query().Get("mode"), Window: window, Search: r.URL.Query().Get("search"), DeviceType: r.URL.Query().Get("type"), Category: r.URL.Query().Get("category"), Capability: r.URL.Query().Get("capability"), ReviewReason: r.URL.Query().Get("review_reason"), RandomMAC: r.URL.Query().Get("random_mac") == "true", OSFamily: r.URL.Query().Get("os"), Limit: limit, Offset: offset, Cursor: r.URL.Query().Get("cursor"), Protocol: r.URL.Query().Get("protocol"), State: r.URL.Query().Get("state"), Domain: r.URL.Query().Get("domain"), VLAN: r.URL.Query().Get("vlan")}
+		query.Subnet = r.URL.Query().Get("subnet")
+		query.SkipOverview = r.URL.Query().Get("overview") == "false"
+		from, to := r.URL.Query().Get("last_seen_from"), r.URL.Query().Get("last_seen_to")
+		freshWindow := r.URL.Query().Get("first_seen_within")
+		if from != "" || to != "" || freshWindow != "" || query.Subnet != "" {
+			if path == "/discovery/devices/coverage-report" || repo.ActiveStreamOnly || repo.PipelineV2 || os.Getenv("PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ") == "true" {
+				writeError(w, 409, "filter_read_path", "当前发现读取路径不支持此时间或网段筛选")
+				return
+			}
+			if from != "" || to != "" {
+				var fromErr, toErr error
+				query.LastSeenFrom, fromErr = time.Parse(time.RFC3339Nano, from)
+				query.LastSeenTo, toErr = time.Parse(time.RFC3339Nano, to)
+				if fromErr != nil || toErr != nil || !query.LastSeenFrom.Before(query.LastSeenTo) ||
+					query.LastSeenFrom.Before(time.Now().Add(-30*24*time.Hour)) || query.LastSeenTo.After(time.Now()) {
+					writeError(w, 400, "bad_window", "请设置最近 30 天内的观测起止时间")
+					return
+				}
+			}
+			if freshWindow != "" {
+				if freshWindow != "168h" {
+					writeError(w, 400, "bad_window", "首次观测窗口无效")
+					return
+				}
+				query.FirstSeenWithin = 168 * time.Hour
+			}
+		}
 		if query.ReviewReason != "" && (repo.ActiveStreamOnly || repo.PipelineV2 || os.Getenv("PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ") == "true") {
 			writeError(w, 409, "review_read_path", "当前发现读取路径尚不支持核实筛选")
 			return
@@ -562,7 +606,7 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 			}
 			if err != nil {
 				log.Printf("discovery position read failed after %s: %v", time.Since(readStarted), err)
-				if strings.Contains(err.Error(), "mode") || strings.Contains(err.Error(), "view") || strings.Contains(err.Error(), "state") || strings.Contains(err.Error(), "review reason") {
+				if strings.Contains(err.Error(), "mode") || strings.Contains(err.Error(), "view") || strings.Contains(err.Error(), "state") || (strings.Contains(err.Error(), "review reason") || strings.Contains(err.Error(), "discovery filter")) {
 					writeError(w, 400, "bad_filter", err.Error())
 					return
 				}
@@ -580,7 +624,7 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 			result, err := repo.DevicesIndexedMetadata(ctx, query)
 			if err != nil {
 				log.Printf("discovery metadata read failed after %s: %v", time.Since(readStarted), err)
-				if strings.Contains(err.Error(), "mode") || strings.Contains(err.Error(), "view") || strings.Contains(err.Error(), "state") || strings.Contains(err.Error(), "review reason") {
+				if strings.Contains(err.Error(), "mode") || strings.Contains(err.Error(), "view") || strings.Contains(err.Error(), "state") || (strings.Contains(err.Error(), "review reason") || strings.Contains(err.Error(), "discovery filter")) {
 					writeError(w, 400, "bad_filter", err.Error())
 				} else {
 					writeError(w, 500, "discovery_metadata_read", "读取发现设备总数失败")
@@ -605,7 +649,7 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 			log.Printf("discovery list read failed after %s: %v", time.Since(readStarted), err)
 			if strings.Contains(err.Error(), "cursor") {
 				writeError(w, 400, "bad_cursor", err.Error())
-			} else if strings.Contains(err.Error(), "mode") || strings.Contains(err.Error(), "view") || strings.Contains(err.Error(), "state") || strings.Contains(err.Error(), "review reason") {
+			} else if strings.Contains(err.Error(), "mode") || strings.Contains(err.Error(), "view") || strings.Contains(err.Error(), "state") || (strings.Contains(err.Error(), "review reason") || strings.Contains(err.Error(), "discovery filter")) {
 				writeError(w, 400, "bad_filter", err.Error())
 			} else {
 				writeError(w, 500, "discovery_read", "读取发现结果失败")

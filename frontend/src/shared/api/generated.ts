@@ -242,6 +242,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/discovery/behavior": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Read bounded recent passive behavior evidence for a discovery identity or scoped IP. Requires identity:read. */
+        get: operations["readDiscoveryBehavior"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/discovery/passive-signals": {
         parameters: {
             query?: never;
@@ -4406,6 +4423,14 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
+                    /** @description Inclusive absolute observation bound */
+                    last_seen_from?: string;
+                    /** @description Exclusive absolute observation bound */
+                    last_seen_to?: string;
+                    /** @description The latest seven Beijing calendar days */
+                    first_seen_within?: "168h";
+                    /** @description A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address */
+                    subnet?: string;
                     type?: string;
                     protocol?: string;
                     state?: "identified" | "expired" | "conflict" | "candidate";
@@ -8451,7 +8476,31 @@ export interface components {
         DiscoveryChassisCandidateList: {
             items: components["schemas"]["DiscoveryChassisCandidate"][];
         };
+        DiscoveryBehavior: {
+            rule_version: string;
+            /** @enum {string} */
+            status: "ready" | "partial";
+            /** @enum {string} */
+            attribution: "device" | "ip";
+            candidate_type?: string;
+            os_hint?: string;
+            ntp_target?: string;
+            cadence_minutes?: number;
+            /** Format: date-time */
+            as_of: string;
+            items: {
+                kind: string;
+                value: string;
+                /** Format: date-time */
+                bucket_at: string;
+                /** Format: date-time */
+                observed_at: string;
+                event_id: string;
+            }[];
+        };
         DiscoveryDevice: {
+            /** @description Opaque keys for opted-in behavior evidence. */
+            behavior_keys?: string[];
             product_clues?: components["schemas"]["DiscoveryProductClue"][];
             /** @description 可信作用域身份的持久硬件类型；服务 TTL 到期不清除 */
             hardware_type?: string;
@@ -8722,6 +8771,33 @@ export interface components {
                 /** Format: int64 */
                 count: number;
             }[];
+            overview?: {
+                /** Format: int64 */
+                active: number;
+                /** Format: int64 */
+                previous_active?: number;
+                /** Format: int64 */
+                dumb_terminals: number;
+                /** Format: int64 */
+                new_seven_days: number;
+                new_by_day: {
+                    /** Format: date */
+                    date: string;
+                    /** Format: int64 */
+                    count: number;
+                }[];
+                brands?: {
+                    brand: string;
+                    device_type: string;
+                    /** Format: int64 */
+                    count: number;
+                }[];
+                subnets?: {
+                    subnet: string;
+                    /** Format: int64 */
+                    count: number;
+                }[];
+            };
             /** Format: date-time */
             as_of: string;
             /**
@@ -10177,6 +10253,49 @@ export interface operations {
             };
         };
     };
+    readDiscoveryBehavior: {
+        parameters: {
+            query: {
+                key: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Passive behavior clues */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoveryBehavior"];
+                };
+            };
+            /** @description Invalid owner key */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Optional behavior reader is disabled */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Behavior evidence could not be read */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     getDiscoveryPassiveSignals: {
         parameters: {
             query?: {
@@ -10556,6 +10675,14 @@ export interface operations {
     getDiscoveryDevices: {
         parameters: {
             query?: {
+                /** @description Inclusive absolute observation bound */
+                last_seen_from?: string;
+                /** @description Exclusive absolute observation bound */
+                last_seen_to?: string;
+                /** @description The latest seven Beijing calendar days */
+                first_seen_within?: "168h";
+                /** @description A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address */
+                subnet?: string;
                 type?: string;
                 protocol?: string;
                 state?: "identified" | "expired" | "conflict" | "candidate";
@@ -10604,6 +10731,16 @@ export interface operations {
     getDiscoveryDeviceMetadata: {
         parameters: {
             query?: {
+                /** @description Set false for facet-only reads */
+                overview?: boolean;
+                /** @description Inclusive absolute observation bound */
+                last_seen_from?: string;
+                /** @description Exclusive absolute observation bound */
+                last_seen_to?: string;
+                /** @description The latest seven Beijing calendar days */
+                first_seen_within?: "168h";
+                /** @description A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address */
+                subnet?: string;
                 type?: string;
                 protocol?: string;
                 state?: "identified" | "expired" | "conflict" | "candidate";
@@ -10699,6 +10836,14 @@ export interface operations {
     streamDiscoveryDevicesExport: {
         parameters: {
             query?: {
+                /** @description Inclusive absolute observation bound */
+                last_seen_from?: string;
+                /** @description Exclusive absolute observation bound */
+                last_seen_to?: string;
+                /** @description The latest seven Beijing calendar days */
+                first_seen_within?: "168h";
+                /** @description A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address */
+                subnet?: string;
                 type?: string;
                 protocol?: string;
                 state?: string;

@@ -25,9 +25,18 @@ func indexedDeviceSignature(q DeviceQuery) string {
 		View, Mode, Search, DeviceType, Category, Capability, Protocol, State, Domain, VLAN, ReviewReason string
 		Window                                                                                            int64
 		HardwareV2                                                                                        bool
-	}{q.View, q.Mode, q.Search, q.DeviceType, q.Category, q.Capability, q.Protocol, q.State, q.Domain, q.VLAN, q.ReviewReason, int64(q.Window), q.HardwareV2})
+		Subnet, From, To                                                                                  string `json:",omitempty"`
+		FirstSeenWithin                                                                                   int64  `json:",omitempty"`
+	}{q.View, q.Mode, q.Search, q.DeviceType, q.Category, q.Capability, q.Protocol, q.State, q.Domain, q.VLAN, q.ReviewReason, int64(q.Window), q.HardwareV2, q.Subnet, indexedDate(q.LastSeenFrom), indexedDate(q.LastSeenTo), int64(q.FirstSeenWithin)})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
+}
+
+func indexedDate(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339Nano)
 }
 
 func decodeIndexedDeviceCursor(q DeviceQuery) (*indexedDeviceCursor, error) {
@@ -237,6 +246,18 @@ func aggregateIndexedDeviceRows(rows []deviceObservationRow, now time.Time) ([]D
 			return nil, fmt.Errorf("discovery identity group invariant violated")
 		}
 		group[0].indexedIdentityKey = identity
+		if PassiveBehaviorReadEnabled() {
+			device := &group[0]
+			scope := rows[0].Observation
+			if device.MAC != "" && HardwareIdentityKey(scope.Node, scope.Site, scope.Domain, scope.VLAN, scope.VRF, device.MAC) == identity {
+				device.BehaviorKeys = append(device.BehaviorKeys, PassiveBehaviorKey(scope.Node, scope.Site, scope.Domain, scope.VLAN, scope.VRF, device.MAC, ""))
+			}
+			if scope.IP == device.PrimaryIP && scope.Current(now) {
+				if key := PassiveBehaviorKey(scope.Node, scope.Site, scope.Domain, scope.VLAN, scope.VRF, "", device.PrimaryIP); key != "" {
+					device.BehaviorKeys = append(device.BehaviorKeys, key)
+				}
+			}
+		}
 		items = append(items, group[0])
 	}
 	return items, nil

@@ -35,13 +35,16 @@ type packetObservation struct {
 
 type bucketKey struct {
 	IP, MAC, Direction string
+	VLAN               string
 	TCPStack           string
+	TCPWindow          uint16
 	TrafficScope       string
 	Version, TTL       int
 }
 
 type tcpFingerprint struct {
 	MSS         uint16
+	Window      uint16
 	WindowScale uint8
 	Flags       uint8
 	OptionCount uint8
@@ -69,6 +72,7 @@ type packetBucketKey struct {
 	Version      int
 	TTL          int
 	TCP          tcpFingerprint
+	VLAN         string
 }
 
 func parseFrame(frame []byte) (Observation, bool) {
@@ -142,7 +146,7 @@ func parseTCPFingerprint(frame []byte, offset int, df bool) tcpFingerprint {
 	if headerLength < 20 || len(frame) < offset+headerLength {
 		return tcpFingerprint{}
 	}
-	result := tcpFingerprint{Flags: 1}
+	result := tcpFingerprint{Flags: 1, Window: uint16(frame[offset+14])<<8 | uint16(frame[offset+15])}
 	if df {
 		result.Flags |= 8
 	}
@@ -190,7 +194,7 @@ func writePacketBucketWithScope(path, sensorID, interfaceName, instance string, 
 func writePacketBucketWithSource(path, sensorID, interfaceName, instance, source string, scope *normalized.CaptureScope, bucket time.Time, values map[packetBucketKey]int) error {
 	converted := make(map[bucketKey]int, len(values))
 	for key, count := range values {
-		converted[bucketKey{IP: key.IP.String(), MAC: net.HardwareAddr(key.MAC[:]).String(), Direction: key.Direction, TrafficScope: key.TrafficScope, TCPStack: key.TCP.String(), Version: key.Version, TTL: key.TTL}] = count
+		converted[bucketKey{IP: key.IP.String(), MAC: net.HardwareAddr(key.MAC[:]).String(), Direction: key.Direction, TrafficScope: key.TrafficScope, TCPStack: key.TCP.String(), TCPWindow: key.TCP.Window, VLAN: key.VLAN, Version: key.Version, TTL: key.TTL}] = count
 	}
 	return writeBucketWithSource(path, sensorID, interfaceName, instance, source, scope, bucket, converted)
 }
@@ -222,6 +226,9 @@ func writeBucketWithSource(path, sensorID, interfaceName, instance, source strin
 	encoder := json.NewEncoder(file)
 	for _, key := range keys {
 		identity := fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%d\x00%s\x00%s\x00%s", sensorID, key.IP, key.Direction, key.Version, key.TTL, key.TCPStack, bucket.UTC().Format(time.RFC3339), key.TrafficScope)
+		if key.TCPWindow > 0 {
+			identity += fmt.Sprintf("\x00window=%d\x00vlan=%s", key.TCPWindow, key.VLAN)
+		}
 		if source != "packet-sidecar" {
 			identity += "\x00" + source
 		}
@@ -233,6 +240,12 @@ func writeBucketWithSource(path, sensorID, interfaceName, instance, source strin
 		}
 		if key.TCPStack != "" {
 			event.Payload["tcp_stack"] = key.TCPStack
+		}
+		if key.TCPWindow > 0 {
+			event.Payload["tcp_window"] = key.TCPWindow
+			if key.VLAN != "" {
+				event.Payload["vlan"] = key.VLAN
+			}
 		}
 		if key.Version == 6 {
 			event.SourceEventType = "hop_limit"

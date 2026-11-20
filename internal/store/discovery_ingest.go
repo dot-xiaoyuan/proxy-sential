@@ -13,6 +13,11 @@ import (
 // StageDiscoveryBatch links work to the original file batch before export.
 // A pending task is not eligible until that same ledger batch is committed.
 func (s *DBStore) StageDiscoveryBatch(ctx context.Context, batch ingest.Batch, events []normalized.Event) error {
+	if passiveBehaviorWriteEnabled() {
+		if err := s.stagePassiveBehavior(ctx, batch, events); err != nil {
+			return err
+		}
+	}
 	if os.Getenv("PROXY_SENTINEL_DISCOVERY_V2") != "true" {
 		return nil
 	}

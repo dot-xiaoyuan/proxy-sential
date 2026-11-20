@@ -10,7 +10,7 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-VERSION = 'hardware-catalog-2026-11-15.4'
+VERSION = 'hardware-catalog-2026-11-20.1'
 CONVERTER = 'sentinel-hardware-converter/1'
 RECOG_FIELDS = {'snmp_sysdescr':'snmp_sysdescr','http_servers':'http_server','html_title':'http_title','http_wwwauth':'http_www_authenticate','mdns_device-info_txt':'mdns_model','ssh_banners':'ssh_banner','sip_banners':'sip_server','x509_subjects':'tls_subject','x509_issuers':'tls_issuer','dhcp_vendor_class':'dhcp_vendor_class','sip_user_agents':'sip_user_agent'}
 

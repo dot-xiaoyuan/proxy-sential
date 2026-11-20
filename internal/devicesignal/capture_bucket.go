@@ -10,6 +10,7 @@ import (
 // captureBucket groups replayable frame observations without deriving device
 // ownership from transit traffic. Control and IP packet eligibility are separate.
 type captureBucket struct {
+	behaviorTCPWindow bool
 	packets           map[packetBucketKey]int
 	controls          map[string]controlSignal
 	droppedPacketKeys int
@@ -32,7 +33,7 @@ const maxPacketBucketKeys = 50000
 const maxHandshakeFeatureSamples = 32768
 
 func newCaptureBucket() *captureBucket {
-	return &captureBucket{packets: map[packetBucketKey]int{}, controls: map[string]controlSignal{}, handshakes: map[handshakeKey]*handshakeSummary{}}
+	return &captureBucket{behaviorTCPWindow: os.Getenv("PROXY_SENTINEL_PASSIVE_BEHAVIOR_WRITE") == "true", packets: map[packetBucketKey]int{}, controls: map[string]controlSignal{}, handshakes: map[handshakeKey]*handshakeSummary{}}
 }
 
 func (b *captureBucket) addFrame(frame []byte, scope *normalized.CaptureScope) {
@@ -40,9 +41,19 @@ func (b *captureBucket) addFrame(frame []byte, scope *normalized.CaptureScope) {
 		b.addHandshake(frame)
 	}
 	if value, ok := parsePacketFrame(frame); ok && value.TTL > 0 {
+		var vlan string
+		if b.behaviorTCPWindow && value.TCP.Window > 0 {
+			if ethernet, ok := parseEthernetFrame(frame); ok {
+				vlan = ethernet.vlanScope
+			} else {
+				value.TCP.Window = 0
+			}
+		} else {
+			value.TCP.Window = 0
+		}
 		value.Direction = scope.DirectionAddr(value.IP, value.DestinationIP)
 		if value.Direction != "inbound" && value.Direction != "internal" && (value.Direction != "unknown" || value.IP.IsPrivate()) {
-			key := packetBucketKey{IP: value.IP, MAC: value.MAC, Direction: value.Direction, TrafficScope: value.TrafficScope, Version: value.Version, TTL: value.TTL, TCP: value.TCP}
+			key := packetBucketKey{IP: value.IP, MAC: value.MAC, Direction: value.Direction, TrafficScope: value.TrafficScope, Version: value.Version, TTL: value.TTL, TCP: value.TCP, VLAN: vlan}
 			if _, found := b.packets[key]; found || len(b.packets) < maxPacketBucketKeys {
 				b.packets[key]++
 			} else {
