@@ -209,7 +209,7 @@ func FromEvent(e normalized.Event) (Observation, error) {
 	o.ValidUntil = o.ObservedAt.Add(time.Duration(ttl) * time.Second)
 	o.Withdrawn = ttl == 0 || e.Payload["withdrawn"] == true
 	switch o.Origin {
-	case "fdb", "neighbor", "lldp", "cdp", "arp", "ndp", "dhcp", "dhcpv6", "nbns", "llmnr", "ieee1905_client_association":
+	case "fdb", "neighbor", "lldp", "cdp", "arp", "ndp", "dhcp", "dhcpv6", "nbns", "llmnr", "ieee1905_client_association", "ieee1905_topology", "ieee1905_client_snapshot":
 		o.Explanation = "基础设施表项或邻居公告；读取时间不代表终端流量观测时间"
 		if o.Origin == "lldp" {
 			caps := number(e.Payload, "system_capabilities")
@@ -224,6 +224,15 @@ func FromEvent(e normalized.Event) (Observation, error) {
 			if o.DeviceType != "" {
 				o.Explanation = "LLDP 邻居自报能力，属于设备类型线索"
 			}
+		}
+		if o.Origin == "ieee1905_topology" || o.Origin == "ieee1905_client_snapshot" {
+			if o.MAC == "" {
+				return o, errors.New("IEEE1905 topology lacks AL MAC")
+			}
+			o.DeviceType = "access_point"
+			o.Capabilities = []string{"routing"}
+			o.Confidence = "strong"
+			o.Explanation = "IEEE 1905 网格节点声明，属于路由线索"
 		}
 	case "dns_sd":
 		if e.Payload["is_response"] != true {

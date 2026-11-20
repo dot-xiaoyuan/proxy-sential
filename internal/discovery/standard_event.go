@@ -30,7 +30,7 @@ func AdaptDiscoveryEvent(event normalized.Event) (normalized.Event, error) {
 	}
 	kind := e.SourceEventType
 	switch kind {
-	case "dhcp", "dhcpv6", "arp", "ndp", "nbns", "llmnr", "lldp", "cdp", "ssdp", "ws_discovery", "sadp", "snmp", "dns_sd", "mqtt", "coap", "bacnet", "ipp", "onvif", "rtsp", "http", "tls", "ssh", "sip", "ieee1905_client_association":
+	case "dhcp", "dhcpv6", "arp", "ndp", "nbns", "llmnr", "lldp", "cdp", "ssdp", "ws_discovery", "sadp", "snmp", "dns_sd", "mqtt", "coap", "bacnet", "ipp", "onvif", "rtsp", "http", "tls", "ssh", "sip", "ieee1905_client_association", "ieee1905_topology", "ieee1905_client_snapshot":
 	default:
 		return e, fmt.Errorf("not a discovery protocol")
 	}
@@ -66,6 +66,15 @@ func AdaptDiscoveryEvent(event normalized.Event) (normalized.Event, error) {
 			return e, fmt.Errorf("IEEE1905 association has unsupported state")
 		}
 		e.Subject["mac"] = client
+	}
+	if kind == "ieee1905_topology" || kind == "ieee1905_client_snapshot" {
+		if str(e.Subject, "mac") == "" {
+			e.Subject["mac"] = str(e.Payload, "al_mac")
+		}
+		if str(e.Subject, "mac") == "" {
+			return e, fmt.Errorf("IEEE1905 topology lacks AL MAC")
+		}
+		e.Payload["ttl"] = 600
 	}
 	if kind == "dhcp" || kind == "dhcpv6" {
 		if e.Payload["discovery_scope_conflict"] == true {

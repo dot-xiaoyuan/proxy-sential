@@ -231,7 +231,7 @@ func assignDeviceStream4Keys(segment *streamlog.Segment) error {
 	ordinal, scope := 0, ""
 	for index := range segment.Events {
 		event := &segment.Events[index]
-		if !normalized.IsDiscoveryProjectionEvent(*event) {
+		if !normalized.ProjectsDiscoveryHotPath(*event) {
 			continue
 		}
 		value, ok := event.Observer["capture_scope_id"].(string)
@@ -404,7 +404,7 @@ func benignStreamSkips(kind string, chunk []byte, offset int64, header []byte) i
 
 func needsStreamProjection(events []normalized.Event) bool {
 	for _, event := range events {
-		if normalized.IsDiscoveryProjectionEvent(event) {
+		if normalized.ProjectsDiscoveryHotPath(event) {
 			return true
 		}
 		switch event.Type {

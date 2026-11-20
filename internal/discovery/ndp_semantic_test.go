@@ -18,11 +18,31 @@ func sidecarNDPEvent(id, at, message, target string, ttl int) normalized.Event {
 	}
 }
 
+func TestPacketSidecarNDPDoesNotEnterDiscoveryHotPath(t *testing.T) {
+	events := []normalized.Event{
+		sidecarNDPEvent("ns-1", "2026-11-12T03:57:00Z", "neighbor_solicitation", "fe80::abcd", 600),
+		sidecarNDPEvent("na-1", "2026-11-12T03:57:30Z", "neighbor_advertisement", "fe80::1234", 600),
+	}
+	prepared, err := prepareStreamDiscovery(streamlog.Segment{Epoch: "packet-a", Source: "device-signals", AcceptedAt: time.Date(2026, 11, 12, 3, 58, 1, 0, time.UTC), Events: events})
+	if err != nil || len(prepared) != 0 {
+		t.Fatalf("packet NDP must stay out of discovery projection: %d %v", len(prepared), err)
+	}
+	if !discoveryPayloadFieldIsEvidenceOnly(events[0], "message") || !discoveryPayloadFieldIsEvidenceOnly(events[0], "target") {
+		t.Fatal("NDP message and target remain evidence fields")
+	}
+	if events[0].Payload["message"] != "neighbor_solicitation" || events[1].Payload["target"] != "fe80::1234" {
+		t.Fatal("source evidence was rewritten")
+	}
+}
+
 func TestSidecarNDPMessageAndTargetAreEvidenceNotStateChanges(t *testing.T) {
 	events := []normalized.Event{
 		sidecarNDPEvent("ns-1", "2026-11-12T03:57:00Z", "neighbor_solicitation", "fe80::abcd", 600),
 		sidecarNDPEvent("na-1", "2026-11-12T03:57:30Z", "neighbor_advertisement", "fe80::1234", 600),
 		sidecarNDPEvent("ns-2", "2026-11-12T03:58:00Z", "neighbor_solicitation", "fe80::beef", 600),
+	}
+	for i := range events {
+		events[i].EventID = "stream4-legacy-" + events[i].EventID
 	}
 	prepared, err := prepareStreamDiscovery(streamlog.Segment{Epoch: "packet-a", Source: "device-signals", AcceptedAt: time.Date(2026, 11, 12, 3, 58, 1, 0, time.UTC), Events: events})
 	if err != nil || len(prepared) != 3 {
@@ -43,9 +63,9 @@ func TestSidecarNDPMessageAndTargetAreEvidenceNotStateChanges(t *testing.T) {
 }
 
 func TestSidecarNDPWithdrawalBindingAndLateEventRemainDistinct(t *testing.T) {
-	base := sidecarNDPEvent("base", "2026-11-12T03:57:00Z", "neighbor_solicitation", "fe80::abcd", 600)
-	withdrawn := sidecarNDPEvent("withdrawn", "2026-11-12T03:57:30Z", "neighbor_advertisement", "fe80::1234", 0)
-	bound := sidecarNDPEvent("bound", "2026-11-12T03:57:40Z", "neighbor_advertisement", "fe80::1234", 600)
+	base := sidecarNDPEvent("stream4-legacy-base", "2026-11-12T03:57:00Z", "neighbor_solicitation", "fe80::abcd", 600)
+	withdrawn := sidecarNDPEvent("stream4-legacy-withdrawn", "2026-11-12T03:57:30Z", "neighbor_advertisement", "fe80::1234", 0)
+	bound := sidecarNDPEvent("stream4-legacy-bound", "2026-11-12T03:57:40Z", "neighbor_advertisement", "fe80::1234", 600)
 	bound.Payload["address_binding"] = true
 	prepared, err := prepareStreamDiscovery(streamlog.Segment{Epoch: "packet-a", Source: "device-signals", AcceptedAt: time.Date(2026, 11, 12, 3, 58, 1, 0, time.UTC), Events: []normalized.Event{base, withdrawn, bound}})
 	if err != nil || len(prepared) != 3 {
@@ -67,7 +87,7 @@ func TestSidecarNDPWithdrawalBindingAndLateEventRemainDistinct(t *testing.T) {
 	if decision := mergeStreamDiscoveryFact(&binding, first); decision.Result != "late_history" || decision.WriteFact {
 		t.Fatalf("late NDP event displaced current binding: %+v", decision)
 	}
-	changedMAC := sidecarNDPEvent("different-mac", "2026-11-12T03:57:50Z", "neighbor_solicitation", "fe80::abcd", 600)
+	changedMAC := sidecarNDPEvent("stream4-legacy-different-mac", "2026-11-12T03:57:50Z", "neighbor_solicitation", "fe80::abcd", 600)
 	changedMAC.Subject["mac"] = "02:00:00:00:00:35"
 	changed, err := prepareStreamDiscovery(streamlog.Segment{Epoch: "packet-a", Source: "device-signals", AcceptedAt: time.Date(2026, 11, 12, 3, 58, 1, 0, time.UTC), Events: []normalized.Event{changedMAC}})
 	if err != nil || len(changed) != 1 || changed[0].Fact.SemanticHash == first.SemanticHash {

@@ -83,6 +83,7 @@ func TestStreamFactUpsertKeepsShortRenewalOffTheConflictUpdate(t *testing.T) {
 func TestStreamShortNDPRenewalKeepsReceiptWithoutFactOrDeviceWrite(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	event := sidecarNDPEvent("ndp-repeat", now.Format(time.RFC3339Nano), "neighbor_advertisement", "fe80::abcd", 600)
+	event.Source = "passive"
 	segment := streamlog.Segment{Epoch: "epoch-a", Source: "device-signals", SourcePath: "packet://ttl",
 		AcceptedAt: now, ArchiveMonth: now.Format("200601"), Events: []normalized.Event{event}}
 	prepared, err := prepareStreamDiscovery(segment)

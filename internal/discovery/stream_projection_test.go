@@ -210,6 +210,17 @@ func TestPrepareStreamDiscoveryProjectsSidecarSSDPAnnouncement(t *testing.T) {
 	}
 }
 
+func TestPrepareStreamDiscoveryProjectsIEEE1905TopologyAsAccessPoint(t *testing.T) {
+	event := normalized.Event{SchemaVersion: "v1", EventID: "topo-one", Source: "packet-sidecar", SourceEventType: "ieee1905_topology", Type: "device", Timestamp: "2026-11-20T06:25:00Z",
+		Observer: map[string]any{"sensor_id": "sensor-a", "capture_scope_id": "scope-a", "interface": "bond0"},
+		Subject:  map[string]any{"campus_id": "site-a", "mac": "f4:fc:49:75:16:f6"},
+		Payload:  map[string]any{"access_domain": "bond0", "origin": "ieee1905", "al_mac": "f4:fc:49:75:16:f6"}}
+	prepared, err := prepareStreamDiscovery(streamlog.Segment{Epoch: "fresh", Source: "device-signals", AcceptedAt: time.Now().UTC(), Events: []normalized.Event{event}})
+	if err != nil || len(prepared) != 1 || !prepared[0].HasFact || prepared[0].Fact.Protocol != "ieee1905_topology" || prepared[0].Fact.DeviceType != "access_point" || prepared[0].Fact.MAC != "f4:fc:49:75:16:f6" {
+		t.Fatalf("IEEE1905 topology was not a router clue: %+v %v", prepared, err)
+	}
+}
+
 func TestPrepareStreamDiscoveryProjectsIEEE1905ClientAndWithdrawal(t *testing.T) {
 	base := normalized.Event{SchemaVersion: "v1", EventID: "assoc-one", Source: "packet-sidecar", SourceEventType: "ieee1905_client_association", Type: "device", Timestamp: "2026-10-25T10:00:00Z",
 		Observer: map[string]any{"sensor_id": "sensor-a", "capture_scope_id": "scope-a", "interface": "bond0"},

@@ -174,7 +174,7 @@ func TestStreamSignalRetentionFollowsActualReader(t *testing.T) {
 	for _, tc := range []struct {
 		source, kind, want string
 	}{
-		{"packet-sidecar", "ieee1905_topology", "short"},
+		{"packet-sidecar", "ieee1905_topology", "evidence"},
 		{"packet-sidecar", "ieee1905_client_association", "evidence"},
 		{"packet-sidecar", "ieee1905_client_snapshot", "evidence"},
 		{"handshake-sidecar", "handshake", "evidence"},

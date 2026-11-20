@@ -882,6 +882,11 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 		}
 		return nil
 	}
+	for index := range fresh {
+		if packetNeighborFactArchiveOnly(fresh[index].Fact) {
+			fresh[index].HasFact = false
+		}
+	}
 	keys := make([]string, 0)
 	seenDevices := map[string]bool{}
 	for _, item := range fresh {
@@ -1041,6 +1046,15 @@ func (p StreamDiscoveryProjector) projectPreparedStreamSegment(ctx context.Conte
 		p.ObserveWrite(StreamProjectionWriteStats{Source: segment.Source, Epoch: segment.Epoch, Events: len(segment.Events), FreshEvents: len(fresh), FactRows: factRows, StateRows: stateRows})
 	}
 	return nil
+}
+
+func packetNeighborFactArchiveOnly(fact streamDiscoveryFact) bool {
+	switch fact.Protocol {
+	case "arp", "ndp", "ttl", "hop_limit":
+	default:
+		return false
+	}
+	return strings.HasPrefix(fact.Source, "packet-sidecar")
 }
 
 func streamAcceptedMonth(at time.Time) time.Time {
