@@ -35,3 +35,15 @@ func ProjectsDiscoveryHotPath(event Event) bool {
 	}
 	return IsDiscoveryProjectionEvent(event)
 }
+
+// SegmentProjectsDiscovery keeps an already keyed stream4 segment on the
+// receipt subset stored with it. Newly eligible router clues stay archived
+// until a later segment is captured with matching keys.
+func SegmentProjectsDiscovery(events []Event, event Event) bool {
+	for _, item := range events {
+		if strings.HasPrefix(item.EventID, "stream4-") {
+			return strings.HasPrefix(event.EventID, "stream4-")
+		}
+	}
+	return ProjectsDiscoveryHotPath(event)
+}

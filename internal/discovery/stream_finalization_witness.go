@@ -25,7 +25,7 @@ func (p StreamDiscoveryProjector) MarkStreamSegmentFinalized(ctx context.Context
 	}
 	count := 0
 	for _, event := range segment.Events {
-		if normalized.ProjectsDiscoveryHotPath(event) {
+		if normalized.SegmentProjectsDiscovery(segment.Events, event) {
 			count++
 		}
 	}

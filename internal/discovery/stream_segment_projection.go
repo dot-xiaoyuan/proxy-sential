@@ -51,7 +51,7 @@ func isSegmentKeyedDeviceSegment(segment streamlog.Segment) bool {
 	}
 	count := 0
 	for _, event := range segment.Events {
-		if normalized.ProjectsDiscoveryHotPath(event) {
+		if normalized.SegmentProjectsDiscovery(segment.Events, event) {
 			count++
 			if !strings.HasPrefix(event.EventID, "stream4-") {
 				return false
@@ -82,7 +82,7 @@ func verifyStream4PreparedSegment(id string, segment streamlog.Segment, prepared
 	}
 	count := 0
 	for _, event := range segment.Events {
-		if normalized.ProjectsDiscoveryHotPath(event) {
+		if normalized.SegmentProjectsDiscovery(segment.Events, event) {
 			count++
 		}
 	}

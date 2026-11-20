@@ -32,3 +32,16 @@ func TestPacketSidecarHotPathKeepsRouterClues(t *testing.T) {
 		}
 	}
 }
+
+func TestKeyedSegmentKeepsStoredSubsetWhenRouterSelectionGrows(t *testing.T) {
+	ndp := Event{Type: "device", Source: "packet-sidecar", SourceEventType: "ndp", EventID: "stream4-segment-0"}
+	topology := Event{Type: "device", Source: "packet-sidecar", SourceEventType: "ieee1905_topology", EventID: "stream-topology"}
+	events := []Event{ndp, topology}
+	if !SegmentProjectsDiscovery(events, ndp) || SegmentProjectsDiscovery(events, topology) {
+		t.Fatal("an existing stream4 segment changed its stored receipt subset")
+	}
+	fresh := []Event{{Type: "device", Source: "packet-sidecar", SourceEventType: "ieee1905_topology", EventID: "stream-topology"}}
+	if !SegmentProjectsDiscovery(fresh, fresh[0]) {
+		t.Fatal("a new topology segment must enter discovery projection")
+	}
+}

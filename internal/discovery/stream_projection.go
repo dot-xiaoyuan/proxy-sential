@@ -86,7 +86,7 @@ func walkStreamDiscoveryReceipts(segment streamlog.Segment, visit func(normalize
 	seen := make(map[string]string, len(segment.Events))
 	compactScheme := -1
 	for _, event := range segment.Events {
-		if !normalized.ProjectsDiscoveryHotPath(event) {
+		if !normalized.SegmentProjectsDiscovery(segment.Events, event) {
 			continue
 		}
 		if event.EventID == "" || event.Timestamp == "" {

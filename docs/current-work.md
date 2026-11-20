@@ -100,7 +100,8 @@
 - **14:22 `stream-prepare` 新鲜切入**：epoch `packet-fresh-20261120T062000Z`，`replace-closed-epoch=packet-birth-20261111T022159Z`，`cancel-id=packet-birth-wrong-generation-rehydrate-20261120`，`start_offset=121802597`（当时文件尾），丢弃记录 157,526/121,802,597 字节（审计取消、不计完成）；pending 段清单 `.../20261120T062000Z-packet-birth-pending-segments.jsonl` 哈希 `a8ad5ccf…`。unit 改指向新 journal，recovery 目录换新空目录。
 - **14:24 验收（只读）**：CH 已出现当日 `observed_at` 的 `ieee1905_topology`/`ssdp`/`ndp`；14:25 起有当日 `ieee1905_client_association`（至少 3 条）。共享判定仍以 `expired`/`insufficient` 为主、`matched=0`，时延中位仍常 >180s；packet 未读约数 MiB、pending 段仍高，需继续追平后观察 matched。
 - **14:28 投影仍慢于采集**：新鲜 epoch 上单段 `write_facts` 约 84 秒，pending 顶满，未读从数 MiB 涨到约 18 MiB。活跃写入落在 `stream_discovery_device_state`。`stream_discovery_network_state` 仍是旧 epoch `packet-birth-20261111T022159Z` 的 50 行过期网关，没有新鲜路由线索。
-- **窄投影代码（待发布）**：packet-sidecar 的新 `ndp`/`arp`/`ttl`/`hop_limit` 不再进入发现热路径，仍进 ClickHouse 正文；已经编成 `stream4-` 的旧段继续出收据，但不再写邻居设备事实。`ieee1905_topology` 与 `ieee1905_client_snapshot` 适配为接入点路由线索并进入投影。被动发现等非报文源的 NDP 行为不变。`shared_only` 仍拒绝确认。阶段 C 未开始。
+- **窄投影**：packet-sidecar 的新 `ndp`/`arp`/`ttl`/`hop_limit` 不再进入发现热路径，仍进 ClickHouse 正文。已经编成 `stream4-` 的段保持原收据子集，邻居事实不再写设备当前态；段内尚未编号的 `ieee1905_topology` 留到下一段再投影，避免改变已提交段哈希。新捕获的拓扑和客户端快照适配为接入点线索。`shared_only` 仍拒绝确认。
+- **14:39 发布回退**：`2026.11.20-25755dc6` 曾切到 current，packet 在投影段 `b7a3301f…` 上报内容冲突后退出；升级脚本已把 current 恢复为 `2026.11.20-03eb8c70` 并核对进程。候选目录仍在，未作为 current。阶段 C 未开始。
 
 ## 数据边界与待办
 
