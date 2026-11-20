@@ -77,16 +77,18 @@ it('keeps the discovery page focused on its list and leaves coverage on its own 
   const overview = document.querySelector('.discovery-overview')
   expect(list).toBeTruthy()
   expect(overview).toBeTruthy()
-  expect(document.querySelector('.discovery-overview-details')).toBeNull()
+  expect(within(overview as HTMLElement).getByRole('button', { name: '统计与类型线索' })).toHaveAttribute('aria-expanded', 'false')
+  expect(document.querySelector('.discovery-type-chart')).not.toBeVisible()
   expect(Boolean(overview!.compareDocumentPosition(list!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
 })
 
-it('keeps the overview visible with stat cards and a type distribution chart', async () => {
+it('keeps totals visible and expands the stat cards and interactive type chart on demand', async () => {
   mockReads()
   renderPanel()
   const overview = await screen.findByLabelText('发现设备总览')
   await waitFor(() => expect(overview).toHaveTextContent('已识别类型 42'))
   expect(overview.closest('details')).toBeNull()
+  fireEvent.click(within(overview).getByRole('button', { name: '统计与类型线索' }))
   const routerRow = within(overview).getByRole('button', { name: '路由器 30' })
   expect(routerRow.querySelector('.discovery-type-fill')).toHaveClass('is-10')
   expect(within(overview).getByRole('button', { name: '无线接入点 12' }).querySelector('.discovery-type-fill')).toHaveClass('is-4')
@@ -115,7 +117,7 @@ it('shows the filtered discovery metadata total when the cursor page has no tota
   const overview = await screen.findByLabelText('发现设备总览')
   await waitFor(()=>expect(overview).toHaveTextContent('共 84 个设备'))
   expect(summary).toHaveTextContent('本页明确类型 1')
-  expect((await screen.findAllByText('无线接入点'))[0]).toBeVisible()
+  expect(await within(screen.getByRole('table')).findByRole('button', { name: '无线接入点' })).toBeVisible()
   expect(screen.queryByText('待分类')).not.toBeInTheDocument()
 })
 
@@ -140,6 +142,7 @@ it('shows complete discovery and confirmed type counts using the same metadata s
   renderPanel()
   const overview=await screen.findByLabelText('发现设备总览')
   await waitFor(()=>expect(overview).toHaveTextContent('已识别类型 42'))
+  fireEvent.click(within(overview).getByRole('button', { name: '统计与类型线索' }))
   expect(overview).toHaveTextContent('共 84 个设备')
   expect(overview).toHaveTextContent('已识别类型（合计 42）')
   expect(overview).toHaveTextContent('待核实 35')
@@ -163,7 +166,6 @@ it('keeps the type overview visible when the statistics request fails', async ()
   renderPanel()
   const overview = await screen.findByLabelText('发现设备总览')
   await waitFor(() => expect(overview).toHaveTextContent('统计读取失败'))
-  expect(overview).toHaveTextContent('共 ')
   expect(overview).toHaveTextContent('已识别类型')
 })
 
@@ -331,7 +333,9 @@ it('keeps V8 profile type clues visible without counting them as hardware confir
   renderPanel()
   const overview = await screen.findByLabelText('发现设备总览')
   expect(await screen.findByText('手机 · 画像线索')).toBeVisible()
+  expect(overview).toHaveTextContent('共 1 条发现记录')
   expect(overview).toHaveTextContent('已确认硬件类型（合计 0）')
+  fireEvent.click(within(overview).getByRole('button', { name: '统计与类型线索' }))
   fireEvent.click(within(screen.getByLabelText('画像类型线索')).getByRole('button', { name: /手机/ }))
   await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).startsWith('/discovery/devices?') &&
     String(path).includes('type=mobile') && String(path).includes('state=candidate'))).toBe(true))
@@ -345,9 +349,38 @@ it('filters response IP products without adding hardware confirmations', async (
   }):read(path))
   renderPanel()
   const products=await screen.findByLabelText('IP 产品类型线索')
-  expect(screen.getByLabelText('发现设备总览')).toHaveTextContent('已确认硬件类型（合计 0）')
+  const overview = screen.getByLabelText('发现设备总览')
+  expect(overview).toHaveTextContent('已确认硬件类型（合计 0）')
+  fireEvent.click(within(overview).getByRole('button', { name: '统计与类型线索' }))
   fireEvent.click(within(products).getByRole('button',{name:/交换机/}))
   await waitFor(()=>expect(request.mock.calls.some(([path])=>String(path).startsWith('/discovery/devices?')&&String(path).includes('type=switch')&&String(path).includes('state=candidate'))).toBe(true))
+})
+
+it('labels address-only observations and keeps the same IP in different VLANs independently traceable', async () => {
+  const sharedAddress = {
+    ...device, primary_ip: '192.168.1.1', current_addresses: [], last_observed_ip: '192.168.1.1',
+    hardware_type_status: 'candidate', domain: 'enp3s0f0', protocols: ['ssdp'], capabilities: ['routing'],
+  }
+  mockReads()
+  const read = request.getMockImplementation()!
+  request.mockImplementation((path: string) => path.startsWith('/discovery/devices?')
+    ? Promise.resolve({ items: [
+      { ...sharedAddress, id: 'scope-20', vlan: '3193/20' },
+      { ...sharedAddress, id: 'scope-22', vlan: '2851/22' },
+    ], has_more: false })
+    : read(path))
+  renderPanel()
+  const remarks = await screen.findAllByRole('button', { name: '地址线索' })
+  expect(remarks).toHaveLength(2)
+  const row = remarks[0].closest('tr')!
+  expect(within(row).getAllByText('192.168.1.1')).toHaveLength(1)
+  expect(within(row).getByText('观测地址')).toBeVisible()
+  expect(within(row).getByText('VLAN 3193/20')).toBeVisible()
+  expect(within(remarks[1].closest('tr')!).getByText('VLAN 2851/22')).toBeVisible()
+  fireEvent.click(remarks[0])
+  const explanation = await screen.findByText(/不同 VLAN 可以重复使用同一地址/)
+  expect(explanation).toBeInTheDocument()
+  expect(within(explanation.closest('.discovery-evidence-modal') as HTMLElement).queryByText('当前地址', { exact: true })).toBeNull()
 })
 
 it('does not count expired or conflicting recognition as an explicit current type', async()=>{
@@ -421,6 +454,7 @@ it('shows identification quality when the status section opens', async () => {
 it('filters the list from the triage counts', async () => {
   mockReads()
   renderPanel()
+  fireEvent.click(screen.getByRole('button', { name: '统计与类型线索' }))
   fireEvent.click(screen.getByRole('button', { name: /待核实/ }))
   await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).startsWith('/discovery/devices?') && String(path).includes('state=candidate'))).toBe(true))
 })

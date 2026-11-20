@@ -75,6 +75,12 @@ function dhcpFieldEvidenceFor(signal?: PassiveSignal) {
 type HandshakeClue = components['schemas']['DiscoveryHandshakeClue']
 const protocols: Record<string,string> = { dhcp:'DHCP', dhcp_client:'DHCP 客户端特征', dhcpv6:'DHCPv6', sip:'SIP', sadp:'SADP', dns_sd:'DNS-SD', ssdp:'SSDP', ws_discovery:'WS-Discovery', arp:'ARP', ndp:'NDP', ieee1905_client:'IEEE 1905', ieee1905_client_association:'IEEE 1905', lldp:'LLDP', cdp:'CDP', snmp:'SNMP', ipp:'IPP', onvif:'ONVIF', nbns:'NBNS', llmnr:'LLMNR', bacnet:'BACnet/IP', modbus:'Modbus', coap:'CoAP', mqtt:'MQTT', http:'HTTP', tls:'TLS', rtsp:'RTSP', fdb:'交换机 MAC 表', neighbor:'邻居表', active:'探测响应' }
 const capabilities: Record<string,string> = { printing:'打印', scanning:'扫描', casting:'投屏', network_video:'网络视频', media_rendering:'媒体播放', voice:'语音通话' }
+function discoveryAddressClue(item: Device) {
+  return item.hardware_type_status && !item.mac && !item.endpoint_id
+    ? item.current_addresses?.[0] || item.primary_ip || item.last_observed_ip || ''
+    : ''
+}
+
 function hardwareStatusLabel(item: Device): string {
   if (item.hardware_type_status === 'candidate' && item.product_clues?.length) return item.product_clues.some(clue => clue.type) ? '产品类型有依据，设备归属待核实' : '已有产品字段，类型待匹配'
   return hardwareStates[item.hardware_type_status ?? ''] ?? ''
@@ -252,6 +258,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
     setViewName('')
     message.success('视图已保存')
   }
+  const [overviewOpen, setOverviewOpen] = useState(false)
   const [qualityOpen,setQualityOpen] = useState(false)
   const [trendDays,setTrendDays]=useState(7)
   const [autoRefresh,setAutoRefresh]=useState(()=>{
@@ -331,6 +338,8 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   })
   const hardwareV2=discoveryMetadata.data?.classification_version==='passive-hardware/v2'
   const confirmedTypesLabel=hardwareV2?'已确认硬件类型':'已识别类型'
+  const countUnit = hardwareV2 ? '条发现记录' : '个设备'
+  const discoveryTotal = discoveryMetadata.data?.total
   const viewStates=hardwareV2?{...states,identified:'已知硬件类型',expired:'硬件结论已撤销'}:states
   const metadataValue=(value?:number)=>value??(discoveryMetadata.isError?'统计读取失败':'统计中')
   // keepPreviousData 会保留上一次结果，只看 isPending 会让搜索看起来没有反应。
@@ -371,6 +380,13 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const identity=(item:Device)=>{
     const type=item.hardware_type_status?confirmedDeviceType(item):['conflict','expired'].includes(item.classification_status??'')?'':item.device_type||((item.recognition?.confidence??0)>=.8?item.recognition?.device_type:'')
     const label=item.candidate_device_type?'':typeLabel(item,types)
+    const addressClue = discoveryAddressClue(item)
+    if (addressClue) {
+      return <div className="terminal-identity">
+        <DiscoveryDeviceIcon />
+        <Button type="link" className="terminal-device-link" onClick={()=>show(item)}>地址线索</Button>
+      </div>
+    }
     return <div className="terminal-identity"><DiscoveryDeviceIcon type={type} capabilities={item.capabilities}/><div><Button type="link" className="terminal-device-link" onClick={()=>show(item)}>{item.name||label||item.mac||item.primary_ip}</Button>{item.mac&&<span className="terminal-mac">{item.mac}{isLocallyAdministeredMAC(item.mac)?' · 本地管理':''}</span>}{item.name&&label&&<span className="terminal-kind-caption">{label}</span>}{discoveryNameClue(item.name)&&<Typography.Text type="secondary" className="terminal-kind-caption" title={discoveryNameClue(item.name)?.detail}>{discoveryNameClue(item.name)?.label}</Typography.Text>}</div></div>
   }
   const kind=(item:Device)=>{const label=typeLabel(item,types);return <>{label?<Typography.Text strong={!!confirmedDeviceType(item)} title={item.type_evidence_at?`类型依据于 ${observedTimeTitle(item.type_evidence_at)}`:item.last_product_at&&item.classification_status==='candidate'?`型号自报于 ${observedTimeTitle(item.last_product_at)}；当前类型证据已过期`:undefined}>{label}</Typography.Text>:null}<DiscoveryProductClues clues={item.product_clues} compact/></>}
@@ -398,7 +414,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
       anchor.download=`discovery-${new Date().toISOString().slice(0,10)}.csv`
       anchor.click()
       URL.revokeObjectURL(url)
-      message.success(`已导出当前筛选的全部 ${devices.length} 台设备${snapshotAt?` · 快照 ${observedTimeTitle(snapshotAt)}`:''}`)
+      message.success(`已导出当前筛选的全部 ${devices.length} ${countUnit}${snapshotAt?` · 快照 ${observedTimeTitle(snapshotAt)}`:''}`)
     }catch(error){
       message.error(`导出失败：${error instanceof Error?error.message:String(error)}`)
     }finally{
@@ -420,7 +436,16 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const columns=[
     {title:'设备',key:'identity',width:250,render:(_:unknown,item:Device)=>identity(item)},
     {title:'设备类型',key:'type',width:145,render:(_:unknown,item:Device)=>kind(item)},
-    {title:'地址 / 网络',key:'address',width:175,render:(_:unknown,item:Device)=><div className="terminal-address"><span>{item.current_addresses?.[0]??item.primary_ip}</span>{item.current_addresses?.length===0&&item.last_observed_ip&&<Typography.Text type="secondary">最后地址 {item.last_observed_ip}</Typography.Text>}{location(item)}</div>},
+    {title:'地址 / 网络',key:'address',width:175,render:(_:unknown,item:Device)=>{
+      const addressClue = discoveryAddressClue(item)
+      return <div className="terminal-address">
+        <span>{addressClue || item.current_addresses?.[0] || (item.current_addresses ? '' : item.primary_ip)}</span>
+        {addressClue
+          ? <Typography.Text type="secondary">观测地址</Typography.Text>
+          : item.current_addresses?.length===0&&item.last_observed_ip&&<Typography.Text type="secondary">最后地址 {item.last_observed_ip}</Typography.Text>}
+        {location(item)}
+      </div>
+    }},
     {title:'厂商 / 系统',key:'vendor',width:160,render:(_:unknown,item:Device)=><div>{vendor(item)}{osFor(item).label&&<Typography.Text type="secondary">{osFor(item).label} · 线索</Typography.Text>}</div>},
     {title:'识别依据',key:'clues',width:145,render:(_:unknown,item:Device)=><div className="discovery-ledger-stack"><div className="discovery-desktop-clues">{clues(item)}{secondaryTypeClue(item,types,signalFor(item))&&<Typography.Text type="secondary">{secondaryTypeClue(item,types,signalFor(item))}</Typography.Text>}</div>{state(item)}</div>},
     {title:'最近观测',key:'seen',width:110,render:(_:unknown,item:Device)=><span title={observedTimeTitle(item.last_seen)}>{observedTimeLabel(item.last_seen)}</span>},
@@ -530,55 +555,54 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
     {position.isError&&<AppErrorAlert title="页码定位失败" message={position.error.message} action={<Button onClick={()=>void position.refetch()}>重试定位</Button>}/>}
     {devices.isError&&<AppErrorAlert title="读取发现设备失败" message={devices.data?'当前展示上次成功读取的结果；请重试。':devices.error.message} action={<Button onClick={()=>void devices.refetch()}>重试列表</Button>}/>}
     {(!devices.isError||devices.data)&&<section aria-busy={searching} className={searching?'surface center-list-surface is-updating':'surface center-list-surface'}>
-      <section className="discovery-overview" aria-label="发现设备总览" title={`${scopeLabel} · 按采集范围与可信身份去重${discoveryMetadata.data?.as_of?` · 统计于 ${observedTimeTitle(discoveryMetadata.data.as_of)}`:''}`}>
+      <section className="discovery-overview" aria-label="发现设备总览">
         <div className="discovery-overview-line">
-          <strong>共 {metadataValue(discoveryMetadata.data?.total)} 个设备</strong>
+          <strong>{discoveryTotal===undefined?(discoveryMetadata.isError?'统计读取失败':'统计中'):`共 ${discoveryTotal} ${countUnit}`}</strong>
+          {discoveryMetadata.data&&<Typography.Text type="secondary">已确认 {discoveryMetadata.data.identified} · 待核实 {discoveryMetadata.data.candidate}</Typography.Text>}
+          <Typography.Text className="discovery-overview-caption" type="secondary" title={hardwareV2?'按采集范围和发现分组计数，包含地址线索':undefined}>
+            {scopeLabel}{discoveryMetadata.data?.as_of?` · 统计于 ${observedTimeTitle(discoveryMetadata.data.as_of)}`:''}{discoveryMetadata.isFetching?' · 统计更新中':''}
+          </Typography.Text>
           {fresh?.status==='ready'&&<Typography.Text type="secondary" className="discovery-freshness">{fresh.lag_seconds<60?'数据实时':`数据延迟 ${Math.round(fresh.lag_seconds/60)} 分钟`}</Typography.Text>}
-          <Typography.Text className="discovery-overview-caption" type="secondary">{scopeLabel} · 按采集范围与可信身份去重{discoveryMetadata.data?.as_of?` · 统计于 ${observedTimeTitle(discoveryMetadata.data.as_of)}`:''}{discoveryMetadata.isFetching?' · 统计更新中':''}</Typography.Text>
+          <Button type="link" size="small" className="discovery-overview-toggle" aria-expanded={overviewOpen} aria-controls="discovery-overview-breakdown" onClick={()=>setOverviewOpen(open=>!open)}>
+            {overviewOpen?'收起统计':'统计与类型线索'}
+          </Button>
         </div>
-        <div className="discovery-stat-cards">
-          {dashboard&&<>
-            <Button className="discovery-stat-card" onClick={()=>setWindow('15m')}><span className="discovery-stat-label">近 15 分钟活跃</span><strong>{dashboard.active}</strong>
-              <span className="discovery-stat-rate">{dashboard.previous_active===undefined?'昨日覆盖不足':`较昨日 ${dashboard.active>=dashboard.previous_active?'+':''}${dashboard.active-dashboard.previous_active}`}</span>
-            </Button>
-            <Button className="discovery-stat-card" aria-pressed={dumbFilter} onClick={()=>shortcut('',dumbFilter?'':'dumb')}><span className="discovery-stat-label">哑终端</span><strong>{dashboard.dumb_terminals}</strong></Button>
-            <Button className="discovery-stat-card" aria-pressed={params.has('discovery_first_seen_within')} onClick={()=>change('first_seen_within',params.has('discovery_first_seen_within')?'':'168h')}>
-              <span className="discovery-stat-label">近 7 天新增</span><strong>{dashboard.new_seven_days}</strong>
-              <span className="discovery-trend-bars" aria-label="七日新增趋势">{dashboard.new_by_day.map(day=><span key={day.date} className={`discovery-trend-bar is-${trendBucket(day.count,Math.max(1,...dashboard.new_by_day.map(point=>point.count)))}`} title={`${day.date} · ${day.count}`}/>)}</span>
-            </Button>
-          </>}
-          {statCard('identified',confirmedTypesLabel,discoveryMetadata.data?.identified)}
-          {statCard('candidate','待核实',discoveryMetadata.data?.candidate)}
-          {statCard('conflict','类型冲突',discoveryMetadata.data?.conflict)}
-          {statCard('expired',hardwareV2?'硬件结论已撤销':'证据过期',discoveryMetadata.data?.expired)}
+        <div id="discovery-overview-breakdown" className="discovery-overview-breakdown" hidden={!overviewOpen}>
+          <div className="discovery-stat-cards">
+            {dashboard&&<>
+              <Button className="discovery-stat-card" onClick={()=>setWindow('15m')}><span className="discovery-stat-label">近 15 分钟活跃</span><strong>{dashboard.active}</strong>
+                <span className="discovery-stat-rate">{dashboard.previous_active===undefined?'昨日覆盖不足':`较昨日 ${dashboard.active>=dashboard.previous_active?'+':''}${dashboard.active-dashboard.previous_active}`}</span>
+              </Button>
+              <Button className="discovery-stat-card" aria-pressed={dumbFilter} onClick={()=>shortcut('',dumbFilter?'':'dumb')}><span className="discovery-stat-label">哑终端</span><strong>{dashboard.dumb_terminals}</strong></Button>
+              <Button className="discovery-stat-card" aria-pressed={params.has('discovery_first_seen_within')} onClick={()=>change('first_seen_within',params.has('discovery_first_seen_within')?'':'168h')}>
+                <span className="discovery-stat-label">近 7 天新增</span><strong>{dashboard.new_seven_days}</strong>
+                <span className="discovery-trend-bars" aria-label="七日新增趋势">{dashboard.new_by_day.map(day=><span key={day.date} className={`discovery-trend-bar is-${trendBucket(day.count,Math.max(1,...dashboard.new_by_day.map(point=>point.count)))}`} title={`${day.date} · ${day.count}`}/>)}</span>
+              </Button>
+            </>}
+            {statCard('identified',confirmedTypesLabel,discoveryMetadata.data?.identified)}
+            {statCard('candidate','待核实',discoveryMetadata.data?.candidate)}
+            {statCard('conflict','类型冲突',discoveryMetadata.data?.conflict)}
+            {statCard('expired',hardwareV2?'硬件结论已撤销':'证据过期',discoveryMetadata.data?.expired)}
+          </div>
+          <div className="discovery-type-chart">
+            <Typography.Text type="secondary" className="discovery-type-chart-head">{confirmedTypesLabel}{discoveryMetadata.data?`（合计 ${confirmedTypes.reduce((sum,item)=>sum+item.count,0)}）`:''}</Typography.Text>
+            {confirmedTypes.length?[...confirmedTypes].sort((a,b)=>b.count-a.count||a.device_type.localeCompare(b.device_type)).map(item=><Button key={item.device_type} type="text" size="small" className="discovery-type-row" onClick={()=>shortcut(item.device_type,dumbFilter?'dumb':'','identified')}><span className="discovery-type-row-body">{types[item.device_type]??deviceTypeLabel(item.device_type)} <span className="discovery-type-track" aria-hidden="true">
+              {(candidateCounts.get(item.device_type)??0)>0&&<span className={`discovery-type-fill discovery-type-candidate is-${barBucket(item.count+(candidateCounts.get(item.device_type)??0),typeMax)}`}/>}
+              <span className={`discovery-type-fill is-${barBucket(item.count,typeMax)}`}/></span><strong className="discovery-type-count">{item.count}</strong></span></Button>):<Typography.Text type="secondary">{discoveryMetadata.data?`当前筛选下暂无${confirmedTypesLabel}`:discoveryMetadata.isError?'统计读取失败':'统计中'}</Typography.Text>}
+          </div>
+          {!!discoveryMetadata.data?.candidate_types?.length&&<div className="discovery-overview-types discovery-overview-candidates" aria-label="画像类型线索">
+            <Typography.Text type="secondary">画像类型线索</Typography.Text>
+            {[...discoveryMetadata.data.candidate_types].sort((a,b)=>b.count-a.count||a.device_type.localeCompare(b.device_type)).map(item=>
+              <Button key={item.device_type} type="text" size="small" className="discovery-overview-type" onClick={()=>shortcut(item.device_type,dumbFilter?'dumb':'','candidate')}>{types[item.device_type]??deviceTypeLabel(item.device_type)} <strong>{item.count}</strong></Button>
+            )}
+          </div>}
+          {!!discoveryMetadata.data?.ip_product_types?.length&&<div className="discovery-overview-types discovery-overview-candidates" aria-label="IP 产品类型线索">
+            <Typography.Text type="secondary">IP 产品类型线索（不计入确认硬件）</Typography.Text>
+            {[...discoveryMetadata.data.ip_product_types].sort((a,b)=>b.count-a.count||a.device_type.localeCompare(b.device_type)).map(item=>
+              <Button key={item.device_type} type="text" size="small" className="discovery-overview-type" onClick={()=>shortcut(item.device_type,dumbFilter?'dumb':'','candidate')}>{types[item.device_type]??deviceTypeLabel(item.device_type)} <strong>{item.count}</strong></Button>
+            )}
+          </div>}
         </div>
-        <div className="discovery-type-chart">
-          <Typography.Text type="secondary" className="discovery-type-chart-head">{confirmedTypesLabel}{discoveryMetadata.data?`（合计 ${confirmedTypes.reduce((sum,item)=>sum+item.count,0)}）`:''}</Typography.Text>
-          {confirmedTypes.length?[...confirmedTypes].sort((a,b)=>b.count-a.count||a.device_type.localeCompare(b.device_type)).map(item=><Button key={item.device_type} type="text" size="small" className="discovery-type-row" onClick={()=>shortcut(item.device_type,dumbFilter?'dumb':'','identified')}><span className="discovery-type-row-body">{types[item.device_type]??deviceTypeLabel(item.device_type)} <span className="discovery-type-track" aria-hidden="true">
-            {(candidateCounts.get(item.device_type)??0)>0&&<span className={`discovery-type-fill discovery-type-candidate is-${barBucket(item.count+(candidateCounts.get(item.device_type)??0),typeMax)}`}/>}
-            <span className={`discovery-type-fill is-${barBucket(item.count,typeMax)}`}/></span><strong className="discovery-type-count">{item.count}</strong></span></Button>):<Typography.Text type="secondary">{discoveryMetadata.data?`当前筛选下暂无${confirmedTypesLabel}`:discoveryMetadata.isError?'统计读取失败':'统计中'}</Typography.Text>}
-        </div>
-        {!!discoveryMetadata.data?.candidate_types?.length&&<div className="discovery-overview-types discovery-overview-candidates" aria-label="画像类型线索">
-          <Typography.Text type="secondary">画像类型线索</Typography.Text>
-          {[...discoveryMetadata.data.candidate_types].sort((a,b)=>b.count-a.count||a.device_type.localeCompare(b.device_type)).map(item=>
-            <Button key={item.device_type} type="text" size="small" className="discovery-overview-type" onClick={()=>shortcut(item.device_type,dumbFilter?'dumb':'','candidate')}>{types[item.device_type]??deviceTypeLabel(item.device_type)} <strong>{item.count}</strong></Button>
-          )}
-        </div>}
-        {!!discoveryMetadata.data?.ip_product_types?.length&&<div className="discovery-overview-types discovery-overview-candidates" aria-label="IP 产品类型线索">
-          <Typography.Text type="secondary">IP 产品类型线索（不计入确认硬件）</Typography.Text>
-          {[...discoveryMetadata.data.ip_product_types].sort((a,b)=>b.count-a.count||a.device_type.localeCompare(b.device_type)).map(item=>
-            <Button key={item.device_type} type="text" size="small" className="discovery-overview-type" onClick={()=>shortcut(item.device_type,dumbFilter?'dumb':'','candidate')}>{types[item.device_type]??deviceTypeLabel(item.device_type)} <strong>{item.count}</strong></Button>
-          )}
-        </div>}
-        {hardwareFresh&&hardwareFresh.status!=='failed'&&<div className="discovery-hardware-progress" aria-label="硬件分类处理进度"><Typography.Text type="secondary">硬件分类{hardwareFresh.coverage==='live_input_only'?'仅含启用后输入':hardwareFresh.backfill_complete?'保留观测回填完成':'保留观测回填中'}{hardwareFresh.available_from?` · 可用起点 ${observedTimeTitle(hardwareFresh.available_from)}`:''} · 待处理 {hardwareFresh.pending_identities??0} · 处理失败 {hardwareFresh.failed_identities??0}{hardwareFresh.oldest_pending_at?` · 最早积压 ${observedTimeTitle(hardwareFresh.oldest_pending_at)}`:''}{hardwareFresh.missing_source_refs?` · 缺少原文引用 ${hardwareFresh.missing_source_refs}`:''}{hardwareFresh.changed_after_backfill_start?` · 回填窗口被新观测替换 ${hardwareFresh.changed_after_backfill_start}`:''}</Typography.Text></div>}
-        {fresh?.source==='passive-discovery-batch-v3'&&<div className="discovery-batch-progress" aria-label="存储处理进度">
-          {fresh.ingested_at&&<Typography.Text type="secondary">采集入库 {observedTimeTitle(fresh.ingested_at)}</Typography.Text>}
-          {fresh.processed_at&&<Typography.Text type="secondary">设备发现 {observedTimeTitle(fresh.processed_at)}</Typography.Text>}
-          {fresh.pending_batches!==undefined&&<Typography.Text type="secondary">待发现批次 {fresh.pending_batches}</Typography.Text>}
-          {fresh.archive_verified_at&&<Typography.Text type="secondary">证据归档 {observedTimeTitle(fresh.archive_verified_at)}</Typography.Text>}
-          {fresh.archive_pending_batches!==undefined&&<Typography.Text type="secondary">待归档批次 {fresh.archive_pending_batches}</Typography.Text>}
-          {fresh.archive_oldest_pending_at&&<Typography.Text type="secondary">最早待归档 {observedTimeTitle(fresh.archive_oldest_pending_at)}</Typography.Text>}
-        </div>}
       </section>
       <div className="list-surface-head">
       <AppTableBar
@@ -592,7 +616,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
           {!smallScreen&&stateControls}
           <Button size="small" type="text" onClick={()=>setMoreOpen(value=>!value)}>{smallScreen?'筛选':moreOpen?'收起筛选':'更多筛选'}{['category','type','protocol','window','domain','vlan','subnet','random_mac','os','last_seen_from','first_seen_within'].filter(key=>params.get(`discovery_${key}`)).length?`（${['category','type','protocol','window','domain','vlan','subnet','random_mac','os','last_seen_from','first_seen_within'].filter(key=>params.get(`discovery_${key}`)).length}）`:''}</Button>
         </>}
-        extra={<div className="discovery-list-actions"><span className="discovery-auto-refresh"><Switch size="small" aria-label="自动刷新" checked={autoRefresh} onChange={toggleAutoRefresh}/><Typography.Text type="secondary">自动刷新</Typography.Text></span>{searching&&<span className="discovery-search-status" role="status" aria-live="polite"><LoadingOutlined aria-hidden="true" spin /> {draft.trim()||search?'正在搜索…':'正在加载…'}</span>}<span className="terminal-page-summary" aria-label="发现设备摘要"><span>当前页 <strong>{items.length}</strong> 个设备</span><span>本页明确类型 <strong>{typedPageCount}</strong></span><span>本页近15分钟观测 <strong>{recentPageCount}</strong></span></span><Button size="small" icon={<DownloadOutlined aria-hidden="true"/>} loading={exporting} onClick={()=>void exportDevices()}>{exporting?`导出中 ${exportProgress.count}/${exportProgress.total||'…'}`:'导出全部筛选结果'}</Button></div>}
+        extra={<div className="discovery-list-actions"><span className="discovery-auto-refresh"><Switch size="small" aria-label="自动刷新" checked={autoRefresh} onChange={toggleAutoRefresh}/><Typography.Text type="secondary">自动刷新</Typography.Text></span>{searching&&<span className="discovery-search-status" role="status" aria-live="polite"><LoadingOutlined aria-hidden="true" spin /> {draft.trim()||search?'正在搜索…':'正在加载…'}</span>}<span className="terminal-page-summary" aria-label="发现设备摘要"><span>当前页 <strong>{items.length}</strong> {countUnit}</span><span>本页明确类型 <strong>{typedPageCount}</strong></span><span>本页近15分钟观测 <strong>{recentPageCount}</strong></span></span><Button size="small" icon={<DownloadOutlined aria-hidden="true"/>} loading={exporting} onClick={()=>void exportDevices()}>{exporting?`导出中 ${exportProgress.count}/${exportProgress.total||'…'}`:'导出全部筛选结果'}</Button></div>}
       panel={moreOpen&&!smallScreen?advancedFilters:undefined}
       />
         {viewActions}
@@ -623,9 +647,18 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
       <AppServerPagination disabled={devices.isFetching||position.isLocating} page={page+1} pageSize={pageSize} total={discoveryMetadata.data?.total} onChange={(nextPage,nextSize)=>{
         if(nextSize!==pageSize){setPageSize(nextSize);setPaging({key:filterKey,page:0});return}
         setPaging({key:filterKey,page:nextPage-1})
-      }} totalText={discoveryMetadata.data?`共 ${discoveryMetadata.data.total} 个设备`:(discoveryMetadata.isError?'数量读取失败':'正在统计数量')} />
+      }} totalText={discoveryMetadata.data?`共 ${discoveryMetadata.data.total} ${countUnit}`:(discoveryMetadata.isError?'数量读取失败':'正在统计数量')} />
     </section>}
     <details className="terminal-diagnostics" open={qualityOpen}><summary onClick={event=>{event.preventDefault();setQualityOpen(value=>!value)}}>采集与识别状态</summary>    <section className="surface center-list-toolbar">
+        {hardwareFresh&&hardwareFresh.status!=='failed'&&<div className="discovery-hardware-progress" aria-label="硬件分类处理进度"><Typography.Text type="secondary">硬件分类{hardwareFresh.coverage==='live_input_only'?'仅含启用后输入':hardwareFresh.backfill_complete?'保留观测回填完成':'保留观测回填中'}{hardwareFresh.available_from?` · 可用起点 ${observedTimeTitle(hardwareFresh.available_from)}`:''} · 待处理 {hardwareFresh.pending_identities??0} · 处理失败 {hardwareFresh.failed_identities??0}{hardwareFresh.oldest_pending_at?` · 最早积压 ${observedTimeTitle(hardwareFresh.oldest_pending_at)}`:''}{hardwareFresh.missing_source_refs?` · 缺少原文引用 ${hardwareFresh.missing_source_refs}`:''}{hardwareFresh.changed_after_backfill_start?` · 回填窗口被新观测替换 ${hardwareFresh.changed_after_backfill_start}`:''}</Typography.Text></div>}
+        {fresh?.source==='passive-discovery-batch-v3'&&<div className="discovery-batch-progress" aria-label="存储处理进度">
+          {fresh.ingested_at&&<Typography.Text type="secondary">采集入库 {observedTimeTitle(fresh.ingested_at)}</Typography.Text>}
+          {fresh.processed_at&&<Typography.Text type="secondary">设备发现 {observedTimeTitle(fresh.processed_at)}</Typography.Text>}
+          {fresh.pending_batches!==undefined&&<Typography.Text type="secondary">待发现批次 {fresh.pending_batches}</Typography.Text>}
+          {fresh.archive_verified_at&&<Typography.Text type="secondary">证据归档 {observedTimeTitle(fresh.archive_verified_at)}</Typography.Text>}
+          {fresh.archive_pending_batches!==undefined&&<Typography.Text type="secondary">待归档批次 {fresh.archive_pending_batches}</Typography.Text>}
+          {fresh.archive_oldest_pending_at&&<Typography.Text type="secondary">最早待归档 {observedTimeTitle(fresh.archive_oldest_pending_at)}</Typography.Text>}
+        </div>}
       {qualityOpen&&<div className="recognition-quality-strip" aria-label="识别质量">
         <Typography.Text type="secondary" className="recognition-quality-scope">全局识别画像 · 不随列表筛选变化</Typography.Text>
         {quality.isError&&<AppErrorAlert title="识别质量读取失败" message={quality.error.message} />}
@@ -665,7 +698,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
 </details>
     <Modal title="管理视图" open={manageViewsOpen} footer={null} onCancel={()=>setManageViewsOpen(false)}>{views.length?views.map(view=><div key={view.id} className="discovery-view-manage-row"><Typography.Text>{view.name}</Typography.Text><Button type="link" size="small" danger onClick={()=>deleteSavedView(view.id)}>删除</Button></div>):<Typography.Text type="secondary">还没有保存的视图</Typography.Text>}</Modal>
     <Modal title="保存视图" open={saveViewOpen} okText="保存" cancelText="取消" onOk={saveCurrentView} onCancel={()=>{setSaveViewOpen(false);setViewName('')}}><Input aria-label="视图名称" placeholder="例如：网络设备 · 近 7 天" value={viewName} onChange={e=>setViewName(e.target.value)}/><Typography.Paragraph type="secondary">保存当前筛选条件，仅存储在本机浏览器。</Typography.Paragraph></Modal>
-    <Modal className="discovery-evidence-modal" title="设备详情" open={!!selected} footer={selected?<div className="discovery-detail-nav"><Typography.Text type="secondary">{selectedPosition+1} / {items.length}</Typography.Text><Button disabled={selectedPosition<=0} onClick={()=>setSelected(items[selectedPosition-1])}>上一台</Button><Button disabled={selectedPosition<0||selectedPosition>=items.length-1} onClick={()=>setSelected(items[selectedPosition+1])}>下一台</Button></div>:null} onCancel={()=>setSelected(undefined)}>{selected&&<><div className="discovery-detail-identity">{identity(selected)}{kind(selected)}{detailIP&&<Typography.Text>{detailIP}</Typography.Text>}{selected.endpoint_id&&<Button type="link" size="small" className="discovery-detail-profile-link" onClick={()=>{setSelected(undefined);navigate(`/devices/${encodeURIComponent(selected.endpoint_id!)}`)}}>查看终端画像</Button>}</div>{renderDetailFacts([[`硬件类型状态`,hardwareStatusLabel(selected)],[`类型依据时间`,selected.type_evidence_at?observedTimeTitle(selected.type_evidence_at):''],[`活动状态`,activityStates[selected.activity_status??'']],[`硬件规则版本`,selected.type_rule_version],[`型号状态`,selected.hardware_model_status==='conflict'?'型号证据冲突':''],[`互斥类型`,(selected.hardware_conflicting_types??[]).map(type=>types[type]??deviceTypeLabel(type)).join('、')],[`型号冲突项`,(selected.hardware_conflicting_models??[]).join('、')],[`设备类型`,conclusionTypeLabel(selected,types)],[`设备分类`,selected.category?categories[selected.category]??selected.category:''],[`分类状态说明`,discoveryClassificationExplanation(selected)],[`名称线索`,discoveryNameClue(selected.name)?.label],[`名称线索依据`,discoveryNameClue(selected.name)?.detail],[`分类补充线索`,secondaryTypeClue(selected,types,signalFor(selected))],[`操作系统线索`,osFor(selected).label?`${osFor(selected).label} · ${signalFor(selected)?.dhcp_historical&&signalFor(selected)?.os_family?'历史线索':'线索'}`:''],[`操作系统依据`,osFor(selected).detail],[`DHCP 线索时效`,signalFor(selected)?.dhcp_historical?'历史 REQUEST 线索；同源当前租约仍有效，需结合观测时间核对':''],[`DHCP 观测时间`,signalFor(selected)?.dhcp_observed_at?observedTimeTitle(signalFor(selected)!.dhcp_observed_at!):''],[`最近 DHCP 证据事件`,signalFor(selected)?.dhcp_evidence_id],[`TTL 证据引用`,signalFor(selected)?.ttl_evidence?.event_id||((signalFor(selected)?.ttl_evidence?.raw_sha256)?`原文 SHA256 ${signalFor(selected)?.ttl_evidence?.raw_sha256}`:'')],[`TTL 观测时间`,signalFor(selected)?.ttl_observed_at?observedTimeTitle(signalFor(selected)!.ttl_observed_at!):''],[`TTL`,signalFor(selected)?.ttl?String(signalFor(selected)?.ttl):''],[`DHCP 主机名`,signalFor(selected)?.dhcp_hostname],[`DHCP 厂商类`,signalFor(selected)?.dhcp_vendor_class],[`DHCP 请求选项`,signalFor(selected)?.dhcp_options],[`DHCP 客户端标识类型`,signalFor(selected)?.dhcp_client_id_hwtype],[`DHCP 选项 93`,signalFor(selected)?.dhcp_option93_present?'已观测':''],[`识别操作系统`,recognitionOSLabel(selected)],[`识别设备类型`,recognitionTypeLabel(selected,types)],[`类型置信度`,selected.recognition?.confidence?`${Math.round(selected.recognition.confidence*100)}%`:''],[`系统置信度`,selected.recognition?.os_family&&selected.recognition?.os_family_confidence?`${Math.round(selected.recognition.os_family_confidence*100)}%`:''],[`识别规则`,selected.recognition?.rule_version],[`识别依据`,(selected.recognition?.evidence??[]).join('；')],[`品牌推断`,selected.recognition?.brand_inference_status==='inferred'&&selected.recognition?.brand_inference_brand?`${selected.recognition.brand_inference_brand} · 设备服务线索推断${selected.recognition.brand_inference_confidence?`（${Math.round(selected.recognition.brand_inference_confidence*100)}%）`:''}`:''],[`制造商`,selected.manufacturer],[`型号`,selected.hardware_type_status?selected.hardware_model:selected.model_name],[`MAC`,selected.mac],[`MAC 管理方式`,selected.mac?(isLocallyAdministeredMAC(selected.mac)?'本地管理（不能据此判定随机）':'全局管理'):''],[`当前地址`,(selected.current_addresses??[]).join('、')||selected.primary_ip],[`最后观测地址`,selected.last_observed_ip],[`网络域`,selected.domain],[`VLAN`,selected.vlan],[`采集传感器`,selected.sensor_id],[`窗口内首次观测`,selected.first_seen?observedTimeTitle(selected.first_seen):''],[`最近观测`,observedTimeTitle(selected.last_seen)],[`证据数`,selected.evidence_count?String(selected.evidence_count):'']])}{dhcpFieldEvidenceFor(signalFor(selected)).length>0&&<section className="discovery-client-clues"><Typography.Text type="secondary">DHCP 字段证据（各字段保留对应原始报文引用）</Typography.Text>{dhcpFieldEvidenceFor(signalFor(selected)).map(entry=><article key={entry.field}><strong>{entry.label}</strong><span>{entry.value}</span><Typography.Text type="secondary">{[entry.ref.event_id?`事件 ${entry.ref.event_id}`:entry.ref.raw_sha256?`原文 SHA256 ${entry.ref.raw_sha256}`:'',entry.ref.historical?'历史线索':'',observedTimeTitle(entry.ref.observed_at)].filter(Boolean).join(' · ')}</Typography.Text></article>)}</section>}{selected?.endpoint_id&&fingerprintDetail.data?.profile?.recognition?.source_matches?.length?<section className="discovery-client-clues"><Typography.Text type="secondary">指纹库命中（端点识别）</Typography.Text>{fingerprintDetail.data.profile.recognition.source_matches.slice(0,6).map(m=><article key={`${m.source_id}:${m.rule_id}`}><strong>{m.name}</strong><span>{m.strength==='auxiliary'?'辅助线索':'自报证据'} · {m.source_id}</span><Typography.Text type="secondary">{[m.fields.join('、'),Object.values(m.observed??{}).join('；')].filter(Boolean).join(' · ')}</Typography.Text></article>)}</section>:null}{clientFor(selected)?.client_clues?.length&&<section className="discovery-client-clues"><Typography.Text type="secondary">HTTP / TLS 客户端弱线索（仅按当前 IP 关联，地址共享或复用时需核对）</Typography.Text>{clientFor(selected)?.client_clues?.map((clue,index)=><article key={`${clue.kind}:${clue.evidence_id}:${index}`}><strong>{clue.kind==='user_agent'?'HTTP User-Agent':clue.kind.toUpperCase()}</strong><span>{clue.value}</span><Typography.Text type="secondary">{[clue.evidence_id,observedTimeTitle(clue.observed_at)].filter(Boolean).join(' · ')}</Typography.Text></article>)}</section>}<Typography.Paragraph>{selected.classification?.reason}</Typography.Paragraph>{selected.type_sources?.length?<section className="discovery-hardware-evidence" aria-label="硬件类型证据"><Typography.Title level={5}>硬件类型证据</Typography.Title><Typography.Paragraph type="secondary">类型保留已确认的硬件事实；服务公告和地址绑定的有效期单独判断。</Typography.Paragraph>{selected.type_sources.map(source=><article key={`${source.source}:${source.rule_id}:${source.evidence_id}`}><strong>{protocols[source.source]??source.source}</strong><span>{source.rule_id} · {source.rule_version}</span><span>{source.evidence_id}</span><time>{observedTimeTitle(source.observed_at)}</time></article>)}</section>:null}<DiscoveryProductClues clues={selected.product_clues}/><DiscoveryEvidenceSummary observations={selected.observations}/>
+    <Modal className="discovery-evidence-modal" title="设备详情" open={!!selected} footer={selected?<div className="discovery-detail-nav"><Typography.Text type="secondary">{selectedPosition+1} / {items.length}</Typography.Text><Button disabled={selectedPosition<=0} onClick={()=>setSelected(items[selectedPosition-1])}>上一台</Button><Button disabled={selectedPosition<0||selectedPosition>=items.length-1} onClick={()=>setSelected(items[selectedPosition+1])}>下一台</Button></div>:null} onCancel={()=>setSelected(undefined)}>{selected&&<><div className="discovery-detail-identity">{identity(selected)}{kind(selected)}{(detailIP||discoveryAddressClue(selected))&&<Typography.Text>{detailIP||discoveryAddressClue(selected)}</Typography.Text>}{selected.endpoint_id&&<Button type="link" size="small" className="discovery-detail-profile-link" onClick={()=>{setSelected(undefined);navigate(`/devices/${encodeURIComponent(selected.endpoint_id!)}`)}}>查看终端画像</Button>}</div>{discoveryAddressClue(selected)&&<Typography.Paragraph type="secondary">这是一条按采集范围记录的地址线索，尚无可绑定的 MAC 或设备身份。不同 VLAN 可以重复使用同一地址。</Typography.Paragraph>}{renderDetailFacts([[`硬件类型状态`,hardwareStatusLabel(selected)],[`类型依据时间`,selected.type_evidence_at?observedTimeTitle(selected.type_evidence_at):''],[`活动状态`,activityStates[selected.activity_status??'']],[`硬件规则版本`,selected.type_rule_version],[`型号状态`,selected.hardware_model_status==='conflict'?'型号证据冲突':''],[`互斥类型`,(selected.hardware_conflicting_types??[]).map(type=>types[type]??deviceTypeLabel(type)).join('、')],[`型号冲突项`,(selected.hardware_conflicting_models??[]).join('、')],[`设备类型`,conclusionTypeLabel(selected,types)],[`设备分类`,selected.category?categories[selected.category]??selected.category:''],[`分类状态说明`,discoveryClassificationExplanation(selected)],[`名称线索`,discoveryNameClue(selected.name)?.label],[`名称线索依据`,discoveryNameClue(selected.name)?.detail],[`分类补充线索`,secondaryTypeClue(selected,types,signalFor(selected))],[`操作系统线索`,osFor(selected).label?`${osFor(selected).label} · ${signalFor(selected)?.dhcp_historical&&signalFor(selected)?.os_family?'历史线索':'线索'}`:''],[`操作系统依据`,osFor(selected).detail],[`DHCP 线索时效`,signalFor(selected)?.dhcp_historical?'历史 REQUEST 线索；同源当前租约仍有效，需结合观测时间核对':''],[`DHCP 观测时间`,signalFor(selected)?.dhcp_observed_at?observedTimeTitle(signalFor(selected)!.dhcp_observed_at!):''],[`最近 DHCP 证据事件`,signalFor(selected)?.dhcp_evidence_id],[`TTL 证据引用`,signalFor(selected)?.ttl_evidence?.event_id||((signalFor(selected)?.ttl_evidence?.raw_sha256)?`原文 SHA256 ${signalFor(selected)?.ttl_evidence?.raw_sha256}`:'')],[`TTL 观测时间`,signalFor(selected)?.ttl_observed_at?observedTimeTitle(signalFor(selected)!.ttl_observed_at!):''],[`TTL`,signalFor(selected)?.ttl?String(signalFor(selected)?.ttl):''],[`DHCP 主机名`,signalFor(selected)?.dhcp_hostname],[`DHCP 厂商类`,signalFor(selected)?.dhcp_vendor_class],[`DHCP 请求选项`,signalFor(selected)?.dhcp_options],[`DHCP 客户端标识类型`,signalFor(selected)?.dhcp_client_id_hwtype],[`DHCP 选项 93`,signalFor(selected)?.dhcp_option93_present?'已观测':''],[`识别操作系统`,recognitionOSLabel(selected)],[`识别设备类型`,recognitionTypeLabel(selected,types)],[`类型置信度`,selected.recognition?.confidence?`${Math.round(selected.recognition.confidence*100)}%`:''],[`系统置信度`,selected.recognition?.os_family&&selected.recognition?.os_family_confidence?`${Math.round(selected.recognition.os_family_confidence*100)}%`:''],[`识别规则`,selected.recognition?.rule_version],[`识别依据`,(selected.recognition?.evidence??[]).join('；')],[`品牌推断`,selected.recognition?.brand_inference_status==='inferred'&&selected.recognition?.brand_inference_brand?`${selected.recognition.brand_inference_brand} · 设备服务线索推断${selected.recognition.brand_inference_confidence?`（${Math.round(selected.recognition.brand_inference_confidence*100)}%）`:''}`:''],[`制造商`,selected.manufacturer],[`型号`,selected.hardware_type_status?selected.hardware_model:selected.model_name],[`MAC`,selected.mac],[`MAC 管理方式`,selected.mac?(isLocallyAdministeredMAC(selected.mac)?'本地管理（不能据此判定随机）':'全局管理'):''],[`当前地址`,discoveryAddressClue(selected)?'':(selected.current_addresses??[]).join('、')||(!selected.current_addresses?selected.primary_ip:'')],[`最后观测地址`,selected.last_observed_ip],[`网络域`,selected.domain],[`VLAN`,selected.vlan],[`采集传感器`,selected.sensor_id],[`窗口内首次观测`,selected.first_seen?observedTimeTitle(selected.first_seen):''],[`最近观测`,observedTimeTitle(selected.last_seen)],[`证据数`,selected.evidence_count?String(selected.evidence_count):'']])}{dhcpFieldEvidenceFor(signalFor(selected)).length>0&&<section className="discovery-client-clues"><Typography.Text type="secondary">DHCP 字段证据（各字段保留对应原始报文引用）</Typography.Text>{dhcpFieldEvidenceFor(signalFor(selected)).map(entry=><article key={entry.field}><strong>{entry.label}</strong><span>{entry.value}</span><Typography.Text type="secondary">{[entry.ref.event_id?`事件 ${entry.ref.event_id}`:entry.ref.raw_sha256?`原文 SHA256 ${entry.ref.raw_sha256}`:'',entry.ref.historical?'历史线索':'',observedTimeTitle(entry.ref.observed_at)].filter(Boolean).join(' · ')}</Typography.Text></article>)}</section>}{selected?.endpoint_id&&fingerprintDetail.data?.profile?.recognition?.source_matches?.length?<section className="discovery-client-clues"><Typography.Text type="secondary">指纹库命中（端点识别）</Typography.Text>{fingerprintDetail.data.profile.recognition.source_matches.slice(0,6).map(m=><article key={`${m.source_id}:${m.rule_id}`}><strong>{m.name}</strong><span>{m.strength==='auxiliary'?'辅助线索':'自报证据'} · {m.source_id}</span><Typography.Text type="secondary">{[m.fields.join('、'),Object.values(m.observed??{}).join('；')].filter(Boolean).join(' · ')}</Typography.Text></article>)}</section>:null}{clientFor(selected)?.client_clues?.length&&<section className="discovery-client-clues"><Typography.Text type="secondary">HTTP / TLS 客户端弱线索（仅按当前 IP 关联，地址共享或复用时需核对）</Typography.Text>{clientFor(selected)?.client_clues?.map((clue,index)=><article key={`${clue.kind}:${clue.evidence_id}:${index}`}><strong>{clue.kind==='user_agent'?'HTTP User-Agent':clue.kind.toUpperCase()}</strong><span>{clue.value}</span><Typography.Text type="secondary">{[clue.evidence_id,observedTimeTitle(clue.observed_at)].filter(Boolean).join(' · ')}</Typography.Text></article>)}</section>}<Typography.Paragraph>{selected.classification?.reason}</Typography.Paragraph>{selected.type_sources?.length?<section className="discovery-hardware-evidence" aria-label="硬件类型证据"><Typography.Title level={5}>硬件类型证据</Typography.Title><Typography.Paragraph type="secondary">类型保留已确认的硬件事实；服务公告和地址绑定的有效期单独判断。</Typography.Paragraph>{selected.type_sources.map(source=><article key={`${source.source}:${source.rule_id}:${source.evidence_id}`}><strong>{protocols[source.source]??source.source}</strong><span>{source.rule_id} · {source.rule_version}</span><span>{source.evidence_id}</span><time>{observedTimeTitle(source.observed_at)}</time></article>)}</section>:null}<DiscoveryProductClues clues={selected.product_clues}/><DiscoveryEvidenceSummary observations={selected.observations}/>
       {(selected.behavior_keys??[]).map(key=><DiscoveryBehaviorEvidence key={key} evidenceKey={key}/>)}
       {handshakeClues.isError&&<AppErrorAlert title="读取握手弱线索失败" />}
       {!!handshakeClues.data?.items.length&&<section className="discovery-client-clues"><Typography.Text type="secondary">镜像握手弱线索（当前 IP {detailIP}，地址共享或复用时需核对）</Typography.Text>{handshakeClues.data.items.map((clue,index)=><article key={`${clue.kind}:${clue.evidence_id}:${index}`}><strong>{clue.kind==='user_agent'?'HTTP User-Agent':clue.kind==='ja4'?'TLS JA4':'TLS JA3'}</strong><span>{clue.value}</span><Typography.Text type="secondary">{[clue.dst_port?`握手目标 TCP/${clue.dst_port}`:'',clue.evidence_id,observedTimeTitle(clue.observed_at)].filter(Boolean).join(' · ')}</Typography.Text></article>)}</section>}

@@ -5160,10 +5160,12 @@ pre.wrap-code {
 .discovery-detail-nav { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .discovery-detail-nav .ant-typography { margin-right: 4px; }
 .discovery-overview-caption { font-size: 12px; }
-.discovery-overview-types { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding-top: 0; flex: 1 1 320px; min-width: 0; }
+.discovery-overview-types { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
 .discovery-overview-type { display: inline-flex; gap: 6px; flex-shrink: 0; white-space: nowrap; padding: 3px 8px; border: 1px solid #e2e8f0; border-radius: 8px; color: #334155; background: #fff; font-size: 12px; }
 .discovery-overview-type strong { color: #0f172a; font-variant-numeric: tabular-nums; }
-.discovery-overview { display: flex; flex-direction: column; gap: 14px; margin: 0 0 12px; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; background: var(--surface, #fff); min-width: 0; }
+.discovery-overview { margin: 0 0 12px; padding: 12px 20px; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; min-width: 0; }
+.discovery-overview-toggle.ant-btn { padding-inline: 0; white-space: nowrap; flex-shrink: 0; margin-inline-start: auto; }
+.discovery-overview-breakdown:not([hidden]) { display: grid; gap: 12px; margin-top: 12px; padding-top: 12px; border-top: 1px solid #e2e8f0; min-width: 0; }
 .discovery-stat-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .discovery-stat-card { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; flex-shrink: 0; height: auto; min-width: 0; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; color: #475569; font-size: 13px; line-height: 1.4; text-align: left; white-space: nowrap; }
 .discovery-stat-card:hover { border-color: #93c5fd; }
@@ -5200,7 +5202,8 @@ pre.wrap-code {
 .discovery-detail-diagnostics { margin-top: 14px; }
 .discovery-detail-diagnostics > summary { cursor: pointer; color: #475569; font-size: 13px; }
 @media (max-width: 560px) {
-  .discovery-overview { padding: 14px; }
+  .discovery-overview { padding: 8px 14px; }
+  .discovery-overview-toggle.ant-btn { margin-inline-start: 0; }
   .discovery-stat-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .discovery-stat-card { padding: 10px 12px; }
   .discovery-stat-card strong { font-size: 20px; }

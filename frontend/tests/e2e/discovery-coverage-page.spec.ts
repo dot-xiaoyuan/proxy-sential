@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:1440,height:900}]) {
-  test(`coverage has its own page and discovery shows its overview before the list ${viewport.width}`, async ({page}, info) => {
+  test(`coverage has its own page and discovery starts with a compact summary and list ${viewport.width}`, async ({page}, info) => {
     const errors:string[] = []
     page.on('pageerror', error => errors.push(error.message))
     page.on('console', message => {if(message.type()==='error')errors.push(message.text())})
@@ -16,6 +16,7 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
     const overviewTop = await page.getByLabel('发现设备总览').evaluate(element=>element.getBoundingClientRect().top)
     expect(overviewTop).toBeLessThan(viewport.height)
     expect(overviewTop).toBeLessThan(listTop)
+    expect(listTop).toBeLessThan(viewport.height)
     await page.getByRole('button',{name:/^(筛选|更多筛选)/}).click()
     await expect(page.getByRole('checkbox',{name:'本地管理 MAC'})).toBeVisible()
     await page.screenshot({path:info.outputPath(`discovery-list-${viewport.width}.png`),animations:'disabled'})
