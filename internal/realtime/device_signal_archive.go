@@ -73,6 +73,12 @@ func readDeviceSignalChunk(path string, cursor streamlog.SourceCursor, maxBytes 
 	if err != nil {
 		return sourceChunk{}, err
 	}
+	for _, candidate := range []signalFile{file, next} {
+		current, err := os.Lstat(candidate.path)
+		if err != nil || !os.SameFile(candidate.info, current) {
+			return sourceChunk{}, ErrStreamSourceGap
+		}
+	}
 	if next.compressed {
 		read, err = readSignalGzip(path, next, streamlog.SourceCursor{FileID: next.id}, maxBytes)
 	} else {
@@ -247,12 +253,22 @@ func signalRawCursorMatches(file signalFile, cursor streamlog.SourceCursor) bool
 		return false
 	}
 	defer f.Close()
+	return signalRawTailMatches(f, file.info, cursor)
+}
+
+func signalRawTailMatches(f *os.File, before os.FileInfo, cursor streamlog.SourceCursor) bool {
+	if cursor.Offset == 0 {
+		return true
+	}
+	if !validSignalTail(cursor) {
+		return false
+	}
 	tail := make([]byte, cursor.TailBytes)
 	if _, err := f.ReadAt(tail, cursor.Offset-int64(cursor.TailBytes)); err != nil {
 		return false
 	}
 	after, err := f.Stat()
-	if err != nil || !os.SameFile(file.info, after) || after.Size() < cursor.Offset {
+	if err != nil || !os.SameFile(before, after) || after.Size() < cursor.Offset {
 		return false
 	}
 	sum := sha256.Sum256(tail)
@@ -282,7 +298,7 @@ func readSignalRaw(source string, file signalFile, cursor streamlog.SourceCursor
 	}
 	defer f.Close()
 	info, err := f.Stat()
-	if err != nil || !os.SameFile(info, file.info) {
+	if err != nil || !os.SameFile(info, file.info) || !signalRawTailMatches(f, info, cursor) {
 		return sourceChunk{}, ErrStreamSourceGap
 	}
 	// The retained legacy inode is selected only after its committed tail was
@@ -495,12 +511,32 @@ func openVerifiedSignalGzip(file signalFile, cursor streamlog.SourceCursor) (*si
 		f.Close()
 		return nil, ErrStreamSourceGap
 	}
-	if _, err := io.CopyN(io.Discard, zr, cursor.Offset); err != nil {
-		zr.Close()
-		f.Close()
-		return nil, ErrStreamSourceGap
+	if cursor.Offset > 0 {
+		if err := verifyOpenedSignalGzipTail(zr, cursor); err != nil {
+			zr.Close()
+			f.Close()
+			return nil, err
+		}
 	}
 	return &signalGzipReader{file: f, reader: zr, info: before, logicalID: cursor.FileID, length: length, offset: cursor.Offset, tailBytes: cursor.TailBytes, tailHash: cursor.TailSHA256}, nil
+}
+
+func verifyOpenedSignalGzipTail(r io.Reader, cursor streamlog.SourceCursor) error {
+	if !validSignalTail(cursor) {
+		return ErrStreamSourceGap
+	}
+	if _, err := io.CopyN(io.Discard, r, cursor.Offset-int64(cursor.TailBytes)); err != nil {
+		return ErrStreamSourceGap
+	}
+	tail := make([]byte, cursor.TailBytes)
+	if _, err := io.ReadFull(r, tail); err != nil {
+		return ErrStreamSourceGap
+	}
+	hash := sha256.Sum256(tail)
+	if hex.EncodeToString(hash[:]) != cursor.TailSHA256 {
+		return ErrStreamSourceGap
+	}
+	return nil
 }
 
 type signalLastByte struct{ value byte }
@@ -517,6 +553,7 @@ func (w *signalLastByte) Write(data []byte) (int, error) {
 // still expose the anchor's inode to prove the intervening interval.
 func nextSignalFile(path string, files []signalFile, old signalFile) (signalFile, error) {
 	if old.protected && old.ordinal == 0 {
+		var successors []signalFile
 		for _, file := range files {
 			if file.protected && file.compressed && file.chainSeq == old.chainSeq+1 {
 				if old.chainSeq == 0 && !old.compressed {
@@ -526,8 +563,11 @@ func nextSignalFile(path string, files []signalFile, old signalFile) (signalFile
 						return signalFile{}, ErrStreamSourceGap
 					}
 				}
-				return file, nil
+				successors = append(successors, file)
 			}
+		}
+		if len(successors) > 0 {
+			return verifiedSignalSuccessor(successors)
 		}
 	}
 	if old.ordinal == 0 {
@@ -557,6 +597,7 @@ func nextSignalFile(path string, files []signalFile, old signalFile) (signalFile
 		return signalFile{}, ErrStreamSourceGap
 	}
 	if old.protected {
+		var successors []signalFile
 		for _, file := range files {
 			// The chain's first gzip also has ordinal zero, but it is a
 			// duplicate of the protected live anchor, not the successor of
@@ -565,8 +606,11 @@ func nextSignalFile(path string, files []signalFile, old signalFile) (signalFile
 				if want == 0 && !protectedSignalSuccessorProved(files, old, file) {
 					return signalFile{}, ErrStreamSourceGap
 				}
-				return file, nil
+				successors = append(successors, file)
 			}
+		}
+		if len(successors) > 0 {
+			return verifiedSignalSuccessor(successors)
 		}
 		if want > 0 {
 			return signalFile{}, ErrStreamSourceGap
@@ -591,10 +635,18 @@ func nextSignalFile(path string, files []signalFile, old signalFile) (signalFile
 		}
 		return signalFile{}, ErrStreamSourceGap
 	}
+	var successors []signalFile
 	for _, file := range files {
 		if !file.protected && file.ordinal == want {
-			return file, nil
+			successors = append(successors, file)
 		}
+	}
+	return verifiedSignalSuccessor(successors)
+}
+
+func verifiedSignalSuccessor(candidates []signalFile) (signalFile, error) {
+	if file, ok := uniqueSignalMatch(candidates); ok {
+		return file, nil
 	}
 	return signalFile{}, ErrStreamSourceGap
 }

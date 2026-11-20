@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"proxy-sentinel/internal/store"
 	"proxy-sentinel/internal/streamlog"
 )
@@ -20,6 +21,8 @@ type StreamRunOptions struct {
 	SearchWorkers      int
 	DrainOnly          bool
 	OnSourceError      func(Source, error)
+	ProgressSources    map[string]string
+	OnSourceProgress   func(context.Context, Source, StreamSourceProgress) error
 }
 
 // Up to this many independent archive or search workers may run per source.
@@ -106,6 +109,13 @@ func RunStream(ctx context.Context, journal *streamlog.Journal, writer streamlog
 		ids, err := journal.RecoverSource(source.Kind, source.Path)
 		if err != nil {
 			if streamPermanentError(err) {
+				tracker, trackerErr := newStreamSourceTracker(journal, opts, source, nil)
+				if trackerErr == nil {
+					err = tracker.block(journal, source, "", "recover", err)
+					tracker.report(ctx, opts, source)
+				} else {
+					err = errors.Join(err, trackerErr)
+				}
 				wrapped := fmt.Errorf("recover stream source %s at %s: %w", source.Kind, source.Path, err)
 				opts.OnSourceError(source, wrapped)
 				startupFailures = append(startupFailures, wrapped)
@@ -153,7 +163,27 @@ func RunStream(ctx context.Context, journal *streamlog.Journal, writer streamlog
 func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer streamlog.Writer, opts StreamRunOptions, source Source, recovered []string) error {
 	sourceCtx, cancel := context.WithCancel(ctx)
 	var drainWorker sync.WaitGroup
-	defer func() { cancel(); drainWorker.Wait() }()
+	tracker, err := newStreamSourceTracker(journal, opts, source, recovered)
+	if err != nil {
+		cancel()
+		return err
+	}
+	limit := opts.MaxPendingSegments
+	parkFailingSegments := tracker != nil && !opts.DrainOnly
+	if tracker != nil {
+		// Each descriptor is independently limited to 4 MiB on disk.
+		limit = min(limit, 24)
+		drainWorker.Add(1)
+		go func() {
+			defer drainWorker.Done()
+			tracker.reportUntilCanceled(sourceCtx, opts, source)
+		}()
+	}
+	defer func() {
+		cancel()
+		drainWorker.Wait()
+		tracker.report(context.Background(), opts, source)
+	}()
 	var reportMu sync.Mutex
 	var lastReport time.Time
 	reportTransient := func(err error) {
@@ -167,20 +197,27 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 	}
 	// Projection preserves source order. Independent archive and search workers
 	// may complete later segments first, while each search still waits for its
-	// own archived body and finalization stays in source order.
+	// own archived body. Ready segments can finalize out of order.
 	// A permit is returned only after finalization, bounding durable in-flight
 	// segments as well as memory. Recovery uses the same bound.
 	queues := map[streamlog.Lane]chan string{
-		streamlog.Archive: make(chan string, opts.MaxPendingSegments), streamlog.Search: make(chan string, opts.MaxPendingSegments),
-		streamlog.Projection: make(chan string, opts.MaxPendingSegments),
+		streamlog.Archive: make(chan string, limit), streamlog.Search: make(chan string, limit),
+		streamlog.Projection: make(chan string, limit),
 	}
-	finalize := make(chan string, opts.MaxPendingSegments)
-	permits := make(chan struct{}, opts.MaxPendingSegments)
+	finalize := make(chan string, limit)
+	permits := make(chan struct{}, limit)
 	workerErrors := make(chan error, opts.ArchiveWorkers+opts.SearchWorkers+2)
 	projectionTimeout := recoveryProjectionTimeout(source)
-	processor := streamlog.Processor{Journal: journal, Writer: writer, SinkTimeout: 30 * time.Second,
+	processor := streamlog.Processor{Journal: journal, Writer: writer, SinkTimeout: opts.Capture.StoreTimeout,
 		ProjectionWriteTimeout: projectionTimeout, ProjectionRetryTimeout: projectionTimeout,
 		FinalizeTimeout: recoveryFinalizationTimeout(source)}
+	if tracker != nil {
+		processor.AckObserver = func(lane streamlog.Lane, segment streamlog.Segment) {
+			if lane == streamlog.Archive {
+				tracker.archive(streamlog.SourceSegmentID(segment), segment.AcceptedAt)
+			}
+		}
+	}
 	startWorker := func(queue <-chan string, name string, run func(context.Context, string) error, release bool) {
 		drainWorker.Add(1)
 		go func() {
@@ -192,7 +229,7 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 					return
 				case id = <-queue:
 				}
-				for {
+				for attempt := 0; ; attempt++ {
 					// The processor starts the unchanged storage budget at the
 					// actual database call. Journal fsync and source rehydration
 					// are outside that budget; the site no-progress guard still
@@ -208,13 +245,21 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 						return
 					}
 					if streamPermanentError(err) {
-						workerErrors <- fmt.Errorf("stream %s segment %s: %w", name, id, err)
-						return
+						failure := fmt.Errorf("stream %s segment %s: %w", name, id, tracker.block(journal, source, id, name, err))
+						if !parkFailingSegments {
+							workerErrors <- failure
+							return
+						}
+						opts.OnSourceError(source, failure)
+						if name == string(streamlog.Projection) {
+							return // Later projections depend on source order.
+						}
+						break // Other segments can still archive or search.
 					}
 					if !errors.Is(err, streamlog.ErrUnconfirmed) {
 						reportTransient(fmt.Errorf("retry stream %s segment %s: %w", name, id, err))
 					}
-					if !waitStreamPoll(sourceCtx, opts.Capture.PollInterval) {
+					if !waitStreamPoll(sourceCtx, streamRetryDelay(opts.Capture.PollInterval, attempt, err)) {
 						return
 					}
 				}
@@ -240,7 +285,21 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 	go func() {
 		defer drainWorker.Done()
 		if err := runStreamFinalizer(sourceCtx, finalize, opts.Capture.PollInterval,
-			processor.FinalizeAfterLanes, func(string) { <-permits }, reportTransient); err != nil {
+			func(ctx context.Context, id string) error {
+				err := processor.FinalizeAfterLanes(ctx, id)
+				if streamPermanentError(err) {
+					failure := tracker.block(journal, source, id, "finalize", err)
+					if parkFailingSegments {
+						opts.OnSourceError(source, failure)
+						return errStreamFinalizationParked
+					}
+					return failure
+				}
+				return err
+			}, func(id string) {
+				tracker.finished(journal, source, id, reportTransient)
+				<-permits
+			}, reportTransient); err != nil {
 			workerErrors <- fmt.Errorf("stream finalize: %w", err)
 		}
 	}()
@@ -359,12 +418,12 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 			if staged {
 				// The lanes were queued once. Retry only the idempotent cursor
 				// commit; recapturing would enqueue the same segment twice.
-				for err != nil && sourceCtx.Err() == nil {
+				for attempt := 0; err != nil && sourceCtx.Err() == nil; attempt++ {
 					if streamPermanentError(err) {
-						return err
+						return tracker.block(journal, source, id, "commit_cursor", err)
 					}
 					reportTransient(fmt.Errorf("retry staged source cursor %s: %w", id, err))
-					if !waitStreamPoll(sourceCtx, opts.Capture.PollInterval) {
+					if !waitStreamPoll(sourceCtx, streamRetryDelay(opts.Capture.PollInterval, attempt, err)) {
 						return nil
 					}
 					err = journal.CommitSource(source.Kind, source.Path, id)
@@ -372,6 +431,7 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 				if sourceCtx.Err() != nil {
 					return nil
 				}
+				tracker.recordAccepted(journal, id, reportTransient)
 				if err := enqueueFinalizer(id); err != nil {
 					return err
 				}
@@ -400,13 +460,13 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 					sourceGapSince = time.Now()
 				}
 				if time.Since(sourceGapSince) >= 60*time.Second {
-					return err
+					return tracker.block(journal, source, id, "capture", err)
 				}
 			} else {
 				sourceGapSince = time.Time{}
 			}
 			if !errors.Is(err, ErrStreamSourceGap) && streamPermanentError(err) {
-				return err
+				return tracker.block(journal, source, id, "capture", err)
 			}
 			reportTransient(fmt.Errorf("retry stream capture: %w", err))
 			if !waitStreamPoll(sourceCtx, opts.Capture.PollInterval) {
@@ -416,7 +476,9 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 		}
 		archivePendingSince = time.Time{}
 		sourceGapSince = time.Time{}
+		tracker.finished(journal, source, "", reportTransient)
 		if captured {
+			tracker.recordAccepted(journal, id, reportTransient)
 			smallZeekBatchSince = time.Time{}
 			if staged {
 				err = enqueueFinalizer(id)
@@ -486,8 +548,34 @@ func holdSmallZeekBindingBatch(lag int64, first *time.Time, now time.Time) bool 
 }
 
 func streamPermanentError(err error) bool {
-	return errors.Is(err, ErrStreamSourceGap) || errors.Is(err, streamlog.ErrQuarantined) ||
-		errors.Is(err, streamlog.ErrContentConflict) || errors.Is(err, store.ErrStreamProjectorUnavailable)
+	return streamFailureReason(err) != ""
+}
+
+func streamFailureReason(err error) string {
+	switch {
+	case errors.Is(err, ErrStreamSourceGap):
+		return "source_position_gap"
+	case errors.Is(err, streamlog.ErrQuarantined):
+		return "source_segment_quarantined"
+	case errors.Is(err, streamlog.ErrContentConflict):
+		return "source_content_conflict"
+	case errors.Is(err, store.ErrSharedStreamBinding):
+		return "shared_source_binding_mismatch"
+	case errors.Is(err, store.ErrStreamProjectorUnavailable):
+		return "stream_projector_unavailable"
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23514" {
+		return "storage_constraint_violation"
+	}
+	return ""
+}
+
+func streamRetryDelay(poll time.Duration, attempt int, err error) time.Duration {
+	if errors.Is(err, streamlog.ErrUnconfirmed) {
+		return poll
+	}
+	return min(max(poll, time.Second)*time.Duration(1<<min(attempt, 5)), 30*time.Second)
 }
 
 func waitStreamPoll(ctx context.Context, interval time.Duration) bool {

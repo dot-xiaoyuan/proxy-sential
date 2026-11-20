@@ -12,12 +12,14 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"syscall"
 	"time"
 
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/store"
+	"proxy-sentinel/internal/streamlog"
 )
 
 type sharedSourceActivation struct{ Owner, Path, Epoch, FileCancelID string }
@@ -40,9 +42,22 @@ func runIngestStreamSharedActivate(args []string) error {
 	packetFileCancelID := fs.String("packet-file-cancel-id", "", "audited packet file cutover cancellation ID, when different from the shared generation")
 	handshakeFileCancelID := fs.String("handshake-file-cancel-id", "", "audited handshake file cutover cancellation ID, when different from the shared generation")
 	recoverClosedFiles := fs.Bool("recover-closed-file-generation", false, "audit and close a stale shared generation whose file cutovers are already closed")
+	replacePacket := fs.String("replace-packet-binding", "", "closed packet file epoch still registered with shared processing")
+	packetJournal := fs.String("packet-journal-dir", "", "active packet file journal for a single-owner repair")
+	packetAudit := fs.String("packet-old-audit", "", "immutable audit file for the replaced packet source")
+	packetAuditHash := fs.String("packet-old-audit-sha256", "", "verified SHA256 of the replaced packet audit file")
 	cutoffText := fs.String("cutoff-at", "", "fixed old-input cutoff")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *replacePacket != "" {
+		if fs.NArg() != 0 || *sensor == "" || *packetPath == "" || *packetEpoch == "" || *packetJournal == "" || *scopeFile == "" || *postgresDSN == "" || *handshakeEpoch != "" || *handshakePath != "" || *recoverClosedFiles || *cancelID != "" || *previousCancelID != "" || *cutoffText != "" || *packetFileCancelID != "" || *handshakeFileCancelID != "" {
+			return errors.New("single-owner repair needs only the active packet source, journal, scope and old audit proof")
+		}
+		return repairActivePacketSharedBinding(*sensor, *packetPath, *packetEpoch, *replacePacket, *packetJournal, *packetAudit, *packetAuditHash, *scopeFile, *controlledInterface, *postgresDSN)
+	}
+	if *packetJournal != "" || *packetAudit != "" || *packetAuditHash != "" {
+		return errors.New("packet repair flags require replace-packet-binding")
 	}
 	if fs.NArg() != 0 || *sensor == "" || *packetPath == "" || *packetEpoch == "" || *handshakePath == "" || *handshakeEpoch == "" || *packetPath == *handshakePath || *packetEpoch == *handshakeEpoch || *scopeFile == "" || *postgresDSN == "" || *cancelID == "" || *cutoffText == "" {
 		return errors.New("shared activation needs two distinct audited sources, scope, generation and database")
@@ -109,6 +124,73 @@ func runIngestStreamSharedActivate(args []string) error {
 		return err
 	}
 	return json.NewEncoder(os.Stdout).Encode(map[string]any{"sensor_id": *sensor, "cancel_id": *cancelID, "cutoff_at": cutoff, "source_epochs": sources, "canceled_jobs": counts, "manifest_sha256": manifest})
+}
+
+func repairActivePacketSharedBinding(sensor, path, epoch, oldEpoch, journalDir, auditPath, auditHash, scopeFile, iface, dsn string) error {
+	if filepath.Base(path) != "ttl.jsonl" {
+		return errors.New("packet repair requires the controlled ttl.jsonl source")
+	}
+	if err := verifySharedRebindManifest(auditPath, auditHash); err != nil {
+		return err
+	}
+	scope, fileHash, err := loadCaptureScopeWithHash(scopeFile)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	if scope == nil || scope.SensorID != sensor || now.Before(scope.ValidFrom) || !now.Before(scope.ValidUntil) {
+		return errors.New("packet repair requires a matching active capture scope")
+	}
+	if iface == "" {
+		iface = scope.InterfaceName
+	}
+	if iface == "" || (scope.InterfaceName != "" && scope.InterfaceName != iface) {
+		return errors.New("packet repair requires the recorded capture interface")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	leaseStore, err := store.NewPostgresStore(store.PostgresOptions{DSN: dsn, SensorID: sensor})
+	if err != nil {
+		return err
+	}
+	defer leaseStore.Close()
+	release, err := leaseStore.AcquireIngestSourceLease(ctx, "device-signals", path)
+	if err != nil {
+		return err
+	}
+	defer release()
+	journal, err := streamlog.Open(journalDir)
+	if err != nil {
+		return err
+	}
+	releaseJournal, err := journal.AcquireSourceLease("device-signals", path)
+	if err != nil {
+		return err
+	}
+	defer releaseJournal()
+	cursor, err := journal.LoadSource("device-signals", path)
+	if err != nil || cursor.Epoch != epoch {
+		return fmt.Errorf("packet repair journal epoch: %w", errors.Join(streamlog.ErrContentConflict, err))
+	}
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	scopeHash := controlledScopeBindingHash(fileHash, iface)
+	if err := verifyIngestStreamCutover(ctx, db, cursor, sensor, scopeHash); err != nil {
+		return err
+	}
+	cutover, found, err := loadFileCutover(ctx, db, "device-signals", epoch, path)
+	if err != nil || !found {
+		return fmt.Errorf("packet repair file cutover: %w", errors.Join(streamlog.ErrContentConflict, err))
+	}
+	input := sharedStreamRebind{Sensor: sensor, Scope: scope.ID(), ScopeHash: scopeHash, Owner: "packet-sidecar", Path: path,
+		OldEpoch: oldEpoch, Epoch: epoch, Manifest: auditHash, FileManifest: cutover.ManifestHash, Cutoff: cutover.Cutoff.UTC()}
+	if err := rebindStreamSharedSource(ctx, db, input); err != nil {
+		return err
+	}
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{"sensor_id": sensor, "packet_epoch": epoch, "previous_packet_epoch": oldEpoch, "audit_sha256": auditHash})
 }
 
 func activateStreamSharedSources(ctx context.Context, db *sql.DB, sensor string, scope *normalized.CaptureScope, scopeHash string, sources []sharedSourceActivation, cancelID string, cutoff time.Time, previous ...string) error {

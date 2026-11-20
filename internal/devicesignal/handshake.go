@@ -41,6 +41,59 @@ type handshakeObservation struct {
 // maxHandshakeValues bounds the distinct values kept per (device, bucket).
 const maxHandshakeValues = 8
 
+type handshakeFrameDisposition uint8
+
+const (
+	handshakeUnlocated handshakeFrameDisposition = iota
+	handshakeExcluded
+	handshakeObserved
+)
+
+// classifyHandshakeFrame retains the subject of a clipped candidate whenever
+// the link, IP and TCP headers identify it. Partial candidates never supply
+// fingerprint samples. A proven non-candidate does not imply evidence loss.
+func classifyHandshakeFrame(frame []byte) (handshakeObservation, handshakeFrameDisposition) {
+	ethernet, ok := parseEthernetFrame(frame)
+	if !ok || ethernet.etherType != 0x0800 {
+		return handshakeObservation{}, handshakeUnlocated
+	}
+	ip := ethernet.payload
+	if len(ip) < 20 || ip[0]>>4 != 4 || ip[9] != 6 {
+		return handshakeObservation{}, handshakeUnlocated
+	}
+	ihl := int(ip[0]&0xf) * 4
+	total := int(binary.BigEndian.Uint16(ip[2:4]))
+	if ihl < 20 || min(total, len(ip)) < ihl+20 || binary.BigEndian.Uint16(ip[6:8])&0x1fff != 0 {
+		return handshakeObservation{}, handshakeUnlocated
+	}
+	tcp := ip[ihl:min(total, len(ip))]
+	port := binary.BigEndian.Uint16(tcp[2:4])
+	if port != 443 && port != 80 {
+		return handshakeObservation{}, handshakeExcluded
+	}
+	var source [4]byte
+	copy(source[:], ip[12:16])
+	partial := handshakeObservation{IP: netip.AddrFrom4(source), MAC: ethernet.source, DestinationPort: port, Truncated: true}
+	if partial.IP.IsUnspecified() || partial.IP.IsMulticast() || partial.MAC == [6]byte{} || partial.MAC[0]&1 != 0 {
+		return handshakeObservation{}, handshakeUnlocated
+	}
+	header := int(tcp[12]>>4) * 4
+	if header < 20 || header >= len(tcp) {
+		return partial, handshakeObserved
+	}
+	payload := tcp[header:]
+	if port == 443 && (payload[0] != 22 || len(payload) >= 2 && payload[1] != 3 || len(payload) >= 6 && payload[5] != 1) {
+		return handshakeObservation{}, handshakeExcluded
+	}
+	if port == 80 && len(payload) >= 4 && !hasHTTPRequestMethod(payload) {
+		return handshakeObservation{}, handshakeExcluded
+	}
+	if observed, ok := parseHandshakeFrame(frame); ok {
+		return observed, handshakeObserved
+	}
+	return partial, handshakeObserved
+}
+
 // parseHandshakeFrame extracts the handshake fields of an IPv4 TCP client packet to port
 // 443 (TLS ClientHello) or 80 (HTTP request). It returns false for anything else.
 func parseHandshakeFrame(frame []byte) (handshakeObservation, bool) {
@@ -166,15 +219,17 @@ func parseClientHello(record []byte) (sni, alpn string, ok bool) {
 }
 
 // parseHTTPRequestHeaders reads Host and User-Agent from an HTTP/1.x request head.
-func parseHTTPRequestHeaders(payload []byte) (host, userAgent string, ok bool) {
-	isRequest := false
+func hasHTTPRequestMethod(payload []byte) bool {
 	for _, method := range []string{"GET ", "POST ", "HEAD ", "PUT "} {
 		if bytes.HasPrefix(payload, []byte(method)) {
-			isRequest = true
-			break
+			return true
 		}
 	}
-	if !isRequest {
+	return false
+}
+
+func parseHTTPRequestHeaders(payload []byte) (host, userAgent string, ok bool) {
+	if !hasHTTPRequestMethod(payload) {
 		return "", "", false
 	}
 	head := payload

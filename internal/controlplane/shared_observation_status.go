@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"proxy-sentinel/internal/store"
 )
 
 func (s *Server) sharedObservationStatus(w http.ResponseWriter, r *http.Request) {
@@ -154,5 +156,24 @@ func (s *Server) sharedObservationStatus(w http.ResponseWriter, r *http.Request)
 		}
 		return nil
 	}
-	writeJSON(w, 200, map[string]any{"checked_at": now, "identity": identities, "collection": map[string]any{"state": collection, "last_received_at": nullable(last), "last_event_at": nullable(captured), "sources": collectors}, "materialization": map[string]any{"configured": s.sharedObservationEnabled, "state": state, "blocker": blocker, "pending": pending, "failed": failed, "expired": expired, "completed_at": nullable(done), "oldest_pending_at": nullable(oldest)}, "attribution": map[string]any{"state": "evaluated_per_window", "mapping_version": s.sharedConfig.ID(), "insufficient": attributionMissing}, "policy": map[string]any{"state": state, "blocker": blocker, "router_confirmation": "unavailable", "router_confirmation_blocker": "router_forwarding_not_verified", "mode": "observe", "delivery_status": "not_sent", "matched": matched, "insufficient": insufficient, "coverage_partial": coveragePartial, "expired": expired}, "controller": map[string]any{"state": "disabled", "expected": true, "label": "执行功能关闭"}})
+	materialization := map[string]any{"configured": s.sharedObservationEnabled, "state": state, "blocker": blocker, "pending": pending, "failed": failed, "expired": expired, "completed_at": nullable(done), "oldest_pending_at": nullable(oldest)}
+	if s.sharedObservationEnabled && store.SharedStreamRequired() {
+		progress, err := s.readSharedStreamProgress(ctx, now)
+		if err != nil {
+			writeError(w, 503, "shared_status_unavailable", "共享来源处理进度读取失败")
+			return
+		}
+		materialization["source_progress"] = progress
+		for _, source := range progress {
+			if source.Blocker != "" {
+				state, blocker = source.State, source.Blocker
+				if state == "delayed" {
+					state = "processing"
+				}
+				break
+			}
+		}
+		materialization["state"], materialization["blocker"] = state, blocker
+	}
+	writeJSON(w, 200, map[string]any{"checked_at": now, "identity": identities, "collection": map[string]any{"state": collection, "last_received_at": nullable(last), "last_event_at": nullable(captured), "sources": collectors}, "materialization": materialization, "attribution": map[string]any{"state": "evaluated_per_window", "mapping_version": s.sharedConfig.ID(), "insufficient": attributionMissing}, "policy": map[string]any{"state": state, "blocker": blocker, "router_confirmation": "unavailable", "router_confirmation_blocker": "router_forwarding_not_verified", "mode": "observe", "delivery_status": "not_sent", "matched": matched, "insufficient": insufficient, "coverage_partial": coveragePartial, "expired": expired}, "controller": map[string]any{"state": "disabled", "expected": true, "label": "执行功能关闭"}})
 }

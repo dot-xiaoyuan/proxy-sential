@@ -147,3 +147,42 @@ func TestHandshakeProgramSelectsHandshakeFrames(t *testing.T) {
 		}
 	}
 }
+
+func TestHandshakeEvidenceProgramAndCoverageClassifyLargeClientHello(t *testing.T) {
+	mac := [6]byte{2, 0, 0, 0, 0, 1}
+	ip := [4]byte{192, 0, 2, 1}
+	hello := appendClientHelloExtension(clientHello("capture.example", "h2"), 21, make([]byte, 1100))
+	frame := buildTCPFrame(mac, ip, 443, hello)
+	for _, tagged := range []bool{false, true} {
+		packet := frame
+		if tagged {
+			packet = append(append(append([]byte{}, frame[:12]...), 0x81, 0, 0, 10), frame[12:]...)
+		}
+		if limit := int(runClassicBPF(handshakeEvidenceProgram, packet)); limit != 2048 || len(packet) > limit {
+			t.Fatalf("tagged=%t frame=%d cap=%d", tagged, len(packet), limit)
+		}
+		bucket := newCaptureBucket()
+		bucket.handshakeCaptureV2 = true
+		bucket.addHandshake(packet)
+		bucket.addHandshake(packet[:1024])
+		bucket.addHandshake(buildTCPFrame(mac, ip, 443, []byte{22, 3, 3, 0, 4, 2, 0, 0, 0}))
+		bucket.addHandshake(packet[:12])
+		if bucket.handshakeParseFailures != 1 || bucket.handshakeExcludedFrames != 1 || len(bucket.handshakes) != 1 {
+			t.Fatalf("unexpected coverage counters: %+v", bucket)
+		}
+		for _, summary := range bucket.handshakes {
+			if summary.truncated != 1 || summary.count != 2 || len(summary.samples) == 0 {
+				t.Fatalf("clipped evidence lost or fingerprinted: %+v", summary)
+			}
+		}
+	}
+	for _, method := range []string{"GET ", "POST", "HEAD", "PUT "} {
+		packet := buildTCPFrame(mac, ip, 80, []byte(method+" / HTTP/1.1\r\n\r\n"))
+		if runClassicBPF(handshakeEvidenceProgram, packet) != 2048 {
+			t.Fatalf("HTTP method %q filtered", method)
+		}
+	}
+	if runClassicBPF(handshakeEvidenceProgram, buildTCPFrame(mac, ip, 443, []byte("GET / HTTP/1.1\r\n\r\n"))) != 0 {
+		t.Fatal("HTTP prefix on the TLS port was accepted")
+	}
+}

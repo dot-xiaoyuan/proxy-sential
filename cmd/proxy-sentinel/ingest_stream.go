@@ -250,6 +250,7 @@ WHERE state='active' AND sensor_id=$1 AND (source_kind='zeek-dhcp' OR source_kin
 		}
 	}
 	sources := make([]realtime.Source, 0, 5)
+	requiredShared := make(map[string]string)
 	releases := make([]func(), 0, 5)
 	defer func() {
 		for i := len(releases) - 1; i >= 0; i-- {
@@ -272,6 +273,16 @@ WHERE state='active' AND sensor_id=$1 AND (source_kind='zeek-dhcp' OR source_kin
 			return err
 		}
 		releases = append(releases, release)
+		if store.SharedStreamRequired() && (item.path == *ttlPath || item.path == *handshakePath) {
+			owner := "packet-sidecar"
+			if item.path == *handshakePath {
+				owner = "handshake-sidecar"
+			}
+			if err := store.VerifyRequiredSharedStream(ctx, db, *sensor, scope.ID(), owner, item.path, cursor.Epoch); err != nil {
+				return fmt.Errorf("%s epoch %s: %w", owner, cursor.Epoch, err)
+			}
+			requiredShared[item.path] = owner
+		}
 		sources = append(sources, realtime.Source{Kind: item.kind, Path: item.path, CaptureScope: scope, ControlledInterface: *controlledInterface, CollectorInstanceID: scope.CollectorInstanceID})
 	}
 	ch, err := store.NewClickHouseStore(store.ClickHouseOptions{DSN: *clickhouseDSN, RequestTimeout: *storeTimeout})
@@ -279,7 +290,7 @@ WHERE state='active' AND sensor_id=$1 AND (source_kind='zeek-dhcp' OR source_kin
 		return err
 	}
 	projector := discovery.StreamDiscoveryProjector{DB: db, DeviceSignalManifestWrites: *deviceManifestWrites}
-	writer := store.StreamLaneWriter{ClickHouse: ch, Projector: projector, RiskQueue: projector, SharedQueue: store.StreamSharedJobQueue{DB: db}}
+	writer := store.StreamLaneWriter{ClickHouse: ch, Projector: projector, RiskQueue: projector, SharedQueue: store.StreamSharedJobQueue{DB: db, RequiredSources: requiredShared}}
 	archiveLanes, searchLanes := 1, 1
 	if *ttlPath != "" || *handshakePath != "" {
 		archiveLanes, searchLanes = 2, 2
@@ -296,7 +307,29 @@ WHERE state='active' AND sensor_id=$1 AND (source_kind='zeek-dhcp' OR source_kin
 		ArchiveWorkers:     archiveLanes,
 		SearchWorkers:      searchLanes,
 		DrainOnly:          *drainOnly,
+		ProgressSources:    requiredShared,
+		OnSourceProgress: func(ctx context.Context, source realtime.Source, progress realtime.StreamSourceProgress) error {
+			return recordSharedStreamProgress(ctx, db, *sensor, source.Path, progress)
+		},
 	})
+}
+
+func recordSharedStreamProgress(ctx context.Context, db *sql.DB, sensor, path string, p realtime.StreamSourceProgress) error {
+	nullTime := func(at time.Time) sql.NullTime { return sql.NullTime{Time: at, Valid: !at.IsZero()} }
+	_, err := db.ExecContext(ctx, `INSERT INTO stream_shared_source_runtime
+ (sensor_id,source_path,epoch,accepted_segment,accepted_at,archived_segment,archived_at,pending_segments,pending_bytes,oldest_pending_at,
+ failed_segment,failed_stage,failed_at,blocker)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+ ON CONFLICT (sensor_id,source_path,epoch) DO UPDATE SET
+ accepted_segment=CASE WHEN EXCLUDED.accepted_at>=COALESCE(stream_shared_source_runtime.accepted_at,'-infinity') THEN EXCLUDED.accepted_segment ELSE stream_shared_source_runtime.accepted_segment END,
+ accepted_at=GREATEST(EXCLUDED.accepted_at,stream_shared_source_runtime.accepted_at),
+ archived_segment=CASE WHEN EXCLUDED.archived_at>=COALESCE(stream_shared_source_runtime.archived_at,'-infinity') THEN EXCLUDED.archived_segment ELSE stream_shared_source_runtime.archived_segment END,
+ archived_at=GREATEST(EXCLUDED.archived_at,stream_shared_source_runtime.archived_at),
+ pending_segments=EXCLUDED.pending_segments,pending_bytes=EXCLUDED.pending_bytes,oldest_pending_at=EXCLUDED.oldest_pending_at,
+ failed_segment=EXCLUDED.failed_segment,failed_stage=EXCLUDED.failed_stage,failed_at=EXCLUDED.failed_at,blocker=EXCLUDED.blocker,updated_at=now()`,
+		sensor, path, p.Epoch, p.AcceptedSegment, nullTime(p.AcceptedAt), p.ArchivedSegment, nullTime(p.ArchivedAt), p.PendingSegments, p.PendingBytes, nullTime(p.OldestPendingAt),
+		p.Blocker.SegmentID, p.Blocker.Stage, nullTime(p.Blocker.FirstAt), p.Blocker.Reason)
+	return err
 }
 
 func verifyDeviceSignalManifestSchema(ctx context.Context, db *sql.DB) error {

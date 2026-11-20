@@ -139,7 +139,7 @@ func VerifyCoverage(w Window, cfg Config, facts []CoverageFact) []string {
 		// Any unlocatable loss wins over per-IP proof, including conflicting replay.
 		for _, f := range facts {
 			c := f.Coverage
-			if f.Source == ref.Source && f.Instance == ref.InstanceID && c.From.Before(w.To) && c.To.After(w.From) && (f.IP == "" || f.IP == w.IP) && (!c.KernelStatsKnown || c.Dropped > 0 || c.KeyDrops > 0 || c.ParseUnknown > 0 || c.Stopped || (f.IP == w.IP && !c.Complete())) {
+			if f.Source == ref.Source && f.Instance == ref.InstanceID && c.From.Before(w.To) && c.To.After(w.From) && (f.IP == "" || f.IP == w.IP) && (!c.KernelStatsKnown || c.Dropped > 0 || c.QueueFreezes > 0 || c.KeyDrops > 0 || c.ParseUnknown > 0 || c.Stopped || (f.IP == w.IP && !c.Complete())) {
 				reasons = append(reasons, "capture_unlocated_loss:"+ref.Source)
 				break
 			}

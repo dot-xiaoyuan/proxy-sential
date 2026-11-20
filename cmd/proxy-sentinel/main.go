@@ -430,6 +430,9 @@ func runIngest(args []string) error {
 	if len(args) > 0 && args[0] == "stream-shared-activate" {
 		return runIngestStreamSharedActivate(args[1:])
 	}
+	if len(args) > 0 && args[0] == "stream-shared-repair" {
+		return runIngestStreamSharedRepair(args[1:])
+	}
 	if len(args) > 0 && args[0] == "stream-prepare" {
 		return runIngestStreamPrepare(args[1:])
 	}

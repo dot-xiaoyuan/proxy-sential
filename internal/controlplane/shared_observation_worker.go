@@ -308,7 +308,11 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 		sharedObservationFailures.Add(1)
 		report, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		_, e := s.operations.db.ExecContext(report, `UPDATE shared_observation_jobs SET attempts=attempts+1,last_error='processing_failed',next_attempt_at=now()+interval '5 seconds',lease_token='',lease_until=NULL WHERE job_id=$1 AND lease_token=$2 AND revision=$3`, id, token, revision)
+		code := "processing_failed"
+		if errors.Is(cause, store.ErrSharedStreamBinding) {
+			code = "shared_source_binding_mismatch"
+		}
+		_, e := s.operations.db.ExecContext(report, `UPDATE shared_observation_jobs SET attempts=attempts+1,last_error=$4,next_attempt_at=now()+interval '5 seconds',lease_token='',lease_until=NULL WHERE job_id=$1 AND lease_token=$2 AND revision=$3`, id, token, revision, code)
 		if e != nil {
 			return true, fmt.Errorf("%w; report: %v", cause, e)
 		}
@@ -354,14 +358,14 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 			return failure(err)
 		}
 	}
-	if !item.Current && len(previous) > 0 {
+	if !item.Current && len(previous) > 0 && (sharedObservationExpiryLane(lane) || !store.SharedStreamRequired()) {
 		if err = json.Unmarshal(previous, &doc); err != nil {
 			return failure(err)
 		}
 		w, item = doc.Window, doc.Assessment
 		item.Current = false
 	}
-	if item.Current && len(previous) > 0 && w.StrongAnchor == "" {
+	if item.Current && len(previous) > 0 && w.StrongAnchor == "" && !store.SharedStreamRequired() {
 		var prev sharedObservationDocument
 		if json.Unmarshal(previous, &prev) == nil && prev.Window.StrongAnchor != "" {
 			w.StrongAnchor = prev.Window.StrongAnchor
@@ -467,6 +471,12 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 	if _, err = tx.ExecContext(ctx, `SET LOCAL synchronous_commit = on`); err != nil {
 		_ = tx.Rollback()
 		return failure(err)
+	}
+	if store.SharedStreamRequired() && !sharedObservationExpiryLane(lane) {
+		if err := store.LockSharedStreamEpochs(ctx, tx, scope.SensorID, generation, w.SourceEpochs); err != nil {
+			_ = tx.Rollback()
+			return failure(err)
+		}
 	}
 	observationChanged, err := store.PersistSharedObservationTx(ctx, tx, item)
 	if err != nil {

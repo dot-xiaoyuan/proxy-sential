@@ -13,6 +13,7 @@ type CoverageV2 struct {
 	Dropped          uint64    `json:"dropped_packets"`
 	QueueFreezes     uint64    `json:"queue_freezes,omitempty"`
 	ParseUnknown     int       `json:"unscoped_parse_truncated"`
+	ExcludedFrames   int       `json:"excluded_frames,omitempty"`
 	Truncated        int       `json:"parse_truncated"`
 	Overflow         int       `json:"feature_overflow"`
 	Omitted          int       `json:"output_omitted"`

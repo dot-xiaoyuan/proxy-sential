@@ -17,6 +17,8 @@ type captureBucket struct {
 	// the handshake filter is attached.
 	handshakes              map[handshakeKey]*handshakeSummary
 	handshakeEnabled        bool
+	handshakeCaptureV2      bool
+	handshakeExcludedFrames int
 	handshakeParseFailures  int
 	handshakeFeatureSamples int
 	controlParseFailures    int
@@ -81,10 +83,25 @@ func arpSignalsEnabled() bool {
 // addHandshake folds one client handshake packet into its device's summary. A new device is
 // dropped once the bucket reaches the key limit, the same bound the packet buckets use.
 func (b *captureBucket) addHandshake(frame []byte) {
-	observation, ok := parseHandshakeFrame(frame)
-	if !ok {
-		b.handshakeParseFailures++
-		return
+	var observation handshakeObservation
+	if b.handshakeCaptureV2 {
+		var disposition handshakeFrameDisposition
+		observation, disposition = classifyHandshakeFrame(frame)
+		switch disposition {
+		case handshakeExcluded:
+			b.handshakeExcludedFrames++
+			return
+		case handshakeUnlocated:
+			b.handshakeParseFailures++
+			return
+		}
+	} else {
+		var ok bool
+		observation, ok = parseHandshakeFrame(frame)
+		if !ok {
+			b.handshakeParseFailures++
+			return
+		}
 	}
 	key := handshakeKey{IP: observation.IP, MAC: observation.MAC}
 	summary := b.handshakes[key]

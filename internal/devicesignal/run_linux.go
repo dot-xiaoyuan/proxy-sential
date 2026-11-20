@@ -116,8 +116,9 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 	log.Printf("device signal receive buffer: requested=%d effective=%d router_protocols_only=%t", requestedBuffer, effectiveBuffer, opts.RouterProtocolsOnly)
+	handshakeCaptureV2 := opts.HandshakeOnly && os.Getenv("PROXY_SENTINEL_HANDSHAKE_CAPTURE_V2") == "true"
 	if opts.HandshakeOnly {
-		if err := attachHandshakeFilter(fd); err != nil {
+		if err := attachHandshakeFilter(fd, handshakeCaptureV2); err != nil {
 			return fmt.Errorf("attach handshake BPF: %w", err)
 		}
 	} else if opts.RouterProtocolsOnly {
@@ -141,6 +142,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	state := newCaptureBucket()
 	state.handshakeEnabled = opts.HandshakeOnly
+	state.handshakeCaptureV2 = handshakeCaptureV2
 	packetSource := "packet-sidecar"
 	if opts.SharedSignalsOnly {
 		packetSource = "shared-syn-sidecar"
@@ -159,6 +161,7 @@ func Run(ctx context.Context, opts Options) error {
 			end := time.Now().UTC()
 			received, drops, known := packetCaptureStats(fd)
 			coverage := sharedaccess.CoverageV2{SchemaVersion: "capture-coverage/v2", From: coverageFrom, To: end, KernelStatsKnown: known, Received: uint64(received), Dropped: uint64(drops), KeyDrops: state.droppedPacketKeys, ParseUnknown: state.handshakeParseFailures, Stopped: ctx.Err() != nil}
+			coverage.ExcludedFrames = state.handshakeExcludedFrames
 			for _, summary := range state.handshakes {
 				summary.coverage = coverage
 				coverage.Truncated += summary.truncated
@@ -261,6 +264,7 @@ func Run(ctx context.Context, opts Options) error {
 			state.handshakes = map[handshakeKey]*handshakeSummary{}
 			state.droppedPacketKeys = 0
 			state.handshakeParseFailures = 0
+			state.handshakeExcludedFrames = 0
 			state.handshakeFeatureSamples = 0
 			state.controlParseFailures = 0
 			state.controlKeyDrops = 0
@@ -294,6 +298,7 @@ func Run(ctx context.Context, opts Options) error {
 					state.handshakes = map[handshakeKey]*handshakeSummary{}
 					state.droppedPacketKeys = 0
 					state.handshakeParseFailures = 0
+					state.handshakeExcludedFrames = 0
 					state.handshakeFeatureSamples = 0
 					state.controlParseFailures = 0
 					state.controlKeyDrops = 0

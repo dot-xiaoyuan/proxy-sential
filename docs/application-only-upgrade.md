@@ -37,3 +37,15 @@ bash upgrade-application.sh --version VERSION \
 设备信号 `--device-signal-stream4-keys` 须分两次独立发布。先发布 PG248、精确/批量收据、历史、案件证据的兼容读者，保持写入开关关闭，验证旧 `stream-` journal 和真实页面；再发布一个同样具备兼容读者的不可变版本，使第一次发布成为 `previous`，核对两个版本的源码、迁移账本及可执行文件后才开启开关。只关闭开关并排空新段属于写入回退；stream4 键还可能被当前态、变化与案件引用，不支持 stream4 的旧程序不能作为应用回退。灰度失败时先停止抓包接收，让兼容版本完成已入 journal 的各落点，再恢复上一兼容版本；保留原始文件、来源 epoch、游标和未完成缺口。写入版通过真实持续输入与页面验收后按单版本约定清理旧发布。
 
 应用切换前还会读取活动服务的启动参数，只提取参数名，与候选程序的帮助输出核对。缺少现场正在使用的参数时，在切换 `current` 前拒绝发布；这不能代替相关协议和数据库回放测试。
+
+### 184 共享来源修复与验证
+
+包含 `254_shared_stream_continuity.sql` 的候选包走完整安装迁移流程。预检同时读取文件切换与共享切换账本，核对两个 sidecar 的路径、作用域及启动参数。运行中的新报文代际若还没有共享绑定，先保持两个采集器持续写源文件，暂停共享判定与 packet 文件消费以取得该文件的独占租约。握手文件消费者保留现有游标。
+
+对已切换文件的单来源修复，运行 `ingest stream-shared-activate`，提供 `--replace-packet-binding`、`--packet-source`、`--packet-epoch`、`--packet-journal-dir`、`--packet-old-audit`、`--packet-old-audit-sha256` 及正常的 sensor、采集作用域和接口参数。审计文件与校验值从现场证据取得。命令核对已落盘游标并事务切换共享绑定。重复调用须使用完全一致的参数。后续需要同时更换文件与共享绑定时，向 `stream-prepare` 提供 `--replace-closed-epoch`、`--replace-shared-old-audit` 和 `--replace-shared-old-audit-sha256`，并使用新 journal 目录。命令先持久化新游标再事务切换账本。
+
+绑定吻合后，在两个文件消费者及控制面设置 `PROXY_SENTINEL_STREAM_SHARED_REQUIRED=true`，在握手采集器设置 `PROXY_SENTINEL_HANDSHAKE_CAPTURE_V2=true`。核对生效环境和进程后恢复消费与仅记录判定。`ingest stream-shared-repair` 接收 `--packet-source`、`--packet-epoch` 与采集作用域参数，每次最多处理 16 条归档定位，返回 `complete` 或 `paused_for_realtime`。在实时处理运行期间逐页执行，遇到实时积压暂停领取。过期项保留独立的事件级审计，原始接纳时间和内容哈希来自原归档。补账写入成本为每个核验事件一条窄记录，每个来源代际一条检查点。日常读取从小型运行进度表及共享收据索引取数。运行报告只保存每来源代际的最新样本。
+
+验收读取授权的 `/api/v1/shared-access/status`，核对 `materialization.source_progress` 的绑定、最近接纳、归档、共享确认、待办段和失败位置。最近处理位置可能越过独立车道的慢段，仍需核对最老待办和失败状态。恢复 ClickHouse 合并时逐表启用，观察部件、水位与磁盘余量，再恢复 `account_sessions` 的自动清理。用真实输入覆盖维护运行期间的净积压斜率，并核对一条符合条件的真实共享样本及其仅记录处置和上报。
+
+需要回退时，先暂停补账和共享判定，将两个环境开关恢复到发布前状态。保留现行文件游标和已应用迁移，先验证上一兼容版本能处理现有段和覆盖字段，再执行应用回退。保留绑定审计和未完成水位，已有路由及案件证据仍按原引用读取。获得现场闭环与正常维护下的容量验收后按单版本约定清理旧程序。

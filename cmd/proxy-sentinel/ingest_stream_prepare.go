@@ -262,6 +262,14 @@ func closeStaleFileCutover(ctx context.Context, db *sql.DB, kind, path, oldEpoch
 	if state != "active" {
 		return fmt.Errorf("stale cutover state is %q, want active", state)
 	}
+	var shared bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM stream_shared_source_cutovers
+ WHERE source_kind=$1 AND source_path=$2 AND epoch=$3 AND state='active')`, kind, path, oldEpoch).Scan(&shared); err != nil {
+		return err
+	}
+	if shared {
+		return errors.New("active shared binding requires an audited atomic shared replacement")
+	}
 	if _, err = tx.ExecContext(ctx, `UPDATE stream_source_cutovers SET state='closed' WHERE epoch=$1 AND source_kind=$2 AND source_path=$3 AND state='active'`, oldEpoch, kind, path); err != nil {
 		return err
 	}
@@ -272,7 +280,7 @@ func closeStaleFileCutover(ctx context.Context, db *sql.DB, kind, path, oldEpoch
 	return nil
 }
 
-func prepareControlledFileStreamAfterClosedWithRotation(ctx context.Context, db *sql.DB, journal *streamlog.Journal, kind, sensor, path, epoch, cancelID, previousRelease, scopeHash string, cutoff time.Time, priorEpoch, priorManifest, rotationArchive string) (zeekCutoverBytes, string, error) {
+func prepareControlledFileStreamAfterClosedWithRotation(ctx context.Context, db *sql.DB, journal *streamlog.Journal, kind, sensor, path, epoch, cancelID, previousRelease, scopeHash string, cutoff time.Time, priorEpoch, priorManifest, rotationArchive string, replacements ...sharedStreamRebind) (zeekCutoverBytes, string, error) {
 	parser := streamParserForSourcePath(kind, path)
 	if parser == "" || db == nil || journal == nil || sensor == "" || path == "" || epoch == "" || len(epoch) > 128 || cancelID == "" || previousRelease == "" || len(scopeHash) != 64 || cutoff.IsZero() || cutoff.After(time.Now()) || (priorEpoch == "") != (priorManifest == "") || (priorEpoch != "" && (kind != "zeek-dhcp-binding" && kind != "device-signals" || priorEpoch == epoch || len(priorManifest) != 64)) || (rotationArchive != "" && (priorEpoch == "" || kind != "zeek-dhcp-binding" && kind != "device-signals")) {
 		return zeekCutoverBytes{}, "", errors.New("invalid controlled file fresh-cutover parameters")
@@ -282,7 +290,13 @@ func prepareControlledFileStreamAfterClosedWithRotation(ctx context.Context, db 
 		return zeekCutoverBytes{}, "", err
 	}
 	var otherActive int
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM stream_source_cutovers WHERE source_kind=$1 AND source_path=$2 AND state='active' AND epoch<>$3`, kind, path, epoch).Scan(&otherActive); err != nil {
+	activeQuery := `SELECT count(*) FROM stream_source_cutovers WHERE source_kind=$1 AND source_path=$2 AND state='active' AND epoch<>$3`
+	activeArgs := []any{kind, path, epoch}
+	if len(replacements) == 1 {
+		activeQuery += ` AND epoch<>$4`
+		activeArgs = append(activeArgs, replacements[0].OldEpoch)
+	}
+	if err := db.QueryRowContext(ctx, activeQuery, activeArgs...).Scan(&otherActive); err != nil {
 		return zeekCutoverBytes{}, "", err
 	}
 	if otherActive != 0 {
@@ -466,16 +480,25 @@ func prepareControlledFileStreamAfterClosedWithRotation(ctx context.Context, db 
 	} else if old.Epoch != epoch || old.ParserVersion != cursor.ParserVersion || old.KeyScheme != cursor.KeyScheme || old.DiscardedBeforeOffset != scan.Offset || (old.LastSegmentID == "" && (old.FileID != fileID || old.Generation != cursor.Generation)) {
 		return zeekCutoverBytes{}, "", streamlog.ErrContentConflict
 	}
-	result, err := db.ExecContext(ctx, `UPDATE stream_source_cutovers SET state='active' WHERE epoch=$1 AND source_kind=$2 AND source_path=$3 AND state IN ('prepared','active') AND cancel_manifest_sha256=$4`, epoch, kind, path, manifest)
-	if err != nil {
-		return zeekCutoverBytes{}, "", err
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return zeekCutoverBytes{}, "", err
-	}
-	if rows != 1 {
-		return zeekCutoverBytes{}, "", streamlog.ErrUnconfirmed
+	if len(replacements) == 1 {
+		input := replacements[0]
+		input.Sensor, input.Path, input.Epoch, input.ScopeHash = sensor, path, epoch, scopeHash
+		input.FileManifest, input.Cutoff = manifest, cutoff.UTC()
+		if err := rebindStreamSharedSource(ctx, db, input); err != nil {
+			return zeekCutoverBytes{}, "", err
+		}
+	} else {
+		result, err := db.ExecContext(ctx, `UPDATE stream_source_cutovers SET state='active' WHERE epoch=$1 AND source_kind=$2 AND source_path=$3 AND state IN ('prepared','active') AND cancel_manifest_sha256=$4`, epoch, kind, path, manifest)
+		if err != nil {
+			return zeekCutoverBytes{}, "", err
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return zeekCutoverBytes{}, "", err
+		}
+		if rows != 1 {
+			return zeekCutoverBytes{}, "", streamlog.ErrUnconfirmed
+		}
 	}
 	for _, entry := range rotationEntries {
 		scan.Records += entry.UnprocessedRecords
@@ -526,6 +549,8 @@ func runIngestStreamPrepare(args []string) error {
 	priorManifest := fs.String("prior-retirement-sha256", "", "verified immutable retirement manifest")
 	rotationArchive := fs.String("rotation-archive", "", "verified retained file across rotation (Zeek gzip or device .1)")
 	replaceEpoch := fs.String("replace-closed-epoch", "", "stale active epoch on the same file to close before the fresh start")
+	sharedAudit := fs.String("replace-shared-old-audit", "", "immutable audit of the old shared source being replaced")
+	sharedAuditHash := fs.String("replace-shared-old-audit-sha256", "", "verified SHA256 of the old shared source audit")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -587,12 +612,25 @@ func runIngestStreamPrepare(args []string) error {
 		return err
 	}
 	defer releaseLegacy()
-	if *replaceEpoch != "" {
+	var replacement []sharedStreamRebind
+	if *sharedAudit != "" || *sharedAuditHash != "" {
+		owner := "handshake-sidecar"
+		if *ttlPath != "" {
+			owner = "packet-sidecar"
+		}
+		if *replaceEpoch == "" || (*ttlPath == "" && *handshakePath == "") {
+			return errors.New("shared replacement needs the old epoch and exactly one sidecar source")
+		}
+		if err := verifySharedRebindManifest(*sharedAudit, *sharedAuditHash); err != nil {
+			return err
+		}
+		replacement = append(replacement, sharedStreamRebind{Scope: scope.ID(), Owner: owner, OldEpoch: *replaceEpoch, Manifest: *sharedAuditHash})
+	} else if *replaceEpoch != "" {
 		if err := closeStaleFileCutover(ctx, db, kind, sourcePath, *replaceEpoch, *epoch); err != nil {
 			return err
 		}
 	}
-	scan, manifest, err := prepareControlledFileStreamAfterClosedWithRotation(ctx, db, journal, kind, *sensor, sourcePath, *epoch, *cancelID, *previousRelease, scopeHash, cutoff, *priorEpoch, *priorManifest, *rotationArchive)
+	scan, manifest, err := prepareControlledFileStreamAfterClosedWithRotation(ctx, db, journal, kind, *sensor, sourcePath, *epoch, *cancelID, *previousRelease, scopeHash, cutoff, *priorEpoch, *priorManifest, *rotationArchive, replacement...)
 	if err != nil {
 		return err
 	}

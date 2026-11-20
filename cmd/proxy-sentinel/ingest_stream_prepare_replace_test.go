@@ -17,12 +17,34 @@ func TestCloseStaleFileCutoverClosesActiveEpoch(t *testing.T) {
 	mock.ExpectQuery("SELECT state FROM stream_source_cutovers").
 		WithArgs("old-epoch", "device-signals", "/signals/flow-syn.jsonl").
 		WillReturnRows(sqlmock.NewRows([]string{"state"}).AddRow("active"))
+	mock.ExpectQuery("SELECT EXISTS").WithArgs("device-signals", "/signals/flow-syn.jsonl", "old-epoch").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectExec("UPDATE stream_source_cutovers SET state='closed'").
 		WithArgs("old-epoch", "device-signals", "/signals/flow-syn.jsonl").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	if err = closeStaleFileCutover(context.Background(), db, "device-signals", "/signals/flow-syn.jsonl", "old-epoch", "new-epoch"); err != nil {
 		t.Fatal(err)
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCloseStaleFileCutoverRejectsActiveSharedBinding(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT state FROM stream_source_cutovers").
+		WillReturnRows(sqlmock.NewRows([]string{"state"}).AddRow("active"))
+	mock.ExpectQuery("SELECT EXISTS").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectRollback()
+	if err = closeStaleFileCutover(context.Background(), db, "device-signals", "/signals/ttl.jsonl", "old", "new"); err == nil {
+		t.Fatal("file-only replacement split the active shared binding")
 	}
 	if err = mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

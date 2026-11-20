@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/policy"
@@ -69,19 +70,31 @@ func (s *DBStore) ResolveSharedGateway(ctx context.Context, cfg sharedaccess.Con
 		return false, err
 	}
 	defer tx.Rollback()
-	var id, mac, previous, generation string
+	var id, mac, previous, generation, sourceEpoch string
 	var scope SharedObservationScope
-	var at, received time.Time
+	var at, received, dirtySince time.Time
 	var revision int64
 	config, _ := json.Marshal(cfg.Sources)
-	err = tx.QueryRowContext(ctx, `SELECT job_id,sensor_id,campus_id,access_domain,gateway_mac,COALESCE(host(resolved_ip),''),last_event_at,dirty_since,revision,generation_id FROM shared_gateway_observation_jobs WHERE NOT expired AND canceled_epoch='' AND next_attempt_at<=now()
+	err = tx.QueryRowContext(ctx, `SELECT job_id,sensor_id,campus_id,access_domain,gateway_mac,COALESCE(host(resolved_ip),''),last_event_at,first_received_at,dirty_since,revision,generation_id,source_epoch FROM shared_gateway_observation_jobs WHERE NOT expired AND canceled_epoch='' AND next_attempt_at<=now()
  AND generation_id=COALESCE((SELECT min(cancel_id) FROM stream_shared_source_cutovers c WHERE c.sensor_id=shared_gateway_observation_jobs.sensor_id AND c.state='active'),'')
- AND (sensor_id,campus_id,access_domain) IN (SELECT sensor_id,campus_id,access_domain FROM jsonb_to_recordset($1::jsonb) r(sensor_id text,campus_id text,access_domain text,source text) WHERE source='packet-sidecar') ORDER BY next_attempt_at,job_id FOR UPDATE SKIP LOCKED LIMIT 1`, config).Scan(&id, &scope.SensorID, &scope.CampusID, &scope.AccessDomain, &mac, &previous, &at, &received, &revision, &generation)
+ AND (sensor_id,campus_id,access_domain) IN (SELECT sensor_id,campus_id,access_domain FROM jsonb_to_recordset($1::jsonb) r(sensor_id text,campus_id text,access_domain text,source text) WHERE source='packet-sidecar')`+sharedGatewayEpochPredicate()+` ORDER BY next_attempt_at,job_id FOR UPDATE SKIP LOCKED LIMIT 1`, config).Scan(&id, &scope.SensorID, &scope.CampusID, &scope.AccessDomain, &mac, &previous, &at, &received, &dirtySince, &revision, &generation, &sourceEpoch)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
+	}
+	if SharedStreamRequired() {
+		var epoch string
+		err = tx.QueryRowContext(ctx, `SELECT s.epoch FROM stream_shared_source_cutovers s
+ JOIN stream_source_cutovers f USING(epoch,source_kind,source_path)
+ WHERE s.sensor_id=$1 AND s.source_owner='packet-sidecar' AND s.state='active' AND f.state='active' FOR SHARE OF s NOWAIT`, scope.SensorID).Scan(&epoch)
+		if errors.Is(err, sql.ErrNoRows) || err == nil && epoch != sourceEpoch {
+			return true, nil
+		}
+		if err != nil {
+			return true, err
+		}
 	}
 	defer func() {
 		if err != nil {
@@ -116,9 +129,9 @@ func (s *DBStore) ResolveSharedGateway(ctx context.Context, cfg sharedaccess.Con
 			continue
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO shared_observation_jobs(job_id,sensor_id,campus_id,access_domain,ip,last_event_at,first_received_at,dirty_since,generation_id)
-		 VALUES($1,$2,$3,$4,$5::inet,$6,$7,$7,$8) ON CONFLICT(job_id) DO UPDATE SET revision=shared_observation_jobs.revision+1,last_event_at=GREATEST(shared_observation_jobs.last_event_at,EXCLUDED.last_event_at),last_received_at=now(),next_attempt_at=now(),expired=false,canceled_epoch='',generation_id=EXCLUDED.generation_id,
+		 VALUES($1,$2,$3,$4,$5::inet,$6,$7,$9,$8) ON CONFLICT(job_id) DO UPDATE SET revision=shared_observation_jobs.revision+1,last_event_at=GREATEST(shared_observation_jobs.last_event_at,EXCLUDED.last_event_at),last_received_at=now(),next_attempt_at=now(),expired=false,canceled_epoch='',generation_id=EXCLUDED.generation_id,
 		 first_received_at=CASE WHEN shared_observation_jobs.generation_id<>EXCLUDED.generation_id THEN EXCLUDED.first_received_at ELSE shared_observation_jobs.first_received_at END,
-		 dirty_since=CASE WHEN shared_observation_jobs.generation_id<>EXCLUDED.generation_id OR shared_observation_jobs.revision=shared_observation_jobs.completed_revision THEN EXCLUDED.dirty_since ELSE LEAST(shared_observation_jobs.dirty_since,EXCLUDED.dirty_since) END`, policy.StableID(scope.SensorID, scope.CampusID, scope.AccessDomain, target), scope.SensorID, scope.CampusID, scope.AccessDomain, target, at, received, generation)
+		 dirty_since=CASE WHEN shared_observation_jobs.generation_id<>EXCLUDED.generation_id OR shared_observation_jobs.revision=shared_observation_jobs.completed_revision THEN EXCLUDED.dirty_since ELSE LEAST(shared_observation_jobs.dirty_since,EXCLUDED.dirty_since) END`, policy.StableID(scope.SensorID, scope.CampusID, scope.AccessDomain, target), scope.SensorID, scope.CampusID, scope.AccessDomain, target, at, received, generation, dirtySince)
 		if err != nil {
 			return true, err
 		}
@@ -309,7 +322,7 @@ func (s *DBStore) includeSharedGateway(ctx context.Context, scope SharedObservat
 		return handshake, item, nil
 	}
 	rows, err := s.pg.db.QueryContext(ctx, `SELECT gateway_mac FROM shared_gateway_observation_jobs WHERE sensor_id=$1 AND campus_id=$2 AND access_domain=$3 AND resolved_ip=$4::inet AND last_event_at>=$5
- AND canceled_epoch='' AND generation_id=COALESCE((SELECT min(cancel_id) FROM stream_shared_source_cutovers c WHERE c.sensor_id=shared_gateway_observation_jobs.sensor_id AND c.state='active'),'')
+ AND canceled_epoch='' AND generation_id=COALESCE((SELECT min(cancel_id) FROM stream_shared_source_cutovers c WHERE c.sensor_id=shared_gateway_observation_jobs.sensor_id AND c.state='active'),'')`+sharedGatewayEpochPredicate()+`
  ORDER BY gateway_mac LIMIT 3`, scope.SensorID, scope.CampusID, scope.AccessDomain, scope.IP, now.Add(-10*time.Minute))
 	if err != nil {
 		return handshake, item, err
@@ -387,4 +400,13 @@ func (s *DBStore) includeSharedGateway(ctx context.Context, scope SharedObservat
 		return w, association, nil
 	}
 	return handshake, item, nil
+}
+
+func sharedGatewayEpochPredicate() string {
+	if !SharedStreamRequired() {
+		return ""
+	}
+	return ` AND EXISTS(SELECT 1 FROM stream_shared_source_cutovers s JOIN stream_source_cutovers f USING(epoch,source_kind,source_path)
+ WHERE s.sensor_id=shared_gateway_observation_jobs.sensor_id AND s.source_owner='packet-sidecar'
+ AND s.epoch=shared_gateway_observation_jobs.source_epoch AND s.state='active' AND f.state='active')`
 }
