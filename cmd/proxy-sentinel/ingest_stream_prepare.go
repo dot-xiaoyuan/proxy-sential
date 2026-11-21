@@ -239,7 +239,7 @@ func prepareControlledFileStream(ctx context.Context, db *sql.DB, journal *strea
 }
 
 func prepareControlledFileStreamAfterClosed(ctx context.Context, db *sql.DB, journal *streamlog.Journal, kind, sensor, path, epoch, cancelID, previousRelease, scopeHash string, cutoff time.Time, priorEpoch, priorManifest string) (zeekCutoverBytes, string, error) {
-	return prepareControlledFileStreamAfterClosedWithRotation(ctx, db, journal, kind, sensor, path, epoch, cancelID, previousRelease, scopeHash, cutoff, priorEpoch, priorManifest, "")
+	return prepareControlledFileStreamAfterClosedWithRotation(ctx, db, journal, kind, sensor, path, epoch, cancelID, previousRelease, scopeHash, cutoff, priorEpoch, priorManifest, "", false)
 }
 
 // closeStaleFileCutover retires a stopped epoch that still holds the source
@@ -280,10 +280,13 @@ func closeStaleFileCutover(ctx context.Context, db *sql.DB, kind, path, oldEpoch
 	return nil
 }
 
-func prepareControlledFileStreamAfterClosedWithRotation(ctx context.Context, db *sql.DB, journal *streamlog.Journal, kind, sensor, path, epoch, cancelID, previousRelease, scopeHash string, cutoff time.Time, priorEpoch, priorManifest, rotationArchive string, replacements ...sharedStreamRebind) (zeekCutoverBytes, string, error) {
+func prepareControlledFileStreamAfterClosedWithRotation(ctx context.Context, db *sql.DB, journal *streamlog.Journal, kind, sensor, path, epoch, cancelID, previousRelease, scopeHash string, cutoff time.Time, priorEpoch, priorManifest, rotationArchive string, resumeExact bool, replacements ...sharedStreamRebind) (zeekCutoverBytes, string, error) {
 	parser := streamParserForSourcePath(kind, path)
 	if parser == "" || db == nil || journal == nil || sensor == "" || path == "" || epoch == "" || len(epoch) > 128 || cancelID == "" || previousRelease == "" || len(scopeHash) != 64 || cutoff.IsZero() || cutoff.After(time.Now()) || (priorEpoch == "") != (priorManifest == "") || (priorEpoch != "" && (kind != "zeek-dhcp-binding" && kind != "device-signals" || priorEpoch == epoch || len(priorManifest) != 64)) || (rotationArchive != "" && (priorEpoch == "" || kind != "zeek-dhcp-binding" && kind != "device-signals")) {
 		return zeekCutoverBytes{}, "", errors.New("invalid controlled file fresh-cutover parameters")
+	}
+	if resumeExact && (priorEpoch == "" || rotationArchive != "" || len(replacements) != 0) {
+		return zeekCutoverBytes{}, "", errors.New("exact resume requires an audited retirement on the current file")
 	}
 	existing, found, err := loadFileCutover(ctx, db, kind, epoch, path)
 	if err != nil {
@@ -396,6 +399,14 @@ func prepareControlledFileStreamAfterClosedWithRotation(ctx context.Context, db 
 	size := before.Size()
 	if found {
 		size = existing.Offset
+	}
+	if resumeExact {
+		// The retirement already audited bytes through from. Anything
+		// appended after that boundary belongs to the fresh reader.
+		if priorRetiredFile != fileID || (found && existing.Offset != from) {
+			return zeekCutoverBytes{}, "", streamlog.ErrContentConflict
+		}
+		size = from
 	}
 	if size < from || size > before.Size() {
 		return zeekCutoverBytes{}, "", streamlog.ErrContentConflict
@@ -547,6 +558,7 @@ func runIngestStreamPrepare(args []string) error {
 	cutoffText := fs.String("cutoff-at", "", "fixed RFC3339 old-input cutoff")
 	priorEpoch := fs.String("resume-closed-epoch", "", "prior closed stream on this exact file")
 	priorManifest := fs.String("prior-retirement-sha256", "", "verified immutable retirement manifest")
+	resumeExact := fs.Bool("resume-at-retirement-cursor", false, "start at the audited byte offset on the same file and preserve subsequent input")
 	rotationArchive := fs.String("rotation-archive", "", "verified retained file across rotation (Zeek gzip or device .1)")
 	replaceEpoch := fs.String("replace-closed-epoch", "", "stale active epoch on the same file to close before the fresh start")
 	sharedAudit := fs.String("replace-shared-old-audit", "", "immutable audit of the old shared source being replaced")
@@ -566,6 +578,9 @@ func runIngestStreamPrepare(args []string) error {
 	}
 	if *messagePath != "" && filepath.Base(*messagePath) != "device_dhcp_message.log" {
 		return errors.New("DHCP message source must use device_dhcp_message.log")
+	}
+	if *resumeExact && (*priorEpoch == "" || *priorManifest == "" || *replaceEpoch != "" || *rotationArchive != "") {
+		return errors.New("exact resume requires a closed audited epoch on the current file")
 	}
 	cutoff, err := time.Parse(time.RFC3339Nano, *cutoffText)
 	if err != nil {
@@ -630,7 +645,7 @@ func runIngestStreamPrepare(args []string) error {
 			return err
 		}
 	}
-	scan, manifest, err := prepareControlledFileStreamAfterClosedWithRotation(ctx, db, journal, kind, *sensor, sourcePath, *epoch, *cancelID, *previousRelease, scopeHash, cutoff, *priorEpoch, *priorManifest, *rotationArchive, replacement...)
+	scan, manifest, err := prepareControlledFileStreamAfterClosedWithRotation(ctx, db, journal, kind, *sensor, sourcePath, *epoch, *cancelID, *previousRelease, scopeHash, cutoff, *priorEpoch, *priorManifest, *rotationArchive, *resumeExact, replacement...)
 	if err != nil {
 		return err
 	}

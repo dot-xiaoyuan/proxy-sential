@@ -81,7 +81,7 @@ func TestClosedBindingRotationAuditsBothFileGaps(t *testing.T) {
 			mock.ExpectExec(`INSERT INTO stream_discard_manifest`).WillReturnResult(sqlmock.NewResult(0, 4))
 			mock.ExpectCommit()
 			mock.ExpectExec(`UPDATE stream_source_cutovers SET state='active'`).WillReturnResult(sqlmock.NewResult(0, 1))
-			scan, _, err := prepareControlledFileStreamAfterClosedWithRotation(context.Background(), db, journal, "zeek-dhcp-binding", "sensor-a", source, "new-epoch", "cancel-new", "compatible-a", strings.Repeat("b", 64), cutoff, "old-epoch", priorHash, archive)
+			scan, _, err := prepareControlledFileStreamAfterClosedWithRotation(context.Background(), db, journal, "zeek-dhcp-binding", "sensor-a", source, "new-epoch", "cancel-new", "compatible-a", strings.Repeat("b", 64), cutoff, "old-epoch", priorHash, archive, false)
 			if err != nil {
 				t.Fatal(err)
 			}

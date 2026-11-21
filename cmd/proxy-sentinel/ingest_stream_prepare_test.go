@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,61 @@ func TestZeekFreshCutoverAuditsOnlyCompleteOldRecords(t *testing.T) {
 	wantHash := sha256.Sum256(wantBytes)
 	if got.Offset != int64(len("#path dhcp\n"))+int64(len(wantBytes)) || got.Records != 2 || got.Bytes != int64(len(wantBytes)) || got.SHA256 != hex.EncodeToString(wantHash[:]) {
 		t.Fatalf("fresh cutoff lost or counted a partial event: %+v", got)
+	}
+}
+
+func TestExactDHCPResumePreservesAppendsAfterAudit(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "device_dhcp_message.log")
+	old := []byte("cancelled\n")
+	if err := os.WriteFile(path, append(append([]byte(nil), old...), []byte("first-new\nsecond-new\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal, err := streamlog.Open(filepath.Join(dir, "journal"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	cutoff := time.Now().UTC().Truncate(time.Second)
+	priorHash, scopeHash := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	const kind = "zeek-dhcp-binding"
+	fileID := realtime.FileIdentity(path, info)
+	mock.ExpectQuery("FROM stream_source_cutovers WHERE epoch=").WithArgs("new", kind, path).
+		WillReturnRows(sqlmock.NewRows([]string{"epoch", "source_kind", "source_path", "sensor_id", "file_id", "start_offset", "parser_version", "previous_release", "legacy_cutoff_at", "legacy_cancel_id", "cancel_manifest_sha256", "capture_scope_sha256", "state"}))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM stream_source_cutovers`).WithArgs(kind, path, "new").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM ingest_batches`).WithArgs("sensor-a", kind, path, cutoff).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery("stream_retirement_cursor").WithArgs("old", kind, path, priorHash).
+		WillReturnRows(sqlmock.NewRows([]string{"sensor_id", "file_id", "legacy_reference", "content_sha256", "retired_file_id"}).
+			AddRow("sensor-a", "old-rotation", strconv.Itoa(len(old)), priorHash, fileID))
+	mock.ExpectQuery("SELECT batch_id,status,checksum").WithArgs("sensor-a", kind, path, cutoff).
+		WillReturnRows(sqlmock.NewRows([]string{"batch_id", "status", "checksum", "start_offset", "end_offset", "event_count", "started_at"}))
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO stream_source_cutovers").
+		WithArgs("new", kind, path, "sensor-a", fileID, int64(len(old)), streamParserForSourcePath(kind, path), "compatible-a", cutoff, "new-cancel", sqlmock.AnyArg(), scopeHash).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO stream_discard_manifest").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	mock.ExpectExec("UPDATE stream_source_cutovers SET state='active'").WillReturnResult(sqlmock.NewResult(0, 1))
+	scan, _, err := prepareControlledFileStreamAfterClosedWithRotation(context.Background(), db, journal, kind, "sensor-a", path, "new", "new-cancel", "compatible-a", scopeHash, cutoff, "old", priorHash, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cursor, err := journal.LoadSource(kind, path)
+	if err != nil || cursor.Offset != int64(len(old)) || scan.Bytes != 0 || scan.Records != 0 {
+		t.Fatalf("new inputs were skipped: scan=%+v cursor=%+v err=%v", scan, cursor, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
