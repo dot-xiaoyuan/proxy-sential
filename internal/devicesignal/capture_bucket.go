@@ -114,9 +114,6 @@ func (b *captureBucket) addHandshake(frame []byte) {
 		b.handshakes[key] = summary
 	}
 	before := len(summary.samples)
-	if b.handshakeFeatureSamples >= maxHandshakeFeatureSamples-3 {
-		observation.FeaturesOmitted = true
-	}
-	summary.add(observation)
+	summary.add(observation, maxHandshakeFeatureSamples-b.handshakeFeatureSamples)
 	b.handshakeFeatureSamples += len(summary.samples) - before
 }

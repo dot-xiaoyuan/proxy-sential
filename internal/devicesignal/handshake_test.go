@@ -90,7 +90,7 @@ func TestParseHandshakeIgnoresOtherTrafficAndResponses(t *testing.T) {
 func TestHandshakeSummaryBoundsDistinctValues(t *testing.T) {
 	summary := &handshakeSummary{snis: map[string]bool{}, alpns: map[string]bool{}, hosts: map[string]bool{}, userAgents: map[string]bool{}}
 	for i := 0; i < 20; i++ {
-		summary.add(handshakeObservation{SNI: string(rune('a' + i))})
+		summary.add(handshakeObservation{SNI: string(rune('a' + i))}, maxHandshakeFeatureSamples)
 	}
 	if summary.count != 20 || len(summary.snis) != maxHandshakeValues {
 		t.Fatalf("summary not bounded: count=%d distinct=%d", summary.count, len(summary.snis))

@@ -23,7 +23,6 @@ import (
 // a TLS ClientHello server name and ALPN, or an HTTP request's Host and User-Agent. Only
 // the header fields are read; bodies and application data are never retained.
 type handshakeObservation struct {
-	FeaturesOmitted bool
 	JA3             string
 	JA4             string
 	EventID         string
@@ -272,19 +271,12 @@ func newHandshakeSummary() *handshakeSummary {
 	return &handshakeSummary{snis: map[string]bool{}, alpns: map[string]bool{}, hosts: map[string]bool{}, userAgents: map[string]bool{}}
 }
 
-func (s *handshakeSummary) add(o handshakeObservation) {
+func (s *handshakeSummary) add(o handshakeObservation, sampleBudget int) {
 	s.count++
-	if o.FeaturesOmitted {
-		s.overflow++
-	}
 	if o.Truncated {
 		s.truncated++
 	}
-	if s.samples == nil {
-		s.samples = map[string]sharedaccess.HandshakeSample{}
-		s.sampleCounts = map[string]int{}
-	}
-	if !o.Truncated && !o.FeaturesOmitted && o.EventID != "" && !o.ObservedAt.IsZero() {
+	if !o.Truncated && o.EventID != "" && !o.ObservedAt.IsZero() {
 		for _, feature := range []struct{ family, value string }{{"user_agent", o.UserAgent}, {"ja3", o.JA3}, {"ja4", o.JA4}} {
 			family, value := feature.family, feature.value
 			if value == "" {
@@ -298,10 +290,17 @@ func (s *handshakeSummary) add(o handshakeObservation) {
 			if s.sampleCounts[bucketKey] >= 3 {
 				continue
 			}
-			if len(s.samples) >= 288 {
+			// A repeated sample never uses a slot or counts as omitted. A
+			// fresh sample blocked by either bound leaves the coverage gap.
+			if sampleBudget <= 0 || len(s.samples) >= 288 {
 				s.overflow++
 				continue
 			}
+			if s.samples == nil {
+				s.samples = map[string]sharedaccess.HandshakeSample{}
+				s.sampleCounts = map[string]int{}
+			}
+			sampleBudget--
 			s.sampleCounts[bucketKey]++
 			s.samples[key] = sharedaccess.HandshakeSample{Family: family, Value: value, EventID: o.EventID, ObservedAt: o.ObservedAt, Bucket: o.ObservedAt.Unix() / 5, DestinationPort: o.DestinationPort}
 		}

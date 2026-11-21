@@ -90,14 +90,14 @@ func TestHandshakeFeatureSamplesDeduplicateRetransmission(t *testing.T) {
 	s := newHandshakeSummary()
 	o := handshakeObservation{UserAgent: "Mozilla/5.0 (Android; Pixel 8 Build/TEST)", EventID: "same", ObservedAt: at}
 	for i := 0; i < 100; i++ {
-		s.add(o)
+		s.add(o, maxHandshakeFeatureSamples)
 	}
 	if len(s.samples) != 1 {
 		t.Fatalf("retransmission became independent evidence: %d", len(s.samples))
 	}
 	o.EventID = "second"
 	o.ObservedAt = at.Add(5 * time.Second)
-	s.add(o)
+	s.add(o, maxHandshakeFeatureSamples)
 	if len(s.samples) != 2 {
 		t.Fatal("independent event lost")
 	}
@@ -110,7 +110,7 @@ func TestHandshakeSummaryRetainsJA3AndJA4FromOnePacket(t *testing.T) {
 		t.Fatalf("missing TLS fingerprints: %+v", o)
 	}
 	s := newHandshakeSummary()
-	s.add(o)
+	s.add(o, maxHandshakeFeatureSamples)
 	if len(s.samples) != 2 || s.samples["ja3/"+o.EventID].Value != o.JA3 || s.samples["ja4/"+o.EventID].Value != o.JA4 || s.samples["ja3/"+o.EventID].DestinationPort != 443 || s.samples["ja4/"+o.EventID].DestinationPort != 443 {
 		t.Fatalf("fingerprint evidence lost: %+v", s.samples)
 	}
@@ -151,6 +151,21 @@ func TestHandshakeRealFrameRetransmissionAndBucketBudget(t *testing.T) {
 	c, ok := parseHandshakeFrame(copied)
 	if !ok || c.EventID == a.EventID {
 		t.Fatal("new TCP sequence did not change event key")
+	}
+	partial := newCaptureBucket()
+	partial.addHandshake(frame)
+	partial.handshakeFeatureSamples = maxHandshakeFeatureSamples
+	partial.addHandshake(frame)
+	for _, summary := range partial.handshakes {
+		if len(summary.samples) != 1 || summary.overflow != 0 {
+			t.Fatal("duplicate observation incorrectly signaled feature loss at the global cap")
+		}
+	}
+	partial.addHandshake(copied)
+	for _, summary := range partial.handshakes {
+		if len(summary.samples) != 1 || summary.overflow != 1 {
+			t.Fatal("an eligible new observation was not reported as omitted")
+		}
 	}
 	bucket := newCaptureBucket()
 	bucket.handshakeFeatureSamples = maxHandshakeFeatureSamples

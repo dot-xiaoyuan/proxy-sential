@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -28,11 +29,13 @@ import (
 //   - affected endpoints are recomputed set-wise in one statement per chunk and written
 //     back with one upsert, skipping rows whose content did not change.
 const (
-	endpointStateInterval    = 15 * time.Second
-	endpointStateChunk       = 50
-	endpointStateProgress    = 100
-	endpointStateSourceLimit = 1000
-	endpointStateSweep       = 500
+	endpointStateInterval     = 15 * time.Second
+	endpointStateChunk        = 50
+	endpointStateProgress     = 100
+	endpointStateSourceLimit  = 1000
+	endpointStateSweep        = 500
+	endpointStateStageBudget  = 45 * time.Second
+	endpointStateStageTimeout = 90 * time.Second
 	// endpointSessionFreshness matches the router binding rule: a session counts as
 	// current only while it is open and was refreshed within three reconcile intervals.
 	endpointSessionFreshness = 90 * time.Minute
@@ -50,8 +53,13 @@ type endpointStateChange struct {
 
 // Save a source cursor only after its corresponding state rows are durable. A later
 // batch may fail without replaying all earlier work or skipping the failed rows.
-func (s *PostgresStore) processEndpointStateChanges(ctx context.Context, source string, changes []endpointStateChange, batchSize int, position *endpointStateKey, refresh func(context.Context, []string) error) error {
+func (s *PostgresStore) processEndpointStateChanges(ctx context.Context, source string, changes []endpointStateChange, batchSize int, position *endpointStateKey, refresh func(context.Context, []string) error) (int, error) {
+	deadline := time.Now().Add(endpointStateStageBudget)
+	processed := 0
 	for start := 0; start < len(changes); start += batchSize {
+		if start > 0 && !time.Now().Before(deadline) {
+			break
+		}
 		end := min(start+batchSize, len(changes))
 		ids := make([]string, 0, end-start)
 		seen := make(map[string]bool, end-start)
@@ -63,20 +71,21 @@ func (s *PostgresStore) processEndpointStateChanges(ctx context.Context, source 
 		}
 		started := time.Now()
 		if err := refresh(ctx, ids); err != nil {
-			return fmt.Errorf("endpoint state %s batch: %w", source, err)
+			return processed, fmt.Errorf("endpoint state %s batch: %w", source, err)
 		}
 		last := changes[end-1]
 		next := endpointStateKey{At: last.stamp.UTC().Format(time.RFC3339Nano), ID: last.id}
 		encoded, _ := json.Marshal(next)
 		if _, err := s.db.ExecContext(ctx, `UPDATE endpoint_state_watermark SET cursors=jsonb_set(cursors,ARRAY[$1]::text[],$2::jsonb,true),updated_at=now() WHERE singleton`, source, encoded); err != nil {
-			return fmt.Errorf("endpoint state %s cursor: %w", source, err)
+			return processed, fmt.Errorf("endpoint state %s cursor: %w", source, err)
 		}
 		*position = next
+		processed = end
 		if elapsed := time.Since(started); elapsed > 5*time.Second {
 			fmt.Fprintf(os.Stderr, "endpoint state %s batch: rows=%d duration=%s\n", source, len(ids), elapsed.Round(time.Millisecond))
 		}
 	}
-	return nil
+	return processed, nil
 }
 
 type endpointStateSource struct {
@@ -104,7 +113,7 @@ func (s *DBStore) RunEndpointStateUpdater(ctx context.Context) {
 		report, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		if err != nil && ctx.Err() == nil {
 			fmt.Fprintf(os.Stderr, "endpoint state round failed: %v\n", err)
-			_, _ = s.pg.db.ExecContext(report, `UPDATE endpoint_state_watermark SET last_error=$1,updated_at=now() WHERE singleton`, err.Error())
+			_, _ = s.pg.db.ExecContext(report, `UPDATE endpoint_state_watermark SET last_error=$1,refreshed_endpoints=refreshed_endpoints+$2,updated_at=now() WHERE singleton`, err.Error(), refreshed)
 		} else if err == nil {
 			_, _ = s.pg.db.ExecContext(report, `UPDATE endpoint_state_watermark SET last_error='',last_success_at=now(),refreshed_endpoints=refreshed_endpoints+$1,updated_at=now() WHERE singleton`, refreshed)
 		}
@@ -119,10 +128,6 @@ func (s *DBStore) RunEndpointStateUpdater(ctx context.Context) {
 
 // endpointStateRound runs one bootstrap step, the change-set pass and one sweep slice.
 func (s *PostgresStore) endpointStateRound(ctx context.Context) (int, error) {
-	departures, err := s.refreshAuthenticationDepartures(ctx)
-	if err != nil {
-		return 0, err
-	}
 	var raw []byte
 	var bootstrapCursor string
 	var bootstrapComplete bool
@@ -149,103 +154,115 @@ func (s *PostgresStore) endpointStateRound(ctx context.Context) (int, error) {
 			return 0, err
 		}
 	}
-	refreshed := departures
-	if !bootstrapComplete {
-		started := time.Now()
-		ids, err := s.endpointIDsAfter(ctx, bootstrapCursor, endpointStateSweep)
+	// A stalled source keeps its own cursor and error. Other sources still get a
+	// bounded turn, with only one step doing database work at a time.
+	refreshed := 0
+	var failures []error
+	run := func(name string, work func(context.Context) (int, error)) {
+		if ctx.Err() != nil {
+			return
+		}
+		step, cancel := context.WithTimeout(ctx, endpointStateStageTimeout)
+		defer cancel()
+		count, err := work(step)
+		refreshed += count
 		if err != nil {
-			return refreshed, err
+			failures = append(failures, fmt.Errorf("%s: %w", name, err))
 		}
-		if elapsed := time.Since(started); elapsed > 5*time.Second {
-			fmt.Fprintf(os.Stderr, "endpoint state bootstrap scan: rows=%d duration=%s\n", len(ids), elapsed.Round(time.Millisecond))
-		}
-		for start := 0; start < len(ids); start += endpointStateProgress {
-			end := min(start+endpointStateProgress, len(ids))
-			if err = s.refreshEndpointStates(ctx, ids[start:end]); err != nil {
-				return refreshed, fmt.Errorf("endpoint state bootstrap: %w", err)
-			}
-			refreshed += end - start
-			bootstrapCursor = ids[end-1]
-			if _, err = s.db.ExecContext(ctx, `UPDATE endpoint_state_watermark SET bootstrap_cursor=$1,updated_at=now() WHERE singleton`, bootstrapCursor); err != nil {
-				return refreshed, err
-			}
-		}
-		if len(ids) < endpointStateSweep {
-			if _, err = s.db.ExecContext(ctx, `UPDATE endpoint_state_watermark SET bootstrap_complete=true,updated_at=now() WHERE singleton`); err != nil {
-				return refreshed, err
-			}
-		}
+	}
+	run("departures", s.refreshAuthenticationDepartures)
+	if !bootstrapComplete {
+		run("bootstrap", func(step context.Context) (int, error) {
+			return s.refreshEndpointStateRange(step, bootstrapCursor, true)
+		})
 	}
 	for _, source := range endpointStateSources {
-		position := cursors[source.name]
-		at, err := time.Parse(time.RFC3339Nano, position.At)
-		if err != nil {
-			return refreshed, fmt.Errorf("endpoint state %s cursor: %w", source.name, err)
-		}
-		started := time.Now()
-		rows, err := s.db.QueryContext(ctx, source.query, at, position.ID, endpointStateSourceLimit)
-		if err != nil {
-			return refreshed, fmt.Errorf("endpoint state %s: %w", source.name, err)
-		}
-		changes := make([]endpointStateChange, 0, endpointStateSourceLimit)
-		for rows.Next() {
-			var id string
-			var stamp time.Time
-			if err = rows.Scan(&id, &stamp); err != nil {
-				rows.Close()
-				return refreshed, err
-			}
-			changes = append(changes, endpointStateChange{id: id, stamp: stamp})
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return refreshed, err
-		}
-		if elapsed := time.Since(started); elapsed > 5*time.Second {
-			fmt.Fprintf(os.Stderr, "endpoint state %s scan: rows=%d duration=%s\n", source.name, len(changes), elapsed.Round(time.Millisecond))
-		}
-		refresh := func(ctx context.Context, ids []string) error {
-			if err := s.refreshEndpointStates(ctx, ids); err != nil {
-				return err
-			}
-			if source.name == "sessions" {
-				changed := make(map[string]bool, len(ids))
-				for _, id := range ids {
-					changed[id] = true
-				}
-				return s.markRecognitionForSessions(ctx, changed)
-			}
-			return nil
-		}
-		if err := s.processEndpointStateChanges(ctx, source.name, changes, endpointStateProgress, &position, refresh); err != nil {
-			return refreshed, err
-		}
-		refreshed += len(changes)
+		run(source.name, func(step context.Context) (int, error) {
+			return s.refreshEndpointStateSource(step, source, cursors[source.name])
+		})
 	}
-	// Round-robin sweep: every endpoint is re-derived about every 20 minutes, which ends
-	// sessions that went stale without a source update.
-	started := time.Now()
-	sweep, err := s.endpointIDsAfter(ctx, cursors["sweep"].ID, endpointStateSweep)
+	// The sweep ends sessions that go stale without a new source update.
+	run("sweep", func(step context.Context) (int, error) {
+		return s.refreshEndpointStateRange(step, cursors["sweep"].ID, false)
+	})
+	return refreshed, errors.Join(append(failures, ctx.Err())...)
+}
+
+func (s *PostgresStore) refreshEndpointStateSource(ctx context.Context, source endpointStateSource, position endpointStateKey) (int, error) {
+	at, err := time.Parse(time.RFC3339Nano, position.At)
 	if err != nil {
-		return refreshed, err
+		return 0, fmt.Errorf("invalid cursor: %w", err)
+	}
+	started := time.Now()
+	rows, err := s.db.QueryContext(ctx, source.query, at, position.ID, endpointStateSourceLimit)
+	if err != nil {
+		return 0, err
+	}
+	changes := make([]endpointStateChange, 0, endpointStateSourceLimit)
+	for rows.Next() {
+		var change endpointStateChange
+		if err = rows.Scan(&change.id, &change.stamp); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		changes = append(changes, change)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return 0, err
 	}
 	if elapsed := time.Since(started); elapsed > 5*time.Second {
-		fmt.Fprintf(os.Stderr, "endpoint state sweep scan: rows=%d duration=%s\n", len(sweep), elapsed.Round(time.Millisecond))
+		fmt.Fprintf(os.Stderr, "endpoint state %s scan: rows=%d duration=%s\n", source.name, len(changes), elapsed.Round(time.Millisecond))
 	}
-	for start := 0; start < len(sweep); start += endpointStateProgress {
-		end := min(start+endpointStateProgress, len(sweep))
-		if err = s.refreshEndpointStates(ctx, sweep[start:end]); err != nil {
-			return refreshed, fmt.Errorf("endpoint state sweep: %w", err)
+	refresh := func(ctx context.Context, ids []string) error {
+		if err := s.refreshEndpointStates(ctx, ids); err != nil {
+			return err
 		}
-		refreshed += end - start
-		encoded, _ := json.Marshal(endpointStateKey{ID: sweep[end-1]})
-		if _, err = s.db.ExecContext(ctx, `UPDATE endpoint_state_watermark SET cursors=jsonb_set(cursors,'{sweep}',$1::jsonb,true),updated_at=now() WHERE singleton`, encoded); err != nil {
+		if source.name == "sessions" {
+			changed := make(map[string]bool, len(ids))
+			for _, id := range ids {
+				changed[id] = true
+			}
+			return s.markRecognitionForSessions(ctx, changed)
+		}
+		return nil
+	}
+	return s.processEndpointStateChanges(ctx, source.name, changes, endpointStateProgress, &position, refresh)
+}
+
+func (s *PostgresStore) refreshEndpointStateRange(ctx context.Context, cursor string, bootstrap bool) (int, error) {
+	ids, err := s.endpointIDsAfter(ctx, cursor, endpointStateSweep)
+	if err != nil {
+		return 0, err
+	}
+	deadline := time.Now().Add(endpointStateStageBudget)
+	refreshed := 0
+	for start := 0; start < len(ids); start += endpointStateProgress {
+		if start > 0 && !time.Now().Before(deadline) {
+			break
+		}
+		end := min(start+endpointStateProgress, len(ids))
+		if err = s.refreshEndpointStates(ctx, ids[start:end]); err != nil {
 			return refreshed, err
 		}
+		if bootstrap {
+			_, err = s.db.ExecContext(ctx, `UPDATE endpoint_state_watermark SET bootstrap_cursor=$1,updated_at=now() WHERE singleton`, ids[end-1])
+		} else {
+			encoded, _ := json.Marshal(endpointStateKey{ID: ids[end-1]})
+			_, err = s.db.ExecContext(ctx, `UPDATE endpoint_state_watermark SET cursors=jsonb_set(cursors,'{sweep}',$1::jsonb,true),updated_at=now() WHERE singleton`, encoded)
+		}
+		if err != nil {
+			return refreshed, err
+		}
+		refreshed = end
 	}
-	if len(sweep) < endpointStateSweep {
-		_, err = s.db.ExecContext(ctx, `UPDATE endpoint_state_watermark SET cursors=jsonb_set(cursors,'{sweep}','{"id":""}'::jsonb,true),updated_at=now() WHERE singleton`)
+	if refreshed == len(ids) && len(ids) < endpointStateSweep {
+		if bootstrap {
+			_, err = s.db.ExecContext(ctx, `UPDATE endpoint_state_watermark SET bootstrap_complete=true,updated_at=now() WHERE singleton`)
+		} else {
+			_, err = s.db.ExecContext(ctx, `UPDATE endpoint_state_watermark SET cursors=jsonb_set(cursors,'{sweep}','{"id":""}'::jsonb,true),updated_at=now() WHERE singleton`)
+		}
 	}
 	return refreshed, err
 }
