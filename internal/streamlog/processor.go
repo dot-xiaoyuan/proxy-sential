@@ -9,7 +9,9 @@ import (
 )
 
 // Writer exposes independently recoverable sinks. Reconcile methods run only
-// after a write was attempted without a durable acknowledgement.
+// after a write was attempted without a durable acknowledgement. For a
+// source-backed archive, ReconcileBody verifies the stored bytes against the
+// segment descriptor.
 type Writer interface {
 	WriteBody(context.Context, string, Segment) error
 	ReconcileBody(context.Context, string, Segment) error
@@ -157,8 +159,7 @@ func (p Processor) DrainLane(ctx context.Context, id string, lane Lane) error {
 	if p.Journal == nil || p.Writer == nil {
 		return errors.New("stream processor requires journal and writer")
 	}
-	// Only the archive sink needs the source-backed raw bytes. Search,
-	// projection and finalization use the already verified event descriptor.
+	// Only a new archive write needs bytes from the source file.
 	if lane == Search {
 		status, err := p.load(id, lane, true, false)
 		if err != nil {
@@ -182,7 +183,7 @@ func (p Processor) DrainLane(ctx context.Context, id string, lane Lane) error {
 	if state.Segment.Quarantined {
 		return ErrQuarantined
 	}
-	if lane == Archive && state.Segment.SourceBackedRaw {
+	if lane == Archive && state.Segment.SourceBackedRaw && state.Acks[Archive] == Pending {
 		state, err = p.load(id, lane, false, true)
 		if err != nil {
 			return err
@@ -288,7 +289,7 @@ func (p Processor) Drain(ctx context.Context, id string) error {
 		return ErrUnconfirmed
 	}
 	archiveState := state
-	if state.Acks[Archive] != Acked && state.Acks[Archive] != NotApplicable && state.Segment.SourceBackedRaw {
+	if state.Acks[Archive] == Pending && state.Segment.SourceBackedRaw {
 		archiveState, err = p.load(id, Archive, false, true)
 		if err != nil {
 			return err

@@ -62,6 +62,40 @@ func TestSourceBackedRawIsReadOnlyByArchiveLane(t *testing.T) {
 	}
 }
 
+func TestAttemptedArchiveReconcilesWithoutReopeningSource(t *testing.T) {
+	for _, layered := range []bool{true, false} {
+		t.Run(fmt.Sprintf("layered=%t", layered), func(t *testing.T) {
+			j, err := Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw := []byte("rotated zeek source\n")
+			sum := sha256.Sum256(raw)
+			segment := testSegment()
+			segment.Source, segment.SourceBackedRaw, segment.Raw = "zeek-dhcp-binding", true, raw
+			segment.EndOffset = segment.StartOffset + int64(len(raw))
+			segment.RawSHA256 = hex.EncodeToString(sum[:])
+			j.SetRawResolver(func(Segment) ([]byte, error) { return raw, nil })
+			id := appendCommitted(t, j, segment)
+			writer := &fakeLaneWriter{failArchiveOnce: true}
+			processor := Processor{Journal: j, Writer: writer}
+			if err = processor.DrainLane(context.Background(), id, Archive); err == nil {
+				t.Fatal("archive did not record an ambiguous attempt")
+			}
+			j.SetRawResolver(func(Segment) ([]byte, error) { return nil, errors.New("source was rotated") })
+			if layered {
+				err = processor.DrainLane(context.Background(), id, Archive)
+			} else {
+				err = processor.Drain(context.Background(), id)
+			}
+			if err != nil || writer.archiveChecks != 1 || writer.archiveWrites != 1 {
+				t.Fatalf("archived segment was not reconciled from its descriptor: checks=%d writes=%d err=%v",
+					writer.archiveChecks, writer.archiveWrites, err)
+			}
+		})
+	}
+}
+
 type fakeLaneWriter struct {
 	archiveWrites   int
 	archiveChecks   int
