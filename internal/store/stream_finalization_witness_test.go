@@ -57,7 +57,7 @@ func TestDHCPMessageStreamFinalizationProjectsAuthoritativeLeases(t *testing.T) 
 		observed := at.Add(time.Duration(offset) * time.Second).Format(time.RFC3339)
 		if err := json.NewEncoder(&input).Encode(map[string]any{
 			"ts": observed, "msg_types": message, "mac": mac, "requested_addr": ip,
-			"assigned_addr": ip, "client_addr": ip, "lease_time": 600, "lease_observed_at": observed,
+			"assigned_addr": ip, "client_addr": ip, "lease_time": 600,
 		}); err != nil {
 			t.Fatal(err)
 		}

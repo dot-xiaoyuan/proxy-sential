@@ -23,10 +23,11 @@ func deviceLeaseFromEvent(e normalized.Event) (deviceLease, bool) {
 	if stringFromMap(e.Payload, "origin") != "dhcp" {
 		return l, false
 	}
+	perMessage := e.Source == "zeek" && stringFromMap(e.RawRef, "log") == "device_dhcp_message"
 	// The per-message adapter keeps withdrawals out of device discovery.
 	// An explicit withdrawal can still terminate a lease for that MAC and IP.
 	if e.Type != "device" {
-		if e.Type != "dhcp_message" || e.Source != "zeek" || stringFromMap(e.RawRef, "log") != "device_dhcp_message" {
+		if e.Type != "dhcp_message" || !perMessage {
 			return l, false
 		}
 		switch strings.ToUpper(stringFromMap(e.Payload, "msg_types")) {
@@ -50,10 +51,11 @@ func deviceLeaseFromEvent(e normalized.Event) (deviceLease, bool) {
 	if l.Sensor == "" || l.EventID == "" || net.ParseIP(l.IP) == nil || net.ParseIP(l.IP).IsUnspecified() {
 		return l, false
 	}
-	// Use ACK time where available. Legacy aggregate duration is a conservative fallback.
+	// The timestamp of a single message is its observation time. Aggregated ACKs
+	// need an explicit ACK time because their timestamp can be from discovery.
 	at := stringFromMap(e.Payload, "lease_observed_at")
 	if at == "" {
-		if strings.Contains(strings.ToUpper(stringFromMap(e.Payload, "msg_types")), "ACK") {
+		if !perMessage && strings.Contains(strings.ToUpper(stringFromMap(e.Payload, "msg_types")), "ACK") {
 			return l, false
 		}
 		at = e.Timestamp
