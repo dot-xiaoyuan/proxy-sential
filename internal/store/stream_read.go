@@ -108,7 +108,7 @@ func (s *ClickHouseStore) GetStreamEventsByRefs(ctx context.Context, refs []Stre
 // getStreamBodiesByRefs returns the exact archived bytes as well as the
 // decoded event. Case creation can protect up to 100 originals without
 // issuing one ClickHouse query per reference inside its PostgreSQL transaction.
-func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []StreamBodyRef, useVerifiedCache bool) (map[StreamBodyRef]StreamEvidence, error) {
+func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []StreamBodyRef, optimizeLiveRead bool) (map[StreamBodyRef]StreamEvidence, error) {
 	if s == nil || len(refs) == 0 || len(refs) > 100 {
 		return nil, errors.New("stream batch body read needs one to 100 references")
 	}
@@ -157,9 +157,18 @@ func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []Stre
 		// made a 100-reference lookup pull hundreds of megabytes when a table
 		// contained repeated physical rows. The first pass also preserves the
 		// conflict check for a key that has more than one content hash.
+		locator := "archive_month=" + group.month + " AND scope_id=" + chQuote(group.scope)
+		keyFilter := "event_key IN (" + strings.Join(keys, ",") + ")"
+		filter := " PREWHERE " + locator + " AND " + keyFilter
+		settings := "max_threads=1,max_memory_usage=268435456,max_execution_time=10"
+		if optimizeLiveRead && group.layout == "v2" {
+			// Live windows rarely request the same key set. Filter the keys
+			// before reading scope and hash columns from the matching granules.
+			filter = " PREWHERE " + keyFilter + " WHERE " + locator
+			settings = "optimize_move_to_prewhere=0," + settings
+		}
 		metadataQuery := "SELECT scope_id,event_key,content_sha256 FROM " + streamBodyTable(group.class, group.layout) +
-			" PREWHERE archive_month=" + group.month + " AND scope_id=" + chQuote(group.scope) + " AND event_key IN (" + strings.Join(keys, ",") + ")" +
-			fmt.Sprintf(" LIMIT %d SETTINGS max_threads=1,max_memory_usage=268435456,max_execution_time=10 FORMAT JSONEachRow", limit)
+			filter + fmt.Sprintf(" LIMIT %d SETTINGS %s FORMAT JSONEachRow", limit, settings)
 		data, err := s.query(ctx, metadataQuery)
 		if err != nil {
 			return nil, err
@@ -201,7 +210,7 @@ func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []Stre
 		bodySeen := make(map[string]bool, len(expected))
 		for _, ref := range expected {
 			key := ref.Scope + "\x00" + ref.Key
-			if useVerifiedCache && s.verifiedStreamBodies != nil {
+			if optimizeLiveRead && s.verifiedStreamBodies != nil {
 				if body, ok := s.verifiedStreamBodies.get(ref, time.Now()); ok {
 					evidence, err := decodeVerifiedStreamBody(ref, body)
 					if err != nil {
@@ -259,7 +268,7 @@ func (s *ClickHouseStore) getStreamBodiesByRefs(ctx context.Context, refs []Stre
 			}
 			result[ref] = evidence
 			bodySeen[key] = true
-			if useVerifiedCache && s.verifiedStreamBodies != nil && evidence.Event.SourceEventType == "capture_coverage" &&
+			if optimizeLiveRead && s.verifiedStreamBodies != nil && evidence.Event.SourceEventType == "capture_coverage" &&
 				stringFromMap(evidence.Event.Subject, "ip") == "" && stringFromMap(evidence.Event.Subject, "mac") == "" {
 				s.verifiedStreamBodies.put(ref, body, time.Now())
 			}

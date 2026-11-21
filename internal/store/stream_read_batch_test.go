@@ -26,7 +26,7 @@ func TestStreamBodiesBatchReadUsesBoundedPhysicalLocator(t *testing.T) {
 	for i, event := range events {
 		body, _ := json.Marshal(event)
 		sum := sha256.Sum256(body)
-		refs[i] = StreamBodyRef{Class: "evidence", Month: "202610", Scope: "scope-a", Key: "fresh:" + event.EventID, SHA256: hex.EncodeToString(sum[:])}
+		refs[i] = StreamBodyRef{Class: "evidence", Month: "202610", Scope: "scope-a", Key: "fresh:" + event.EventID, SHA256: hex.EncodeToString(sum[:]), BodyLayout: "v2"}
 		rows[i] = map[string]string{"scope_id": refs[i].Scope, "event_key": refs[i].Key, "content_sha256": refs[i].SHA256, "body": string(body)}
 	}
 	queries := []string{}
@@ -46,7 +46,11 @@ func TestStreamBodiesBatchReadUsesBoundedPhysicalLocator(t *testing.T) {
 	if err != nil || len(got) != 2 || got[refs[0]].EventID != "a" || got[refs[1]].EventID != "b" {
 		t.Fatalf("batched evidence mismatch: got=%+v err=%v", got, err)
 	}
-	if len(queries) != 2 || !strings.Contains(queries[0], "archive_month=202610") || !strings.Contains(queries[0], "stream_event_body_evidence") || !strings.Contains(queries[0], "scope_id='scope-a' AND event_key IN") || !strings.Contains(queries[1], "scope_id='scope-a' AND (event_key,content_sha256) IN") || !strings.Contains(queries[1], "LIMIT 1 BY scope_id,event_key,content_sha256") {
+	if len(queries) != 2 ||
+		!strings.Contains(queries[0], "FROM stream_event_body_evidence_v2 PREWHERE event_key IN ('fresh:a','fresh:b') WHERE archive_month=202610 AND scope_id='scope-a' LIMIT 202") ||
+		!strings.Contains(queries[0], "optimize_move_to_prewhere=0") ||
+		!strings.Contains(queries[1], "scope_id='scope-a' AND (event_key,content_sha256) IN") ||
+		!strings.Contains(queries[1], "LIMIT 1 BY scope_id,event_key,content_sha256") {
 		t.Fatalf("body read did not use narrow metadata and exact body queries: %+v", queries)
 	}
 	rows[1]["content_sha256"] = strings.Repeat("f", 64)
@@ -94,8 +98,9 @@ func TestStreamCoverageBodyCacheKeepsMetadataAndCaseVerification(t *testing.T) {
 	event := normalized.Event{EventID: "coverage", Source: "handshake-sidecar", SourceEventType: "capture_coverage", Timestamp: "2026-10-25T08:30:00Z", Subject: map[string]any{"campus_id": "campus-a"}}
 	body, _ := json.Marshal(event)
 	sum := sha256.Sum256(body)
-	ref := StreamBodyRef{Class: "evidence", Month: "202610", Scope: "scope-a", Key: "fresh:coverage", SHA256: hex.EncodeToString(sum[:])}
+	ref := StreamBodyRef{Class: "evidence", Month: "202610", Scope: "scope-a", Key: "fresh:coverage", SHA256: hex.EncodeToString(sum[:]), BodyLayout: "v2"}
 	var metadataReads, bodyReads int
+	var metadataQuery string
 	var conflict, corrupt bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		query, _ := io.ReadAll(r.Body)
@@ -109,6 +114,7 @@ func TestStreamCoverageBodyCacheKeepsMetadataAndCaseVerification(t *testing.T) {
 			return
 		}
 		metadataReads++
+		metadataQuery = string(query)
 		hash := ref.SHA256
 		if conflict {
 			hash = strings.Repeat("f", 64)
@@ -137,7 +143,7 @@ func TestStreamCoverageBodyCacheKeepsMetadataAndCaseVerification(t *testing.T) {
 	if _, err := ch.getStreamBodiesByRefs(context.Background(), []StreamBodyRef{ref}, false); !errors.Is(err, streamlog.ErrContentConflict) {
 		t.Fatalf("case path accepted changed authoritative bytes: %v", err)
 	}
-	if metadataReads != 4 || bodyReads != 2 {
+	if metadataReads != 4 || bodyReads != 2 || !strings.Contains(metadataQuery, "PREWHERE archive_month=202610 AND scope_id='scope-a' AND event_key IN") {
 		t.Fatalf("case path reused live cache: metadata=%d body=%d", metadataReads, bodyReads)
 	}
 }
