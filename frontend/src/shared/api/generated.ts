@@ -5799,6 +5799,8 @@ export interface components {
             campus_id?: string;
             access_domain?: string;
             ip: string;
+            /** @description Account attributed throughout the observation window. Requires identity read permission. */
+            account_id?: string;
             endpoint_id?: string;
             /** @enum {string} */
             status: "candidate" | "likely" | "confirmed";
@@ -10791,7 +10793,8 @@ export interface operations {
     listSharedBehaviorObservations: {
         parameters: {
             query?: {
-                view?: "current" | "history";
+                /** @description The traffic view includes current mirror observations with repeated protocol evidence. */
+                view?: "current" | "traffic" | "history";
                 /** @description History only. Defaults to verified multi-device evidence; clues explicitly opens weaker legacy records. */
                 history_basis?: "shared" | "clues";
                 keyword?: string;

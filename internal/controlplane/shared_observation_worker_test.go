@@ -92,6 +92,56 @@ func (r sharedReplayReader) SharedIdentitySessions(context.Context, sharedaccess
 	return r.sessions, nil
 }
 
+type attributedTrafficDocument string
+
+func (t attributedTrafficDocument) Match(value driver.Value) bool {
+	raw, ok := value.([]byte)
+	var document sharedObservationDocument
+	return ok && json.Unmarshal(raw, &document) == nil &&
+		document.Assessment.AccountID == string(t) && document.Assessment.Status == "candidate" &&
+		document.Window.StrongAnchor == "" && document.Result.State == "insufficient" && document.Result.AccountID == ""
+}
+
+func TestSharedObservationAttributesMirrorTrafficWithoutRecordingAction(t *testing.T) {
+	t.Setenv("PROXY_SENTINEL_STREAM_SHARED_REQUIRED", "false")
+	now := time.Date(2026, 11, 21, 1, 0, 0, 0, time.UTC)
+	window := sharedaccess.Window{ID: "mirror-evidence", RuleVersion: sharedaccess.RuleVersion, SensorID: "mirror", CampusID: "ncu", AccessDomain: "capture", IP: "192.0.2.4", From: now.Add(-time.Minute), To: now.Add(-time.Second), LastObservedAt: now.Add(-time.Second), Sources: []string{"handshake-sidecar"}, EventIDs: []string{"realistic-handshake"}, Conflicts: []string{"capture_interval_incomplete:handshake-sidecar"}}
+	mapping := sharedaccess.IdentityMapping{SensorID: "mirror", CampusID: "ncu", AccessDomain: "capture", Source: "auth", IdentitySensorID: "auth", IdentityCampusID: "ncu", IdentityAccessDomain: "auth", ValidFrom: now.Add(-time.Hour), ValidUntil: now.Add(time.Hour)}
+	cfg := sharedaccess.Config{Version: "v1", FreshnessSeconds: 180, IdentityMappings: []sharedaccess.IdentityMapping{mapping}}
+	item := sharedaccess.BehaviorAssessment{Current: true, ObservationID: window.ID, SensorID: window.SensorID, CampusID: window.CampusID, AccessDomain: window.AccessDomain, IP: window.IP, Status: "candidate", CoverageState: "partial", SignalGroups: []string{"tls_stack", "ua_os"}, LastSeen: window.LastObservedAt}
+	identity := policy.Session{ID: "session", AccountID: "alice", IP: window.IP, Source: "auth", SensorID: "auth", CampusID: "ncu", AccessDomain: "auth", StartedAt: now.Add(-time.Hour), ConfirmedAt: window.To, Confirmations: []time.Time{now.Add(-2 * time.Minute), window.To}, HeartbeatSeconds: 60}
+	db, mock, err := sqlmock.New(sqlmock.ValueConverterOption(sharedTestConverter{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	priorToken := newSharedObservationLeaseToken
+	newSharedObservationLeaseToken = func() (string, error) { return "traffic-lease", nil }
+	t.Cleanup(func() { newSharedObservationLeaseToken = priorToken })
+	mock.ExpectBegin()
+	mock.ExpectExec("SET LOCAL synchronous_commit = off").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("FOR UPDATE OF j SKIP LOCKED").WillReturnRows(sqlmock.NewRows([]string{"id", "sensor", "campus", "domain", "ip", "revision", "last", "dependency", "new_dependency", "generation"}).AddRow("job", "mirror", "ncu", "capture", window.IP, 1, nil, now, true, ""))
+	mock.ExpectCommit()
+	mock.ExpectBegin()
+	mock.ExpectExec("SET LOCAL synchronous_commit = on").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("UPDATE shared_behavior_observations").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO shared_behavior_observations").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO shared_device_profile_jobs").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO policy_decision_records").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("(?s)SELECT j.revision,j.lease_token.*FOR UPDATE OF j").WillReturnRows(sqlmock.NewRows([]string{"revision", "lease_token", "generation", "canceled", "mode"}).AddRow(1, "traffic-lease", "", "", "async"))
+	mock.ExpectExec("UPDATE shared_observation_jobs SET completed_revision").
+		WithArgs("job", 1, sqlmock.AnyArg(), false, attributedTrafficDocument("alice"), "insufficient", "partial", "resolved", now, true).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	s := &Server{sharedConfig: cfg, operations: &operationsState{db: db}, reader: sharedReplayReader{window: window, item: item, sessions: []policy.Session{identity}}, identitySources: []identitySourceRegistration{{IdentityScope: store.IdentityScope{Source: "auth", SensorID: "auth", CampusID: "ncu", AccessDomain: "auth"}, IntervalSeconds: 60}}}
+	if did, err := s.processSharedObservation(context.Background(), now); err != nil || !did {
+		t.Fatalf("processed=%v err=%v", did, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSharedObservationCommitsOnlyRecordsAndRetriesFailedTransaction(t *testing.T) {
 	previousBypass := legacyTransportTestBypass.Swap(false)
 	defer legacyTransportTestBypass.Store(previousBypass)

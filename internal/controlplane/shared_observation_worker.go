@@ -13,6 +13,7 @@ import (
 	"proxy-sentinel/internal/policy"
 	"proxy-sentinel/internal/sharedaccess"
 	"proxy-sentinel/internal/store"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -389,7 +390,9 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 	anchorSatisfied := w.StrongAnchor != "" && w.DeviceLowerBound >= s.sharedConfig.DeviceBound()
 	diversitySatisfied := s.sharedConfig.SkipCaptureVerification && len(item.SignalGroups) >= 2
 	captureBypass := s.sharedConfig.SkipCaptureVerification
-	if item.Current && (anchorSatisfied || diversitySatisfied || captureBypass) && w.Complete && w.CoverageVerified {
+	policyEligible := item.Current && (anchorSatisfied || diversitySatisfied || captureBypass) && w.Complete && w.CoverageVerified
+	trafficEvidence := item.Current && slices.Contains(item.SignalGroups, "ua_os") && slices.Contains(item.SignalGroups, "tls_stack")
+	if policyEligible || trafficEvidence {
 		identityStarted := time.Now()
 		mapping, mapErr := s.sharedConfig.Mapping(w)
 		if mapErr == nil {
@@ -398,26 +401,38 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 				return failure(e)
 			}
 			if authority.registered {
-				sessions, e := reader.SharedIdentitySessions(ctx, mapping, w.IP, w.From, now, authority.interval)
-				if e != nil {
-					return failure(e)
+				identityTo := w.To
+				identityContext := ctx
+				var cancelIdentity context.CancelFunc
+				if policyEligible {
+					identityTo = now
+				} else {
+					// Candidate attribution shares the realtime workers. Bound
+					// the extra lookup so a slow read cannot starve collection.
+					identityContext, cancelIdentity = context.WithTimeout(ctx, 1500*time.Millisecond)
 				}
-				if s.sharedConfig.SkipCaptureVerification {
+				sessions, e := reader.SharedIdentitySessions(identityContext, mapping, w.IP, w.From, identityTo, authority.interval)
+				if cancelIdentity != nil {
+					cancelIdentity()
+				}
+				if e != nil {
+					if policyEligible || ctx.Err() != nil {
+						return failure(e)
+					}
+					item.Reasons = append(item.Reasons, "认证账号核对暂未完成")
+				}
+				if trafficEvidence && e == nil {
+					item.AccountID = sharedaccess.ObservationAccount(w, s.sharedConfig, sessions)
+				}
+				if policyEligible && s.sharedConfig.SkipCaptureVerification {
 					for i := range sessions {
 						sessions[i].IdentityIssue = ""
 					}
 				}
-				identityEvidence = sessions
-				result = sharedaccess.EvaluateObservation(w, s.sharedConfig, sessions, now)
-				if !s.sharedConfig.SkipCaptureVerification {
-					for _, session := range sessions {
-						if session.IdentityIssue != "" {
-							result.Reasons = append(result.Reasons, session.IdentityIssue)
-							break
-						}
-					}
+				if policyEligible {
+					identityEvidence = sessions
 				}
-			} else {
+			} else if policyEligible {
 				result.Reasons = []string{"identity_source_unregistered"}
 			}
 		}
@@ -436,6 +451,9 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 		}
 	}
 	decision := sharedaccess.NewObservationDecision(w, result, s.sharedConfig, evaluatedAt)
+	if decision.Result == "matched" {
+		item.AccountID = decision.AccountID
+	}
 	if decision.Result == "expired" {
 		item.Current = false
 	}
@@ -533,7 +551,7 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 		next = evaluatedAt.Add(time.Minute)
 	}
 	attributionState := "insufficient"
-	if result.AccountID != "" {
+	if item.AccountID != "" || result.AccountID != "" {
 		attributionState = "resolved"
 	}
 	newTask := sharedObservationNewDependency(lane, newDependency)

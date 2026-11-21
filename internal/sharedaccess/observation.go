@@ -68,7 +68,30 @@ func EvaluateObservation(w Window, cfg Config, sessions []policy.Session, now ti
 	if !cfg.SkipCaptureVerification && (w.StrongAnchor == "" || w.DeviceLowerBound < cfg.DeviceBound()) {
 		return fail("confirmed_shared_observation_required")
 	}
-	selected := []policy.Session{}
+	result := Evaluate(w, cfg, mappedObservationSessions(w, m, sessions), now, 10*time.Minute)
+	if !cfg.SkipCaptureVerification && result.State == "basis_present" && (w.StrongAnchor == "" || !w.CoverageVerified || w.DeviceLowerBound < cfg.DeviceBound()) {
+		result.State = "insufficient"
+		result.Reasons = []string{"confirmed_shared_observation_required"}
+	}
+	return result
+}
+
+// ObservationAccount attributes the measured time window to one stable
+// authentication session generation. Behavior and policy are evaluated separately.
+func ObservationAccount(w Window, cfg Config, sessions []policy.Session) string {
+	if w.From.IsZero() || !w.To.After(w.From) || w.LastObservedAt.Before(w.From) || w.LastObservedAt.After(w.To) {
+		return ""
+	}
+	mapping, err := cfg.Mapping(w)
+	if err != nil {
+		return ""
+	}
+	account, _, _ := attributeObservationWindow(w, mappedObservationSessions(w, mapping, sessions))
+	return account
+}
+
+func mappedObservationSessions(w Window, m IdentityMapping, sessions []policy.Session) []policy.Session {
+	var selected []policy.Session
 	for _, s := range sessions {
 		if s.Source != m.Source || s.SensorID != m.IdentitySensorID || s.CampusID != m.IdentityCampusID || s.AccessDomain != m.IdentityAccessDomain || s.IP != w.IP {
 			continue
@@ -76,10 +99,5 @@ func EvaluateObservation(w Window, cfg Config, sessions []policy.Session, now ti
 		s.CampusID, s.AccessDomain = w.CampusID, w.AccessDomain
 		selected = append(selected, s)
 	}
-	result := Evaluate(w, cfg, selected, now, 10*time.Minute)
-	if !cfg.SkipCaptureVerification && result.State == "basis_present" && (w.StrongAnchor == "" || !w.CoverageVerified || w.DeviceLowerBound < cfg.DeviceBound()) {
-		result.State = "insufficient"
-		result.Reasons = []string{"confirmed_shared_observation_required"}
-	}
-	return result
+	return selected
 }

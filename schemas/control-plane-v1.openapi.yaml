@@ -800,7 +800,7 @@ paths:
       operationId: listSharedBehaviorObservations
       description: Passive shared-gateway behavior observations; requires cases:read. Results are shadow-only and never authorize enforcement.
       parameters:
-        - { name: view, in: query, schema: { type: string, enum: [current, history], default: current } }
+        - { name: view, in: query, description: The traffic view includes current mirror observations with repeated protocol evidence., schema: { type: string, enum: [current, traffic, history], default: current } }
         - { name: history_basis, in: query, description: 'History only. Defaults to verified multi-device evidence; clues explicitly opens weaker legacy records.', schema: { type: string, enum: [shared, clues] } }
         - { name: keyword, in: query, schema: { type: string } }
         - { name: ip, in: query, schema: { type: string } }
@@ -6058,6 +6058,7 @@ components:
         campus_id: { type: string }
         access_domain: { type: string }
         ip: { type: string }
+        account_id: { type: string, description: Account attributed throughout the observation window. Requires identity read permission. }
         endpoint_id: { type: string }
         status: { type: string, enum: [candidate, likely, confirmed] }
         confidence: { type: integer, minimum: 0, maximum: 100 }

@@ -11,7 +11,7 @@ export const navigation: NavigationGroup[] = [
   { key: 'workbench', title: '运营工作台', items: [item('overview','运营工作台','/overview','risks:read')] },
   { key: 'ai-relay', title: 'AI 中转站', items: [item('ai-relay-usages','AI 中转站','/ai-relay','events:read')] },
   { key: 'risk', title: '风险运营', items: [
-    {...item('observations','共享发现与核验','/shared-access?tab=routers','cases:read'), owns: p => p === '/shared-access' || p.startsWith('/shared-access/')},
+    {...item('observations','共享发现与核验','/shared-access','cases:read'), owns: p => p === '/shared-access' || p.startsWith('/shared-access/')},
     {...item('actions','策略与处置记录','/actions?tab=decisions','policies:read'),readAlternatives:[{permission:'actions:read',to:'/actions?tab=actions'},{permission:'behavior-reports:read',to:'/actions?tab=reports'}]},
   ] },
   // 设备中心每个子菜单独立展示；发现设备保留协议来源与证据时效。

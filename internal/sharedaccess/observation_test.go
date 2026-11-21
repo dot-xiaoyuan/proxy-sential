@@ -55,6 +55,19 @@ func TestRecordedSharingRequiresAnchorAndMappedEventIdentity(t *testing.T) {
 	if r = EvaluateObservation(w, cfg, ss, now); r.State == "basis_present" {
 		t.Fatal("candidate triggered")
 	}
+	w.Complete, w.CoverageVerified = false, false
+	if account := ObservationAccount(w, cfg, ss); account != "account" {
+		t.Fatalf("traffic observation lost its mapped account: %q", account)
+	}
+	changed := append([]policy.Session{}, ss...)
+	changed[0].EndedAt = w.From.Add(30 * time.Second)
+	newSession := ss[0]
+	newSession.ID, newSession.StartedAt = "new-generation", changed[0].EndedAt
+	changed = append(changed, newSession)
+	if account := ObservationAccount(w, cfg, changed); account != "" {
+		t.Fatalf("changed session generation attributed: %q", account)
+	}
+	w.Complete, w.CoverageVerified = true, true
 	w.StrongAnchor = "ieee1905_association"
 	w.AssociatedClients = []string{"one", "two"}
 	ss[0].AccessDomain = "other"

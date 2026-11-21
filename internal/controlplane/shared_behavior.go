@@ -16,6 +16,7 @@ func (s *Server) handleSharedBehavior(w http.ResponseWriter, r *http.Request, pa
 	}
 	ctx, cancel := contextWithRequestTimeout(r.Context())
 	defer cancel()
+	canReadAccount := sessionHasPermission(sessionFromContext(ctx), "identity:read")
 	parts := strings.Split(strings.Trim(strings.TrimPrefix(path, "/shared-access/observations"), "/"), "/")
 	if len(parts) == 1 && parts[0] != "" {
 		item, found, err := reader.GetSharedBehavior(ctx, parts[0])
@@ -26,6 +27,9 @@ func (s *Server) handleSharedBehavior(w http.ResponseWriter, r *http.Request, pa
 		if !found {
 			writeError(w, http.StatusNotFound, "shared_behavior_not_found", "共享行为观察不存在")
 			return
+		}
+		if !canReadAccount {
+			item.AccountID = ""
 		}
 		writeJSON(w, http.StatusOK, item)
 		return
@@ -38,6 +42,7 @@ func (s *Server) handleSharedBehavior(w http.ResponseWriter, r *http.Request, pa
 		Keyword: r.URL.Query().Get("keyword"), IP: r.URL.Query().Get("ip"), Status: r.URL.Query().Get("status"),
 		CoverageState: r.URL.Query().Get("coverage_state"), View: r.URL.Query().Get("view"), HistoryBasis: r.URL.Query().Get("history_basis"), Limit: 20,
 	}
+	query.SearchAccount = query.View == "traffic" && canReadAccount
 	if value := r.URL.Query().Get("limit"); value != "" {
 		parsed, err := strconv.Atoi(value)
 		if err != nil {
@@ -61,6 +66,11 @@ func (s *Server) handleSharedBehavior(w http.ResponseWriter, r *http.Request, pa
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "shared_behavior_query_invalid", err.Error())
 		return
+	}
+	if !canReadAccount {
+		for i := range page.Items {
+			page.Items[i].AccountID = ""
+		}
 	}
 	writeJSON(w, http.StatusOK, page)
 }

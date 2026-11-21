@@ -22,6 +22,7 @@ type SharedBehaviorQuery struct {
 	Status        string
 	CoverageState string
 	ConfidenceMin *int
+	SearchAccount bool `json:",omitempty"`
 	Limit         int
 	Cursor        string
 }
@@ -89,8 +90,11 @@ type SharedBehaviorReader interface {
 
 func sharedBehaviorWhere(query SharedBehaviorQuery) (string, []any, error) {
 	clauses := []string{"current=true", "rule_version='" + sharedaccess.BehaviorRuleVersion + "'", "expires_at>now()", "window_end>now()-interval '20 minutes'", "window_end<=now()", "COALESCE(observation->'signal_groups','[]'::jsonb) ? 'ieee1905_association'", "generation_id=COALESCE((SELECT min(cancel_id) FROM stream_shared_source_cutovers c WHERE c.sensor_id=shared_behavior_observations.sensor_id AND c.state='active'),'')"}
-	if query.View != "" && query.View != "current" && query.View != "history" {
+	if query.View != "" && query.View != "current" && query.View != "traffic" && query.View != "history" {
 		return "", nil, fmt.Errorf("invalid shared behavior view")
+	}
+	if query.View == "traffic" {
+		clauses[5] = "(" + clauses[5] + " OR signal_groups @> ARRAY['ua_os','tls_stack']::text[])"
 	}
 	if query.View == "history" {
 		clauses = []string{"NOT (current AND rule_version='" + sharedaccess.BehaviorRuleVersion + "' AND expires_at>now() AND window_end>now()-interval '20 minutes' AND window_end<=now() AND COALESCE(observation->'signal_groups','[]'::jsonb) ? 'ieee1905_association')"}
@@ -116,7 +120,11 @@ func sharedBehaviorWhere(query SharedBehaviorQuery) (string, []any, error) {
 	if value := strings.TrimSpace(query.Keyword); value != "" {
 		args = append(args, value)
 		placeholder := fmt.Sprintf("$%d", len(args))
-		clauses = append(clauses, `(observation_id ILIKE '%'||`+placeholder+`||'%' OR host(ip) ILIKE '%'||`+placeholder+`||'%' OR endpoint_id ILIKE '%'||`+placeholder+`||'%' OR observation->'router'->>'brand' ILIKE '%'||`+placeholder+`||'%' OR observation->'router'->>'model' ILIKE '%'||`+placeholder+`||'%')`)
+		keyword := `observation_id ILIKE '%'||` + placeholder + `||'%' OR host(ip) ILIKE '%'||` + placeholder + `||'%' OR endpoint_id ILIKE '%'||` + placeholder + `||'%' OR observation->'router'->>'brand' ILIKE '%'||` + placeholder + `||'%' OR observation->'router'->>'model' ILIKE '%'||` + placeholder + `||'%'`
+		if query.View == "traffic" && query.SearchAccount {
+			keyword += " OR observation->>'account_id'=" + placeholder
+		}
+		clauses = append(clauses, "("+keyword+")")
 	}
 	if value := strings.TrimSpace(query.IP); value != "" {
 		if netIP := strings.TrimSpace(value); netIP != "" {
@@ -226,7 +234,8 @@ func (s *PostgresStore) GetSharedBehavior(ctx context.Context, id string) (Share
 	}
 	result.WindowStart, result.WindowEnd, result.ExpiresAt = windowStart.UTC(), windowEnd.UTC(), expires.UTC()
 	now := time.Now().UTC()
-	result.Current = slices.Contains(result.SignalGroups, "ieee1905_association") && current && result.RuleVersion == sharedaccess.BehaviorRuleVersion && expires.After(now) && windowEnd.After(now.Add(-20*time.Minute)) && !windowEnd.After(now)
+	trafficEvidence := slices.Contains(result.SignalGroups, "ua_os") && slices.Contains(result.SignalGroups, "tls_stack")
+	result.Current = (slices.Contains(result.SignalGroups, "ieee1905_association") || trafficEvidence) && current && result.RuleVersion == sharedaccess.BehaviorRuleVersion && expires.After(now) && windowEnd.After(now.Add(-20*time.Minute)) && !windowEnd.After(now)
 	rows, err := s.db.QueryContext(ctx, `SELECT h.status,h.confidence,array_to_json(h.signal_groups),h.coverage_state,h.rule_version,h.observed_at,h.created_at
 FROM shared_behavior_observation_history h
 JOIN shared_behavior_observations o ON o.observation_id=h.observation_id

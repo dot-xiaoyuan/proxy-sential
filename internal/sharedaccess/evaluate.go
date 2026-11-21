@@ -159,69 +159,13 @@ func Evaluate(w Window, cfg Config, ss []policy.Session, now time.Time, lookback
 	if w.CampusID != "" && w.CampusID != r.CampusID || w.AccessDomain != "" && w.AccessDomain != r.AccessDomain {
 		return fail("shared_source_scope_mismatch")
 	}
-	// Check all identity validity boundaries inside the observation window. Merely
-	// comparing its endpoints would miss an IP that changed owners and changed back.
-	selected := []policy.Session{}
-	points := []time.Time{w.From, w.To, w.LastObservedAt}
-	for _, s := range ss {
-		if s.IP != w.IP || s.CampusID != r.CampusID || s.AccessDomain != r.AccessDomain {
-			continue
-		}
-		selected = append(selected, s)
-		points = append(points, s.StartedAt, s.EndedAt)
-		period := s.HeartbeatSeconds
-		if period <= 0 {
-			period = s.ReconcileSeconds
-		}
-		for _, at := range append(append([]time.Time{}, s.Confirmations...), s.ConfirmedAt) {
-			points = append(points, at, at.Add(time.Duration(3*period)*time.Second))
-		}
-		for _, coverage := range s.SourceCoverage {
-			points = append(points, coverage.From, coverage.To)
-		}
-		for _, confirmed := range s.ConfirmedRanges {
-			points = append(points, confirmed.From, confirmed.To)
-		}
+	identityWindow := w
+	identityWindow.CampusID, identityWindow.AccessDomain = r.CampusID, r.AccessDomain
+	account, generation, identityIssue := attributeObservationWindow(identityWindow, ss)
+	if identityIssue != "" {
+		return fail(identityIssue)
 	}
-	account := ""
-	generation := ""
-	for _, point := range points {
-		if point.Before(w.From) || point.After(w.To) {
-			continue
-		}
-		a := policy.Attribute(selected, r.CampusID, r.AccessDomain, w.IP, point)
-		if a.State != "resolved" {
-			return fail("shared_identity_unknown_or_conflicting")
-		}
-		if account != "" && a.AccountID != account {
-			return fail("shared_identity_changed_within_window")
-		}
-		// Bind the window to an unchanged set of authentication generations.
-		// Account equality alone cannot distinguish sequential device logins.
-		keys := []string{}
-		for _, session := range selected {
-			if session.State(point) == "active" {
-				if session.ID == "" {
-					return fail("shared_session_generation_missing")
-				}
-				raw, _ := json.Marshal([]string{session.ID, session.Source, session.StartedAt.UTC().Format(time.RFC3339Nano)})
-				keys = append(keys, string(raw))
-			}
-		}
-		sort.Strings(keys)
-		raw, _ := json.Marshal(keys)
-		current := string(raw)
-		if generation != "" && generation != current {
-			return fail("shared_session_generation_changed_within_window")
-		}
-		generation = current
-		account = a.AccountID
-	}
-	if account == "" {
-		return fail("shared_identity_unknown_or_conflicting")
-	}
-	r.AccountID = account
-	r.SessionGeneration = stableObservationID(generation)
+	r.AccountID, r.SessionGeneration = account, generation
 	// A login count describes authentication, not devices behind an exit.
 	// Re-evaluate the immutable physical evidence rather than trusting a count
 	// supplied by a producer or borrowing the account's session quota.
@@ -300,6 +244,71 @@ func Evaluate(w Window, cfg Config, ss []policy.Session, now time.Time, lookback
 	r.Reasons = append(r.Reasons, "no_shared_basis_in_complete_window")
 	return r
 }
+func attributeObservationWindow(w Window, ss []policy.Session) (accountID, sessionGeneration, reason string) {
+	// Check all identity validity boundaries inside the observation window. Merely
+	// comparing its endpoints would miss an IP that changed owners and changed back.
+	selected := []policy.Session{}
+	points := []time.Time{w.From, w.To, w.LastObservedAt}
+	for _, s := range ss {
+		if s.IP != w.IP || s.CampusID != w.CampusID || s.AccessDomain != w.AccessDomain {
+			continue
+		}
+		selected = append(selected, s)
+		points = append(points, s.StartedAt, s.EndedAt)
+		period := s.HeartbeatSeconds
+		if period <= 0 {
+			period = s.ReconcileSeconds
+		}
+		for _, at := range append(append([]time.Time{}, s.Confirmations...), s.ConfirmedAt) {
+			points = append(points, at, at.Add(time.Duration(3*period)*time.Second))
+		}
+		for _, coverage := range s.SourceCoverage {
+			points = append(points, coverage.From, coverage.To)
+		}
+		for _, confirmed := range s.ConfirmedRanges {
+			points = append(points, confirmed.From, confirmed.To)
+		}
+	}
+	account := ""
+	generation := ""
+	for _, point := range points {
+		if point.Before(w.From) || point.After(w.To) {
+			continue
+		}
+		a := policy.Attribute(selected, w.CampusID, w.AccessDomain, w.IP, point)
+		if a.State != "resolved" {
+			return "", "", "shared_identity_unknown_or_conflicting"
+		}
+		if account != "" && a.AccountID != account {
+			return "", "", "shared_identity_changed_within_window"
+		}
+		// Bind the window to an unchanged set of authentication generations.
+		// Account equality alone cannot distinguish sequential device logins.
+		keys := []string{}
+		for _, session := range selected {
+			if session.State(point) == "active" {
+				if session.ID == "" {
+					return "", "", "shared_session_generation_missing"
+				}
+				raw, _ := json.Marshal([]string{session.ID, session.Source, session.StartedAt.UTC().Format(time.RFC3339Nano)})
+				keys = append(keys, string(raw))
+			}
+		}
+		sort.Strings(keys)
+		raw, _ := json.Marshal(keys)
+		current := string(raw)
+		if generation != "" && generation != current {
+			return "", "", "shared_session_generation_changed_within_window"
+		}
+		generation = current
+		account = a.AccountID
+	}
+	if account == "" {
+		return "", "", "shared_identity_unknown_or_conflicting"
+	}
+	return account, stableObservationID(generation), ""
+}
+
 func diversity(values []string) int {
 	set := map[string]bool{}
 	for _, value := range values {

@@ -49,6 +49,7 @@ type BehaviorAssessment struct {
 	CampusID                string                              `json:"campus_id,omitempty"`
 	AccessDomain            string                              `json:"access_domain,omitempty"`
 	IP                      string                              `json:"ip"`
+	AccountID               string                              `json:"account_id,omitempty"`
 	EndpointID              string                              `json:"endpoint_id,omitempty"`
 	Status                  string                              `json:"status"`
 	Confidence              int                                 `json:"confidence"`
