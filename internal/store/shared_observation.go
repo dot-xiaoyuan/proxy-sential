@@ -193,6 +193,7 @@ func buildHandshakeObservation(scope SharedObservationScope, cfg sharedaccess.Co
 	globalConflicts := map[string]bool{}
 	sources := map[string]bool{}
 	legacy := false
+	featureValueLimit := false
 	for _, row := range rows {
 		rowKey := row.Source + "/" + row.Instance + "/" + row.EventID
 		value := row.IP + "/" + row.Payload
@@ -268,11 +269,11 @@ func buildHandshakeObservation(scope SharedObservationScope, cfg sharedaccess.Co
 				if w.Samples[family] == nil {
 					w.Samples[family] = map[string]sharedaccess.FeatureSample{}
 				}
-				if len(w.Samples[family]) >= 64 {
-					w.Conflicts = append(w.Conflicts, "feature_value_limit")
+				feature, retained := w.Samples[family][value]
+				if !retained && len(w.Samples[family]) >= 64 {
+					featureValueLimit = true
 					continue
 				}
-				feature := w.Samples[family][value]
 				feature.Count++
 				bucket := sample.ObservedAt.Unix() / 5
 				found := false
@@ -317,6 +318,9 @@ func buildHandshakeObservation(scope SharedObservationScope, cfg sharedaccess.Co
 	w.Conflicts = append(w.Conflicts, sharedaccess.VerifyCoverage(w, cfg, facts)...)
 	if legacy {
 		w.Conflicts = append(w.Conflicts, "legacy_summary_without_timing")
+	}
+	if featureValueLimit {
+		w.Conflicts = append(w.Conflicts, "feature_value_limit")
 	}
 	for _, fact := range facts {
 		if fact.Coverage.From.Before(w.To) && fact.Coverage.To.After(w.From) {

@@ -166,11 +166,13 @@ func Run(ctx context.Context, opts Options) error {
 				summary.coverage = coverage
 				coverage.Truncated += summary.truncated
 				coverage.Overflow += summary.overflow
+				coverage.MetadataOmitted += summary.metadataOmitted
 			}
 			// Per-IP summaries inherit only unlocatable loss, never another IP’s truncation.
 			for _, summary := range state.handshakes {
 				summary.coverage.Truncated = 0
 				summary.coverage.Overflow = 0
+				summary.coverage.MetadataOmitted = 0
 			}
 			coverage.Omitted = max(0, len(state.handshakes)-handshakeBucketLimit())
 			if err := writeHandshakeBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, priorityCIDRs, at, state.handshakes); err != nil {

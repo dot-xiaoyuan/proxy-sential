@@ -132,6 +132,47 @@ func TestHandshakeFingerprintsIgnoreFollowingTLSRecord(t *testing.T) {
 	}
 }
 
+func TestHandshakeCompleteHeaderSurvivesClippedTrailingPayload(t *testing.T) {
+	mac := [6]byte{2, 0, 0, 0, 0, 1}
+	ip := [4]byte{192, 0, 2, 1}
+	for _, tc := range []struct {
+		name string
+		port uint16
+		head []byte
+	}{
+		{"TLS", 443, clientHello("test.example", "h2")},
+		{"HTTP", 80, []byte("POST / HTTP/1.1\r\nHost: test.example\r\nUser-Agent: example\r\n\r\n")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			frame := buildTCPFrame(mac, ip, tc.port, append(append([]byte(nil), tc.head...), make([]byte, 2200)...))
+			full, ok := parseHandshakeFrame(frame)
+			if !ok || full.Truncated {
+				t.Fatal("complete frame did not produce a complete handshake")
+			}
+			got, disposition := classifyHandshakeFrame(frame[:2048])
+			if disposition != handshakeObserved || got.Truncated || got.EventID != full.EventID || got.JA3 != full.JA3 || got.UserAgent != full.UserAgent {
+				t.Fatalf("trailing payload affected evidence: %+v", got)
+			}
+			partial, disposition := classifyHandshakeFrame(frame[:len(frame)-2201])
+			if disposition != handshakeObserved || !partial.Truncated {
+				t.Fatalf("clipped header reported as complete: %+v", partial)
+			}
+		})
+	}
+}
+
+func TestHandshakeOptionalMetadataLimitDoesNotReportMissingSamples(t *testing.T) {
+	at := time.Date(2026, 11, 21, 1, 0, 0, 0, time.UTC)
+	summary := newHandshakeSummary()
+	for i := 0; i <= maxHandshakeValues; i++ {
+		value := string(rune('a' + i))
+		summary.add(handshakeObservation{SNI: value, JA3: strings.Repeat("a", 32), EventID: value, ObservedAt: at}, maxHandshakeFeatureSamples)
+	}
+	if len(summary.snis) != maxHandshakeValues || len(summary.samples) != 3 || summary.overflow != 0 || summary.metadataOmitted != 1 {
+		t.Fatalf("optional SNI limit reported missing samples: %+v", summary)
+	}
+}
+
 func TestHandshakeRealFrameRetransmissionAndBucketBudget(t *testing.T) {
 	mac := [6]byte{2, 0, 0, 0, 0, 1}
 	frame := buildTCPFrame(mac, [4]byte{192, 0, 2, 1}, 80, []byte("GET / HTTP/1.1\r\nHost: test.example\r\nUser-Agent: Mozilla/5.0 (Linux; Android 14; SM-S9280 Build/TEST)\r\n\r\n"))

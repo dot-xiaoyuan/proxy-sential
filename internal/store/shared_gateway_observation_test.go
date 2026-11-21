@@ -2,14 +2,75 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
-	"github.com/DATA-DOG/go-sqlmock"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
+
 	"proxy-sentinel/internal/sharedaccess"
 )
+
+func TestSharedGatewayKeepsVerifiedEvidenceWhenHandshakeIsNewer(t *testing.T) {
+	now := time.Date(2026, 11, 21, 1, 0, 0, 0, time.UTC)
+	scope := SharedObservationScope{"mirror", "campus", "domain", "192.0.2.4"}
+	gateway := "02:00:00:00:00:01"
+	cfg := sharedaccess.Config{Version: "v1", FreshnessSeconds: 180, Sources: []sharedaccess.Source{{SensorID: scope.SensorID, CampusID: scope.CampusID, AccessDomain: scope.AccessDomain, Source: "packet-sidecar"}}}
+	for _, leaseAvailable := range []bool{true, false} {
+		name := "owned"
+		if !leaseAvailable {
+			name = "without_ownership"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("PROXY_SENTINEL_STREAM_SHARED_REQUIRED", "false")
+			coverage := sharedaccess.CoverageV2{SchemaVersion: "capture-coverage/v2", From: now.Add(-30 * time.Second), To: now, KernelStatsKnown: true}
+			raw, _ := json.Marshal(map[string]any{"capture_coverage": coverage, "bss_snapshots": []ieee1905AssociationSnapshot{{BSSID: "02:00:00:00:01:01", ClientMACs: []string{"02:00:00:00:00:02", "02:00:00:00:00:03"}}}})
+			row := sharedAssociationEvent{sharedObservationEvent: sharedObservationEvent{Timestamp: now.Add(-10 * time.Second).Format(time.RFC3339Nano), EventID: "snapshot", Source: "packet-sidecar", Instance: "collector", Payload: string(raw)}, MAC: gateway, Kind: "ieee1905_client_snapshot"}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if err := json.NewEncoder(w).Encode(row); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer server.Close()
+			ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			mock.ExpectQuery("SELECT gateway_mac FROM shared_gateway_observation_jobs").WillReturnRows(sqlmock.NewRows([]string{"gateway_mac"}).AddRow(gateway))
+			mock.ExpectQuery("SELECT epoch,source_cutoff_at").WithArgs(scope.SensorID, "packet-sidecar").WillReturnError(sql.ErrNoRows)
+			lease := sqlmock.NewRows([]string{"id", "observed_at", "valid_until"})
+			if leaseAvailable {
+				lease.AddRow("lease", now.Add(-time.Hour), now.Add(time.Hour))
+			}
+			mock.ExpectQuery("SELECT l.event_id").WithArgs(scope.SensorID, scope.CampusID, "mac:"+gateway, scope.IP, coverage.From, now).
+				WillReturnRows(lease)
+			handshake := sharedaccess.Window{ID: "newer-handshake", LastObservedAt: now.Add(-time.Second)}
+			item := sharedaccess.BehaviorAssessment{Current: true, Status: "candidate", LastSeen: handshake.LastObservedAt}
+			got, assessment, err := (&DBStore{pg: &PostgresStore{db: db}, ch: ch}).includeSharedGateway(context.Background(), scope, cfg, handshake, item, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if leaseAvailable && (got.StrongAnchor != "ieee1905_association" || !got.CoverageVerified || len(got.GatewayLease) == 0 || assessment.Status != "candidate") {
+				t.Fatalf("verified association evidence was lost: proof=%+v assessment=%+v", got, assessment)
+			}
+			if !leaseAvailable && (got.ID != handshake.ID || got.StrongAnchor != "") {
+				t.Fatalf("an unowned gateway displaced current evidence: %+v", got)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
 
 func TestSharedGatewaySnapshotReplayAndNegatives(t *testing.T) {
 	now := time.Date(2026, 10, 16, 1, 0, 0, 0, time.UTC)

@@ -390,7 +390,9 @@ func (s *DBStore) includeSharedGateway(ctx context.Context, scope SharedObservat
 	if err != nil {
 		return handshake, item, err
 	}
-	if association.Current && association.Status == "confirmed" {
+	// Membership remains a candidate in the device assessment. The record-only
+	// policy separately verifies its measured evidence and account attribution.
+	if association.Current && w.CoverageVerified && w.StrongAnchor != "" && w.DeviceLowerBound >= max(2, cfg.DeviceBound()) {
 		return w, association, nil
 	}
 	if item.Current && item.Status == "confirmed" {

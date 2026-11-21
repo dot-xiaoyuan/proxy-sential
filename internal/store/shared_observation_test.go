@@ -2,10 +2,50 @@ package store
 
 import (
 	"encoding/json"
+	"fmt"
 	"proxy-sentinel/internal/sharedaccess"
 	"testing"
 	"time"
 )
+
+func TestSharedHandshakeKeepsRepeatedFeaturesAtValueLimit(t *testing.T) {
+	scope, cfg, rows, now := handshakeReplayFixture()
+	coverage := sharedaccess.CoverageV2{SchemaVersion: "capture-coverage/v2", From: now.Add(-time.Minute), To: now, KernelStatsKnown: true}
+	at := now.Add(-20 * time.Second)
+	var samples []sharedaccess.HandshakeSample
+	for i := 0; i < 64; i++ {
+		samples = append(samples, sharedaccess.HandshakeSample{Family: "ja3", Value: fmt.Sprintf("%032x", i), EventID: fmt.Sprintf("start-%d", i), ObservedAt: at})
+	}
+	samples = append(samples, sharedaccess.HandshakeSample{Family: "ja3", Value: samples[0].Value, EventID: "repeated", ObservedAt: at.Add(5 * time.Second)})
+	for _, test := range []struct {
+		name  string
+		extra bool
+	}{
+		{"existing_value", false},
+		{"distinct_overflow", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			current := append([]sharedaccess.HandshakeSample(nil), samples...)
+			if test.extra {
+				for i := 64; i < 67; i++ {
+					current = append(current, sharedaccess.HandshakeSample{Family: "ja3", Value: fmt.Sprintf("%032x", i), EventID: fmt.Sprintf("extra-%d", i), ObservedAt: at})
+				}
+			}
+			raw, _ := json.Marshal(map[string]any{"handshake_schema": "handshake-samples/v1", "feature_samples": current, "capture_coverage": coverage})
+			rows[0].Payload = string(raw)
+			w, _, err := buildHandshakeObservation(scope, cfg, rows, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := w.Samples["tls_stack"]["ja3:"+samples[0].Value].Count; got != 2 {
+				t.Fatalf("retained feature count=%d, want 2", got)
+			}
+			if w.Complete == test.extra || (test.extra && (len(w.Conflicts) != 1 || w.Conflicts[0] != "feature_value_limit")) {
+				t.Fatalf("unexpected coverage for retained values: %v", w.Conflicts)
+			}
+		})
+	}
+}
 
 func TestSharedObservationSwitchMatchesCommandLineBooleanParsing(t *testing.T) {
 	for _, value := range []string{"true", "TRUE", "1", " true ", "false", "0", "", "invalid"} {

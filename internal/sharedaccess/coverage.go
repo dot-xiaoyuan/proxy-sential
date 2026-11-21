@@ -19,6 +19,9 @@ type CoverageV2 struct {
 	Omitted          int       `json:"output_omitted"`
 	KeyDrops         int       `json:"key_drops"`
 	Stopped          bool      `json:"stopped"`
+	// MetadataOmitted counts excess values in optional display fields. The
+	// separately bounded structured samples determine detection coverage.
+	MetadataOmitted int `json:"metadata_omitted,omitempty"`
 }
 
 func (c CoverageV2) Complete() bool {

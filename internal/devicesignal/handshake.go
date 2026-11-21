@@ -115,21 +115,25 @@ func parseHandshakeFrame(frame []byte) (handshakeObservation, bool) {
 	var source [4]byte
 	copy(source[:], ip[12:16])
 	total := int(binary.BigEndian.Uint16(ip[2:4]))
-	if total < ihl+20 || total > len(ip) {
+	if total < ihl+20 {
 		return handshakeObservation{}, false
 	}
-	tcp := ip[ihl:total]
+	// The socket may cut the frame after a complete handshake or request
+	// header. Parse the captured prefix and validate the protocol length.
+	tcp := ip[ihl:min(total, len(ip))]
 	dstPort := binary.BigEndian.Uint16(tcp[2:4])
 	dataOffset := int(tcp[12]>>4) * 4
 	if dataOffset < 20 || len(tcp) <= dataOffset {
 		return handshakeObservation{}, false
 	}
 	payload := tcp[dataOffset:]
-	identity := append(append(append([]byte{}, ip[12:20]...), tcp[:8]...), payload...)
-	sum := sha256.Sum256(identity)
-	observation := handshakeObservation{IP: netip.AddrFrom4(source), MAC: ethernet.source, EventID: hex.EncodeToString(sum[:16]), ObservedAt: time.Now().UTC(), DestinationPort: dstPort}
+	observation := handshakeObservation{IP: netip.AddrFrom4(source), MAC: ethernet.source, ObservedAt: time.Now().UTC(), DestinationPort: dstPort}
 	switch dstPort {
 	case 443:
+		if len(payload) >= 5 {
+			recordEnd := 5 + int(binary.BigEndian.Uint16(payload[3:5]))
+			payload = payload[:min(len(payload), recordEnd)]
+		}
 		sni, alpn, ok := parseClientHello(payload)
 		if !ok && (len(payload) < 6 || payload[0] != 22 || payload[5] != 1) {
 			return handshakeObservation{}, false
@@ -141,15 +145,22 @@ func parseHandshakeFrame(frame []byte) (handshakeObservation, bool) {
 		observation.Truncated = observation.JA3 == ""
 		observation.SNI, observation.ALPN = sni, alpn
 	case 80:
+		end := bytes.Index(payload, []byte("\r\n\r\n"))
+		if end >= 0 {
+			payload = payload[:end+4]
+		}
 		host, userAgent, ok := parseHTTPRequestHeaders(payload)
 		if !ok {
 			return handshakeObservation{}, false
 		}
 		observation.Host, observation.UserAgent = host, userAgent
-		observation.Truncated = !bytes.Contains(payload, []byte("\r\n\r\n"))
+		observation.Truncated = end < 0
 	default:
 		return handshakeObservation{}, false
 	}
+	identity := append(append(append([]byte{}, ip[12:20]...), tcp[:8]...), payload...)
+	sum := sha256.Sum256(identity)
+	observation.EventID = hex.EncodeToString(sum[:16])
 	return observation, true
 }
 
@@ -257,6 +268,7 @@ type handshakeSummary struct {
 	samples                        map[string]sharedaccess.HandshakeSample
 	sampleCounts                   map[string]int
 	overflow, truncated            int
+	metadataOmitted                int
 	coverage                       sharedaccess.CoverageV2
 	count                          int
 	snis, alpns, hosts, userAgents map[string]bool
@@ -308,7 +320,7 @@ func (s *handshakeSummary) add(o handshakeObservation, sampleBudget int) {
 	add := func(set map[string]bool, value string) {
 		if value != "" {
 			if !set[value] && len(set) >= maxHandshakeValues {
-				s.overflow++
+				s.metadataOmitted++
 				return
 			}
 			set[value] = true
@@ -370,6 +382,7 @@ func writeHandshakeBucket(path, sensorID, interfaceName, instance string, scope 
 		coverage := summary.coverage
 		coverage.Omitted = omitted[key.IP]
 		coverage.Overflow += summary.overflow
+		coverage.MetadataOmitted += summary.metadataOmitted
 		coverage.Truncated += summary.truncated
 		event := normalized.Event{
 			SchemaVersion: "v1", EventID: "device-" + hex.EncodeToString(sum[:16]),
