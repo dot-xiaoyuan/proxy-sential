@@ -73,18 +73,30 @@ func parseControlFrame(frame []byte) (controlSignal, bool) {
 }
 
 func parseControlFrames(frame []byte) []controlSignal {
+	signals, _ := parseControlFramesWithCoverage(frame)
+	return signals
+}
+
+// A complete IEEE 1905 message may carry no facts used by this collector.
+// Only an incomplete or malformed message adds a coverage gap.
+func parseControlFramesWithCoverage(frame []byte) (signals []controlSignal, incompleteIEEE1905 bool) {
 	ethernet, ok := parseEthernetFrame(frame)
 	if !ok {
-		return nil
+		return nil, false
 	}
+	if ethernet.etherType == 0x893a {
+		signals, complete := parseIEEE1905(ethernet)
+		return signals, !complete
+	}
+	return parseOtherControlFrames(ethernet), false
+}
+
+func parseOtherControlFrames(ethernet ethernetFrame) []controlSignal {
 	if ethernet.etherType == 0x88cc {
 		if signal, found := parseLLDP(ethernet); found {
 			return []controlSignal{signal}
 		}
 		return nil
-	}
-	if ethernet.etherType == 0x893a {
-		return parseIEEE1905(ethernet)
 	}
 	if ethernet.etherType == 0x0806 {
 		if signal, found := parseARP(ethernet); found {
@@ -161,13 +173,13 @@ type ieee1905BSSSnapshot struct {
 	ClientMACs []string `json:"client_macs"`
 }
 
-func parseIEEE1905(ethernet ethernetFrame) []controlSignal {
+func parseIEEE1905(ethernet ethernetFrame) ([]controlSignal, bool) {
 	// IEEE 1905.1 CMDUs use an eight-octet header followed by TLVs. Fragmented
 	// messages require reassembly, so only complete, unfragmented messages are
 	// emitted. Bit 7 of the flags octet marks the last fragment.
 	payload := ethernet.payload
 	if len(payload) < 8 || payload[0] != 0 || payload[6] != 0 || payload[7]&0x80 == 0 {
-		return nil
+		return nil, false
 	}
 	messageType := binary.BigEndian.Uint16(payload[2:4])
 	messageID := binary.BigEndian.Uint16(payload[4:6])
@@ -182,14 +194,14 @@ func parseIEEE1905(ethernet ethernetFrame) []controlSignal {
 		kind, length := tlvs[0], int(binary.BigEndian.Uint16(tlvs[1:3]))
 		tlvs = tlvs[3:]
 		if length > len(tlvs) {
-			return nil
+			return nil, false
 		}
 		value := tlvs[:length]
 		tlvs = tlvs[length:]
 		switch kind {
 		case 0:
 			if length != 0 {
-				return nil
+				return nil, false
 			}
 			ended = true
 			tlvs = nil
@@ -206,11 +218,8 @@ func parseIEEE1905(ethernet ethernetFrame) []controlSignal {
 				vendorOUI = fmt.Sprintf("%02x:%02x:%02x", value[0], value[1], value[2])
 			}
 		case 0x92:
-			if messageType != 0x0001 {
-				return nil
-			}
-			if len(value) != 13 {
-				continue
+			if messageType != 0x0001 || len(value) != 13 {
+				return nil, false
 			}
 			state := "left"
 			if value[12]&0x80 != 0 {
@@ -221,21 +230,21 @@ func parseIEEE1905(ethernet ethernetFrame) []controlSignal {
 			})
 		case 0x84:
 			if messageType != 0x0003 {
-				return nil
+				return nil, false
 			}
 			if hasSnapshot {
-				return nil
+				return nil, false
 			}
 			parsed, bsses, valid := parseIEEE1905AssociatedClients(value)
 			if !valid {
-				return nil
+				return nil, false
 			}
 			clients = append(clients, parsed...)
 			snapshots, hasSnapshot = bsses, true
 		}
 	}
 	if !ended {
-		return nil
+		return nil, false
 	}
 	base := map[string]any{
 		"origin": "ieee1905", "al_mac": alMAC, "ethernet_source_mac": sourceMAC, "message_type": int(messageType), "message_id": int(messageID),
@@ -275,7 +284,7 @@ func parseIEEE1905(ethernet ethernetFrame) []controlSignal {
 		snapshotPayload["bss_snapshots"] = snapshots
 		signals = append(signals, controlSignal{Kind: "ieee1905_client_snapshot", MAC: alMAC, VLAN: ethernet.vlan, Payload: snapshotPayload})
 	}
-	return signals
+	return signals, true
 }
 
 func parseIEEE1905AssociatedClients(value []byte) ([]ieee1905ClientAssociation, []ieee1905BSSSnapshot, bool) {

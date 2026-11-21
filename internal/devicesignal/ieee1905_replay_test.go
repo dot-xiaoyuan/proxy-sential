@@ -62,3 +62,20 @@ func TestIEEE1905CaptureCountsUnreassembledFragments(t *testing.T) {
 		t.Fatalf("fragment was treated as complete: %+v", bucket)
 	}
 }
+
+func TestIEEE1905CompleteTopologyQueryDoesNotCreateCoverageGap(t *testing.T) {
+	frame := []byte{
+		0x01, 0x80, 0xc2, 0, 0, 0x13, 0x20, 0x3a, 0xeb, 0xe9, 0xde, 0x10, 0x89, 0x3a,
+		0, 0, 0, 2, 0, 9, 0, 0x80,
+		0, 0, 0,
+	}
+	bucket := newCaptureBucket()
+	bucket.addFrame(frame, nil)
+	if bucket.controlParseFailures != 0 || len(bucket.controls) != 0 {
+		t.Fatalf("valid topology query affected measured coverage: parse failures=%d controls=%d", bucket.controlParseFailures, len(bucket.controls))
+	}
+	bucket.addFrame(frame[:len(frame)-1], nil)
+	if bucket.controlParseFailures != 1 || len(bucket.controls) != 0 {
+		t.Fatalf("truncated IEEE 1905 message escaped loss accounting: parse failures=%d controls=%d", bucket.controlParseFailures, len(bucket.controls))
+	}
+}

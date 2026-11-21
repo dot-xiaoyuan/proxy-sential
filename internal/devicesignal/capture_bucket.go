@@ -50,8 +50,8 @@ func (b *captureBucket) addFrame(frame []byte, scope *normalized.CaptureScope) {
 			}
 		}
 	}
-	controls := parseControlFrames(frame)
-	if eth, ok := parseEthernetFrame(frame); ok && eth.etherType == 0x893a && len(controls) == 0 {
+	controls, incompleteIEEE1905 := parseControlFramesWithCoverage(frame)
+	if incompleteIEEE1905 {
 		b.controlParseFailures++
 	}
 	for _, signal := range controls {
