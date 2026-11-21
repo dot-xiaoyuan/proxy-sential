@@ -278,15 +278,30 @@ def plan_parts(parts: list[dict[str, Any]], cutoff: dt.date, max_parts: int, max
     return chosen, sum(int(part["bytes_on_disk"]) for part in candidates), mixed_parts
 
 
-def inspect_parts(query: Callable[[str], list[dict[str, Any]]], table: str) -> list[dict[str, Any]]:
+def inspect_parts(query: Callable[[str], list[dict[str, Any]]], table: str, cutoff: dt.date, max_bytes: int) -> tuple[list[dict[str, Any]], int, int, int]:
+    active = f"FROM system.parts WHERE database='system' AND table='{table}' AND active=1"
+    expires_before = f"toDate('{cutoff.isoformat()}')"
+    totals = query(
+        f"SELECT count() AS active_parts, sumIf(bytes_on_disk,max_date < {expires_before}) AS fully_expired_bytes, "
+        f"countIf(min_date < {expires_before} AND max_date >= {expires_before}) AS mixed_age_parts {active} FORMAT JSONEachRow"
+    )
+    if len(totals) != 1:
+        raise SafetyError("unexpected part summary")
+    active_parts = int(totals[0]["active_parts"])
+    eligible_bytes = int(totals[0]["fully_expired_bytes"])
+    mixed_parts = int(totals[0]["mixed_age_parts"])
+    if eligible_bytes == 0:
+        return [], active_parts, eligible_bytes, mixed_parts
+    # Bound the metadata returned to the planner even when current logs have
+    # many small active parts. Oversized and mixed-age parts stay out of the plan.
     rows = query(
-        "SELECT name,partition,bytes_on_disk,rows,min_date,max_date FROM system.parts "
-        f"WHERE database='system' AND table='{table}' AND active=1 "
-        "ORDER BY max_date,bytes_on_disk,name LIMIT 1001 FORMAT JSONEachRow"
+        f"SELECT name,partition,bytes_on_disk,rows,min_date,max_date {active} "
+        f"AND max_date < {expires_before} AND bytes_on_disk BETWEEN 1 AND {max_bytes} "
+        "ORDER BY max_date,bytes_on_disk,name LIMIT 1000 FORMAT JSONEachRow"
     )
     if len(rows) > 1000:
-        raise SafetyError("more than 1000 active parts; inspect the table before planning cleanup")
-    return rows
+        raise SafetyError("part candidates exceeded the metadata bound")
+    return rows, active_parts, eligible_bytes, mixed_parts
 
 
 def main(argv: list[str] | None = None, *, query_factory: Callable[[str], Callable[[str], list[dict[str, Any]]]] = lambda container: lambda sql: clickhouse_query(container, sql)) -> int:
@@ -408,8 +423,8 @@ def main(argv: list[str] | None = None, *, query_factory: Callable[[str], Callab
         if args.allow_unmounted_live_ttl and not policy_mounted:
             verify_inplace_activation(args.container, args.policy_file, active_query_log_ddl)
     cutoff = dt.datetime.now(dt.timezone.utc).date() - dt.timedelta(days=args.retain_days)
-    parts = inspect_parts(query, args.table)
-    planned, eligible_bytes, mixed_parts = plan_parts(parts, cutoff, args.max_parts, args.max_bytes)
+    parts, active_parts, eligible_bytes, mixed_parts = inspect_parts(query, args.table, cutoff, args.max_bytes)
+    planned, _, _ = plan_parts(parts, cutoff, args.max_parts, args.max_bytes)
     report = {
         "mode": "apply" if args.apply else "dry-run",
         "table": args.table,
@@ -423,7 +438,7 @@ def main(argv: list[str] | None = None, *, query_factory: Callable[[str], Callab
         "live_table_has_ttl": int(tables[0]["ttl_position"]) > 0,
         "active_query_log_has_ttl": query_log_live_ttl if query_log_table else None,
         "unmounted_live_ttl_exception": bool(query_log_table and args.allow_unmounted_live_ttl and not policy_mounted),
-        "active_parts": len(parts),
+        "active_parts": active_parts,
         "fully_expired_bytes": eligible_bytes,
         "mixed_age_parts_preserved": mixed_parts,
         "planned_bytes": sum(int(part["bytes_on_disk"]) for part in planned),

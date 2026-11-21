@@ -62,8 +62,9 @@ class InPlaceSystemLogTest(unittest.TestCase):
                                                                          "git_worktree_modified": False, "os": "linux", "arch": "amd64"}))
             (root / "current").symlink_to(release)
             with mock.patch.object(maintenance, "ROOT", root), mock.patch.object(maintenance, "CURRENT", root / "current"):
-                with mock.patch.object(maintenance.subprocess, "run", return_value=mock.Mock(stdout="", stderr=maintenance.EXPECTED_HELP)):
-                    self.assertEqual(maintenance.release_identity(commit, digest)["repair_sha256"], digest)
+                for description in (maintenance.EXPECTED_HELP, maintenance.LEGACY_SEARCH_REPAIR_HELP):
+                    with self.subTest(description=description), mock.patch.object(maintenance.subprocess, "run", return_value=mock.Mock(stdout="", stderr=description)):
+                        self.assertEqual(maintenance.release_identity(commit, digest)["repair_sha256"], digest)
                 old_help = "repair a settled source-backed or journal-backed standard-event archive with scoped row proof"
                 with mock.patch.object(maintenance.subprocess, "run", return_value=mock.Mock(stdout="", stderr=old_help)):
                     with self.assertRaisesRegex(maintenance.SafetyError, "lacks settled scoped"):

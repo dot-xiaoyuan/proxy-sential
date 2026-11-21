@@ -48,6 +48,29 @@ class SystemLogCleanupTest(unittest.TestCase):
         self.assertEqual(eligible_bytes, 16)
         self.assertEqual(mixed, 1)
 
+    def test_large_active_catalog_plans_only_expired_candidates(self):
+        old = part("202610_1_1_0", "2026-10-31", "2026-10-31", 6)
+
+        def query(sql):
+            if "FROM system.tables" in sql:
+                return [{"engine": "MergeTree", "partition_key": "toYYYYMM(event_date)", "ttl_position": 1}]
+            if "count() AS active_parts" in sql:
+                return [{"active_parts": 1600, "fully_expired_bytes": 6, "mixed_age_parts": 15}]
+            if "AND max_date <" in sql:
+                self.assertIn("bytes_on_disk BETWEEN 1 AND 12", sql)
+                self.assertIn("LIMIT 1000 ", sql)
+                return [old]
+            return [old] * 1001
+
+        output = io.StringIO()
+        with mock.patch.object(cleanup, "run_command", side_effect=["true", "[]"]), mock.patch.object(cleanup, "server_ready", return_value=(True, "200")), contextlib.redirect_stdout(output):
+            self.assertEqual(cleanup.main(["--table", "query_log", "--max-bytes", "12"], query_factory=lambda _: query), 0)
+        report = json.loads(output.getvalue())
+        self.assertEqual(report["active_parts"], 1600)
+        self.assertEqual(report["mixed_age_parts_preserved"], 15)
+        self.assertEqual(report["planned_bytes"], 6)
+        self.assertEqual(report["planned_parts"][0]["name"], old["name"])
+
     def test_apply_stops_on_unready_application_before_reading_parts(self):
         with tempfile.TemporaryDirectory() as directory:
             policy = Path(directory) / "policy.xml"
@@ -119,6 +142,8 @@ class SystemLogCleanupTest(unittest.TestCase):
                     return [{"engine": "MergeTree", "partition_key": "toYYYYMM(event_date)", "ttl_position": 0}]
                 if "FROM system.parts" in sql and "AND name=" in sql:
                     return [] if any("DROP PART" in item for item in queries) else [old]
+                if "count() AS active_parts" in sql:
+                    return [{"active_parts": 1, "fully_expired_bytes": old["bytes_on_disk"], "mixed_age_parts": 0}]
                 if "FROM system.parts" in sql:
                     return [old]
                 if "DROP PART" in sql:
@@ -158,6 +183,8 @@ class SystemLogCleanupTest(unittest.TestCase):
             def query(sql):
                 if "FROM system.tables" in sql:
                     return [{"engine": "MergeTree", "partition_key": "toYYYYMM(event_date)", "ttl_position": 0}]
+                if "count() AS active_parts" in sql:
+                    return [{"active_parts": 1, "fully_expired_bytes": old["bytes_on_disk"], "mixed_age_parts": 0}]
                 if "FROM system.parts" in sql and "AND name=" not in sql:
                     return [old]
                 raise AssertionError(f"DROP or recheck must not run after health changed: {sql}")
@@ -377,7 +404,6 @@ class SystemLogCleanupTest(unittest.TestCase):
             template.write_text(policy.read_text())
             cleanup.query_log_marker(policy).write_text(cleanup.template_digest(template) + "\n")
             old = part("202001_1_1_0", "2020-01-01", "2020-01-01", 1024)
-            mixed = part("202611_2_2_0", "2026-11-02", "2026-11-12", 2048)
             ddl = "CREATE TABLE system.query_log (event_date Date) ENGINE = MergeTree ORDER BY event_date TTL event_date + toIntervalDay(7) SETTINGS ttl_only_drop_parts = 1"
             state = Path(directory) / "inplace-state.json"
             digest = cleanup.hashlib.sha256(policy.read_bytes()).hexdigest()
@@ -404,8 +430,10 @@ class SystemLogCleanupTest(unittest.TestCase):
                     return [{"engine": "MergeTree", "partition_key": "toYYYYMM(event_date)", "ttl_position": 90, "create_table_query": ddl}]
                 if "FROM system.parts" in sql and "AND name=" in sql:
                     return [] if any("DROP PART" in item for item in queries) else [old]
+                if "count() AS active_parts" in sql:
+                    return [{"active_parts": 2, "fully_expired_bytes": old["bytes_on_disk"], "mixed_age_parts": 1}]
                 if "FROM system.parts" in sql:
-                    return [old, mixed]
+                    return [old]
                 if "DROP PART" in sql:
                     return []
                 raise AssertionError(f"unexpected SQL: {sql}")
@@ -474,6 +502,8 @@ class SystemLogCleanupTest(unittest.TestCase):
                     return [{"engine": "MergeTree", "partition_key": "toYYYYMM(event_date)", "ttl_position": 0}]
                 if "FROM system.parts" in sql and "AND name=" in sql:
                     return [changed]
+                if "count() AS active_parts" in sql:
+                    return [{"active_parts": 1, "fully_expired_bytes": old["bytes_on_disk"], "mixed_age_parts": 0}]
                 if "FROM system.parts" in sql:
                     return [old]
                 raise AssertionError(f"unsafe SQL: {sql}")
