@@ -14,6 +14,10 @@ import (
 
 var ErrStreamProjectorUnavailable = errors.New("stream projection is not configured")
 
+// ErrStreamSearchConfirmationMissing means an attempted search returned no
+// durable confirmation. Waiting for the archive lane uses ErrUnconfirmed alone.
+var ErrStreamSearchConfirmationMissing = fmt.Errorf("search index confirmation missing: %w", streamlog.ErrUnconfirmed)
+
 type StreamProjector interface {
 	ProjectStreamSegment(context.Context, string, streamlog.Segment) error
 	ReconcileStreamProjection(context.Context, string, streamlog.Segment) error
@@ -141,7 +145,7 @@ func (w StreamLaneWriter) ReconcileSearch(ctx context.Context, id string, segmen
 		if err != nil {
 			return err
 		}
-		return fmt.Errorf("search index confirmation missing: %w", streamlog.ErrUnconfirmed)
+		return ErrStreamSearchConfirmationMissing
 	}
 	if !segment.RiskFeaturesRequired || segment.SplitRiskFeatures {
 		return nil

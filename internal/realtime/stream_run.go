@@ -256,7 +256,7 @@ func runStreamSource(ctx context.Context, journal *streamlog.Journal, writer str
 						}
 						break // Other segments can still archive or search.
 					}
-					if !errors.Is(err, streamlog.ErrUnconfirmed) {
+					if !errors.Is(err, streamlog.ErrUnconfirmed) || errors.Is(err, store.ErrStreamSearchConfirmationMissing) {
 						reportTransient(fmt.Errorf("retry stream %s segment %s: %w", name, id, err))
 					}
 					if !waitStreamPoll(sourceCtx, streamRetryDelay(opts.Capture.PollInterval, attempt, err)) {
@@ -572,7 +572,12 @@ func streamFailureReason(err error) string {
 }
 
 func streamRetryDelay(poll time.Duration, attempt int, err error) time.Duration {
-	if errors.Is(err, streamlog.ErrUnconfirmed) {
+	const immediateSearchChecks = 3
+	if errors.Is(err, store.ErrStreamSearchConfirmationMissing) && attempt >= immediateSearchChecks {
+		// An async insert can appear in the first few polls. Persistently
+		// empty search checks should yield time to the active storage lanes.
+		attempt -= immediateSearchChecks
+	} else if errors.Is(err, streamlog.ErrUnconfirmed) {
 		return poll
 	}
 	return min(max(poll, time.Second)*time.Duration(1<<min(attempt, 5)), 30*time.Second)

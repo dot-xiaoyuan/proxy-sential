@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -12,8 +13,28 @@ import (
 	"time"
 
 	"proxy-sentinel/internal/normalized"
+	"proxy-sentinel/internal/store"
 	"proxy-sentinel/internal/streamlog"
 )
+
+func TestMissingStreamSearchConfirmationBacksOff(t *testing.T) {
+	const poll = 500 * time.Millisecond
+	missing := fmt.Errorf("stream lane search: %w", store.ErrStreamSearchConfirmationMissing)
+	for _, check := range []struct {
+		attempt int
+		want    time.Duration
+	}{
+		{0, poll}, {1, poll}, {2, poll}, {3, time.Second},
+		{5, 4 * time.Second}, {9, 30 * time.Second}, {500, 30 * time.Second},
+	} {
+		if got := streamRetryDelay(poll, check.attempt, missing); got != check.want {
+			t.Fatalf("missing search confirmation attempt %d: got %v, want %v", check.attempt, got, check.want)
+		}
+	}
+	if got := streamRetryDelay(poll, 500, streamlog.ErrUnconfirmed); got != poll {
+		t.Fatalf("archive wait did not keep its poll interval: %v", got)
+	}
+}
 
 func TestRecoveryProjectionTimeoutForLargeOrContendedSources(t *testing.T) {
 	device := Source{Kind: "device-signals"}
