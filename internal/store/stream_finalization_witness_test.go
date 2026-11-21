@@ -1,12 +1,17 @@
 package store
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"reflect"
 	"testing"
+	"time"
 
+	"proxy-sentinel/internal/adapter/zeek"
+	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/streamlog"
 )
 
@@ -34,6 +39,64 @@ func (p *witnessProjector) MarkStreamSegmentFinalized(context.Context, string, s
 }
 
 type witnessSharedQueue struct{ calls *[]string }
+
+func TestDHCPMessageStreamFinalizationProjectsAuthoritativeLeases(t *testing.T) {
+	s := activityV3PrivatePostgres(t)
+	schema, err := os.ReadFile("../../migrations/postgres/029_device_address_leases.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.pg.db.Exec(string(schema)); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	const mac, ip, campus, sensor = "02:00:00:00:00:12", "192.0.2.12", "campus-a", "sensor-a"
+	at := time.Date(2026, 11, 21, 7, 0, 0, 0, time.UTC)
+	var input, output bytes.Buffer
+	for offset, message := range []string{"REQUEST", "ACK", "RELEASE"} {
+		observed := at.Add(time.Duration(offset) * time.Second).Format(time.RFC3339)
+		if err := json.NewEncoder(&input).Encode(map[string]any{
+			"ts": observed, "msg_types": message, "mac": mac, "requested_addr": ip,
+			"assigned_addr": ip, "client_addr": ip, "lease_time": 600, "lease_observed_at": observed,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = zeek.Convert(&input, &output, zeek.Options{LogKind: "dhcp-message", SensorID: sensor}); err != nil {
+		t.Fatal(err)
+	}
+	reader := json.NewDecoder(&output)
+	segment := testStreamSegment()
+	segment.Source, segment.SourcePath = "zeek-dhcp-binding", "/logs/current/device_dhcp_message.log"
+	segment.Events = nil
+	for reader.More() {
+		var event normalized.Event
+		if err := reader.Decode(&event); err != nil {
+			t.Fatal(err)
+		}
+		event.Subject["campus_id"] = campus
+		segment.Events = append(segment.Events, event)
+	}
+	if len(segment.Events) != 3 {
+		t.Fatalf("DHCP adapter emitted %d events, want three", len(segment.Events))
+	}
+	writer := StreamLaneWriter{Projector: &witnessProjector{}, DeviceLeaseDB: s.pg.db}
+	for range 2 {
+		if err = writer.FinalizeSegment(ctx, "dhcp-segment", segment); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var count int
+	if err = s.pg.db.QueryRowContext(ctx, "SELECT count(*) FROM device_address_leases").Scan(&count); err != nil || count != 2 {
+		t.Fatalf("want one ACK and one release after retry, got %d: %v", count, err)
+	}
+	for offset, want := range []string{"", ip, ""} {
+		got, err := s.ieee1905GatewayIPAt(ctx, sensor, campus, mac, at.Add(time.Duration(offset)*time.Second))
+		if err != nil || got != want {
+			t.Fatalf("at message %d got IP %q, want %q: %v", offset, got, want, err)
+		}
+	}
+}
 
 func (q witnessSharedQueue) MarkStreamSharedJobs(context.Context, string, streamlog.Segment) error {
 	*q.calls = append(*q.calls, "shared")

@@ -291,6 +291,9 @@ WHERE state='active' AND sensor_id=$1 AND (source_kind='zeek-dhcp' OR source_kin
 	}
 	projector := discovery.StreamDiscoveryProjector{DB: db, DeviceSignalManifestWrites: *deviceManifestWrites}
 	writer := store.StreamLaneWriter{ClickHouse: ch, Projector: projector, RiskQueue: projector, SharedQueue: store.StreamSharedJobQueue{DB: db, RequiredSources: requiredShared}}
+	if *messagePath != "" {
+		writer.DeviceLeaseDB = db
+	}
 	archiveLanes, searchLanes := 1, 1
 	if *ttlPath != "" || *handshakePath != "" {
 		archiveLanes, searchLanes = 2, 2

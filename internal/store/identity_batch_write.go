@@ -439,7 +439,7 @@ func accountSessionBatchArguments(items []AccountSession) []any {
 		personType, department, campusID, buildingID, networkZoneID, ssid, vlan, ap, nasIP, sessionStatus, metadata}
 }
 
-func insertDeviceLeasesBatch(ctx context.Context, tx *sql.Tx, leases []deviceLease) error {
+func insertDeviceLeasesBatch(ctx context.Context, db deviceLeaseExecutor, leases []deviceLease) error {
 	if len(leases) == 0 {
 		return nil
 	}
@@ -462,7 +462,7 @@ func insertDeviceLeasesBatch(ctx context.Context, tx *sql.Tx, leases []deviceLea
 		sensor[index], campus[index], eventID[index], ip[index] = lease.Sensor, lease.Campus, lease.EventID, lease.IP
 		endpoint[index], observedAt[index], validUntil[index], action[index] = lease.Endpoint, lease.At, lease.Until, lease.Action
 	}
-	_, err := tx.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, `
 INSERT INTO device_address_leases(sensor_id, campus_id, event_id, ip, endpoint_id, observed_at, valid_until, action)
 SELECT t.sensor_id, t.campus_id, t.event_id, t.ip::inet, t.endpoint_id, t.observed_at, t.valid_until, t.action
 FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::timestamptz[], $7::timestamptz[], $8::text[])

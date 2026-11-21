@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"math"
 	"net"
-	"proxy-sentinel/internal/normalized"
 	"strconv"
 	"strings"
 	"time"
+
+	"proxy-sentinel/internal/normalized"
 )
 
 type deviceLease struct {
@@ -19,7 +20,22 @@ type deviceLease struct {
 
 func deviceLeaseFromEvent(e normalized.Event) (deviceLease, bool) {
 	l := deviceLease{}
-	if e.Type != "device" || stringFromMap(e.Payload, "origin") != "dhcp" {
+	if stringFromMap(e.Payload, "origin") != "dhcp" {
+		return l, false
+	}
+	// The per-message adapter keeps withdrawals out of device discovery.
+	// An explicit withdrawal can still terminate a lease for that MAC and IP.
+	if e.Type != "device" {
+		if e.Type != "dhcp_message" || e.Source != "zeek" || stringFromMap(e.RawRef, "log") != "device_dhcp_message" {
+			return l, false
+		}
+		switch strings.ToUpper(stringFromMap(e.Payload, "msg_types")) {
+		case "RELEASE", "NAK", "DECLINE":
+		default:
+			return l, false
+		}
+	}
+	if conflict, _ := e.Payload["discovery_scope_conflict"].(bool); conflict {
 		return l, false
 	}
 	l.Sensor = stringFromMap(e.Observer, "sensor_id")
@@ -73,15 +89,19 @@ func deviceLeaseFromEvent(e normalized.Event) (deviceLease, bool) {
 	return l, true
 }
 
+type deviceLeaseExecutor interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
 // writeDeviceLeases writes every lease the batch carries in one statement.
-func writeDeviceLeases(ctx context.Context, tx *sql.Tx, events []normalized.Event) error {
+func writeDeviceLeases(ctx context.Context, db deviceLeaseExecutor, events []normalized.Event) error {
 	leases := make([]deviceLease, 0, len(events))
 	for _, e := range events {
 		if l, ok := deviceLeaseFromEvent(e); ok {
 			leases = append(leases, l)
 		}
 	}
-	return insertDeviceLeasesBatch(ctx, tx, leases)
+	return insertDeviceLeasesBatch(ctx, db, leases)
 }
 
 // ResolveDeviceAt only assigns a physical endpoint; it never assigns an account.

@@ -3,9 +3,11 @@ package store
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"proxy-sentinel/internal/streamlog"
 )
@@ -39,10 +41,11 @@ type StreamSharedQueue interface {
 // storage owners. A selected fact cannot be silently marked projected when
 // its PostgreSQL projector is unavailable.
 type StreamLaneWriter struct {
-	ClickHouse  *ClickHouseStore
-	Projector   StreamProjector
-	RiskQueue   StreamRiskQueue
-	SharedQueue StreamSharedQueue
+	ClickHouse    *ClickHouseStore
+	Projector     StreamProjector
+	RiskQueue     StreamRiskQueue
+	SharedQueue   StreamSharedQueue
+	DeviceLeaseDB *sql.DB
 }
 
 // Preflight performs only local validation. A failure here must leave the
@@ -226,6 +229,13 @@ func (w StreamLaneWriter) FinalizeSegment(ctx context.Context, id string, segmen
 		}
 		// Split features already have their PG wake receipt in the separately
 		// acknowledged lane. Both paths must reach the witness below.
+	}
+	if w.DeviceLeaseDB != nil && segment.Source == "zeek-dhcp-binding" && filepath.Base(segment.SourcePath) == "device_dhcp_message.log" {
+		// The file stream does not feed the legacy normalized identity view.
+		// Publish leases from archived messages before releasing the segment.
+		if err := writeDeviceLeases(ctx, w.DeviceLeaseDB, segment.Events); err != nil {
+			return fmt.Errorf("publish DHCP stream leases: %w", err)
+		}
 	}
 	if !segment.NeedsProjection {
 		return nil
