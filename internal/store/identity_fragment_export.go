@@ -22,6 +22,7 @@ type identityExportFragment struct {
 	Accepted                                              time.Time
 	Payload                                               []byte
 	BodyState, SearchState                                string
+	LastError                                             string
 	LeaseEpoch                                            int64
 	DerivedLeaseEpoch                                     int64
 }
@@ -37,8 +38,8 @@ type identityExportTiming struct {
 
 // PostgreSQL is the durable source for HTTP identity input. Each fragment has
 // its own fixed ClickHouse token and separate body/search acknowledgements.
-// An attempted write is verified before any further action; an absent row is
-// left for bounded operator repair rather than blindly sent with a new token.
+// An attempted write is verified before any further action. A settled search
+// gap can be repaired from the original fragment and its confirmed bodies.
 func (s *DBStore) exportIdentityInboxFragment(ctx context.Context) error {
 	return s.exportIdentityInboxFragmentMeasured(ctx, nil)
 }
@@ -118,6 +119,13 @@ func (s *DBStore) exportIdentityInboxFragmentMeasured(ctx context.Context, timin
 		confirmed, err = s.ch.VerifyStreamSearch(ctx, segment)
 		if err == nil && !confirmed {
 			err = streamlog.ErrUnconfirmed
+			now := time.Now().UTC()
+			if fragment.KeyScheme == "source_position_v1" && fragment.LastError == "archive_unconfirmed" &&
+				now.Sub(fragment.Accepted) >= time.Hour &&
+				now.Before(fragment.Accepted.AddDate(1, 0, 0)) &&
+				identityImmediateSearchBudget(ctx) {
+				err = s.ch.repairIdentityFragmentSearch(ctx, token, segment)
+			}
 		}
 	} else {
 		err = s.ch.WriteStreamSearch(ctx, token, segment)
@@ -137,6 +145,26 @@ func (s *DBStore) exportIdentityInboxFragmentMeasured(ctx context.Context, timin
 		}
 	}
 	return err
+}
+
+func (s *ClickHouseStore) repairIdentityFragmentSearch(ctx context.Context, token string, segment streamlog.Segment) error {
+	prepared, err := prepareStreamEvents(segment)
+	if err != nil {
+		return err
+	}
+	refs := make([]StreamBodyRef, 0, len(prepared))
+	for _, item := range prepared {
+		refs = append(refs, StreamBodyRef{Class: item.retention, Month: segment.ArchiveMonth, Scope: item.scope, Key: item.key, SHA256: item.hash, BodyLayout: segment.BodyLayout})
+	}
+	if _, err = s.getStreamBodiesByRefs(ctx, refs, false); err != nil {
+		return err
+	}
+	if err = s.requireQuietStreamRepair(ctx, []string{"stream_event_search"}); err != nil {
+		return err
+	}
+	// Reconcile re-reads the indexed keys after the quiet interval, writes
+	// missing keys only, and confirms the entire fragment before PG receipts.
+	return s.ReconcileStreamSearch(ctx, token, segment)
 }
 
 const identityImmediateSearchReserve = 10 * time.Second
@@ -184,7 +212,7 @@ func (s *PostgresStore) claimIdentityExportFragment(ctx context.Context) (fragme
 	defer tx.Rollback()
 	query, args := identityExportCandidateQuery(s.sensorID, s.identityDerivedAfter)
 	claim := func(candidate string) error {
-		return tx.QueryRowContext(ctx, candidate, args...).Scan(&fragment.BatchID, &fragment.Scope, &fragment.Source, &fragment.Epoch, &fragment.Month, &fragment.Hash, &fragment.KeyScheme, &fragment.First, &fragment.Count, &fragment.Accepted, &fragment.Payload, &fragment.BodyState, &fragment.SearchState, &fragment.LeaseEpoch)
+		return tx.QueryRowContext(ctx, candidate, args...).Scan(&fragment.BatchID, &fragment.Scope, &fragment.Source, &fragment.Epoch, &fragment.Month, &fragment.Hash, &fragment.KeyScheme, &fragment.First, &fragment.Count, &fragment.Accepted, &fragment.Payload, &fragment.BodyState, &fragment.SearchState, &fragment.LeaseEpoch, &fragment.LastError)
 	}
 	if !s.identityDerivedAfter.IsZero() {
 		// Completing the second archive receipt frees durable inbox capacity.
@@ -209,7 +237,7 @@ func identityExportCandidateQuery(sensor string, after time.Time) (string, []any
 	// Return pre-claim states so the worker can distinguish a new durable
 	// intent from an earlier attempt that requires ClickHouse verification.
 	query := `WITH candidate AS MATERIALIZED (
- SELECT f.batch_id,b.scope_key,b.source,b.stream_epoch,f.archive_month,f.content_sha256,f.key_scheme,f.first_ordinal,f.record_count,b.accepted_at,f.body_state,f.search_state
+ SELECT f.batch_id,b.scope_key,b.source,b.stream_epoch,f.archive_month,f.content_sha256,f.key_scheme,f.first_ordinal,f.record_count,b.accepted_at,f.body_state,f.search_state,f.last_error
  FROM identity_ingest_fragments f JOIN identity_ingest_batches b USING(batch_id)
  WHERE b.protocol_version=2 AND b.sensor_id=$1 AND b.payload_format='fragments' AND b.export_state<>'completed'
  AND f.body_state IN ('pending','attempted','completed') AND f.search_state IN ('pending','attempted','completed')
@@ -220,7 +248,7 @@ func identityExportCandidateQuery(sensor string, after time.Time) (string, []any
  body_state=CASE WHEN c.body_state='pending' THEN 'attempted' ELSE c.body_state END,
  search_state=CASE WHEN c.body_state='completed' AND c.search_state='pending' THEN 'attempted' ELSE c.search_state END
  FROM candidate c WHERE f.batch_id=c.batch_id AND f.first_ordinal=c.first_ordinal
- RETURNING c.batch_id,c.scope_key,c.source,c.stream_epoch,c.archive_month,c.content_sha256,c.key_scheme,c.first_ordinal,c.record_count,c.accepted_at,f.normalized_events,c.body_state,c.search_state,f.lease_epoch`
+ RETURNING c.batch_id,c.scope_key,c.source,c.stream_epoch,c.archive_month,c.content_sha256,c.key_scheme,c.first_ordinal,c.record_count,c.accepted_at,f.normalized_events,c.body_state,c.search_state,f.lease_epoch,c.last_error`
 	args := []any{sensor}
 	if !after.IsZero() {
 		query = strings.Replace(query, "b.sensor_id=$1", "b.sensor_id=$1 AND b.accepted_at >= $2", 1)
@@ -339,7 +367,11 @@ func (s *PostgresStore) reportIdentityExportFragmentError(ctx context.Context, f
 	if permanent {
 		result, err = tx.ExecContext(ctx, `UPDATE identity_ingest_fragments SET body_state=CASE WHEN body_state<>'completed' THEN 'failed' ELSE body_state END,search_state=CASE WHEN body_state='completed' THEN 'failed' ELSE search_state END,last_error=$4,lease_until=NULL WHERE batch_id=$1 AND first_ordinal=$2 AND lease_epoch=$3`, fragment.BatchID, fragment.First, fragment.LeaseEpoch, code)
 	} else {
-		result, err = tx.ExecContext(ctx, `UPDATE identity_ingest_fragments SET last_error=$4 WHERE batch_id=$1 AND first_ordinal=$2 AND lease_epoch=$3`, fragment.BatchID, fragment.First, fragment.LeaseEpoch, code)
+		// Preserve the attempt and its evidence. Repeated unconfirmed reads
+		// should not occupy a worker once per lease interval indefinitely.
+		result, err = tx.ExecContext(ctx, `UPDATE identity_ingest_fragments SET last_error=$4,
+ lease_until=CASE WHEN $4='archive_unconfirmed' AND last_error=$4 THEN GREATEST(lease_until,clock_timestamp()+interval '10 minutes') ELSE lease_until END
+ WHERE batch_id=$1 AND first_ordinal=$2 AND lease_epoch=$3`, fragment.BatchID, fragment.First, fragment.LeaseEpoch, code)
 	}
 	if err != nil {
 		return err

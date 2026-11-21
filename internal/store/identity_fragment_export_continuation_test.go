@@ -52,6 +52,10 @@ func expectIdentityFragmentClaim(mock sqlmock.Sqlmock, fragment identityExportFr
 	if singleStatement {
 		columns = append(columns, "lease_epoch")
 		values = append(values, lease)
+		if strings.Contains(query, "c.last_error") {
+			columns = append(columns, "last_error")
+			values = append(values, fragment.LastError)
+		}
 	}
 	if !strings.Contains(query, "ORDER BY b.accepted_at DESC") {
 		// The 204 work line still uses the ascending candidate order. This
@@ -71,6 +75,108 @@ func expectIdentityFragmentClaim(mock sqlmock.Sqlmock, fragment identityExportFr
 			WillReturnRows(sqlmock.NewRows([]string{"lease_epoch"}).AddRow(lease))
 	}
 	mock.ExpectCommit()
+}
+
+func TestIdentityExportRepairsOnlySettledMissingSearchRows(t *testing.T) {
+	t.Setenv("PROXY_SENTINEL_IDENTITY_SPLIT_PROGRESS", "true")
+	for _, test := range []struct {
+		name string
+		busy bool
+	}{
+		{"quiet", false},
+		{"active_insert", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fragment, _ := continuationIdentityFragment(t)
+			fragment.Accepted = time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Microsecond)
+			fragment.Month = fragment.Accepted.Format("200601")
+			fragment.LastError = "archive_unconfirmed"
+			after := fragment.Accepted.Add(-time.Hour)
+			segment, token, err := identityFragmentSegment(fragment)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prepared, err := prepareStreamEvents(segment)
+			if err != nil {
+				t.Fatal(err)
+			}
+			item := prepared[0]
+			db, mock, err := sqlmock.New(sqlmock.ValueConverterOption(identityTestSliceConverter{}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			expectIdentityFragmentClaim(mock, fragment, after, "completed", "attempted", 9)
+			if test.busy {
+				mock.ExpectBegin()
+				mock.ExpectExec("(?s)UPDATE identity_ingest_fragments SET last_error=.*10 minutes").
+					WithArgs(fragment.BatchID, fragment.First, int64(9), "archive_unconfirmed").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec("UPDATE identity_ingest_batches SET export_state='failed'").
+					WithArgs(fragment.BatchID, "archive_unconfirmed").WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectCommit()
+			} else {
+				expectIdentitySearchReceipt(mock, fragment, 9)
+			}
+			searchWrites, bodyReads := 0, 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				data, _ := io.ReadAll(r.Body)
+				sql := string(data)
+				row := map[string]any{"scope_id": item.scope, "event_key": item.key, "content_sha256": item.hash}
+				switch {
+				case strings.HasPrefix(sql, "INSERT INTO stream_event_search"):
+					searchWrites++
+					repairToken := r.URL.Query().Get("insert_deduplication_token")
+					if len(repairToken) != 64 || repairToken == streamInsertSettings(token, "stream_event_search")["insert_deduplication_token"] {
+						t.Error("unexpected search repair token")
+					}
+				case strings.Contains(sql, "FROM system.asynchronous_inserts"):
+					_, _ = io.WriteString(w, "0\n")
+				case strings.Contains(sql, "FROM system.processes"):
+					if test.busy {
+						_, _ = io.WriteString(w, "1\n")
+					} else {
+						_, _ = io.WriteString(w, "0\n")
+					}
+				case strings.Contains(sql, "FROM stream_event_body_evidence"):
+					if strings.HasPrefix(sql, "SELECT scope_id,event_key,content_sha256,body") {
+						bodyReads++
+						row["body"] = item.body
+					}
+					_ = json.NewEncoder(w).Encode(row)
+				case strings.Contains(sql, "FROM stream_event_search"):
+					if searchWrites == 0 {
+						return
+					}
+					row["archive_month"] = fragment.Accepted.Year()*100 + int(fragment.Accepted.Month())
+					row["retention_class"] = item.retention
+					_ = json.NewEncoder(w).Encode(row)
+				default:
+					t.Errorf("unexpected ClickHouse statement")
+					w.WriteHeader(http.StatusBadRequest)
+				}
+			}))
+			defer server.Close()
+			ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			backend := &DBStore{pg: &PostgresStore{db: db, sensorID: "ncu", identityDerivedAfter: after}, ch: ch}
+			err = backend.exportIdentityInboxFragment(context.Background())
+			if bodyReads != 1 {
+				t.Fatalf("expected original body verification, saw %d reads", bodyReads)
+			}
+			if test.busy && (!errors.Is(err, streamlog.ErrUnconfirmed) || searchWrites != 0) {
+				t.Fatalf("active insert did not preserve unconfirmed state: writes=%d err=%v", searchWrites, err)
+			}
+			if !test.busy && (err != nil || searchWrites != 1) {
+				t.Fatalf("settled search did not repair: writes=%d err=%v", searchWrites, err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
 }
 
 func expectIdentityBodyReceipt(mock sqlmock.Sqlmock, fragment identityExportFragment, lease int64) {
