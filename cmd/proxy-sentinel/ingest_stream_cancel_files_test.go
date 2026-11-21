@@ -4,9 +4,11 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"proxy-sentinel/internal/realtime"
 	"proxy-sentinel/internal/streamlog"
@@ -149,6 +151,28 @@ func TestCancellationFileInventoryOrdersDateAndNumericRotations(t *testing.T) {
 		if len(paths) != len(names)+1 || paths[len(paths)-1] != path || paths[0] != path+names[len(names)-1] {
 			t.Fatal(paths)
 		}
+	}
+}
+
+func TestCancellationInventoryIncludesRetainedHourlyDHCPFiles(t *testing.T) {
+	root := t.TempDir()
+	day := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	for dayIndex := 0; dayIndex < 21; dayIndex++ {
+		dir := filepath.Join(root, day.AddDate(0, 0, dayIndex).Format("2006-01-02"))
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for hour := 0; hour < 24; hour++ {
+			path := filepath.Join(dir, fmt.Sprintf("device_dhcp_message.%02d:00:00-%02d:00:00.log.gz", hour, (hour+1)%24))
+			if err := os.WriteFile(path, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	path := filepath.Join(root, "current", "device_dhcp_message.log")
+	paths, err := cancellationSourcePaths(streamlog.SourceCursor{Source: "zeek-dhcp-binding", Path: path})
+	if err != nil || len(paths) != 21*24+1 || paths[len(paths)-1] != path {
+		t.Fatalf("retained DHCP archives were not enumerated: files=%d err=%v", len(paths), err)
 	}
 }
 

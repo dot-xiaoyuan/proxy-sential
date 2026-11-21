@@ -37,13 +37,15 @@ type cancelledSourceFiles struct {
 
 func cancellationSourcePaths(cursor streamlog.SourceCursor) ([]string, error) {
 	if cursor.Source == "zeek-dhcp-binding" {
+		// Include a month of hourly files when proving that the old cursor has one anchor.
+		const maxRetainedZeekHourlyFiles = 31 * 24
 		base := strings.TrimSuffix(filepath.Base(cursor.Path), ".log")
 		paths, e := filepath.Glob(filepath.Join(filepath.Dir(filepath.Dir(cursor.Path)), "????-??-??", base+".*.log.gz"))
 		if e != nil {
 			return nil, e
 		}
-		if len(paths) > 168 {
-			return nil, errors.New("cancellation exceeds 168 retained hourly files")
+		if len(paths) > maxRetainedZeekHourlyFiles {
+			return nil, fmt.Errorf("cancellation exceeds %d retained hourly files", maxRetainedZeekHourlyFiles)
 		}
 		sort.Strings(paths)
 		return append(paths, cursor.Path), nil
