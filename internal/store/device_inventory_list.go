@@ -69,47 +69,6 @@ func (s *PostgresStore) ListDeviceInventory(ctx context.Context, query Query) (D
 	}
 	baseSQL := " FROM endpoint_inventory_lookup i JOIN endpoint_entities e USING(endpoint_id) LEFT JOIN endpoint_recognition_summary r USING(endpoint_id) WHERE " + strings.Join(baseWhere, " AND ")
 
-	facets := DeviceFilterFacets{Brands: []string{}, OSFamilies: []string{}}
-	if !query.InventorySkipMetadata {
-		started = time.Now()
-		facetRows, err := conn.QueryContext(ctx, "SELECT DISTINCT coalesce(r.filter_brand,'unknown'),coalesce(r.filter_os_family,'unknown')"+baseSQL, baseArgs...)
-		if err != nil {
-			return DeviceInventoryListPage{}, err
-		}
-		brandSet, osSet := map[string]string{}, map[string]string{}
-		for facetRows.Next() {
-			var brand, osFamily string
-			if err = facetRows.Scan(&brand, &osFamily); err != nil {
-				facetRows.Close()
-				return DeviceInventoryListPage{}, err
-			}
-			if brand == "" {
-				brand = "unknown"
-			}
-			if osFamily == "" {
-				osFamily = "unknown"
-			}
-			brandSet[strings.ToLower(brand)] = brand
-			osSet[strings.ToLower(osFamily)] = osFamily
-		}
-		if err = facetRows.Err(); err != nil {
-			facetRows.Close()
-			return DeviceInventoryListPage{}, err
-		}
-		facetRows.Close()
-		for _, value := range brandSet {
-			facets.Brands = append(facets.Brands, value)
-		}
-		for _, value := range osSet {
-			facets.OSFamilies = append(facets.OSFamilies, value)
-		}
-		sort.Slice(facets.Brands, func(i, j int) bool { return strings.ToLower(facets.Brands[i]) < strings.ToLower(facets.Brands[j]) })
-		sort.Slice(facets.OSFamilies, func(i, j int) bool {
-			return strings.ToLower(facets.OSFamilies[i]) < strings.ToLower(facets.OSFamilies[j])
-		})
-		inventoryTiming(ctx, "facets", started)
-	}
-
 	where := append([]string{}, baseWhere...)
 	args := append([]any{}, baseArgs...)
 	add := func(clause string, value any) {
@@ -180,12 +139,62 @@ func (s *PostgresStore) ListDeviceInventory(ctx context.Context, query Query) (D
 
 	whereSQL := " FROM endpoint_inventory_lookup i JOIN endpoint_entities e USING(endpoint_id) LEFT JOIN endpoint_recognition_summary r USING(endpoint_id) WHERE " + strings.Join(where, " AND ")
 	var total int
+	facets := DeviceFilterFacets{Brands: []string{}, OSFamilies: []string{}}
 	if !query.InventorySkipMetadata {
 		started = time.Now()
-		if err = conn.QueryRowContext(ctx, "SELECT count(*)"+whereSQL, args...).Scan(&total); err != nil {
+		const facetColumns = "coalesce(r.filter_brand,'unknown'),coalesce(r.filter_os_family,'unknown')"
+		// Without extra filters, the facets and total cover the same rows.
+		// Count the groups in the same scan to avoid rereading the projection.
+		countWithFacets := len(where) == len(baseWhere)
+		facetSQL := "SELECT DISTINCT " + facetColumns + ",0::bigint" + baseSQL
+		if countWithFacets {
+			facetSQL = "SELECT " + facetColumns + ",count(*)" + baseSQL + " GROUP BY 1,2"
+		}
+		facetRows, err := conn.QueryContext(ctx, facetSQL, baseArgs...)
+		if err != nil {
 			return DeviceInventoryListPage{}, err
 		}
-		inventoryTiming(ctx, "count", started)
+		brandSet, osSet := map[string]string{}, map[string]string{}
+		for facetRows.Next() {
+			var brand, osFamily string
+			var count int
+			if err = facetRows.Scan(&brand, &osFamily, &count); err != nil {
+				facetRows.Close()
+				return DeviceInventoryListPage{}, err
+			}
+			if brand == "" {
+				brand = "unknown"
+			}
+			if osFamily == "" {
+				osFamily = "unknown"
+			}
+			total += count
+			brandSet[strings.ToLower(brand)] = brand
+			osSet[strings.ToLower(osFamily)] = osFamily
+		}
+		if err = facetRows.Err(); err != nil {
+			facetRows.Close()
+			return DeviceInventoryListPage{}, err
+		}
+		facetRows.Close()
+		for _, value := range brandSet {
+			facets.Brands = append(facets.Brands, value)
+		}
+		for _, value := range osSet {
+			facets.OSFamilies = append(facets.OSFamilies, value)
+		}
+		sort.Slice(facets.Brands, func(i, j int) bool { return strings.ToLower(facets.Brands[i]) < strings.ToLower(facets.Brands[j]) })
+		sort.Slice(facets.OSFamilies, func(i, j int) bool {
+			return strings.ToLower(facets.OSFamilies[i]) < strings.ToLower(facets.OSFamilies[j])
+		})
+		inventoryTiming(ctx, "facets", started)
+		if !countWithFacets {
+			started = time.Now()
+			if err = conn.QueryRowContext(ctx, "SELECT count(*)"+whereSQL, args...).Scan(&total); err != nil {
+				return DeviceInventoryListPage{}, err
+			}
+			inventoryTiming(ctx, "count", started)
+		}
 	}
 	if query.InventoryPositionPage > 0 {
 		query.Limit = limit

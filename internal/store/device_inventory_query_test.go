@@ -61,11 +61,17 @@ func TestDeviceInventoryMetadataNeverReadsRowsOrHistories(t *testing.T) {
 	defer db.Close()
 	s := &PostgresStore{db: db}
 	mock.ExpectQuery(`SELECT bootstrap_complete,last_error,last_success_at,updated_at FROM endpoint_state_watermark`).WillReturnRows(sqlmock.NewRows([]string{"complete", "error", "success", "at"}).AddRow(true, "", time.Now(), time.Now()))
-	mock.ExpectQuery(`SELECT DISTINCT coalesce`).WillReturnRows(sqlmock.NewRows([]string{"brand", "os"}).AddRow("Dell", "Windows"))
-	mock.ExpectQuery(`SELECT count\(\*\)`).WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(35001))
-	page, err := s.ListDeviceInventory(context.Background(), Query{InventoryMetadataOnly: true})
+	mock.ExpectQuery(`SELECT coalesce\(r.filter_brand,'unknown'\),coalesce\(r.filter_os_family,'unknown'\),count\(\*\).*i.last_seen >= \$1 AND i.last_seen <= \$2 GROUP BY 1,2`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"brand", "os", "count"}).AddRow("Dell", "Windows", 35000).AddRow("", "Windows", 1)).
+		RowsWillBeClosed()
+	page, err := s.ListDeviceInventory(context.Background(), Query{View: "recent", InventoryMetadataOnly: true})
 	if err != nil || page.Page.Total != 35001 || len(page.Items) != 0 || page.AsOf == "" {
 		t.Fatalf("metadata: %+v %v", page, err)
+	}
+	if len(page.Facets.Brands) != 2 || page.Facets.Brands[0] != "Dell" || page.Facets.Brands[1] != "unknown" ||
+		len(page.Facets.OSFamilies) != 1 || page.Facets.OSFamilies[0] != "Windows" {
+		t.Fatalf("facets: %+v", page.Facets)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -102,7 +108,7 @@ func TestDeviceInventoryExactIPSearchIncludesCurrentSnapshot(t *testing.T) {
 			}
 			predicate := `.*h.ip=` + ipArg + `::inet.*s.ip=` + ipArg + `::inet.*JOIN LATERAL \(SELECT 1 FROM account_identity_session_projection p JOIN account_identity_projection_sources src.*p.ip=host\(` + ipArg + `::inet\).*src.observed_at>=now\(\).*LIMIT 1\) snapshot ON true WHERE candidate.current_ip=` + ipArg + `::inet`
 			if tc.query.InventoryMetadataOnly {
-				mock.ExpectQuery(`SELECT DISTINCT coalesce`).WillReturnRows(sqlmock.NewRows([]string{"brand", "os"}))
+				mock.ExpectQuery(`SELECT DISTINCT coalesce`).WillReturnRows(sqlmock.NewRows([]string{"brand", "os", "count"}).AddRow("Dell", "Windows", 0))
 				mock.ExpectQuery(`(?s)SELECT count\(\*\)` + predicate).WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(0))
 			} else {
 				mock.ExpectQuery(`(?s)SELECT i.list_item,i.updated_at` + predicate).WillReturnRows(sqlmock.NewRows([]string{"list_item", "updated_at"}))
