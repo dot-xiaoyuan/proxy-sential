@@ -77,7 +77,7 @@ CREATE TEMP TABLE passive_hardware_current (identity_key text,scope_key text,mac
 		t.Fatal(err)
 	}
 	if got.IPv4Total != 3 || got.IPv4Only != 1 || got.MACTotal != 6 || got.MACOnly != 4 ||
-		got.IPMACPairs != 2 || got.ScopedPairs != 2 || got.TrustedIdentities != 2 || got.IdentifiedPairs != 2 || got.TypedPairs != 1 {
+		got.IPMACPairs != 2 || got.ScopedPairs != 2 || got.TrustedIdentities != 2 || got.IdentifiedPairs != 2 || got.TypedPairs != 1 || got.TypedIdentities != 1 {
 		t.Fatalf("expired rebinding or candidate type counted as identified: %+v", got)
 	}
 }

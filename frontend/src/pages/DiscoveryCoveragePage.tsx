@@ -25,34 +25,63 @@ const sections = [
 ] as const
 
 type Metadata = components['schemas']['DiscoveryDeviceMetadata']
+const networkChartLimit = 10
+
+function isLinkLocalSubnet(value: string) {
+  return /^fe[89ab][0-9a-f]:/i.test(value)
+}
 
 function CoverageNetworks({ data, window }: { data: Metadata; window: string }) {
-  const [kind, setKind] = useState<'subnet' | 'vlan'>('subnet')
+  const [kind, setKind] = useState<'ipv4' | 'ipv6' | 'vlan'>('ipv4')
   const [search, setSearch] = useState('')
-  const groups = kind === 'subnet'
-    ? (data.overview?.subnets ?? []).map(row => ({ value: row.subnet, count: row.count }))
-    : (data.vlans ?? []).map(row => ({ value: row.vlan, count: row.count }))
+  const groups = kind === 'vlan'
+    ? (data.vlans ?? []).map(row => ({ value: row.vlan, count: row.count }))
+    : (data.overview?.subnets ?? []).filter(row => row.subnet.includes(':') === (kind === 'ipv6'))
+      .map(row => ({ value: row.subnet, count: row.count }))
   const rows = groups.filter(row => row.value.toLowerCase().includes(search.trim().toLowerCase()))
     .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value))
+  const ranked = rows.slice(0, networkChartLimit)
+  const remaining = rows.slice(networkChartLimit)
+  const max = ranked[0]?.count ?? 0
+  const title = kind === 'vlan' ? 'VLAN' : kind === 'ipv6' ? 'IPv6 网段' : 'IPv4 网段'
+  const searchLabel = kind === 'vlan' ? '搜索 VLAN' : '搜索网段'
+  const detailUrl = (value: string) => `/devices?${new URLSearchParams({
+    tab: 'discovery', discovery_window: window, [kind === 'vlan' ? 'discovery_vlan' : 'discovery_subnet']: value,
+  })}`
   return <section className="coverage-content" aria-label="网段与 VLAN 分布">
     <div className="coverage-timestamps"><span>发现处理水位 {observedTimeTitle(data.as_of)}</span></div>
     <section className="coverage-panel">
       <header className="coverage-panel-heading">
-        <div><h4>有记录的分组</h4><p>{kind === 'subnet' ? '按有效设备地址归入 IPv4 /24、IPv6 /64' : '按发现记录中保留的采集 VLAN 分组'} · 最多显示 100 组</p></div>
-        <Segmented<'subnet' | 'vlan'> aria-label="分布维度" value={kind} onChange={value => { setKind(value); setSearch('') }}
-          options={[{ label: '网段', value: 'subnet' }, { label: 'VLAN', value: 'vlan' }]} />
+        <div><h4>{title}分布</h4><p>{kind === 'vlan' ? '按发现记录中的采集 VLAN 分组' : `按有效设备地址的 ${kind === 'ipv4' ? '/24' : '/64'} 前缀分组`}</p></div>
+        <Segmented<'ipv4' | 'ipv6' | 'vlan'> aria-label="分布维度" value={kind} onChange={value => { setKind(value); setSearch('') }}
+          options={[{ label: 'IPv4', value: 'ipv4' }, { label: 'IPv6', value: 'ipv6' }, { label: 'VLAN', value: 'vlan' }]} />
       </header>
-      <Input className="coverage-network-search" aria-label={kind === 'subnet' ? '搜索网段' : '搜索 VLAN'} placeholder={kind === 'subnet' ? '搜索网段' : '搜索 VLAN'}
+      <Input className="coverage-network-search" aria-label={searchLabel} placeholder={searchLabel}
         prefix={<SearchOutlined aria-hidden="true"/>} value={search} onChange={event => setSearch(event.target.value)} allowClear />
-      {rows.length > 0 ? <table className="coverage-network-table">
-        <thead><tr><th scope="col">{kind === 'subnet' ? '网段' : 'VLAN'}</th><th scope="col">发现身份</th><th scope="col">操作</th></tr></thead>
-        <tbody>{rows.map(row => <tr key={row.value}>
-          <th scope="row">{row.value}</th><td>{row.count.toLocaleString('zh-CN')}</td>
-          <td><Link aria-label={`查看 ${row.value} 的发现记录`}
-            to={`/devices?${new URLSearchParams({ tab: 'discovery', discovery_window: window, [`discovery_${kind}`]: row.value })}`}>查看记录</Link></td>
-        </tr>)}</tbody>
-      </table> : <p className="coverage-empty">{search ? '没有匹配的分组。' : '当前范围暂无可分组的发现身份。'}</p>}
-      <p className="coverage-footnote">一个身份可能横跨多个地址组。分组数量来自设备观测，实际网络范围以现场配置为准。</p>
+      {ranked.length > 0 ? <>
+        <figure className="coverage-network-chart" aria-label={`${title}按发现身份排序`}>
+          <figcaption><span>发现身份数</span><span>{remaining.length > 0 ? `前 ${ranked.length} 组 / 共 ${rows.length} 组` : `${ranked.length} 组`}</span></figcaption>
+          <ol>
+            {ranked.map(row => <li key={row.value}>
+              <Link className="coverage-network-bar" aria-label={`查看 ${row.value} 的发现记录`} to={detailUrl(row.value)}>
+                <span className="coverage-network-name">{row.value}{kind === 'ipv6' && isLinkLocalSubnet(row.value) && <small>链路本地</small>}</span>
+                <progress className="coverage-progress" value={row.count} max={max || 1} aria-hidden="true" />
+                <strong>{row.count.toLocaleString('zh-CN')}</strong>
+              </Link>
+            </li>)}
+          </ol>
+          <div className="coverage-network-axis" aria-hidden="true"><span>0</span><span>{max.toLocaleString('zh-CN')}</span></div>
+        </figure>
+        {remaining.length > 0 && <details className="coverage-details">
+          <summary>查看其余 {remaining.length} 组</summary>
+          <ul className="coverage-network-details">
+            {remaining.map(row => <li key={row.value}><Link to={detailUrl(row.value)}>{row.value}</Link><span>{row.count.toLocaleString('zh-CN')} 个发现身份</span></li>)}
+          </ul>
+        </details>}
+      </> : <p className="coverage-empty">{search ? '没有匹配的分组。' : '当前范围暂无可分组的发现身份。'}</p>}
+      <p className="coverage-footnote">同一身份可能出现在多个分组。接口最多返回 100 组观测分组。
+        {kind === 'ipv6' && ' 链路本地地址用于本地链路通信，图中会汇总不同采集范围内的同一前缀。'}
+      </p>
     </section>
   </section>
 }

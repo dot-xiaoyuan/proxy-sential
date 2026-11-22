@@ -90,7 +90,7 @@ CREATE TEMP TABLE passive_hardware_current (device_key text,sensor_id text,last_
 	put("10.2.0.4", "four", "sadp")
 	put("10.2.0.5", "five", "arp")
 	put("10.2.0.6", "six", "sip")
-	bind("one", "candidate")
+	bind("one", "revoked")
 	bind("two", "candidate")
 	bind("three", "candidate")
 	bind("four", "identified")
@@ -100,7 +100,7 @@ CREATE TEMP TABLE passive_hardware_current (device_key text,sensor_id text,last_
 	}
 	if got.TypedIPv4 != 1 || got.IdentityNoTypeIPv4 != 3 || got.NoIdentityIPv4 != 2 ||
 		got.UntypedNetworkOnlyIPv4 != 1 || got.UntypedDHCPOnlyIPv4 != 1 ||
-		got.UntypedApplicationIPv4 != 1 || got.UntypedOtherIPv4 != 0 || got.DiagnosticAsOf == nil {
+		got.UntypedApplicationIPv4 != 1 || got.UntypedOtherIPv4 != 0 || got.RevokedTypeIPv4 != 1 || got.DiagnosticAsOf == nil {
 		t.Fatalf("unexpected evidence buckets: %+v", got)
 	}
 }

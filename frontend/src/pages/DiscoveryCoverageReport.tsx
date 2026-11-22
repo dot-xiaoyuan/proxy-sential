@@ -8,6 +8,33 @@ type CoverageRow = { label: string; value: number; color?: 'teal' | 'blue' | 'sl
 const count = (value: number) => value.toLocaleString('zh-CN')
 const percent = (value: number, total: number) => `${(value / total * 100).toFixed(1)}%`
 
+function CoverageDonut({ label, rows, total, unit }: { label: string; rows: CoverageRow[]; total: number; unit: string }) {
+  let offset = 0
+  return <div className="coverage-donut">
+    <svg className="coverage-donut-chart" viewBox="0 0 144 144" role="img" aria-label={`${label} · ${count(total)} ${unit}`}>
+      <circle cx="72" cy="72" r="59" className="coverage-donut-track" />
+      {rows.filter(row => row.value > 0 && total > 0).map(row => {
+        const size = 100 * row.value / total
+        const start = offset
+        offset += size
+        return <circle key={row.label} cx="72" cy="72" r="59" pathLength="100" transform="rotate(-90 72 72)"
+          className={`coverage-donut-arc coverage-chart-${row.color ?? 'blue'}`}
+          strokeDasharray={`${size} ${100 - size}`} strokeDashoffset={-start} />
+      })}
+      <text x="72" y="73" textAnchor="middle" className="coverage-donut-value">{count(total)}</text>
+      <text x="72" y="92" textAnchor="middle" className="coverage-donut-unit">{unit}</text>
+    </svg>
+    <ul className="coverage-chart-legend" aria-label={`${label}明细`}>
+      {rows.map(row => <li key={row.label}>
+        <span className={`coverage-chart-key coverage-chart-${row.color ?? 'blue'}`} aria-hidden="true" />
+        <span>{row.label}</span>
+        <strong>{count(row.value)}</strong>
+        {total > 0 && <small>{percent(row.value, total)}</small>}
+      </li>)}
+    </ul>
+  </div>
+}
+
 function CoverageRows({ rows, total, unit }: { rows: CoverageRow[]; total: number; unit: string }) {
   return <ul className="coverage-breakdown">
     {rows.map(({ label, value, color }) => <li key={label}>
@@ -59,12 +86,12 @@ export function DiscoveryCoverageReport({ report }: { report: CoverageReport }) 
         <section className="coverage-panel" aria-labelledby="coverage-address-heading">
           <header className="coverage-panel-heading">
             <div><h4 id="coverage-address-heading">IPv4 识别进度</h4><p>按 {count(total)} 个有设备观测的 IPv4 地址去重</p></div>
-            {total > 0 && <div className="coverage-highlight"><strong>{percent(typed, total)}</strong><span>地址已有类型</span></div>}
+            {total > 0 && <div className="coverage-highlight"><strong>{percent(typed, total)}</strong><span>地址对应已确认类型</span></div>}
           </header>
-          {total > 0 ? <CoverageRows total={total} unit="个 IP" rows={[
-            { label: '已确认设备类型', value: typed, color: 'teal' },
-            { label: '已关联设备 · 类型待确认', value: needsType },
-            { label: '有设备观测 · 归属待核实', value: unlinked, color: 'slate' },
+          {total > 0 ? <CoverageDonut label="IPv4 地址类型确认构成" total={total} unit="个 IPv4 地址" rows={[
+            { label: '对应已确认类型', value: typed, color: 'teal' },
+            { label: '已关联设备，类型待确认', value: needsType },
+            { label: '归属待核实', value: unlinked, color: 'slate' },
           ]} /> : <p className="coverage-empty">选定范围内暂无设备侧 IPv4 观测。</p>}
         </section>
         <section className="coverage-panel" aria-labelledby="coverage-gap-heading">
@@ -73,6 +100,10 @@ export function DiscoveryCoverageReport({ report }: { report: CoverageReport }) 
           {breakdown.length > 0 && needsType > 0
             ? <CoverageRows total={needsType} unit="个 IP" rows={breakdown}/>
             : <p className="coverage-empty">{needsType === 0 ? '当前没有这类记录。' : '本次统计暂无协议分项。'}</p>}
+          {report.revoked_type_ipv4 !== undefined && needsType > 0 && <div className="coverage-evidence-note">
+            <p>待确认地址中，<strong>{count(report.revoked_type_ipv4)} 个</strong>关联到已撤销的类型结论。</p>
+            <p>证据失效、结论撤销等都可能触发这一状态，现有统计未区分具体原因。</p>
+          </div>}
         </section>
       </div>}
     <p className="coverage-footnote">一个设备可能使用多个 IP 或出现在多个采集范围。/24 按观测地址分组，网络覆盖率需与镜像配置和台账核对。</p>
@@ -82,6 +113,10 @@ export function DiscoveryCoverageReport({ report }: { report: CoverageReport }) 
 export function DiscoveryMirrorCoverage({ funnel }: { funnel?: MirrorFunnel }) {
   if (!funnel) return <p className="coverage-empty">本次统计暂无镜像标识数据。</p>
   if (funnel.status === 'initializing') return <p className="coverage-empty">镜像标识投影正在建立。</p>
+  const identifiers = [
+    { label: 'IPv4', total: funnel.ipv4_total, only: funnel.ipv4_only, other: 'MAC' },
+    { label: 'MAC', total: funnel.mac_total, only: funnel.mac_only, other: 'IPv4' },
+  ]
   return <section className="coverage-content" aria-label="镜像标识与配对">
     <div className="coverage-timestamps">
       {funnel.as_of && <span>镜像数据截至 {observedTimeTitle(funnel.as_of)}</span>}
@@ -93,20 +128,30 @@ export function DiscoveryMirrorCoverage({ funnel }: { funnel?: MirrorFunnel }) {
       <section className="coverage-panel" aria-labelledby="coverage-binding-heading">
         <header className="coverage-panel-heading">
           <div><h4 id="coverage-binding-heading">有效 IP–MAC 配对</h4><p>窗口内出现且查询时仍有效</p></div>
-          <div className="coverage-highlight"><strong>{count(funnel.ip_mac_pairs)}</strong><span>种配对</span></div>
         </header>
-        <CoverageRows total={funnel.ip_mac_pairs} unit="种配对" rows={[
-          { label: '已确认设备类型', value: funnel.typed_pairs, color: 'teal' },
-          { label: '类型待确认', value: Math.max(0, funnel.ip_mac_pairs - funnel.typed_pairs), color: 'slate' },
+        <CoverageDonut label="有效配对的身份与类型构成" total={funnel.ip_mac_pairs} unit="种有效配对" rows={[
+          { label: '关联到设备且类型已确认', value: funnel.typed_pairs, color: 'teal' },
+          { label: '关联到设备，类型待确认', value: funnel.identified_pairs - funnel.typed_pairs },
+          { label: '身份待关联', value: funnel.ip_mac_pairs - funnel.identified_pairs, color: 'slate' },
         ]} />
-        <p className="coverage-footnote">同一设备可对应多种配对，确认率按配对数计算。</p>
+        <dl className="coverage-pair-identities">
+          <div><dt>配对关联的发现身份</dt><dd>{count(funnel.trusted_identities)} 个</dd></div>
+          {funnel.typed_identities !== undefined && <div><dt>其中类型已确认</dt><dd>{count(funnel.typed_identities)} 个</dd></div>}
+        </dl>
+        <p className="coverage-footnote">同一发现身份可对应多种配对。关联按采集范围和镜像时间对齐。</p>
       </section>
       <section className="coverage-panel" aria-labelledby="coverage-mirror-address-heading">
         <header className="coverage-panel-heading"><div><h4 id="coverage-mirror-address-heading">镜像可见地址</h4><p>窗口内分别对 IPv4、MAC 去重</p></div></header>
-        <dl className="coverage-mirror-rows">
-          <div><dt>IPv4</dt><dd>{count(funnel.ipv4_total)} 个</dd><dd>其中 {count(funnel.ipv4_only)} 个无有效 MAC 配对</dd></div>
-          <div><dt>MAC</dt><dd>{count(funnel.mac_total)} 个</dd><dd>其中 {count(funnel.mac_only)} 个无有效 IPv4 配对</dd></div>
-        </dl>
+        <ul className="coverage-mirror-chart" aria-label="镜像可见地址的有效配对占比">
+          {identifiers.map(({ label, total, only, other }) => <li key={label}>
+            <div className="coverage-mirror-chart-label"><strong>{label}</strong><span>{count(total)} 个</span></div>
+            {total > 0 && <progress className="coverage-progress coverage-progress-teal" aria-label={`${label} 有有效配对`} value={total - only} max={total} />}
+            <div className="coverage-mirror-chart-caption">
+              <span>有有效配对 {count(total - only)} 个{total > 0 && ` · ${percent(total - only, total)}`}</span>
+              <span>{count(only)} 个无有效 {other} 配对</span>
+            </div>
+          </li>)}
+        </ul>
         <details className="coverage-details">
           <summary>查看 MAC 管理位和厂商前缀</summary>
           <CoverageRows total={funnel.mac_total} unit="个 MAC" rows={[

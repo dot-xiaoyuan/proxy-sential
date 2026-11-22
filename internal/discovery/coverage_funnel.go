@@ -28,6 +28,7 @@ type MirrorFunnel struct {
 	TrustedIdentities int64      `json:"trusted_identities"`
 	IdentifiedPairs   int64      `json:"identified_pairs"`
 	TypedPairs        int64      `json:"typed_pairs"`
+	TypedIdentities   int64      `json:"typed_identities"`
 	OUIMatched        int64      `json:"oui_matched"`
 	LocallyAdminMAC   int64      `json:"locally_administered_mac"`
 	NoOUIGlobalMAC    int64      `json:"no_oui_global_mac"`
@@ -118,12 +119,13 @@ SELECT (SELECT count(*) FROM ips),
  (SELECT count(*) FROM raw_pairs p WHERE EXISTS(
   SELECT 1 FROM scoped_pairs s WHERE s.ip=p.ip AND s.mac=p.mac AND s.identity_key IS NOT NULL)),
  (SELECT count(*) FROM typed_pairs),
+ (SELECT count(DISTINCT identity_key) FROM scoped_pairs WHERE hardware_type_status='identified' AND hardware_type<>''),
  (SELECT coalesce(jsonb_agg(mac),'[]'::jsonb) FROM macs)`
 	var rawMACs []byte
 	err = tx.QueryRowContext(ctx, statement, sensor, cutoff, source.Time, result.EvaluatedAt).Scan(
 		&result.IPv4Total, &result.IPv4Only, &result.MACTotal, &result.MACOnly,
 		&result.IPMACPairs, &result.ScopedPairs, &result.TrustedIdentities,
-		&result.IdentifiedPairs, &result.TypedPairs, &rawMACs,
+		&result.IdentifiedPairs, &result.TypedPairs, &result.TypedIdentities, &rawMACs,
 	)
 	if err != nil {
 		return MirrorFunnel{}, fmt.Errorf("mirror census funnel: %w", err)

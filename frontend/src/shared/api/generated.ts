@@ -8657,6 +8657,11 @@ export interface components {
             untyped_application_ipv4?: number;
             /** Format: int64 */
             untyped_other_ipv4?: number;
+            /**
+             * Format: int64
+             * @description Subset of associated IPv4 addresses awaiting type confirmation with a revoked hardware conclusion in at least one observed identity. The cause of revocation is not classified.
+             */
+            revoked_type_ipv4?: number;
             mirror_funnel: components["schemas"]["DiscoveryMirrorFunnel"];
         };
         DiscoveryMirrorFunnel: {
@@ -8722,6 +8727,11 @@ export interface components {
              * @description Distinct currently valid raw IP and MAC combinations with an identified nonempty hardware type in at least one matching access scope.
              */
             typed_pairs: number;
+            /**
+             * Format: int64
+             * @description Distinct scoped identities with an identified nonempty hardware type associated with these valid pairs.
+             */
+            typed_identities?: number;
             /**
              * Format: int64
              * @description Distinct globally administered MAC values matched by the active IEEE OUI library.

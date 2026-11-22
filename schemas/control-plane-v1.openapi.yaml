@@ -9056,6 +9056,7 @@ components:
         untyped_dhcp_only_ipv4: { type: integer, format: int64, minimum: 0 }
         untyped_application_ipv4: { type: integer, format: int64, minimum: 0 }
         untyped_other_ipv4: { type: integer, format: int64, minimum: 0 }
+        revoked_type_ipv4: { type: integer, format: int64, minimum: 0, description: Subset of associated IPv4 addresses awaiting type confirmation with a revoked hardware conclusion in at least one observed identity. The cause of revocation is not classified. }
         mirror_funnel: { $ref: '#/components/schemas/DiscoveryMirrorFunnel' }
     DiscoveryMirrorFunnel:
       type: object
@@ -9074,6 +9075,7 @@ components:
         trusted_identities: { type: integer, format: int64, minimum: 0, description: Distinct discovery hardware identities associated with these scoped pairs. }
         identified_pairs: { type: integer, format: int64, minimum: 0, description: Distinct raw IP and MAC combinations associated with a discovery hardware identity, regardless of device type. }
         typed_pairs: { type: integer, format: int64, minimum: 0, description: Distinct currently valid raw IP and MAC combinations with an identified nonempty hardware type in at least one matching access scope. }
+        typed_identities: { type: integer, format: int64, minimum: 0, description: Distinct scoped identities with an identified nonempty hardware type associated with these valid pairs. }
         oui_matched: { type: integer, format: int64, minimum: 0, description: Distinct globally administered MAC values matched by the active IEEE OUI library. }
         locally_administered_mac: { type: integer, format: int64, minimum: 0, description: Distinct MAC values with the locally administered bit, including but not proving randomized addresses. }
         no_oui_global_mac: { type: integer, format: int64, minimum: 0, description: Distinct globally administered MAC values without a match in the active IEEE OUI library. }

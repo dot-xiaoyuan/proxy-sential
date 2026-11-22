@@ -10,7 +10,7 @@ it('uses one address denominator for the three IPv4 stages and a separate denomi
   const progress = within(coverage).getByRole('region', {name:'IPv4 识别进度'})
   expect(progress).toHaveTextContent('15,390 个有设备观测的 IPv4')
   expect(progress).toHaveTextContent('1.9%')
-  expect(within(progress).getByRole('progressbar', {name:'已确认设备类型'})).toHaveAttribute('max','15390')
+  expect(within(progress).getByRole('img', {name:/IPv4 地址类型确认构成/})).toHaveAttribute('aria-label','IPv4 地址类型确认构成 · 15,390 个 IPv4 地址')
   const gaps = within(coverage).getByRole('region', {name:'类型待确认的证据'})
   expect(gaps).toHaveTextContent('1,000 个已关联设备')
   const dhcp = within(gaps).getByRole('progressbar', {name:'有 DHCP · 缺应用或设备公告'})
@@ -23,13 +23,13 @@ it('uses one address denominator for the three IPv4 stages and a separate denomi
 it('displays the mirror ratio using valid pair counts and shows OUI only on demand', () => {
   render(<DiscoveryMirrorCoverage funnel={report.mirror_funnel} />)
   const pairs = screen.getByRole('region', {name:'有效 IP–MAC 配对'})
-  expect(pairs).toHaveTextContent('4,034种配对')
   expect(pairs).toHaveTextContent('17.4%')
-  expect(within(pairs).getByRole('progressbar',{name:'已确认设备类型'})).toHaveAttribute('max','4034')
+  expect(within(pairs).getByRole('img',{name:'有效配对的身份与类型构成 · 4,034 种有效配对'})).toBeVisible()
+  expect(within(pairs).getByText('身份待关联')).toBeVisible()
   expect(screen.getByText('全局管理 · 匹配 OUI')).not.toBeVisible()
   fireEvent.click(screen.getByText('查看 MAC 管理位和厂商前缀'))
   expect(screen.getByText('全局管理 · 匹配 OUI')).toBeVisible()
-  expect(screen.getByText(/其中 3,938 个/)).toBeVisible()
+  expect(screen.getByText('3,938 个无有效 MAC 配对')).toBeVisible()
 })
 
 it('keeps zero and absent breakdowns distinct', () => {
@@ -54,4 +54,11 @@ it('keeps address coverage visible when identity totals time out', () => {
   expect(screen.getByRole('region', { name: 'IPv4 识别进度' })).toHaveTextContent('15,390')
   expect(screen.queryByText('发现处理水位', { exact: false })).not.toBeInTheDocument()
   expect(screen.queryByText('个发现身份', { exact: true })).not.toBeInTheDocument()
+})
+
+it('shows revoked type conclusions as a subset of addresses still awaiting confirmation', () => {
+  render(<DiscoveryCoverageReport report={{...report, revoked_type_ipv4: 25}} />)
+  expect(screen.getByText('25 个')).toBeVisible()
+  expect(screen.getByText(/现有统计未区分具体原因/)).toBeVisible()
+  expect(screen.getByRole('region', {name:'类型待确认的证据'})).toHaveTextContent('1,000 个已关联设备')
 })

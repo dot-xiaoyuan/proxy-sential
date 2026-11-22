@@ -1,5 +1,5 @@
 import { LockOutlined, SafetyCertificateOutlined, UserOutlined } from '@ant-design/icons'
-import { Button, Form, Input, Typography } from 'antd'
+import { Button, Form, Input } from 'antd'
 import { useState } from 'react'
 
 import { ApiError } from '../shared/api/client'
@@ -42,13 +42,14 @@ export function LoginPage() {
         <div className="login-main">
           <section className="login-card" aria-labelledby="login-card-title">
             <div className="login-card-heading">
-              <Typography.Title level={1} id="login-card-title">登录</Typography.Title>
+              <h1 id="login-card-title">登录</h1>
             </div>
 
             {login.isError && <AppErrorAlert className="margin-bottom-md" title="登录失败" message={loginErrorMessage(login.error)} />}
             <Form
               className="login-form"
               layout="vertical"
+              requiredMark={false}
               onFinish={(values: { username: string; password: string }) => login.mutate(values)}
               onValuesChange={() => { if (login.isError) login.reset() }}
             >
@@ -70,7 +71,7 @@ export function LoginPage() {
                   onBlur={() => setCapsLock(false)}
                 />
               </Form.Item>
-              <Button block htmlType="submit" loading={login.isPending} type="primary">登 录</Button>
+              <Button block htmlType="submit" loading={login.isPending} type="primary" autoInsertSpace={false}>登录</Button>
             </Form>
 
           </section>

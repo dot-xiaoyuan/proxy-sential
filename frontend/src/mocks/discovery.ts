@@ -14,7 +14,7 @@ function filteredPassiveDevices(url: URL) {
 }
 
 export const discoveryHandlers=[
- http.get('*/discovery/devices/coverage-report',({request})=>HttpResponse.json({as_of:now,identity_as_of:new Date(Date.now()-22*60_000).toISOString(),diagnostic_as_of:now,window:new URL(request.url).searchParams.get('window')||'24h',subnet24:2,ipv4:3,ipv6:1,mac:4,scoped_mac:4,ip_mac_pairs:3,ipv4_with_mac:2,ip_mac_unique_pairs:2,ip_mac_valid_scoped_pairs:1,multi_mac_ipv4:0,multi_scope_ip_mac_pairs:1,blank_and_filled_vlan_pairs:1,identified:4,dumb_terminals:2,identity_total:5,typed_ipv4:1,identity_no_type_ipv4:1,no_identity_ipv4:1,untyped_network_only_ipv4:1,untyped_dhcp_only_ipv4:0,untyped_application_ipv4:0,untyped_other_ipv4:0,mirror_funnel:{status:'ready',evaluated_at:now,as_of:now,available_from:new Date(Date.now()-25*3600_000).toISOString(),ipv4_total:9,ipv4_only:5,mac_total:6,mac_only:2,ip_mac_pairs:5,scoped_pairs:6,trusted_identities:3,identified_pairs:4,typed_pairs:2,oui_matched:2,locally_administered_mac:3,no_oui_global_mac:1,oui_library_version:'fixture-oui'}})),
+ http.get('*/discovery/devices/coverage-report',({request})=>HttpResponse.json({as_of:now,identity_as_of:new Date(Date.now()-22*60_000).toISOString(),diagnostic_as_of:now,window:new URL(request.url).searchParams.get('window')||'24h',subnet24:2,ipv4:3,ipv6:1,mac:4,scoped_mac:4,ip_mac_pairs:3,ipv4_with_mac:2,ip_mac_unique_pairs:2,ip_mac_valid_scoped_pairs:1,multi_mac_ipv4:0,multi_scope_ip_mac_pairs:1,blank_and_filled_vlan_pairs:1,identified:4,dumb_terminals:2,identity_total:5,typed_ipv4:1,identity_no_type_ipv4:1,no_identity_ipv4:1,untyped_network_only_ipv4:1,untyped_dhcp_only_ipv4:0,untyped_application_ipv4:0,untyped_other_ipv4:0,revoked_type_ipv4:1,mirror_funnel:{status:'ready',evaluated_at:now,as_of:now,available_from:new Date(Date.now()-25*3600_000).toISOString(),ipv4_total:9,ipv4_only:5,mac_total:6,mac_only:2,ip_mac_pairs:5,scoped_pairs:6,trusted_identities:3,identified_pairs:4,typed_pairs:2,typed_identities:2,oui_matched:2,locally_administered_mac:3,no_oui_global_mac:1,oui_library_version:'fixture-oui'}})),
  http.get('*/discovery/census/summary',({request})=>{
   const window=new URL(request.url).searchParams.get('window')||'24h'
   return HttpResponse.json({metric_version:'passive-census/v1',scope:{sensor_id:'sensor-test'},window,status:window==='24h'?'ready':'partial',as_of:now,available_from:new Date(Date.now()-25*3600_000).toISOString(),last_success_at:now,failed_batches:0,last_batch_rows:4,last_batch_ms:8,scope_version:'fixture',observed_ips:2,observed_ipv4:1,observed_ipv6:1,observed_macs:1,random_macs:0,incomplete_scope:0,active_bindings:1,identified_terminals:1,terminal_candidates:0,terminal_conflicts:0,terminal_expired:0,manually_verified:0,types:[{device_type:'printer',identified:1,candidate:0,conflict:0,expired:0},...['camera','recorder','access_control','voip_phone'].map(device_type=>({device_type,identified:0,candidate:0,conflict:0,expired:0}))]})
@@ -39,7 +39,7 @@ export const discoveryHandlers=[
   return HttpResponse.json({page,limit,cursor:page===1?'':String(offset),as_of:now})
  }),
  http.get('*/discovery/devices/metadata',({request})=>{
-  const items=filteredPassiveDevices(new URL(request.url)) as Array<{classification_status?:string;device_type?:string}>
+  const items=filteredPassiveDevices(new URL(request.url))
   const byType=new Map<string,number>()
   for(const item of items)if(item.classification_status==='identified'&&item.device_type)byType.set(item.device_type,(byType.get(item.device_type)??0)+1)
   const identified=[...byType.values()].reduce((sum,count)=>sum+count,0)
@@ -47,7 +47,10 @@ export const discoveryHandlers=[
     vlans:items.length?[{vlan:'32',count:items.length}]:[],
     overview:{active:items.length,previous_active:0,dumb_terminals:identified,new_seven_days:identified,
       new_by_day:[{date:now.slice(0,10),count:identified}],brands:byType.has('printer')?[{brand:'HP',device_type:'printer',count:byType.get('printer')}]:[],
-      subnets:items.length?[{subnet:'192.0.2.0/24',count:items.length}]:[]},
+      subnets:[
+        {subnet:'192.0.2.0/24',count:items.filter(item=>item.addresses.some(address=>address.startsWith('192.0.2.'))).length},
+        {subnet:'fe80::/64',count:items.filter(item=>item.addresses.some(address=>address.startsWith('fe80:'))).length},
+      ].filter(row=>row.count>0)},
     as_of:now,count_unit:'trusted_discovery_identity',window:'24h0m0s'})
  }),
  http.get('*/discovery/types',()=>HttpResponse.json({version:'device-types-v1',items:[{id:'printer',label:'打印机',category:'printer'},{id:'camera',label:'摄像机',category:'camera'},{id:'access_control',label:'门禁设备',category:'access_control'},{id:'sensor',label:'传感设备',category:'sensor'},{id:'access_point',label:'无线接入点',category:'network'},{id:'router',label:'路由器',category:'network'},{id:'switch',label:'交换机',category:'network'},{id:'desktop',label:'桌面终端',category:'desktop'},{id:'mobile',label:'手机',category:'mobile'}]})),
