@@ -24,11 +24,12 @@ export function DiscoveryCoverageReport({ report }: { report: CoverageReport }) 
   const { typed_ipv4: typed, identity_no_type_ipv4: needsType, no_identity_ipv4: unlinked } = report
   const total = typed !== undefined && needsType !== undefined && unlinked !== undefined
     ? typed + needsType + unlinked : undefined
-  const lagMinutes = Math.round((Date.parse(report.as_of) - Date.parse(report.identity_as_of)) / 60_000)
+  const lagMinutes = report.identity_as_of ? Math.round((Date.parse(report.as_of) - Date.parse(report.identity_as_of)) / 60_000) : 0
   const metrics = [
     { label: '有设备观测的 IPv4', value: total ?? report.ipv4, unit: '个地址' },
     { label: '观测到的 /24 分组', value: report.subnet24, unit: '组 IPv4' },
-    { label: '已确认硬件类型', value: report.identified, unit: '个发现身份', detail: `共 ${count(report.identity_total)} 个发现身份` },
+    { label: '已确认硬件类型', value: report.identified, unit: '个发现身份',
+      detail: report.identity_total !== undefined ? `共 ${count(report.identity_total)} 个发现身份` : undefined },
     { label: '已确认的哑终端', value: report.dumb_terminals, unit: '个发现身份', detail: '已包含在确认数中' },
   ]
   const breakdown = [
@@ -43,12 +44,13 @@ export function DiscoveryCoverageReport({ report }: { report: CoverageReport }) 
       <span>{report.diagnostic_as_of
         ? `设备观测截至 ${observedTimeTitle(report.diagnostic_as_of)}`
         : `统计时间 ${observedTimeTitle(report.as_of)}`}</span>
-      <span>发现处理水位 {observedTimeTitle(report.identity_as_of)}</span>
+      {report.identity_as_of && <span>发现处理水位 {observedTimeTitle(report.identity_as_of)}</span>}
       {lagMinutes > 5 && <span className="coverage-warning">相对统计时间滞后约 {lagMinutes} 分钟</span>}
     </div>
+    {report.identity_status === 'timeout' && <p className="coverage-empty" role="status">身份统计读取超时。地址覆盖和镜像配对数据已加载，可刷新重试身份统计。</p>}
     <dl className="coverage-metrics">
       {metrics.map(({ label, value, unit, detail }) => <div className="coverage-metric" key={label}>
-        <dt>{label}</dt><dd><strong>{count(value)}</strong> <span>{unit}</span></dd>
+        <dt>{label}</dt>{value !== undefined && <dd><strong>{count(value)}</strong> <span>{unit}</span></dd>}
         {detail && <dd className="coverage-metric-detail">{detail}</dd>}
       </div>)}
     </dl>

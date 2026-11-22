@@ -2530,30 +2530,52 @@ func (s *Server) handleDeviceFingerprintConflicts(w http.ResponseWriter, r *http
 }
 
 func (s *Server) handleActivityOverview(w http.ResponseWriter, r *http.Request) {
-	sensorID := r.URL.Query().Get("sensor_id")
+	values := r.URL.Query()
+	sensorID := values.Get("sensor_id")
 	if sensorID == "" {
 		sensorID = s.sensorID
 	}
-	window := r.URL.Query().Get("window")
+	window := values.Get("window")
 	if _, _, err := store.NormalizeActivityWindow(window); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_activity_window", err.Error())
 		return
 	}
-	if asOf := r.URL.Query().Get("as_of"); asOf != "" {
+	if asOf := values.Get("as_of"); asOf != "" {
 		if _, err := time.Parse(time.RFC3339, asOf); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_activity_as_of", "as_of must be an RFC3339 timestamp")
 			return
 		}
 	}
-	ctx, cancel := contextWithRequestTimeout(r.Context())
+	view := values.Get("view")
+	if view != "" && view != "summary" {
+		writeError(w, http.StatusBadRequest, "bad_activity_view", "activity view must be summary")
+		return
+	}
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if view == "summary" {
+		ctx, cancel = context.WithTimeout(r.Context(), reportQueryLimit)
+	} else {
+		ctx, cancel = contextWithRequestTimeout(r.Context())
+	}
 	defer cancel()
 	overview, err := s.reader.GetActivityOverview(ctx, store.ActivityQuery{
-		SensorID: sensorID,
-		CampusID: r.URL.Query().Get("campus_id"),
-		AsOf:     r.URL.Query().Get("as_of"),
-		Window:   window,
+		SensorID:    sensorID,
+		CampusID:    values.Get("campus_id"),
+		AsOf:        values.Get("as_of"),
+		Window:      window,
+		SummaryOnly: view == "summary",
 	})
 	if err != nil {
+		if view == "summary" {
+			log.Printf("activity summary read failed for window %s: %v", window, err)
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				writeError(w, http.StatusGatewayTimeout, "activity_summary_timeout", "网络访问统计读取超时")
+			} else {
+				writeError(w, http.StatusInternalServerError, "read_activity_failed", "读取网络访问统计失败")
+			}
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "read_activity_failed", err.Error())
 		return
 	}

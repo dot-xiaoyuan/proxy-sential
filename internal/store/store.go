@@ -375,6 +375,7 @@ type ActivityQuery struct {
 	Q           string
 	View        string
 	SampleLimit int
+	SummaryOnly bool
 }
 
 type ActivityOverview struct {
@@ -706,7 +707,7 @@ type EndpointDeviceInventory struct {
 	OwnershipClass          string                          `json:"ownership_class"`
 	MergeStatus             string                          `json:"merge_status"`
 	CurrentAccount          string                          `json:"current_account,omitempty"`
-	CurrentIP               string                          `json:"current_ip,omitempty"` // Most recently observed address; does not imply online status.
+	CurrentIP               string                          `json:"current_ip,omitempty"`   // Most recently observed address; does not imply online status.
 	CurrentIPv4             string                          `json:"current_ipv4,omitempty"` // Most recently observed IPv4 address; operational key for policies and risk.
 	CurrentIPv6             string                          `json:"current_ipv6,omitempty"` // Most recently observed IPv6 address; SLAAC evidence, never substitutes for IPv4.
 	CurrentAccessID         string                          `json:"current_access_id,omitempty"`

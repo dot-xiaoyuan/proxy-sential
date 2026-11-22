@@ -633,7 +633,7 @@ func (s *ClickHouseStore) getActivityOverview(ctx context.Context, query Activit
 		RiskLevelCounts:    map[string]int{"normal": 0, "suspicious": 0, "high": 0, "confirmed": 0},
 	}
 
-	jobs := []func(context.Context) error{
+	summaryJobs := []func(context.Context) error{
 		func(ctx context.Context) error {
 			summary, err := s.activitySummary(ctx, where)
 			if err != nil {
@@ -659,6 +659,8 @@ LIMIT 20
 FORMAT JSONEachRow`, where))
 			return err
 		},
+	}
+	jobs := append(summaryJobs,
 		func(ctx context.Context) error {
 			var err error
 			overview.ProtocolCounts, err = s.activityCounts(ctx, fmt.Sprintf(`
@@ -737,17 +739,22 @@ FORMAT JSONEachRow`, where))
 			overview.TopActiveRiskIPs, overview.ActiveRiskIPCount, overview.RiskLevelCounts, err = s.activityRiskIPCounts(ctx, where, risks)
 			return err
 		},
+	)
+	if query.SummaryOnly {
+		jobs = summaryJobs
 	}
 	if buckets {
-		riskJob := func(ctx context.Context) error {
-			source, err := activityChartFactRowsSQL(query, window, []string{"source_ip", "ip_domain"})
-			if err != nil {
+		jobs = []func(context.Context) error{func(ctx context.Context) error { return s.populateActivityChartBuckets(ctx, query, window, &overview) }}
+		if !query.SummaryOnly {
+			jobs = append(jobs, func(ctx context.Context) error {
+				source, err := activityChartFactRowsSQL(query, window, []string{"source_ip", "ip_domain"})
+				if err != nil {
+					return err
+				}
+				overview.TopActiveRiskIPs, overview.ActiveRiskIPCount, overview.RiskLevelCounts, err = s.activityRiskIPCounts(ctx, where, risks, source)
 				return err
-			}
-			overview.TopActiveRiskIPs, overview.ActiveRiskIPCount, overview.RiskLevelCounts, err = s.activityRiskIPCounts(ctx, where, risks, source)
-			return err
+			})
 		}
-		jobs = []func(context.Context) error{func(ctx context.Context) error { return s.populateActivityChartBuckets(ctx, query, window, &overview) }, riskJob}
 	}
 	if err := runActivityQueries(ctx, jobs); err != nil {
 		return ActivityOverview{}, err

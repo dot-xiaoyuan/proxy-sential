@@ -163,9 +163,12 @@ func (s *DBStore) GetActivityOverview(ctx context.Context, query ActivityQuery) 
 	if query.SensorID == "" {
 		query.SensorID = s.pg.sensorID
 	}
-	risks, err := s.pg.RiskSnapshotMap(ctx)
-	if err != nil {
-		return ActivityOverview{}, err
+	var risks map[string]risk.Snapshot
+	if !query.SummaryOnly {
+		risks, err = s.pg.RiskSnapshotMap(ctx)
+		if err != nil {
+			return ActivityOverview{}, err
+		}
 	}
 	query.Window = window
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("PROXY_SENTINEL_ACTIVITY_READ_MODEL_V3")), "true") {

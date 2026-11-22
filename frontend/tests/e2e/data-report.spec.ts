@@ -14,7 +14,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await expect(page.getByRole('heading', { name: '全局数据报表' })).toBeVisible()
 
     const report = page.locator('.data-report-page')
-    await expect(report.locator('.data-report-metrics dd')).toHaveCount(4)
+    await expect(report.locator('.data-report-metrics dd strong')).toHaveCount(4)
     await expect(report.locator('.data-report-metrics')).toContainText('发现记录')
     const discovered = report.getByRole('region', { name: '发现设备' })
     await expect(discovered.getByRole('heading', { name: '识别构成' })).toBeVisible()
@@ -53,11 +53,11 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     })
     expect(probe.contrast).toBeGreaterThanOrEqual(4.5)
 
-    const initialEvents = await report.locator('.data-report-metrics dd').first().textContent()
+    const initialEvents = await report.locator('.data-report-metrics dd strong').first().textContent()
     await report.getByText('近 7 天', { exact: true }).click()
     await expect(page).toHaveURL(/window=7d/)
-    await expect(report.locator('.data-report-metrics dd')).toHaveCount(4)
-    await expect(report.locator('.data-report-metrics dd').first()).not.toHaveText(initialEvents ?? '')
+    await expect(report.locator('.data-report-metrics dd strong')).toHaveCount(4)
+    await expect(report.locator('.data-report-metrics dd strong').first()).not.toHaveText(initialEvents ?? '')
     await expect(discovered.getByRole('link', { name: '覆盖报表' })).toHaveAttribute('href', '/devices/coverage?window=168h')
     await expect(discovered.getByRole('link', { name: '待核实' })).toHaveAttribute(
       'href', '/devices?tab=discovery&discovery_window=168h&discovery_state=candidate',
@@ -65,6 +65,8 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     expect(requests.some(url => url.pathname.endsWith('/discovery/devices/metadata') &&
       url.searchParams.get('window') === '168h' && url.searchParams.get('overview') === 'false' &&
       url.searchParams.get('identity_scope') === 'devices')).toBe(true)
+    expect(requests.some(url => url.pathname.endsWith('/activity/overview') &&
+      url.searchParams.get('window') === '7d' && url.searchParams.get('view') === 'summary')).toBe(true)
     const updated = page.waitForRequest(request => request.url().includes('/application-activity?window=7d'))
     await report.getByRole('button', { name: '刷新' }).click()
     await updated
@@ -74,6 +76,52 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await expect(page.getByRole('heading', { name: '发现覆盖报表' })).toBeVisible()
   })
 }
+
+test('both reports show an animated loading state and recover after a timeout', async ({ page }, info) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/audit')
+  await page.getByRole('button', { name: '退出' }).waitFor()
+  await page.evaluate(() => {
+    const original = window.fetch
+    const blocked = new Set(['/api/v1/activity/overview', '/api/v1/discovery/devices/coverage-report'])
+    window.fetch = (...args) => {
+      const path = new URL(String(args[0]), window.location.href).pathname
+      if (blocked.has(path)) {
+        return new Promise(resolve => window.addEventListener('fail-report-request', () => {
+          blocked.delete(path)
+          resolve(new Response('{}', { status: 504, headers: { 'Content-Type': 'application/json' } }))
+        }, { once: true }))
+      }
+      return original(...args)
+    }
+  })
+  const checks = [
+    { route: '/reports/data', label: '正在读取网络访问统计…', error: '网络访问统计读取超时', ready: '活跃 IP', shot: 'global' },
+    { route: '/devices/coverage', label: '正在读取覆盖总览…', error: '覆盖总览读取超时', ready: 'IPv4 识别进度', shot: 'coverage' },
+  ]
+  for (const { route, label, error, ready, shot } of checks) {
+    await page.evaluate(target => {
+      history.pushState({}, '', target)
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    }, route)
+    const content = route === '/reports/data'
+      ? page.getByRole('region', { name: '网络访问' })
+      : page.getByRole('tabpanel')
+    const feedback = content.locator('.app-loading-state')
+    await expect(feedback).toContainText(label)
+    await expect(feedback.locator('.ant-skeleton-active')).toBeVisible()
+    await expect(page.getByRole('button', { name: '刷新' })).toHaveClass(/ant-btn-loading/)
+    await feedback.scrollIntoViewIfNeeded()
+    await page.screenshot({ path: info.outputPath(`loading-${shot}-390.png`), animations: 'disabled' })
+    await page.evaluate(() => window.dispatchEvent(new Event('fail-report-request')))
+    await expect(content).toContainText(error)
+    await expect(feedback).toHaveCount(0)
+    await page.getByRole('button', { name: '刷新' }).click()
+    await expect(content).not.toContainText(error)
+    await expect(content).toContainText(ready)
+    await expect(feedback).toHaveCount(0)
+  }
+})
 
 test('disabled application observations and failed discovery remain distinct from a real zero', async ({ page }) => {
   await page.addInitScript(() => {

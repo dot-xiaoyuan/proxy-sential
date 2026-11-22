@@ -5,12 +5,14 @@ import { Empty, Skeleton } from 'antd'
 interface AppLoadingProps {
   active?: boolean
   rows?: number
+  label?: string
 }
 
-export function AppLoadingState({ rows = 4 }: AppLoadingProps) {
+export function AppLoadingState({ rows = 4, label }: AppLoadingProps) {
   return (
-    <div className="app-loading-state">
-      <Skeleton active paragraph={{ rows }} />
+    <div className="app-loading-state" role={label ? 'status' : undefined}>
+      {label && <p className="app-loading-label">{label}</p>}
+      <Skeleton active title={!label} paragraph={{ rows }} />
     </div>
   )
 }

@@ -53,6 +53,32 @@ func TestActivityV3ThirtyDayQueryUsesPublishedHierarchy(t *testing.T) {
 	}
 }
 
+func TestActivityV3SummaryReadsOnlyRequiredFacts(t *testing.T) {
+	t.Setenv("PROXY_SENTINEL_ACTIVITY_READ_MODEL_V3", "true")
+	t.Setenv("PROXY_SENTINEL_ACTIVITY_V3_CUTOVER", "")
+	query := ActivityQuery{SensorID: "sensor-a", AsOf: "2026-09-28T06:07:00Z", SummaryOnly: true}
+	summary, err := activityChartBucketSQL(query, 7*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"activity_chart_facts_day_v3", " PREWHERE ", "toDateTime(", "'type','source_ip','domain'", "uniqExactIf("} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("summary lacks %s: %s", want, summary)
+		}
+	}
+	if strings.Contains(summary, "ip_domain") || strings.Contains(summary, "tls_fp") || strings.Contains(summary, "normalized_events") {
+		t.Fatalf("summary selected unrelated detail: %s", summary)
+	}
+	query.SummaryOnly = false
+	detail, err := activityChartBucketSQL(query, 7*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(detail, "activity_chart_facts_day_v3") || !strings.Contains(detail, "tls_fp") {
+		t.Fatalf("detailed activity query changed: %s", detail)
+	}
+}
+
 func TestActivityV3CoarseMaterializerPrunesSupersededRevisions(t *testing.T) {
 	query, granularity, _, err := activityV3CoarseMaterializeSQL(readModelJob{
 		Model:       activityV3HourModel,

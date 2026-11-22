@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { ArrowRightOutlined, FileSearchOutlined, LaptopOutlined, RadarChartOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons'
-import { Button, Segmented } from 'antd'
+import { Button, Segmented, Skeleton } from 'antd'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { deviceTypeLabel } from '../entities/device/DeviceInventoryCells'
@@ -9,6 +9,7 @@ import type { components } from '../shared/api/generated'
 import { useSession } from '../shared/api/queries'
 import type { ActivityOverview, DeviceInventoryMetadataResponse } from '../shared/api/types'
 import { can } from '../shared/auth/permissions'
+import { AppLoadingState } from '../shared/ui'
 import { observedTimeTitle } from '../shared/ui/observedTime'
 import { useUrlState } from '../shared/ui/useUrlState'
 
@@ -40,29 +41,32 @@ function useReportData<T>(path: string, enabled: boolean) {
   })
 }
 
-function Metric({ label, value, unit, icon, primary }: {
-  label: string; value?: number; unit: string; icon: ReactNode; primary?: boolean
+function Metric({ label, value, unit, icon, primary, loading }: {
+  label: string; value?: number; unit: string; icon: ReactNode; primary?: boolean; loading: boolean
 }) {
   return <div className={primary ? 'data-report-metric data-report-metric-primary' : 'data-report-metric'}>
     <dt>{icon}{label}</dt>
     {value !== undefined && <dd><strong>{number.format(value)}</strong><span>{unit}</span></dd>}
+    {value === undefined && loading && <dd aria-hidden="true"><Skeleton.Input size="small" active /></dd>}
   </div>
 }
 
-function Panel({ id, title, hint, links, asOf, note, message, children }: {
+function Panel({ id, title, hint, links, asOf, note, message, busy, loadingLabel, children }: {
   id: string; title: string; hint: string; links: { label: string; to: string }[];
-  asOf?: string; note?: string; message?: string; children: ReactNode
+  asOf?: string; note?: string; message?: string; busy: boolean; loadingLabel?: string; children: ReactNode
 }) {
   const displayedTime = observedTimeTitle(asOf)
-  return <section className={`data-report-panel data-report-${id}`} aria-labelledby={`data-report-${id}-title`}>
+  return <section className={`data-report-panel data-report-${id}`} aria-labelledby={`data-report-${id}-title`} aria-busy={busy}>
     <header className="data-report-panel-head">
       <div><h2 id={`data-report-${id}-title`}>{title}</h2><p>{hint}</p></div>
       <div className="data-report-links">
         {links.map(link => <Link key={link.to} to={link.to}>{link.label}<ArrowRightOutlined aria-hidden="true" /></Link>)}
       </div>
     </header>
-    {note && <p className="data-report-note" role="status">{note}</p>}
-    {message ? <p className="data-report-message" role="status">{message}</p> : children}
+    {loadingLabel ? <AppLoadingState label={loadingLabel} rows={3} /> : <>
+      {note && <p className="data-report-note" role="status">{note}</p>}
+      {message ? <p className="data-report-message" role="status">{message}</p> : children}
+    </>}
     {displayedTime && <footer className="data-report-time">统计于 <time dateTime={asOf}>{displayedTime}</time></footer>}
   </section>
 }
@@ -110,7 +114,7 @@ export function DataReportPage() {
   const { data: session } = useSession()
   const readIdentity = can(session, 'identity:read')
   const readTraffic = can(session, 'dpi:read')
-  const activity = useReportData<ActivityOverview>(`/activity/overview?window=${period.value}`, readTraffic)
+  const activity = useReportData<ActivityOverview>(`/activity/overview?window=${period.value}&view=summary`, readTraffic)
   const applications = useReportData<Applications>(`/application-activity?window=${period.value}`, readTraffic)
   const inventory = useReportData<DeviceInventoryMetadataResponse>(`/device-inventory/metadata?view=recent&window=${period.value}`, readIdentity)
   const discovery = useReportData<Discovery>(`/discovery/devices/metadata?mode=passive&identity_scope=devices&overview=false&window=${period.discovery}`, readIdentity)
@@ -143,26 +147,27 @@ export function DataReportPage() {
         <Segmented aria-label="统计范围" value={period.value}
           options={windows.map(({ value, label }) => ({ value, label }))} onChange={setWindow} />
       </div>
-      <Button icon={<ReloadOutlined />} loading={queries.some(query => query.isFetching && !query.isPending)}
+      <Button icon={<ReloadOutlined />} loading={queries.some(query => query.isFetching)}
         onClick={() => { for (const query of queries) void query.refetch({ cancelRefetch: false }) }}>刷新</Button>
     </header>
 
     <dl className="data-report-metrics" aria-label="核心数据">
       {readTraffic && <>
-        <Metric label="标准事件" value={traffic?.event_count} unit="条" icon={<ThunderboltOutlined aria-hidden="true" />} />
-        <Metric label="应用观测" value={disabledApplications ? undefined : apps?.observation_count} unit="条" icon={<FileSearchOutlined aria-hidden="true" />} />
+        <Metric label="标准事件" value={traffic?.event_count} unit="条" icon={<ThunderboltOutlined aria-hidden="true" />} loading={activity.isFetching} />
+        <Metric label="应用观测" value={disabledApplications ? undefined : apps?.observation_count} unit="条" icon={<FileSearchOutlined aria-hidden="true" />} loading={applications.isFetching} />
       </>}
       {readIdentity && <>
-        <Metric label="近期终端" value={inventoryPreparing ? undefined : terminals?.total} unit="个" icon={<LaptopOutlined aria-hidden="true" />} />
-        <Metric label="发现记录" value={discovered?.total} unit="条" icon={<RadarChartOutlined aria-hidden="true" />} primary />
+        <Metric label="近期终端" value={inventoryPreparing ? undefined : terminals?.total} unit="个" icon={<LaptopOutlined aria-hidden="true" />} loading={inventory.isFetching} />
+        <Metric label="发现记录" value={discovered?.total} unit="条" icon={<RadarChartOutlined aria-hidden="true" />} primary loading={discovery.isFetching} />
       </>}
     </dl>
 
     {readIdentity && <div className="data-report-grid data-report-assets">
       <Panel id="discovery" title="发现设备" hint="被动发现 · 按采集范围与身份去重"
         links={[{ label: '发现列表', to: discoveryUrl }, { label: '覆盖报表', to: coverageUrl }]}
-        asOf={discovered?.as_of} message={discovery.isPending ? '正在读取发现统计…' :
-          isDiscoveryReadPathUnsupported(discovery.error) ? '当前读取路径暂不支持发现统计。' :
+        asOf={discovered?.as_of} busy={discovery.isFetching}
+        loadingLabel={discovery.isFetching && !discovered ? '正在读取发现统计…' : undefined}
+        message={isDiscoveryReadPathUnsupported(discovery.error) ? '当前读取路径暂不支持发现统计。' :
           discovery.isError && !discovered ? '发现统计读取失败。' : undefined}
         note={discovery.isError && discovered ? '刷新失败，保留上次统计。' : undefined}>
         {discovered && <div className="data-report-discovery-body">
@@ -188,7 +193,8 @@ export function DataReportPage() {
       </Panel>
       <Panel id="inventory" title="终端台账" hint="统计窗口内有观测的台账终端"
         links={[{ label: '终端列表', to: inventoryUrl }]} asOf={inventoryPreparing ? undefined : terminals?.as_of}
-        message={inventory.isPending ? '正在读取终端统计…' : inventoryPreparing ? '终端统计仍在生成。' :
+        busy={inventory.isFetching} loadingLabel={inventory.isFetching && !terminals ? '正在读取终端统计…' : undefined}
+        message={inventoryPreparing ? '终端统计仍在生成。' :
           inventory.isError && !terminals ? '终端统计读取失败。' : undefined}
         note={inventory.isError && terminals ? '刷新失败，保留上次统计。' :
           currentInventory?.status === 'failed' ? '终端数据更新异常，当前展示已有统计。' :
@@ -204,8 +210,10 @@ export function DataReportPage() {
     {readTraffic && <div className="data-report-grid">
       <Panel id="traffic" title="网络访问" hint="按标准事件汇总观测地址和访问对象"
         links={[{ label: '访问分析', to: networkUrl }]} asOf={activityNote?.as_of || traffic?.statistics_as_of}
-        message={activity.isPending ? '正在读取网络访问统计…' :
-          activity.isError && !traffic ? '网络访问统计读取失败。' : undefined}
+        busy={activity.isFetching} loadingLabel={activity.isFetching && !traffic ? '正在读取网络访问统计…' : undefined}
+        message={activity.isError && !traffic
+          ? (activity.error instanceof ApiError && activity.error.status === 504 ? '网络访问统计读取超时，请刷新重试。' : '网络访问统计读取失败，请刷新重试。')
+          : undefined}
         note={activity.isError && traffic ? '刷新失败，保留上次统计。' :
           activityNote?.status === 'warming' ? '访问统计正在生成，当前统计可能不完整。' :
           activityNote?.status === 'stale' || activityNote?.status === 'delayed' ? '访问统计有延迟。' :
@@ -223,7 +231,8 @@ export function DataReportPage() {
       </Panel>
       <Panel id="applications" title="应用识别" hint="域名与协议特征产生的应用观测"
         links={[{ label: '应用访问', to: appUrl }]} asOf={disabledApplications ? undefined : apps?.statistics_as_of || apps?.as_of}
-        message={applications.isPending ? '正在读取应用观测…' : disabledApplications ? '应用观测尚未启用。' :
+        busy={applications.isFetching} loadingLabel={applications.isFetching && !apps ? '正在读取应用观测…' : undefined}
+        message={disabledApplications ? '应用观测尚未启用。' :
           applications.isError && !apps ? '应用观测读取失败。' : undefined}
         note={applications.isError && apps && !disabledApplications ? '刷新失败，保留上次统计。' : undefined}>
         {apps && <>

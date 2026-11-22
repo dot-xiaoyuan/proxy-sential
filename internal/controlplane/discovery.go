@@ -82,6 +82,8 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 	var cancel context.CancelFunc
 	if path == "/discovery/devices/export" {
 		ctx, cancel = context.WithTimeout(r.Context(), 2*time.Minute)
+	} else if path == "/discovery/devices/coverage-report" {
+		ctx, cancel = context.WithTimeout(r.Context(), reportQueryLimit)
 	} else {
 		ctx, cancel = contextWithRequestTimeout(r.Context())
 	}
@@ -581,6 +583,10 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 			report, err := repo.DiscoveryCoverageReport(ctx, s.sensorID, window)
 			if err != nil {
 				log.Printf("discovery coverage report failed after %s: %v", time.Since(readStarted), err)
+				if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					writeError(w, http.StatusGatewayTimeout, "coverage_report_timeout", "覆盖报表读取超时")
+					return
+				}
 				writeError(w, 500, "coverage_report_failed", "读取覆盖报表失败")
 				return
 			}

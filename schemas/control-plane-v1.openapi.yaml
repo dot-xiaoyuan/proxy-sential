@@ -442,6 +442,7 @@ paths:
               schema: { $ref: '#/components/schemas/DiscoveryCoverageReport' }
         '409': { description: Passive hardware indexed reader unavailable }
         '500': { description: Report could not be read }
+        '504': { description: The report exceeded the query deadline }
   /discovery/devices/export:
     get:
       operationId: streamDiscoveryDevicesExport
@@ -2634,6 +2635,10 @@ paths:
             default: 1h
         - { name: campus_id, in: query, schema: { type: string } }
         - { name: as_of, in: query, schema: { type: string, format: date-time } }
+        - name: view
+          in: query
+          description: Summary reads event counts, distinct IPs and access objects, and event type counts. Use the default view for detailed rankings and risk fields.
+          schema: { type: string, enum: [summary] }
       responses:
         "200":
           description: Aggregated access posture and client feature overview for the observed domain.
@@ -2645,6 +2650,12 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
+        "504":
+          description: The summary exceeded the query deadline.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /activity/reports:
     get:
       operationId: getActivityReport
@@ -9016,10 +9027,11 @@ components:
         observations: { type: array, items: { $ref: '#/components/schemas/DiscoveryObservation' } }
     DiscoveryCoverageReport:
       type: object
-      required: [as_of, identity_as_of, window, subnet24, ipv4, ipv6, mac, ip_mac_pairs, scoped_mac, identified, dumb_terminals, identity_total, mirror_funnel]
+      required: [as_of, window, subnet24, ipv4, ipv6, mac, ip_mac_pairs, scoped_mac, mirror_funnel]
       properties:
         as_of: { type: string, format: date-time }
         identity_as_of: { type: string, format: date-time }
+        identity_status: { type: string, enum: [timeout], description: The identity statistics exceeded their deadline. Address and mirror counts are still available. }
         window: { type: string }
         subnet24: { type: integer, format: int64, minimum: 0 }
         ipv4: { type: integer, format: int64, minimum: 0 }

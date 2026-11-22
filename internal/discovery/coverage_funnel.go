@@ -80,6 +80,8 @@ func mirrorFunnelCounts(ctx context.Context, db *sql.DB, sensor string, window t
 	if success.Valid && time.Since(success.Time) > 10*time.Minute {
 		result.Status = "delayed"
 	}
+	// The binding primary key distinguishes MACs within each scoped IP. Check
+	// every live peer before restricting the remaining pair to the report window.
 	const statement = `WITH ids AS MATERIALIZED (
  SELECT scope_key,kind,value,ip_family FROM passive_census_identifier_current
  WHERE sensor_id=$1 AND last_seen>=$2 AND last_seen<=$3
@@ -87,18 +89,19 @@ func mirrorFunnelCounts(ctx context.Context, db *sql.DB, sensor string, window t
  SELECT DISTINCT value ip FROM ids WHERE kind='ip' AND ip_family=4
 ), macs AS MATERIALIZED (
  SELECT DISTINCT value mac FROM ids WHERE kind='mac'
+), unambiguous AS MATERIALIZED (
+ SELECT scope_key,ip,min(mac) mac,max(observed_at) observed_at
+ FROM passive_census_binding_current
+ WHERE valid_until>$4 AND NOT withdrawn
+ GROUP BY scope_key,ip HAVING count(*)=1
 ), scoped_pairs AS MATERIALIZED (
  SELECT b.scope_key,b.ip,b.mac,h.identity_key,h.hardware_type,h.hardware_type_status
- FROM passive_census_binding_current b
+ FROM unambiguous b
  JOIN ids i ON i.scope_key=b.scope_key AND i.kind='ip' AND i.value=b.ip AND i.ip_family=4
  JOIN ids m ON m.scope_key=b.scope_key AND m.kind='mac' AND m.value=b.mac
  LEFT JOIN passive_hardware_current h ON h.scope_key=b.scope_key AND h.mac=b.mac
   AND h.sensor_id=$1 AND h.first_seen<=$3 AND h.last_seen<=$3
  WHERE b.observed_at>=$2 AND b.observed_at<=$3
-  AND b.valid_until>$4 AND NOT b.withdrawn
-  AND NOT EXISTS(SELECT 1 FROM passive_census_binding_current peer
-   WHERE peer.scope_key=b.scope_key AND peer.ip=b.ip AND peer.mac<>b.mac
-    AND peer.valid_until>$4 AND NOT peer.withdrawn)
 ), raw_pairs AS MATERIALIZED (
  SELECT DISTINCT ip,mac FROM scoped_pairs
 ), typed_pairs AS MATERIALIZED (

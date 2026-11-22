@@ -2090,6 +2090,7 @@ pre.wrap-code {
   border-radius: 8px;
   background: #ffffff;
 }
+.app-loading-label { margin: 0 0 8px; color: #526278; font-size: 13px; }
 
 .app-empty-state {
   padding: 32px 16px;
@@ -6298,6 +6299,7 @@ pre.wrap-code {
 .data-report-counts dd,
 .data-report-ranking li strong { font-variant-numeric: tabular-nums; }
 .data-report-panel { display: flex; flex-direction: column; }
+.data-report-panel > .app-loading-state { border: 0; padding: 12px 0 0; }
 .data-report-panel-head { padding-bottom: 13px; border-bottom: 1px solid var(--data-report-border); }
 .data-report-panel-head > div:first-child { min-width: 0; }
 .data-report-panel h2 { margin: 0; font-size: 17px; font-weight: 680; line-height: 1.4; }

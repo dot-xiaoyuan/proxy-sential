@@ -97,6 +97,9 @@ func activityChartFactRowsV3SQL(query ActivityQuery, window time.Duration, dimen
 		}
 	}
 	stamp := func(t time.Time) string {
+		if query.SummaryOnly {
+			return "toDateTime(" + chQuote(t.UTC().Format("2006-01-02 15:04:05")) + ",'UTC')"
+		}
 		return "parseDateTime64BestEffort(" + chQuote(t.UTC().Format(time.RFC3339Nano)) + ",6)"
 	}
 	ceil := func(t time.Time, width time.Duration) time.Time {
@@ -133,17 +136,21 @@ func activityChartFactRowsV3SQL(query ActivityQuery, window time.Duration, dimen
 			return
 		}
 		startSQL, endSQL := stamp(start), stamp(end)
+		filter := "WHERE"
+		if query.SummaryOnly {
+			filter = "PREWHERE"
+		}
 		// An explicit tuple IN lets ClickHouse apply the published revision set to
 		// the primary key. A JOIN scans every superseded revision in the bucket,
 		// which is catastrophic when late traffic repeatedly rebuilds old buckets.
-		pieces = append(pieces, fmt.Sprintf(`SELECT f.dimension,f.value,f.event_count,f.first_seen,f.last_seen FROM %s f WHERE f.bucket_start>=%s AND f.bucket_start<%s AND %s AND (f.bucket_start,f.sensor_id,f.campus_id,f.revision) IN(SELECT bucket_start,sensor_id,campus_id,argMax(revision,published_at) revision FROM activity_chart_bucket_versions_v3 WHERE granularity=%s AND bucket_start>=%s AND bucket_start<%s AND %s GROUP BY bucket_start,sensor_id,campus_id)`, table, startSQL, endSQL, scope("f", true), chQuote(granularity), startSQL, endSQL, scope("", false)))
+		pieces = append(pieces, fmt.Sprintf(`SELECT f.dimension,f.value,f.event_count,f.first_seen,f.last_seen FROM %s f %s f.bucket_start>=%s AND f.bucket_start<%s AND %s AND (f.bucket_start,f.sensor_id,f.campus_id,f.revision) IN(SELECT bucket_start,sensor_id,campus_id,argMax(revision,published_at) revision FROM activity_chart_bucket_versions_v3 WHERE granularity=%s AND bucket_start>=%s AND bucket_start<%s AND %s GROUP BY bucket_start,sensor_id,campus_id)`, table, filter, startSQL, endSQL, scope("f", true), chQuote(granularity), startSQL, endSQL, scope("", false)))
 	}
 	from5, closed5 := ceil(from, 5*time.Minute), to.Truncate(5*time.Minute)
 	current5End := closed5.Add(5 * time.Minute)
 	switch {
 	case window <= time.Hour:
 		appendFacts("5m", "activity_chart_facts_5m_v3", from5, current5End)
-	case window <= 7*24*time.Hour:
+	case window <= 24*time.Hour || (!query.SummaryOnly && window <= 7*24*time.Hour):
 		fromHour, toHour := ceil(from5, time.Hour), closed5.Truncate(time.Hour)
 		appendFacts("5m", "activity_chart_facts_5m_v3", from5, minTime(fromHour, closed5))
 		appendFacts("hour", "activity_chart_facts_hour_v3", fromHour, toHour)
@@ -163,6 +170,9 @@ func activityChartFactRowsV3SQL(query ActivityQuery, window time.Duration, dimen
 	return strings.Join(pieces, " UNION ALL "), nil
 }
 func activityChartBucketSQL(query ActivityQuery, window time.Duration) (string, error) {
+	if query.SummaryOnly {
+		return activityChartSummarySQL(query, window)
+	}
 	source, err := activityChartFactRowsSQL(query, window, []string{"type", "protocol", "domain", "http_host", "tls_sni", "user_agent", "tls_fp", "dst_port", "dst_ip", "source_ip"})
 	if err != nil {
 		return "", err
@@ -178,6 +188,28 @@ func activityChartBucketSQL(query ActivityQuery, window time.Duration) (string, 
  SETTINGS max_threads=4,max_block_size=8192,max_memory_usage=1073741824,max_bytes_before_external_group_by=268435456,max_execution_time=20 FORMAT JSONEachRow`, source), nil
 }
 
+func activityChartSummarySQL(query ActivityQuery, window time.Duration) (string, error) {
+	source, err := activityChartFactRowsSQL(query, window, []string{"type", "source_ip", "domain"})
+	if err != nil {
+		return "", err
+	}
+	// Only event types need individual rows. Count address/domain values in
+	// their dimension without sorting the full set of distinct values.
+	return fmt.Sprintf(`SELECT dimension,label AS value,count,last_seen,
+ sum(count) OVER(PARTITION BY dimension) AS total,
+ distinct_values, distinct_values AS nonempty_values,
+ min(first_seen) OVER(PARTITION BY dimension) AS first_seen,
+ max(last_seen) OVER(PARTITION BY dimension) AS latest_seen
+ FROM (
+  SELECT dimension,if(dimension='type',value,'') label,sum(event_count) AS count,
+   uniqExactIf(value,dimension='source_ip' OR (dimension='domain' AND value!='')) AS distinct_values,
+   min(first_seen) AS first_seen,max(last_seen) AS last_seen
+  FROM(%s) GROUP BY dimension,label
+ )
+ ORDER BY dimension,count DESC,last_seen DESC,label ASC LIMIT 20 BY dimension
+ SETTINGS max_threads=4,max_block_size=8192,max_memory_usage=1073741824,max_execution_time=14 FORMAT JSONEachRow`, source), nil
+}
+
 func (s *ClickHouseStore) populateActivityChartBuckets(ctx context.Context, query ActivityQuery, window time.Duration, overview *ActivityOverview) error {
 	sql, err := activityChartBucketSQL(query, window)
 	if err != nil {
@@ -185,6 +217,9 @@ func (s *ClickHouseStore) populateActivityChartBuckets(ctx context.Context, quer
 	}
 	data, err := s.query(ctx, sql)
 	if err != nil {
+		if query.SummaryOnly && strings.Contains(err.Error(), "TIMEOUT_EXCEEDED") {
+			return fmt.Errorf("%w: %v", context.DeadlineExceeded, err)
+		}
 		return err
 	}
 	var rows []struct {

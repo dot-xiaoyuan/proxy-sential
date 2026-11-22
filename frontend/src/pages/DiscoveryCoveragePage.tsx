@@ -3,9 +3,10 @@ import { useQuery } from '@tanstack/react-query'
 import { Button, Input, Segmented, Select, Tabs, Typography } from 'antd'
 import { ReloadOutlined, SearchOutlined } from '@ant-design/icons'
 import { Link, useSearchParams } from 'react-router-dom'
-import { request } from '../shared/api/client'
+import { ApiError, request } from '../shared/api/client'
 import type { components } from '../shared/api/generated'
 import { observedTimeTitle } from '../shared/ui/observedTime'
+import { AppLoadingState } from '../shared/ui'
 import { DiscoveryCoverageReport, DiscoveryMirrorCoverage, type CoverageReport } from './DiscoveryCoverageReport'
 import { DiscoveryCoverageDiagnostics } from './DiscoveryCoverageDiagnostics'
 import { CensusPanel } from './CensusPanel'
@@ -81,10 +82,11 @@ export function DiscoveryCoveragePage() {
     })
   }
   function feedback(label: string) {
+    if (activeQuery.isFetching && !activeQuery.data) return <AppLoadingState label={`正在读取${label}…`} rows={4} />
     if (activeQuery.isError) return <p role="alert" className="coverage-empty">
-      {label}读取失败。{activeQuery.data ? '当前显示上次成功读取的数据。' : '可用顶部的刷新按钮重试。'}
+      {label}{activeQuery.error instanceof ApiError && activeQuery.error.status === 504 ? '读取超时。' : '读取失败。'}
+      {activeQuery.data ? '当前显示上次成功读取的数据。' : '可用顶部的刷新按钮重试。'}
     </p>
-    if (activeQuery.isPending) return <p role="status" className="coverage-empty">正在读取{label}…</p>
     return null
   }
 
@@ -96,7 +98,7 @@ export function DiscoveryCoveragePage() {
         <Button icon={<ReloadOutlined aria-hidden="true"/>} onClick={() => void activeQuery.refetch()} loading={activeQuery.isFetching}>刷新</Button>
       </div>}
     </header>
-    <Tabs className="coverage-tabs" activeKey={section} onChange={value => changeParam('section', value)} items={sections.map(item => ({
+    <Tabs className="coverage-tabs" aria-busy={section !== 'history' && activeQuery.isFetching} activeKey={section} onChange={value => changeParam('section', value)} items={sections.map(item => ({
       ...item,
       children: item.key === 'overview' ? <>
         {section === 'overview' && feedback('覆盖总览')}

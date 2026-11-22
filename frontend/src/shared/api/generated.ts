@@ -8580,7 +8580,12 @@ export interface components {
             /** Format: date-time */
             as_of: string;
             /** Format: date-time */
-            identity_as_of: string;
+            identity_as_of?: string;
+            /**
+             * @description The identity statistics exceeded their deadline. Address and mirror counts are still available.
+             * @enum {string}
+             */
+            identity_status?: "timeout";
             window: string;
             /** Format: int64 */
             subnet24: number;
@@ -8625,11 +8630,11 @@ export interface components {
             /** Format: int64 */
             scoped_mac: number;
             /** Format: int64 */
-            identified: number;
+            identified?: number;
             /** Format: int64 */
-            dumb_terminals: number;
+            dumb_terminals?: number;
             /** Format: int64 */
-            identity_total: number;
+            identity_total?: number;
             /**
              * Format: date-time
              * @description Latest observation included in the IPv4 evidence buckets.
@@ -10832,6 +10837,13 @@ export interface operations {
             };
             /** @description Report could not be read */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The report exceeded the query deadline */
+            504: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14904,6 +14916,8 @@ export interface operations {
                 window?: "10m" | "1h" | "24h" | "7d" | "30d";
                 campus_id?: string;
                 as_of?: string;
+                /** @description Summary reads event counts, distinct IPs and access objects, and event type counts. Use the default view for detailed rankings and risk fields. */
+                view?: "summary";
             };
             header?: never;
             path?: never;
@@ -14922,6 +14936,15 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             500: components["responses"]["InternalError"];
+            /** @description The summary exceeded the query deadline. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     getActivityReport: {

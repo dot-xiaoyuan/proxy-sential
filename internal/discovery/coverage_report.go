@@ -3,15 +3,19 @@ package discovery
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // CoverageReport counts addresses from the bounded discovery index. A /24 is
 // an observation bucket, not a claim about the campus routing configuration.
 type CoverageReport struct {
 	AsOf                    time.Time    `json:"as_of"`
-	IdentityAsOf            time.Time    `json:"identity_as_of"`
+	IdentityAsOf            *time.Time   `json:"identity_as_of,omitempty"`
+	IdentityStatus          string       `json:"identity_status,omitempty"`
 	Window                  string       `json:"window"`
 	Subnet24                int64        `json:"subnet24"`
 	IPv4                    int64        `json:"ipv4"`
@@ -25,9 +29,9 @@ type CoverageReport struct {
 	MultiScopeIPMACPairs    int64        `json:"multi_scope_ip_mac_pairs"`
 	BlankAndFilledVLANPairs int64        `json:"blank_and_filled_vlan_pairs"`
 	ScopedMAC               int64        `json:"scoped_mac"`
-	Identified              int64        `json:"identified"`
-	DumbTerminals           int64        `json:"dumb_terminals"`
-	IdentityTotal           int64        `json:"identity_total"`
+	Identified              *int64       `json:"identified,omitempty"`
+	DumbTerminals           *int64       `json:"dumb_terminals,omitempty"`
+	IdentityTotal           *int64       `json:"identity_total,omitempty"`
 	DiagnosticAsOf          *time.Time   `json:"diagnostic_as_of,omitempty"`
 	TypedIPv4               int64        `json:"typed_ipv4"`
 	IdentityNoTypeIPv4      int64        `json:"identity_no_type_ipv4"`
@@ -50,26 +54,57 @@ func (r Repository) DiscoveryCoverageReport(ctx context.Context, sensor string, 
 	if !r.HardwareV2 || r.DB == nil || sensor == "" || window < 10*time.Minute || window > 30*24*time.Hour {
 		return CoverageReport{}, fmt.Errorf("coverage report requires passive hardware reader, sensor and bounded window")
 	}
-	metadata, err := r.DevicesIndexedMetadata(ctx, DeviceQuery{Mode: "passive", Window: window})
-	if err != nil {
+	at := time.Now().UTC()
+	out := CoverageReport{AsOf: at}
+	var metadata IndexedDeviceMetadata
+	var identityTimedOut bool
+	group, readCtx := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		identityCtx, cancel := context.WithTimeout(readCtx, 14*time.Second)
+		defer cancel()
+		var err error
+		metadata, err = r.DevicesIndexedMetadata(identityCtx, DeviceQuery{Mode: "passive", Window: window, SnapshotAt: at, SkipOverview: true})
+		if errors.Is(identityCtx.Err(), context.DeadlineExceeded) && readCtx.Err() == nil {
+			identityTimedOut = true
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("coverage discovery identities: %w", err)
+		}
+		return nil
+	})
+	group.Go(func() error {
+		// Count only device-side bindings for MAC and IP/MAC. Other protocol
+		// endpoints can expose a routed next-hop MAC.
+		from := at.Add(-window)
+		if err := coverageAddressCounts(readCtx, r.DB, sensor, from, at, &out); err != nil {
+			return fmt.Errorf("coverage address counts: %w", err)
+		}
+		if err := coverageEvidenceCounts(readCtx, r.DB, sensor, from, at, &out); err != nil {
+			return fmt.Errorf("coverage evidence counts: %w", err)
+		}
+		var err error
+		out.MirrorFunnel, err = mirrorFunnelCounts(readCtx, r.DB, sensor, window)
+		return err
+	})
+	if err := group.Wait(); err != nil {
 		return CoverageReport{}, err
 	}
-	out := CoverageReport{AsOf: time.Now().UTC(), IdentityAsOf: metadata.AsOf, Window: metadata.Window, Identified: metadata.Identified, IdentityTotal: metadata.Total}
+	out.Window = indexedWindowLabel(window)
+	if identityTimedOut {
+		out.IdentityStatus = "timeout"
+		return out, nil
+	}
+	out.IdentityAsOf = &metadata.AsOf
+	out.Identified, out.IdentityTotal = &metadata.Identified, &metadata.Total
+	var dumbTerminals int64
 	for _, item := range metadata.Types {
 		if dumbHardwareTypes[item.DeviceType] {
-			out.DumbTerminals += item.Count
+			dumbTerminals += item.Count
 		}
 	}
-	// Count only device-side address bindings for MAC and IP/MAC. Other protocol
-	// endpoints can expose a routed next-hop MAC and must not inflate these.
-	err = coverageAddressCounts(ctx, r.DB, sensor, out.AsOf.Add(-window), out.AsOf, &out)
-	if err == nil {
-		err = coverageEvidenceCounts(ctx, r.DB, sensor, out.AsOf.Add(-window), out.AsOf, &out)
-	}
-	if err == nil {
-		out.MirrorFunnel, err = mirrorFunnelCounts(ctx, r.DB, sensor, window)
-	}
-	return out, err
+	out.DumbTerminals = &dumbTerminals
+	return out, nil
 }
 
 // Evidence buckets partition IPv4 addresses with current-window device
@@ -78,22 +113,30 @@ func (r Repository) DiscoveryCoverageReport(ctx context.Context, sensor string, 
 // contains only ARP; origin buckets are therefore reported only for untyped
 // addresses with a hardware identity.
 func coverageEvidenceCounts(ctx context.Context, db *sql.DB, sensor string, from, until time.Time, out *CoverageReport) error {
-	const statement = `WITH hw AS MATERIALIZED (
- SELECT device_key,bool_or(hardware_type_status='identified') typed
+	// PostgreSQL underestimates the JSON IPv4 filter. Partitioning by device key
+	// avoids scanning all in-window hardware keys for every matching observation.
+	const statement = `WITH by_device AS (
+ SELECT device_key,NULL::text ip,NULL::text origin,NULL::timestamptz observed_at,
+  true hardware,hardware_type_status='identified' typed
  FROM passive_hardware_current
- WHERE sensor_id=$1 AND last_seen>=$2 AND last_seen<$3 GROUP BY device_key
-), per_ip AS (
- SELECT l.data->>'ip' ip,bool_or(hw.device_key IS NOT NULL) has_identity,
-  bool_or(coalesce(hw.typed,false)) typed,
-  bool_or(l.origin='dhcp') dhcp,
-  bool_or(l.origin IN ('snmp','http_device','tls_device','dns_sd','ssdp','sadp','rtsp','sip','ws_discovery')) app,
-  bool_and(l.origin IN ('arp','ttl','ndp')) network_only,
-  max(l.observed_at) latest
- FROM discovery_observation_latest l LEFT JOIN hw ON hw.device_key=l.device_key
+ WHERE sensor_id=$1 AND last_seen>=$2 AND last_seen<$3
+ UNION ALL
+ SELECT l.device_key,l.data->>'ip',l.origin,l.observed_at,false,false
+ FROM discovery_observation_latest l
  WHERE l.data->>'node'=$1 AND l.observed_at>=$2 AND l.observed_at<$3
   AND NOT l.withdrawn
   AND l.data->>'ip' ~ '^[0-9]{1,3}([.][0-9]{1,3}){3}$'
- GROUP BY l.data->>'ip'
+), classified AS (
+ SELECT ip,origin,observed_at,bool_or(hardware) OVER device has_identity,
+  bool_or(typed) OVER device typed
+ FROM by_device WINDOW device AS (PARTITION BY device_key)
+), per_ip AS (
+ SELECT ip,bool_or(has_identity) has_identity,bool_or(typed) typed,
+  bool_or(origin='dhcp') dhcp,
+  bool_or(origin IN ('snmp','http_device','tls_device','dns_sd','ssdp','sadp','rtsp','sip','ws_discovery')) app,
+  bool_and(origin IN ('arp','ttl','ndp')) network_only,
+  max(observed_at) latest
+ FROM classified WHERE ip IS NOT NULL GROUP BY ip
 )
 SELECT count(*) FILTER(WHERE typed),
  count(*) FILTER(WHERE has_identity AND NOT typed),
@@ -134,23 +177,24 @@ func coverageAddressCounts(ctx context.Context, db *sql.DB, sensor string, from,
   binding AND mac ~ '^[0-9a-f][02468ace](:[0-9a-f]{2}){5}$'
    AND mac<>'00:00:00:00:00:00' AND ip<>'' trusted_pair
  FROM observed
-), trusted_ipv4 AS MATERIALIZED (
- SELECT ip,mac,vlan,valid_until,
-  jsonb_build_array(ip,mac)::text raw_pair,
-  jsonb_build_array(sensor,site,domain,vlan,vrf,ip,mac)::text scoped_pair
- FROM addresses WHERE v4 AND trusted_pair
+), scoped AS MATERIALIZED (
+ SELECT ip,mac,sensor,site,domain,vlan,vrf,v4,bool_or(valid_until>$3) valid
+ FROM addresses WHERE trusted_pair GROUP BY ip,mac,sensor,site,domain,vlan,vrf,v4
+), ipv4_pairs AS MATERIALIZED (
+ SELECT ip,mac,count(*) scopes,bool_or(vlan='') blank_vlan,bool_or(vlan<>'') filled_vlan
+ FROM scoped WHERE v4 GROUP BY ip,mac
 )
 SELECT count(DISTINCT split_part(ip,'.',1)||'.'||split_part(ip,'.',2)||'.'||split_part(ip,'.',3)) FILTER(WHERE v4),
  count(DISTINCT ip) FILTER(WHERE v4), count(DISTINCT ip) FILTER(WHERE v6),
- count(DISTINCT mac) FILTER(WHERE trusted_pair),
- count(DISTINCT jsonb_build_array(sensor,site,domain,vlan,vrf,ip,mac)::text) FILTER(WHERE trusted_pair),
- count(DISTINCT jsonb_build_array(sensor,site,domain,vlan,vrf,mac)::text) FILTER(WHERE trusted_pair),
- (SELECT count(DISTINCT ip) FROM trusted_ipv4),
- (SELECT count(DISTINCT raw_pair) FROM trusted_ipv4),
- (SELECT count(DISTINCT scoped_pair) FROM trusted_ipv4 WHERE valid_until>$3),
- (SELECT count(*) FROM (SELECT ip FROM trusted_ipv4 GROUP BY ip HAVING count(DISTINCT mac)>1) multi_mac),
- (SELECT count(*) FROM (SELECT raw_pair FROM trusted_ipv4 GROUP BY raw_pair HAVING count(DISTINCT scoped_pair)>1) multi_scope),
- (SELECT count(*) FROM (SELECT raw_pair FROM trusted_ipv4 GROUP BY raw_pair HAVING bool_or(vlan='') AND bool_or(vlan<>'')) mixed_vlan)
+ (SELECT count(DISTINCT mac) FROM scoped),
+ (SELECT count(*) FROM scoped),
+ (SELECT count(*) FROM (SELECT DISTINCT sensor,site,domain,vlan,vrf,mac FROM scoped) unique_scoped_macs),
+ (SELECT count(DISTINCT ip) FROM ipv4_pairs),
+ (SELECT count(*) FROM ipv4_pairs),
+ (SELECT count(*) FROM scoped WHERE v4 AND valid),
+ (SELECT count(*) FROM (SELECT ip FROM ipv4_pairs GROUP BY ip HAVING count(*)>1) multi_mac),
+ (SELECT count(*) FROM ipv4_pairs WHERE scopes>1),
+ (SELECT count(*) FROM ipv4_pairs WHERE blank_vlan AND filled_vlan)
 FROM addresses`
 	return db.QueryRowContext(ctx, statement, sensor, from, until).Scan(
 		&out.Subnet24, &out.IPv4, &out.IPv6, &out.MAC, &out.IPMACPairs, &out.ScopedMAC,

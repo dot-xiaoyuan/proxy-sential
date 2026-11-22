@@ -68,6 +68,10 @@ CREATE TEMP TABLE passive_hardware_current (identity_key text,scope_key text,mac
 	if _, err = db.Exec(`UPDATE passive_census_binding_current SET conflict=true WHERE ip='10.0.0.1' AND mac='00:0c:29:00:00:01'`); err != nil {
 		t.Fatal(err)
 	}
+	// A valid competing binding can predate the report window.
+	if _, err = db.Exec(`UPDATE passive_census_binding_current SET observed_at=$1 WHERE ip='10.0.0.3' AND mac='00:0c:29:00:00:05'`, now.Add(-25*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
 	got, err := mirrorFunnelCounts(context.Background(), db, "campus-204", 24*time.Hour)
 	if err != nil {
 		t.Fatal(err)

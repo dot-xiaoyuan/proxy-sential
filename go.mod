@@ -12,6 +12,7 @@ require (
 	github.com/twmb/franz-go v1.20.6
 	golang.org/x/net v0.47.0
 	golang.org/x/oauth2 v0.30.0
+	golang.org/x/sync v0.18.0
 	golang.org/x/text v0.31.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -35,6 +36,5 @@ require (
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/twmb/franz-go/pkg/kmsg v1.12.0 // indirect
 	golang.org/x/crypto v0.45.0 // indirect
-	golang.org/x/sync v0.18.0 // indirect
 	golang.org/x/sys v0.38.0
 )

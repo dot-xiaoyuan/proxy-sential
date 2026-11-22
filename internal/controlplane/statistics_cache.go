@@ -33,6 +33,7 @@ type statisticsCache struct {
 // single-flight refresh catches up.
 const (
 	statisticsLoadLimit = 12 * time.Second
+	reportQueryLimit    = 16 * time.Second
 )
 
 func newStatisticsCache() *statisticsCache {
@@ -123,7 +124,11 @@ func (c *statisticsCache) load(r *http.Request, path string, dispatch func(http.
 	started := time.Now()
 	// A departing first browser must not cancel a shared statistics fill for
 	// other authorized readers. The independent fill remains bounded.
-	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), statisticsLoadLimit)
+	limit := statisticsLoadLimit
+	if path == "/activity/overview" && r.URL.Query().Get("view") == "summary" {
+		limit = reportQueryLimit + time.Second
+	}
+	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), limit)
 	defer cancel()
 	r = r.Clone(loadCtx)
 	buffer := &statisticsWriter{header: http.Header{}}

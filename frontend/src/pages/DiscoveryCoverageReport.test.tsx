@@ -40,3 +40,18 @@ it('keeps zero and absent breakdowns distinct', () => {
   expect(screen.queryByRole('region',{name:'IPv4 识别进度'})).not.toBeInTheDocument()
   expect(screen.getByText('15,390')).toBeVisible()
 })
+
+it('keeps address coverage visible when identity totals time out', () => {
+  render(<DiscoveryCoverageReport report={{
+    ...report,
+    identity_status: 'timeout',
+    identity_as_of: undefined,
+    identity_total: undefined,
+    identified: undefined,
+    dumb_terminals: undefined,
+  }} />)
+  expect(screen.getByRole('status')).toHaveTextContent('身份统计读取超时')
+  expect(screen.getByRole('region', { name: 'IPv4 识别进度' })).toHaveTextContent('15,390')
+  expect(screen.queryByText('发现处理水位', { exact: false })).not.toBeInTheDocument()
+  expect(screen.queryByText('个发现身份', { exact: true })).not.toBeInTheDocument()
+})
