@@ -35,6 +35,7 @@ type IncrementalOptions struct {
 	ClaimLimit   int
 	FeatureLimit int
 	SkipExpiry   bool
+	Drain        bool
 }
 
 type IncrementalResult struct {
@@ -75,10 +76,13 @@ func RunIncrementalOnce(ctx context.Context, backend IncrementalStore, opts Incr
 	if freshCutoff.IsZero() || freshCutoff.After(opts.AsOf) {
 		return IncrementalResult{}, errors.New("incremental risk requires an audited fresh cutoff")
 	}
-	// The PG lease is 15 seconds and the caller's batch deadline is 10 seconds.
-	// Claim only what one bounded risk commit can finish; otherwise later
-	// groups hold expiring leases while an earlier hot subject is scanned.
-	const maxClaimsPerLease = 8
+	// A worker that just committed a full batch within its scheduling budget
+	// can spread the claim, read and commit cost over more subjects. The same
+	// feature byte limit and caller deadline apply in both modes.
+	maxClaimsPerLease := 8
+	if opts.Drain {
+		maxClaimsPerLease = 16
+	}
 	claimLimit := min(opts.ClaimLimit, maxClaimsPerLease)
 	if !opts.SkipExpiry {
 		if err := backend.QueueExpiredStreamRiskSubjects(ctx, opts.SensorID, opts.AsOf.Add(-opts.Window), claimLimit); err != nil {
@@ -134,16 +138,9 @@ func RunIncrementalOnce(ctx context.Context, backend IncrementalStore, opts Incr
 		}
 		selected[key] = true
 	}
-	// A hot subject can produce more than 20,000 distinct rows by itself. Keep
-	// each read page and each commit small, and release any unprocessed lease if
-	// the context expires. A successful group has already acknowledged its own
-	// generations and must never be released again.
-	const claimGroupSize = 8
-	groups := make([][]store.RiskSubjectClaim, 0, (len(claims)+claimGroupSize-1)/claimGroupSize)
-	for start := 0; start < len(claims); start += claimGroupSize {
-		end := min(start+claimGroupSize, len(claims))
-		groups = append(groups, claims[start:end])
-	}
+	// One read and commit is the usual path. Split only when the feature bound
+	// is exceeded. Acked groups keep their receipts if a later group fails.
+	groups := [][]store.RiskSubjectClaim{claims}
 	var boundErr error
 	for len(groups) > 0 {
 		group := groups[0]

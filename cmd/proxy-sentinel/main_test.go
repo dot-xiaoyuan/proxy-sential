@@ -16,7 +16,7 @@ func TestRiskWorkerLoopsProcessIndependentBatches(t *testing.T) {
 	started := make(chan struct{}, 2)
 	done := make(chan struct{})
 	go func() {
-		runRiskWorkerLoops(ctx, time.Hour, 2, func() bool {
+		runRiskWorkerLoops(ctx, time.Hour, 2, func(bool) bool {
 			started <- struct{}{}
 			<-ctx.Done()
 			return false
@@ -38,22 +38,24 @@ func TestRiskWorkerLoopsProcessIndependentBatches(t *testing.T) {
 	}
 }
 
-func TestRiskWorkerDelayAdaptsOnlyToFastFullBatches(t *testing.T) {
+func TestRiskWorkerScheduleAdaptsToFullBatchesAndDatabaseLatency(t *testing.T) {
 	for _, tt := range []struct {
 		name              string
 		interval, elapsed time.Duration
-		full              bool
+		full, draining    bool
+		wantDrain         bool
 		want              time.Duration
 	}{
-		{"full", time.Second, 180 * time.Millisecond, true, 320 * time.Millisecond},
-		{"partial or failed", time.Second, 180 * time.Millisecond, false, 820 * time.Millisecond},
-		{"database slowed down", time.Second, 550 * time.Millisecond, true, 450 * time.Millisecond},
-		{"minimum interval", 150 * time.Millisecond, 20 * time.Millisecond, true, 80 * time.Millisecond},
-		{"batch outlasts the interval", time.Second, 2 * time.Second, true, 0},
+		{"full", time.Second, 180 * time.Millisecond, true, false, true, 320 * time.Millisecond},
+		{"larger batch stays within budget", time.Second, 550 * time.Millisecond, true, true, true, 0},
+		{"partial or failed", time.Second, 180 * time.Millisecond, false, true, false, 820 * time.Millisecond},
+		{"back to small batch", time.Second, 550 * time.Millisecond, true, false, false, 450 * time.Millisecond},
+		{"minimum interval", 150 * time.Millisecond, 20 * time.Millisecond, true, false, true, 80 * time.Millisecond},
+		{"batch outlasts the interval", time.Second, 2 * time.Second, true, true, false, 0},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := riskWorkerDelay(tt.interval, tt.elapsed, tt.full); got != tt.want {
-				t.Fatalf("delay=%v, want %v", got, tt.want)
+			if drain, delay := riskWorkerSchedule(tt.interval, tt.elapsed, tt.full, tt.draining); drain != tt.wantDrain || delay != tt.want {
+				t.Fatalf("drain=%t delay=%v, want drain=%t delay=%v", drain, delay, tt.wantDrain, tt.want)
 			}
 		})
 	}

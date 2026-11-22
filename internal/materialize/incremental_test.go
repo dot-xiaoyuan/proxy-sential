@@ -189,6 +189,19 @@ func TestIncrementalRiskSplitsOversizedGroupWithoutSkippingClaims(t *testing.T) 
 	}
 }
 
+func TestIncrementalRiskCombinesFullDrainBatchInOneCommit(t *testing.T) {
+	now := time.Now().UTC()
+	claims := make([]store.RiskSubjectClaim, 20)
+	for index := range claims {
+		claims[index] = store.RiskSubjectClaim{SensorID: "sensor-a", Type: "ip", ID: "192.0.2." + strconv.Itoa(index+1), Generation: int64(index + 1)}
+	}
+	f := &incrementalFake{claims: claims, cutoff: now.Add(-time.Hour)}
+	result, err := RunIncrementalOnce(context.Background(), f, IncrementalOptions{SensorID: "sensor-a", AsOf: now, SkipExpiry: true, Drain: true})
+	if err != nil || !result.FullBatch || result.Claims != 16 || result.Committed != 16 || f.streamCalls != 1 || len(f.appliedGroups) != 1 || len(f.appliedGroups[0]) != 16 || f.released != 0 {
+		t.Fatalf("drain batch did not combine claim and write: result=%+v reads=%d groups=%v err=%v", result, f.streamCalls, f.appliedGroups, err)
+	}
+}
+
 func TestIncrementalRiskHotSingletonStaysPendingWhileOtherClaimsCommit(t *testing.T) {
 	now := time.Now().UTC()
 	claims := []store.RiskSubjectClaim{

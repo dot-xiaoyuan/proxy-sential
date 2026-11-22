@@ -1292,7 +1292,7 @@ func runRiskMaterialize(args []string) error {
 	interval := fs.Duration("interval", 0, "base materialization interval; incremental workers can run at half the interval when full batches commit quickly")
 	limit := fs.Int("event-limit", 200000, "maximum events per rolling window")
 	incremental := fs.Bool("incremental", false, "evaluate only confirmed, dirty stream risk subjects")
-	claimLimit := fs.Int("claim-limit", 64, "requested dirty subjects per incremental transaction; worker caps a PG lease at 8 subjects")
+	claimLimit := fs.Int("claim-limit", 64, "requested dirty subjects per incremental transaction, capped at 8 normally and 16 while draining")
 	featureLimit := fs.Int("feature-limit", 20000, "legacy feature read bound; incremental reads use pages of at most 5000 rows and a separate 100000-row/64MiB group guard")
 	sharedAccess := fs.Bool("shared-access", os.Getenv("PROXY_SENTINEL_SHARED_ACCESS_ENABLED") == "true", "build scoped shared access evidence for observation policies")
 	routerDedicated := fs.Bool("router-observations-dedicated", os.Getenv("PROXY_SENTINEL_ROUTER_OBSERVATIONS_DEDICATED") == "true", "use the healthy incremental recognition owner instead of replaying router observations")
@@ -1398,7 +1398,7 @@ func runRiskMaterialize(args []string) error {
 			}
 		}()
 	}
-	runOnce := func() (bool, error) {
+	runOnce := func(drain bool) (bool, error) {
 		runCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer cancel()
 		if *incremental {
@@ -1408,7 +1408,7 @@ func runRiskMaterialize(args []string) error {
 			boundedCtx, stopBatch := context.WithTimeout(runCtx, 10*time.Second)
 			defer stopBatch()
 			started := time.Now()
-			result, err := materialize.RunIncrementalOnce(boundedCtx, backend, materialize.IncrementalOptions{SensorID: *sensorID, Window: *window, ClaimLimit: *claimLimit, FeatureLimit: *featureLimit, SkipExpiry: !*once})
+			result, err := materialize.RunIncrementalOnce(boundedCtx, backend, materialize.IncrementalOptions{SensorID: *sensorID, Window: *window, ClaimLimit: *claimLimit, FeatureLimit: *featureLimit, SkipExpiry: !*once, Drain: drain})
 			if err != nil {
 				return false, err
 			}
@@ -1425,7 +1425,7 @@ func runRiskMaterialize(args []string) error {
 		return false, nil
 	}
 	if *once {
-		_, err := runOnce()
+		_, err := runOnce(false)
 		return err
 	}
 	workers := 1
@@ -1434,8 +1434,8 @@ func runRiskMaterialize(args []string) error {
 		// absorb real source bursts without sharing one evaluation transaction.
 		workers = 2
 	}
-	runRiskWorkerLoops(ctx, *interval, workers, func() bool {
-		full, err := runOnce()
+	runRiskWorkerLoops(ctx, *interval, workers, func(drain bool) bool {
+		full, err := runOnce(drain)
 		if err != nil && ctx.Err() == nil {
 			fmt.Fprintf(os.Stderr, "risk materialize failed: %v\n", err)
 		}
@@ -1451,15 +1451,21 @@ func runRiskMaterialize(args []string) error {
 	return nil
 }
 
-func riskWorkerDelay(interval, elapsed time.Duration, full bool) time.Duration {
+func riskWorkerSchedule(interval, elapsed time.Duration, full, draining bool) (bool, time.Duration) {
 	fastInterval := max(100*time.Millisecond, interval/2)
-	if full && elapsed <= fastInterval {
+	budget := fastInterval
+	if draining {
+		// A larger batch can take longer while reducing cost per subject.
+		budget = interval
+	}
+	drain := full && elapsed <= budget
+	if drain {
 		interval = fastInterval
 	}
-	return max(0, interval-elapsed)
+	return drain, max(0, interval-elapsed)
 }
 
-func runRiskWorkerLoops(ctx context.Context, interval time.Duration, workers int, run func() bool) {
+func runRiskWorkerLoops(ctx context.Context, interval time.Duration, workers int, run func(bool) bool) {
 	var group sync.WaitGroup
 	for range workers {
 		group.Add(1)
@@ -1468,10 +1474,13 @@ func runRiskWorkerLoops(ctx context.Context, interval time.Duration, workers int
 			timer := time.NewTimer(interval)
 			timer.Stop()
 			defer timer.Stop()
+			drain := false
 			for ctx.Err() == nil {
 				started := time.Now()
-				full := run()
-				timer.Reset(riskWorkerDelay(interval, time.Since(started), full))
+				full := run(drain)
+				var delay time.Duration
+				drain, delay = riskWorkerSchedule(interval, time.Since(started), full, drain)
+				timer.Reset(delay)
 				select {
 				case <-ctx.Done():
 					return
