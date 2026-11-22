@@ -1,5 +1,6 @@
 import type { Permission, Session } from '../shared/api/types'
 import { can } from '../shared/auth/permissions'
+import { reportPermissions } from './reportSections'
 
 export type NavigationItem = { key: string; title: string; to: string; permission?: Permission; hidden?: boolean; readAlternatives?: {permission: Permission; to: string}[]; owns: (path: string, params: URLSearchParams) => boolean }
 export type NavigationGroup = { key: string; title: string; items: NavigationItem[]; hidden?: boolean }
@@ -9,6 +10,10 @@ export const deviceCenterTab = (params: URLSearchParams): DeviceCenterTab => par
 const item = (key: string, title: string, to: string, permission?: Permission, prefix = to.split('?')[0]): NavigationItem => ({ key, title, to, permission, owns: path => path === prefix || path.startsWith(`${prefix}/`) })
 export const navigation: NavigationGroup[] = [
   { key: 'workbench', title: '运营工作台', items: [item('overview','运营工作台','/overview','risks:read')] },
+  { key: 'reports', title: '系统报表', items: [{
+    ...item('reports', '系统报表', '/reports', 'risks:read'),
+    readAlternatives: reportPermissions.map(permission => ({ permission, to: '/reports' })),
+  }] },
   { key: 'ai-relay', title: 'AI 中转站', items: [item('ai-relay-usages','AI 中转站','/ai-relay','events:read')] },
   { key: 'risk', title: '风险运营', items: [
     {...item('observations','共享发现与核验','/shared-access','cases:read'), owns: p => p === '/shared-access' || p.startsWith('/shared-access/')},
@@ -29,7 +34,7 @@ export const navigation: NavigationGroup[] = [
   { key: 'system', title: '系统管理', items: [{...item('sources','数据源与采集','/settings/sources','ingest:read'),readAlternatives:[{permission:'identity:read',to:'/settings/sources?tab=sources'}]},item('integrations','认证与处置接入','/settings/actions','actions:read'),item('notifications','通知模板与通道','/settings/notifications','notifications:read'),{...item('behavior-reports','上报通道配置','/settings/behavior-reports','behavior-reports:read'),readAlternatives:[{permission:'behavior-reports:manage',to:'/settings/behavior-reports'}]},item('organization','校区与网络区域','/settings/organization','organization:read'),item('users','用户权限','/settings/security','users:manage'),item('audit','审计日志','/audit','audit:read')] },
 ]
 
-const registeredRoutes=[/^\/(overview|ai-relay|activity|devices|discovery|events|cases|actions|audit|policies|shared-access|violation-observations|behavior-report-proposals)$/, /^\/(devices|events|cases|audit|review)\/[^/]+$/, /^\/discovery\/routers\/[^/]+$/, /^\/shared-access\/(observations|reviews)\/[^/]+$/, /^\/policies\/(exceptions|whitelist|blacklist|destination-targets)$/, /^\/settings\/(sources|rules|organization|actions|security|notifications|behavior-reports)$/, /^\/(ingest|settings\/sources)\/diagnostics\/[^/]+$/, /^\/ingest$/]
+const registeredRoutes=[/^\/(overview|reports|ai-relay|activity|devices|discovery|events|cases|actions|audit|policies|shared-access|violation-observations|behavior-report-proposals)$/, /^\/(devices|events|cases|audit|review)\/[^/]+$/, /^\/discovery\/routers\/[^/]+$/, /^\/shared-access\/(observations|reviews)\/[^/]+$/, /^\/policies\/(exceptions|whitelist|blacklist|destination-targets)$/, /^\/settings\/(sources|rules|organization|actions|security|notifications|behavior-reports)$/, /^\/(ingest|settings\/sources)\/diagnostics\/[^/]+$/, /^\/ingest$/]
 export function safeReturnTo(value: string | null | undefined, fallback = '/events', depth=0): string {
   if (!value || !value.startsWith('/') || value.startsWith('//') || /[\\\u0000-\u001f]/.test(value)) return fallback
   try {
@@ -67,7 +72,9 @@ export function routePermission(path: string, search: string): Permission | unde
   if(path.startsWith('/ingest')) return 'ingest:read'
   if(path === '/settings/sources' && ['sources','scan','tasks'].includes(new URLSearchParams(search).get('tab') || '')) return 'identity:read'
   if(path === '/actions') return tab==='actions'?'actions:read':tab==='reports'?'behavior-reports:read':'policies:read'
-  return routeOwner(path,search)?.entry.permission
+  const entry = routeOwner(path,search)?.entry
+  // The report page checks each section and its data sources individually.
+  return entry?.key === 'reports' ? undefined : entry?.permission
 }
 export function visibleNavigation(session: Session) {
  return navigation.map(group => ({...group,items:group.items.flatMap(entry => {

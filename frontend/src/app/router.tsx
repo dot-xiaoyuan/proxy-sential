@@ -20,6 +20,7 @@ import {
   IngestDiagnosticDetailsRoute,
   IpDetailsRoute,
   OverviewRoute,
+  ReportsRoute,
   ReviewDetailsRoute,
   RulesRoute,
 	CasesRoute,
@@ -40,6 +41,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate replace to="/overview" /> },
       { path: 'overview', element: <OverviewRoute /> },
+      { path: 'reports', element: <ReportsRoute /> },
       { path: 'activity', element: <ActivityEntry><ActivityRoute /></ActivityEntry> },
       { path: 'devices', element: <DevicesRoute /> },
       { path: 'discovery', element: <LegacyDiscoveryRedirect /> },

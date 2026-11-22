@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   DashboardOutlined,
+  BarChartOutlined,
   AlertOutlined,
   LaptopOutlined,
   DeploymentUnitOutlined,
@@ -26,6 +27,7 @@ import type { Session } from '../shared/api/types'
 
 const navigationIcons: Record<string, ReactNode> = {
   workbench: <DashboardOutlined />,
+  reports: <BarChartOutlined />,
   'ai-relay': <ApiOutlined />,
   risk: <AlertOutlined />,
   assets: <LaptopOutlined />,
@@ -35,7 +37,7 @@ const navigationIcons: Record<string, ReactNode> = {
 }
 
 function buildNavItems(session: Session): MenuProps['items'] {
-  return visibleNavigation(session).map(group => (group.key === 'workbench' || group.key === 'ai-relay') ? {
+  return visibleNavigation(session).map(group => (group.key === 'workbench' || group.key === 'reports' || group.key === 'ai-relay') ? {
     key: group.items[0].key, icon: navigationIcons[group.key], label: <NavLink to={group.items[0].to}>{group.title}</NavLink>
   } : {key:group.key,label:group.title,icon:navigationIcons[group.key],children:group.items.map(entry=>({key:entry.key,label:<NavLink to={entry.to} onClick={()=>{if(entry.to.split('?')[0]==='/devices'){performance.clearMarks('device-inventory-enter');performance.mark('device-inventory-enter')}}}>{entry.title}</NavLink>}))})
 }

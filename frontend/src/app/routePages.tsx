@@ -17,6 +17,7 @@ const IngestPage = lazy(() => import('../pages/IngestPage').then((module) => ({ 
 const OverviewPage = lazy(() =>
   import('../pages/OverviewPage').then((module) => ({ default: module.OverviewPage })),
 )
+const ReportsPage = lazy(() => import('../pages/ReportsPage').then((module) => ({ default: module.ReportsPage })))
 const ReviewPage = lazy(() => import('../pages/ReviewPage').then((module) => ({ default: module.ReviewPage })))
 const ReviewDetailsPage = lazy(() => import('../pages/ReviewDetailsPage').then((module) => ({ default: module.ReviewDetailsPage })))
 const EventDetailsPage = lazy(() => import('../pages/RecordDetailsPages').then((module) => ({ default: module.EventDetailsPage })))
@@ -106,6 +107,10 @@ export function OverviewRoute() {
       <OverviewPage />
     </RouteSuspense>
   )
+}
+
+export function ReportsRoute() {
+  return <RouteSuspense><ReportsPage /></RouteSuspense>
 }
 
 export function ReviewRoute() {
