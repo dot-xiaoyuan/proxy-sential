@@ -24,6 +24,25 @@ func TestRouterObservationPageAlwaysSerializesHasMore(t *testing.T) {
 	}
 }
 
+func TestRouterObservationReportCountsDeviceWinners(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC()
+	mock.ExpectQuery(`SELECT now\(\).*DISTINCT ON \(device_key\).*expires_at>now\(\).*ip IS NOT NULL.*active_router_fact.*role=\$1.*ORDER BY device_key,status_rank DESC`).
+		WithArgs("router").
+		WillReturnRows(sqlmock.NewRows([]string{"now", "candidate", "likely", "confirmed"}).AddRow(now, 12, 3, 0))
+	report, err := (&PostgresStore{db: db}).GetRouterObservationReport(context.Background())
+	if err != nil || report != (RouterObservationReport{AsOf: now, Candidate: 12, Likely: 3}) {
+		t.Fatalf("unexpected report: %+v err=%v", report, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRouterObservationListUsesSeekAndLookahead(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherFunc(func(_, actual string) error {
 		if !strings.Contains(actual, "WITH filtered AS NOT MATERIALIZED") || !strings.Contains(actual, "LIMIT 1") || strings.Contains(actual, "OVER(") || strings.Contains(actual, "count(*)") || strings.Contains(actual, " OFFSET ") {

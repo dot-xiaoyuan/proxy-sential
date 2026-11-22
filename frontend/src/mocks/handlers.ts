@@ -143,6 +143,21 @@ export const handlers = [
  ...routerObservationHandlers,
  http.get("/api/v1/events/proxy-fixture",()=>HttpResponse.json({event_id:"proxy-fixture",type:"proxy_transaction",source:"zeek",timestamp:proxyProof.response_at,proxy_protocol:proxyProof})),
   ...applicationHandlers,
+  http.get('/api/v1/policy-decisions/shared-trend', ({ request }) => {
+    const short = new URL(request.url).searchParams.get('window') === '15m'
+    const bucketMinutes = short ? 1 : 5
+    const count = short ? 15 : 12
+    const interval = bucketMinutes * 60_000
+    const to = Math.floor(Date.now() / interval) * interval
+    const from = to - count * interval
+    const time = (value: number) => new Date(value).toISOString()
+    return HttpResponse.json({
+      from: time(from), to: time(to), bucket_minutes: bucketMinutes,
+      buckets: Array.from({ length: count }, (_, i) => ({
+        from: time(from + i * interval), matched: i === 8 ? 2 : 0, insufficient: 26 + i * 3, expired: 12 + i % 3 * 7,
+      })),
+    })
+  }),
   ...policyHandlers,
   http.get('/api/v1/session', async () => {
     await delay(120)

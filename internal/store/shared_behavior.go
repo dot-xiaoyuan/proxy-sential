@@ -155,6 +155,33 @@ func sharedBehaviorWhere(query SharedBehaviorQuery) (string, []any, error) {
 	return "WHERE " + strings.Join(clauses, " AND "), args, nil
 }
 
+type SharedBehaviorReport struct {
+	AsOf          time.Time `json:"as_of"`
+	PendingReview int64     `json:"pending_review"`
+	Confirmed     int64     `json:"confirmed"`
+}
+
+func (s *DBStore) GetSharedBehaviorReport(ctx context.Context) (SharedBehaviorReport, error) {
+	if s == nil || s.pg == nil {
+		return SharedBehaviorReport{}, fmt.Errorf("shared behavior store unavailable")
+	}
+	return s.pg.GetSharedBehaviorReport(ctx)
+}
+
+func (s *PostgresStore) GetSharedBehaviorReport(ctx context.Context) (SharedBehaviorReport, error) {
+	where, args, err := sharedBehaviorWhere(SharedBehaviorQuery{View: "traffic"})
+	if err != nil {
+		return SharedBehaviorReport{}, err
+	}
+	var report SharedBehaviorReport
+	var total int64
+	err = s.db.QueryRowContext(ctx, `SELECT now(),count(*),count(*) FILTER(
+ WHERE status='confirmed' AND coverage_state='verified' AND COALESCE(observation->>'strong_anchor','')<>'')
+ FROM shared_behavior_observations `+where, args...).Scan(&report.AsOf, &total, &report.Confirmed)
+	report.PendingReview = total - report.Confirmed
+	return report, err
+}
+
 func (s *PostgresStore) ListSharedBehavior(ctx context.Context, query SharedBehaviorQuery) (SharedBehaviorPage, error) {
 	if query.Limit <= 0 {
 		query.Limit = 20

@@ -1,6 +1,5 @@
 import type { Permission, Session } from '../shared/api/types'
 import { can } from '../shared/auth/permissions'
-import { reportPermissions } from './reportSections'
 
 export type NavigationItem = { key: string; title: string; to: string; permission?: Permission; hidden?: boolean; readAlternatives?: {permission: Permission; to: string}[]; owns: (path: string, params: URLSearchParams) => boolean }
 export type NavigationGroup = { key: string; title: string; items: NavigationItem[]; hidden?: boolean }
@@ -10,9 +9,9 @@ export const deviceCenterTab = (params: URLSearchParams): DeviceCenterTab => par
 const item = (key: string, title: string, to: string, permission?: Permission, prefix = to.split('?')[0]): NavigationItem => ({ key, title, to, permission, owns: path => path === prefix || path.startsWith(`${prefix}/`) })
 export const navigation: NavigationGroup[] = [
   { key: 'workbench', title: '运营工作台', items: [item('overview','运营工作台','/overview','risks:read')] },
-  { key: 'reports', title: '系统报表', items: [{
-    ...item('reports', '系统报表', '/reports', 'risks:read'),
-    readAlternatives: reportPermissions.map(permission => ({ permission, to: '/reports' })),
+  { key: 'reports', title: '防代理报表', items: [{
+    ...item('reports', '防代理报表', '/reports', 'identity:read'),
+    readAlternatives: [{ permission: 'cases:read', to: '/reports' }, { permission: 'policies:read', to: '/reports' }],
   }] },
   { key: 'ai-relay', title: 'AI 中转站', items: [item('ai-relay-usages','AI 中转站','/ai-relay','events:read')] },
   { key: 'risk', title: '风险运营', items: [

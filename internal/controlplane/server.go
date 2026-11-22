@@ -770,6 +770,8 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		writeJSON(w, http.StatusOK, session)
 	case r.Method == http.MethodGet && (path == "/shared-access/devices" || strings.HasPrefix(path, "/shared-access/devices/")):
 		s.handleSharedDeviceProfiles(w, r, path)
+	case r.Method == http.MethodGet && path == "/shared-access/observations/summary":
+		s.handleSharedBehaviorReport(w, r)
 	case r.Method == http.MethodGet && (path == "/shared-access/observations" || strings.HasPrefix(path, "/shared-access/observations/")):
 		s.handleSharedBehavior(w, r, path)
 	case (path == "/shared-access/reviews" || strings.HasPrefix(path, "/shared-access/reviews/")):
@@ -808,6 +810,8 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handlePolicyImports(w, r, path)
 	case r.Method == http.MethodGet && path == "/policy-decisions/metadata":
 		s.queryPolicyDecisionMetadata(w, r)
+	case r.Method == http.MethodGet && path == "/policy-decisions/shared-trend":
+		s.handleSharedDecisionTrend(w, r)
 	case r.Method == http.MethodGet && path == "/policy-decisions/position":
 		s.queryPolicyDecisionPosition(w, r)
 	case r.Method == http.MethodGet && path == "/policy-decisions":
@@ -870,6 +874,8 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleEndpointRegistration(w, r, strings.TrimPrefix(path, "/endpoints/"))
 	case strings.HasPrefix(path, "/discovery/"):
 		s.handleDiscovery(w, r, path)
+	case r.Method == http.MethodGet && path == "/router-observations/summary":
+		s.handleRouterObservationReport(w, r)
 	case r.Method == http.MethodGet && (path == "/router-observations" || strings.HasPrefix(path, "/router-observations/")):
 		s.handleRouterObservations(w, r, path)
 	case r.Method == http.MethodGet && path == "/devices":

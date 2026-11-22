@@ -10,6 +10,24 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 )
 
+func TestSharedBehaviorReportUsesCurrentTrafficAndVerifiedEvidence(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC()
+	mock.ExpectQuery(`count\(\*\) FILTER\( WHERE status='confirmed' AND coverage_state='verified'.*strong_anchor.* FROM shared_behavior_observations WHERE current=true.*window_end>now\(\)-interval '20 minutes'.*ua_os.*tls_stack.*generation_id=`).
+		WillReturnRows(sqlmock.NewRows([]string{"now", "total", "confirmed"}).AddRow(now, 8, 1))
+	report, err := (&PostgresStore{db: db}).GetSharedBehaviorReport(context.Background())
+	if err != nil || report != (SharedBehaviorReport{AsOf: now, PendingReview: 7, Confirmed: 1}) {
+		t.Fatalf("unexpected report: %+v err=%v", report, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestListSharedBehaviorReturnsLatestGatewayProfile(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

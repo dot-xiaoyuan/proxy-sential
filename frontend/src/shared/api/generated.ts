@@ -498,6 +498,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/router-observations/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Counts current addressed router observations once per device using the router list winner order. Requires identity:read. */
+        get: operations["getRouterObservationReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/router-observations/{assessment_id}": {
         parameters: {
             query?: never;
@@ -1140,6 +1157,23 @@ export interface paths {
         };
         /** @description Passive shared-gateway behavior observations; requires cases:read. Results are shadow-only and never authorize enforcement. */
         get: operations["listSharedBehaviorObservations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shared-access/observations/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Current mirror observations within the existing unexpired traffic view. Requires cases:read. */
+        get: operations["getSharedBehaviorReport"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2575,6 +2609,23 @@ export interface paths {
         };
         /** @description Stable cursor pagination over recorded decisions; shared observe records never dispatch actions. */
         get: operations["listPolicyDecisionRecords"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/policy-decisions/shared-trend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Counts shared-access policy records by evaluated time and result in recent complete buckets. Requires policies:read. */
+        get: operations["getSharedDecisionTrend"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7802,6 +7853,34 @@ export interface components {
             current: boolean;
             history: components["schemas"]["RouterAssessmentHistory"][];
         };
+        RouterObservationReport: {
+            /** Format: date-time */
+            as_of: string;
+            candidate: number;
+            likely: number;
+            confirmed: number;
+        };
+        SharedBehaviorReport: {
+            /** Format: date-time */
+            as_of: string;
+            pending_review: number;
+            confirmed: number;
+        };
+        SharedDecisionTrend: {
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            /** @enum {integer} */
+            bucket_minutes: 1 | 5;
+            buckets: {
+                /** Format: date-time */
+                from: string;
+                matched: number;
+                insufficient: number;
+                expired: number;
+            }[];
+        };
         RouterAssessmentPage: {
             items: components["schemas"]["RouterAssessment"][];
             page: {
@@ -10261,6 +10340,33 @@ export interface operations {
             };
         };
     };
+    getRouterObservationReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current router identity distribution. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RouterObservationReport"];
+                };
+            };
+            /** @description Router statistics unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     getRouterObservation: {
         parameters: {
             query?: never;
@@ -10823,6 +10929,33 @@ export interface operations {
             };
             /** @description Invalid filter or pagination */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getSharedBehaviorReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current observations split by presence of verified confirmation. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedBehaviorReport"];
+                };
+            };
+            /** @description Shared behavior statistics unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14192,6 +14325,42 @@ export interface operations {
                 content?: never;
             };
             /** @description Decision storage unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getSharedDecisionTrend: {
+        parameters: {
+            query?: {
+                window?: "15m" | "1h";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded trend including empty buckets. Counts describe decision records. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharedDecisionTrend"];
+                };
+            };
+            /** @description Invalid window */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Shared decision statistics unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;

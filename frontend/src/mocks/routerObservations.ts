@@ -113,6 +113,9 @@ export const routerObservationHandlers = [
     const items = selected.map(({ evidence: _evidence, history: _history, ...item }) => item)
     return HttpResponse.json({ items, page: { limit, next_cursor: hasMore ? encodeRouterMockCursor(selected[selected.length - 1], scope) : null, total: 0, has_more: hasMore } })
   }),
+  http.get('/api/v1/router-observations/summary', () => HttpResponse.json({
+    as_of: new Date().toISOString(), candidate: 24, likely: 7, confirmed: 3,
+  })),
   http.get('/api/v1/router-observations/:assessmentId', ({ params }) => {
     const item = routerObservations.find(entry => entry.assessment_id === params.assessmentId)
     return item ? HttpResponse.json(item) : HttpResponse.json({ code: 'not_found', message: '路由观察不存在' }, { status: 404 })
