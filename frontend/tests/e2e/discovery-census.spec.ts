@@ -9,7 +9,8 @@ test('mirror census stays readable and scoped at three viewports', async ({page}
   for(const viewport of [{width:390,height:844},{width:1280,height:800},{width:1440,height:900}]){
     await page.setViewportSize(viewport)
     await page.goto('/devices/coverage')
-    await page.getByText('查看原因分析与镜像明细').click()
+    await page.getByRole('tab',{name:'镜像与配对'}).click()
+    await page.getByText('镜像明细与台账对照').click()
     const panel=page.getByRole('region',{name:'镜像可见标识统计'})
     await expect(panel).toBeVisible()
     await expect(panel.locator('.census-card').first()).toContainText('2')

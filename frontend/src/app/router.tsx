@@ -13,6 +13,7 @@ import {
   AuditDetailsRoute,
   DevicesRoute,
   DiscoveryCoverageRoute,
+  DataReportRoute,
   RouterObservationDetailsRoute,
   EndpointDetailsRoute,
   EventsRoute,
@@ -41,6 +42,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate replace to="/overview" /> },
       { path: 'overview', element: <OverviewRoute /> },
+      { path: 'reports/data', element: <DataReportRoute /> },
       { path: 'activity', element: <ActivityEntry><ActivityRoute /></ActivityEntry> },
       { path: 'devices', element: <DevicesRoute /> },
       { path: 'devices/coverage', element: <DiscoveryCoverageRoute /> },
@@ -77,6 +79,7 @@ export const router = createBrowserRouter([
       { path: 'policies/destination-targets', element: <DestinationTargetsRoute /> },
       { path: 'policies/exceptions', element: <CampusExceptionsRoute /> },
       { path: 'settings/sources', element: <SourcesRoute /> },
+      { path: 'settings/system-report', element: <Navigate replace to="/reports/data" /> },
       { path: 'settings/sources/diagnostics/:diagnosticId', element: <IngestDiagnosticDetailsRoute /> },
       { path: 'settings/actions', element: <LegacySettingsEntry kind="actions"><ActionsRoute /></LegacySettingsEntry> },
 	  { path: 'settings/security', element: <LegacySettingsEntry kind="security"><SecuritySettingsRoute /></LegacySettingsEntry> },

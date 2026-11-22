@@ -1,7 +1,39 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
+
+async function assertCoverageLayout(page: Page) {
+  const probe = await page.evaluate(() => {
+    const visible = (el: Element) => el.getClientRects().length > 0
+    const activeTab = document.querySelector('.coverage-tabs .ant-tabs-tab-active .ant-tabs-tab-btn')!
+    const rgb = (value: string) => value.match(/[\d.]+/g)?.map(Number) ?? []
+    const luminance = (color: number[]) => color.slice(0,3).reduce((sum, value, index) => {
+      const channel = value / 255
+      return sum + (channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4) * [0.2126, 0.7152, 0.0722][index]
+    }, 0)
+    let background = [255,255,255]
+    for (let element: Element | null = activeTab; element; element = element.parentElement) {
+      const fill = rgb(getComputedStyle(element).backgroundColor)
+      if (fill.length === 3 || fill[3] === 1) { background = fill; break }
+    }
+    const foregroundLight = luminance(rgb(getComputedStyle(activeTab).color))
+    const backgroundLight = luminance(background)
+    return {
+      overflow:document.documentElement.scrollWidth>innerWidth+2,
+      badControls:[...document.querySelectorAll('.discovery-coverage-page .ant-btn,.discovery-coverage-page .ant-tag')].filter(visible).filter(element=>{const style=getComputedStyle(element);return style.whiteSpace!=='nowrap'||style.flexShrink!=='0'}).length,
+      clipped:[...document.querySelectorAll('.coverage-metric,.coverage-panel,.discovery-diagnostics-stage,.discovery-diagnostics-table tr')].filter(visible).filter(element=>element.getBoundingClientRect().right>innerWidth+2||element.scrollWidth>element.clientWidth+2).length,
+      selected:[...document.querySelectorAll('.ant-menu-item-selected')].map(element=>element.textContent?.trim()),
+      contrast:(Math.max(foregroundLight, backgroundLight)+.05)/(Math.min(foregroundLight, backgroundLight)+.05),
+    }
+  })
+  expect(probe.overflow).toBe(false)
+  expect(probe.badControls).toBe(0)
+  expect(probe.clipped).toBe(0)
+  expect(probe.selected).toContain('发现覆盖报表')
+  expect(probe.contrast).toBeGreaterThanOrEqual(4.5)
+}
+
 
 for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:1440,height:900}]) {
-  test(`coverage has its own page and discovery starts with a compact summary and list ${viewport.width}`, async ({page}, info) => {
+  test(`coverage keeps live metrics, network groups and historical evidence in their own views ${viewport.width}`, async ({page}, info) => {
     const errors:string[] = []
     page.on('pageerror', error => errors.push(error.message))
     page.on('console', message => {if(message.type()==='error')errors.push(message.text())})
@@ -22,48 +54,51 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
     await page.screenshot({path:info.outputPath(`discovery-list-${viewport.width}.png`),animations:'disabled'})
 
     await page.goto('/devices/coverage')
-    const report = page.getByLabel('设备发现覆盖报表')
-    await expect(report).toContainText('当前无有效 MAC 配对的 IPv4')
-    await expect(report).toContainText('当前有效的 IP–MAC 配对')
-    await expect(report.getByText('当前无有效 MAC 配对的 IPv4').locator('..')).not.toContainText('共 9 个 IPv4')
-    await expect(report.getByText('当前无有效 IPv4 配对的 MAC').locator('..')).not.toContainText('共 6 个 MAC')
-    await expect(report).toContainText('绑定状态截至')
-    await expect(report).not.toContainText('包含窗口内历史换绑')
-    await expect(report).toContainText('已识别设备类型的配对')
-    await expect(report).toContainText('类型待确认的配对')
-    await expect(report).toContainText('配对占比，不是物理设备台数占比')
-    await expect(report.getByLabel('已识别设备类型的配对占比')).toContainText('40.0%')
-    await expect(report).not.toContainText('有设备记录的组合占比')
-    await expect(report.getByLabel('MAC OUI 匹配占比')).toContainText('33.3%')
-    await expect(report).toContainText('近期新配对可能还在处理中')
-    await expect(report).toContainText('已按固定标志位计算')
-    await expect(report).toContainText('无法确认随机 MAC 的准确数量')
-    await expect(report).toContainText('无 OUI 且非本地管理 MAC')
-    await expect(report).not.toContainText('可信设备身份')
-    await expect(report.getByText('设备发现观测')).not.toBeVisible()
+    const report = page.getByRole('region',{name:'设备发现覆盖报表'})
+    const stages = report.getByRole('region',{name:'IPv4 识别进度'})
+    await expect(stages).toContainText('33.3%')
+    await expect(report.getByRole('region',{name:'类型待确认的证据'})).toContainText('仅网络层')
+    await expect(report).toContainText('滞后约 22 分钟')
+    await expect(page.getByRole('region',{name:'镜像标识与配对'})).not.toBeVisible()
     await expect(page.getByLabel('设备事实原因分析')).not.toBeVisible()
+    await assertCoverageLayout(page)
     await page.screenshot({path:info.outputPath(`coverage-report-${viewport.width}.png`),fullPage:true,animations:'disabled'})
-    await report.getByLabel('已识别设备类型的配对占比').scrollIntoViewIfNeeded()
-    await page.screenshot({path:info.outputPath(`coverage-type-rate-${viewport.width}.png`),animations:'disabled'})
-    await report.getByText('查看设备观测与类型统计（另一统计口径）').click()
-    await expect(report.getByText('设备发现观测')).toBeVisible()
-    await page.getByText('查看原因分析与镜像明细').click()
-    await expect(page.getByLabel('设备事实原因分析')).toContainText('Fingerbank 采购判断')
-    await expect(page.locator('.discovery-diagnostics-table tbody tr')).toHaveCount(46)
+
+    await page.getByRole('tab',{name:'网段与 VLAN'}).click()
+    const networks = page.getByRole('region',{name:'网段与 VLAN 分布'})
+    const subnet = networks.getByRole('link',{name:'查看 192.0.2.0/24 的发现记录'})
+    await expect(subnet).toHaveAttribute('href',/tab=discovery&discovery_window=24h&discovery_subnet=192.0.2.0%2F24/)
+    const subnetSearch = networks.getByRole('textbox',{name:'搜索网段'})
+    await subnetSearch.fill('203.0.113')
+    await expect(networks.getByText('没有匹配的分组。')).toBeVisible()
+    await subnetSearch.clear()
+    await expect(subnet).toBeVisible()
+    await assertCoverageLayout(page)
+    await page.screenshot({path:info.outputPath(`coverage-networks-${viewport.width}.png`),animations:'disabled'})
+    await subnet.click()
+    await expect(page).toHaveURL(/\/devices\?tab=discovery&discovery_window=24h&discovery_subnet=192.0.2.0%2F24/)
+    await expect(page.getByLabel('已应用筛选')).toContainText('192.0.2.0/24')
+    await page.goBack()
+
+    await page.getByRole('tab',{name:'镜像与配对'}).click()
+    const mirror = page.getByRole('region',{name:'镜像标识与配对'})
+    const pairCounts = mirror.getByRole('region',{name:'有效 IP–MAC 配对'})
+    await expect(pairCounts).toContainText('40.0%')
+    await expect(pairCounts.getByRole('progressbar',{name:'已确认设备类型'})).toHaveAttribute('max','5')
+    await expect(mirror).toContainText('绑定状态截至')
+    await expect(mirror).toContainText('5 个无有效 MAC 配对')
+    await expect(page.getByLabel('镜像可见标识统计')).not.toBeVisible()
+    await page.getByText('查看 MAC 管理位和厂商前缀').click()
+    await expect(mirror.getByText('全局管理 · 匹配 OUI')).toBeVisible()
+    await assertCoverageLayout(page)
+    await page.screenshot({path:info.outputPath(`coverage-mirror-${viewport.width}.png`),fullPage:true,animations:'disabled'})
+    await page.getByText('镜像明细与台账对照').click()
     await expect(page.getByLabel('镜像可见标识统计')).toBeVisible()
-    const probe = await page.evaluate(() => ({
-      overflow:document.documentElement.scrollWidth>innerWidth+2,
-      badControls:[...document.querySelectorAll('.discovery-coverage-page .ant-btn,.discovery-coverage-page .ant-tag')].filter(element=>{const style=getComputedStyle(element);return style.whiteSpace!=='nowrap'||style.flexShrink!=='0'}).length,
-      clippedMetrics:[...document.querySelectorAll('.discovery-report-metric')].filter(element=>element.scrollWidth>element.clientWidth+2).length,
-      clippedDiagnosis:[...document.querySelectorAll('.discovery-diagnostics-stage,.discovery-diagnostics-examples article,.discovery-diagnostics-table tr')].filter(element=>element.getBoundingClientRect().right>innerWidth+2).length,
-      selected:[...document.querySelectorAll('.ant-menu-item-selected')].map(element=>element.textContent?.trim()),
-    }))
-    expect(probe.overflow).toBe(false)
-    expect(probe.badControls).toBe(0)
-    expect(probe.clippedMetrics).toBe(0)
-    expect(probe.clippedDiagnosis).toBe(0)
-    expect(probe.selected).toContain('发现覆盖报表')
-    await page.screenshot({path:info.outputPath(`coverage-details-${viewport.width}.png`),fullPage:true,animations:'disabled'})
+
+    await page.getByRole('tab',{name:'历史核查'}).click()
+    await expect(page.getByLabel('历史现场核查')).toContainText('11 月 15 日')
+    await expect(page.locator('.discovery-diagnostics-table tbody tr')).toHaveCount(46)
+    await assertCoverageLayout(page)
     expect(errors).toEqual([])
   })
 }

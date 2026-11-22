@@ -8,6 +8,7 @@ const ActivityPage = lazy(() =>
 const EventsPage = lazy(() => import('../pages/EventsPage').then((module) => ({ default: module.EventsPage })))
 const DevicesPage = lazy(() => import('../pages/DeviceCenterPage').then((module) => ({ default: module.DeviceCenterPage })))
 const DiscoveryCoveragePage = lazy(() => import('../pages/DiscoveryCoveragePage').then((module) => ({ default: module.DiscoveryCoveragePage })))
+const DataReportPage = lazy(() => import('../pages/DataReportPage').then((module) => ({ default: module.DataReportPage })))
 const EndpointDetailsPage = lazy(() =>
   import('../pages/EndpointDetailsPage').then((module) => ({ default: module.EndpointDetailsPage })),
 )
@@ -78,6 +79,7 @@ export function DevicesRoute() {
 }
 
 export function DiscoveryCoverageRoute() { return <RouteSuspense><DiscoveryCoveragePage /></RouteSuspense> }
+export function DataReportRoute() { return <RouteSuspense><DataReportPage /></RouteSuspense> }
 
 export function EndpointDetailsRoute() {
   return (

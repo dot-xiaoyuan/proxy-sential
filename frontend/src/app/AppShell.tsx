@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   DashboardOutlined,
+  BarChartOutlined,
   AlertOutlined,
   LaptopOutlined,
   DeploymentUnitOutlined,
@@ -26,6 +27,7 @@ import type { Session } from '../shared/api/types'
 
 const navigationIcons: Record<string, ReactNode> = {
   workbench: <DashboardOutlined />,
+  'data-report': <BarChartOutlined />,
   'ai-relay': <ApiOutlined />,
   risk: <AlertOutlined />,
   assets: <LaptopOutlined />,
@@ -34,8 +36,10 @@ const navigationIcons: Record<string, ReactNode> = {
   system: <SettingOutlined />,
 }
 
+const standaloneNav = new Set(['workbench', 'data-report', 'ai-relay'])
+
 function buildNavItems(session: Session): MenuProps['items'] {
-  return visibleNavigation(session).map(group => (group.key === 'workbench' || group.key === 'ai-relay') ? {
+  return visibleNavigation(session).map(group => standaloneNav.has(group.key) ? {
     key: group.items[0].key, icon: navigationIcons[group.key], label: <NavLink to={group.items[0].to}>{group.title}</NavLink>
   } : {key:group.key,label:group.title,icon:navigationIcons[group.key],children:group.items.map(entry=>({key:entry.key,label:<NavLink to={entry.to} onClick={()=>{if(entry.to.split('?')[0]==='/devices'){performance.clearMarks('device-inventory-enter');performance.mark('device-inventory-enter')}}}>{entry.title}</NavLink>}))})
 }
@@ -59,7 +63,7 @@ export function AppShell() {
   const logout = useLogout()
   const owner = routeOwner(location.pathname,location.search)
   const [openKeys,setOpenKeys] = useState<string[]>([])
-  useEffect(()=>{if(owner && owner.group.key !== 'workbench')setOpenKeys(keys=>[...new Set([...keys,owner.group.key])])},[owner?.group.key])
+  useEffect(()=>{if(owner && !standaloneNav.has(owner.group.key))setOpenKeys(keys=>[...new Set([...keys,owner.group.key])])},[owner?.group.key])
   const isMockEnabled = !import.meta.env.PROD && import.meta.env.VITE_ENABLE_MOCKS !== 'false'
 
   useEffect(() => {
@@ -69,6 +73,7 @@ export function AppShell() {
   if (session.isLoading) return <main className="app-bootstrap-loading" aria-busy="true"><SentinelLogo/><Spin size="large"/><Typography.Text type="secondary">正在恢复会话…</Typography.Text></main>
   if (session.isError || !session.data) return <LoginPage />
 	const navItems = buildNavItems(session.data)
+  const permission = routePermission(location.pathname, location.search, session.data)
 
   const menu = (
     <Menu
@@ -145,7 +150,7 @@ export function AppShell() {
         </Layout.Header>
         <Layout.Content className="app-content" ref={contentRef}>
           <OperationTaskProgress />
-          {!routePermission(location.pathname,location.search) || can(session.data,routePermission(location.pathname,location.search)!) ? <Outlet /> : <Alert showIcon type="warning" title="没有访问权限" description="当前账号无权读取此功能，请联系管理员调整权限。" />}
+          {!permission || can(session.data, permission) ? <Outlet /> : <Alert showIcon type="warning" title="没有访问权限" description="当前账号无权读取此功能，请联系管理员调整权限。" />}
         </Layout.Content>
       </Layout>
       <Drawer

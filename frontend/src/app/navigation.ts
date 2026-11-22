@@ -9,6 +9,10 @@ export const deviceCenterTab = (params: URLSearchParams): DeviceCenterTab => par
 const item = (key: string, title: string, to: string, permission?: Permission, prefix = to.split('?')[0]): NavigationItem => ({ key, title, to, permission, owns: path => path === prefix || path.startsWith(`${prefix}/`) })
 export const navigation: NavigationGroup[] = [
   { key: 'workbench', title: '运营工作台', items: [item('overview','运营工作台','/overview','risks:read')] },
+  { key: 'data-report', title: '全局数据报表', items: [{
+    ...item('data-report', '全局数据报表', '/reports/data', 'identity:read'),
+    readAlternatives: [{ permission: 'dpi:read', to: '/reports/data' }],
+  }] },
   { key: 'ai-relay', title: 'AI 中转站', items: [item('ai-relay-usages','AI 中转站','/ai-relay','events:read')] },
   { key: 'risk', title: '风险运营', items: [
     {...item('observations','共享发现与核验','/shared-access?tab=routers','cases:read'), owns: p => p === '/shared-access' || p.startsWith('/shared-access/')},
@@ -30,7 +34,7 @@ export const navigation: NavigationGroup[] = [
   { key: 'system', title: '系统管理', items: [{...item('sources','数据源与采集','/settings/sources','ingest:read'),readAlternatives:[{permission:'identity:read',to:'/settings/sources?tab=sources'}]},item('integrations','认证与处置接入','/settings/actions','actions:read'),item('notifications','通知模板与通道','/settings/notifications','notifications:read'),{...item('behavior-reports','上报通道配置','/settings/behavior-reports','behavior-reports:read'),readAlternatives:[{permission:'behavior-reports:manage',to:'/settings/behavior-reports'}]},item('organization','校区与网络区域','/settings/organization','organization:read'),item('users','用户权限','/settings/security','users:manage'),item('audit','审计日志','/audit','audit:read')] },
 ]
 
-const registeredRoutes=[/^\/(overview|ai-relay|activity|devices|discovery|events|cases|actions|audit|policies|shared-access|violation-observations|behavior-report-proposals)$/, /^\/(devices|events|cases|audit|review)\/[^/]+$/, /^\/discovery\/routers\/[^/]+$/, /^\/shared-access\/(observations|reviews)\/[^/]+$/, /^\/policies\/(exceptions|whitelist|blacklist|destination-targets)$/, /^\/settings\/(sources|rules|organization|actions|security|notifications|behavior-reports)$/, /^\/(ingest|settings\/sources)\/diagnostics\/[^/]+$/, /^\/ingest$/]
+const registeredRoutes=[/^\/reports\/data$/, /^\/(overview|ai-relay|activity|devices|discovery|events|cases|actions|audit|policies|shared-access|violation-observations|behavior-report-proposals)$/, /^\/(devices|events|cases|audit|review)\/[^/]+$/, /^\/discovery\/routers\/[^/]+$/, /^\/shared-access\/(observations|reviews)\/[^/]+$/, /^\/policies\/(exceptions|whitelist|blacklist|destination-targets)$/, /^\/settings\/(sources|rules|organization|actions|security|notifications|behavior-reports|system-report)$/, /^\/(ingest|settings\/sources)\/diagnostics\/[^/]+$/, /^\/ingest$/]
 export function safeReturnTo(value: string | null | undefined, fallback = '/events', depth=0): string {
   if (!value || !value.startsWith('/') || value.startsWith('//') || /[\\\u0000-\u001f]/.test(value)) return fallback
   try {
@@ -58,12 +62,13 @@ export function routeOwner(path: string, search: string) {
   const matches = navigation.flatMap(group => group.items.map(entry => ({group,entry}))).filter(({entry}) => entry.owns(path,params))
   return matches.sort((a,b) => b.entry.to.split('?')[0].length-a.entry.to.split('?')[0].length)[0]
 }
-export function routePermission(path: string, search: string): Permission | undefined {
+export function routePermission(path: string, search: string, session?: Session): Permission | undefined {
   const tab=new URLSearchParams(search).get('tab')
   if(path === '/settings/rules' && tab==='application-domains')return 'dpi:read'
   if(path === '/settings/rules' && tab==='fingerprints')return 'identity:read'
   if(path === '/settings/security' && tab==='exceptions')return 'risks:read'
   if(path === '/settings/actions' && tab==='executions')return 'policies:read'
+  if (path === '/reports/data' && can(session, 'dpi:read')) return 'dpi:read'
   if(path.startsWith('/ips/')) return 'risks:read'
   if(path.startsWith('/ingest')) return 'ingest:read'
   if(path === '/settings/sources' && ['sources','scan','tasks'].includes(new URLSearchParams(search).get('tab') || '')) return 'identity:read'

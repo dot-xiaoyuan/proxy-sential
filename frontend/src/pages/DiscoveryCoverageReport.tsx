@@ -1,76 +1,120 @@
-import { Typography } from 'antd'
 import type { components } from '../shared/api/generated'
 import { observedTimeTitle } from '../shared/ui/observedTime'
 
-type Report = components['schemas']['DiscoveryCoverageReport']
+export type CoverageReport = components['schemas']['DiscoveryCoverageReport']
+type MirrorFunnel = NonNullable<CoverageReport['mirror_funnel']>
+type CoverageRow = { label: string; value: number; color?: 'teal' | 'blue' | 'slate' }
 
-export function DiscoveryCoverageReport({ report, loading, error }: { report?: Report; loading: boolean; error: boolean }) {
-  const lagMinutes = report ? Math.max(0, Math.round((Date.parse(report.as_of) - Date.parse(report.identity_as_of)) / 60_000)) : 0
-  const windowCode = report?.window.replace(/0s$/, '').replace(/0m$/, '')
-  const windowLabel = windowCode ? ({'15m':'近 15 分钟','24h':'近 24 小时','168h':'近 7 天','720h':'近 30 天'} as Record<string,string>)[windowCode] || report?.window : ''
-  const funnel = report?.mirror_funnel
-  const funnelIdentityLag = funnel?.as_of && report ? Math.max(0, Math.round((Date.parse(funnel.as_of) - Date.parse(report.identity_as_of)) / 60_000)) : 0
-  const typePendingPairs = funnel ? Math.max(0, funnel.ip_mac_pairs - funnel.typed_pairs) : 0
-  const rate = (count: number, total: number) => total > 0 ? `${(count / total * 100).toFixed(1)}%` : ''
-  const metric = (label: string, value?: number, detail?: string) => <div className="discovery-report-metric" key={label}><span>{label}</span><strong>{value === undefined ? error ? '读取失败' : '统计中' : value.toLocaleString('zh-CN')}</strong>{detail && <small>{detail}</small>}</div>
-  return <section className="discovery-report" aria-label="设备发现覆盖报表">
-    <div className="discovery-report-heading"><div><h3>镜像标识与设备发现</h3><Typography.Text type="secondary">{funnel?.as_of ? `${windowLabel} · 镜像数据截至 ${observedTimeTitle(funnel.as_of)} · 绑定状态截至 ${observedTimeTitle(funnel.evaluated_at)}` : loading ? '正在读取现场统计' : '镜像标识统计读取失败'}</Typography.Text></div></div>
-    {funnel?.status === 'initializing' && <p className="discovery-report-delay">镜像标识投影正在建立，暂时没有可核对的统计。</p>}
-    {funnel && funnel.status !== 'initializing' && <>
-      {funnel.status !== 'ready' && <p className="discovery-report-delay">本窗口数据{funnel.status === 'partial' ? '覆盖不完整' : '处理延迟'}；镜像标识投影从 {funnel.available_from ? observedTimeTitle(funnel.available_from) : '当前起点'} 开始，以下数量只代表已处理的范围。</p>}
-      {funnelIdentityLag > 5 && <p className="discovery-report-delay">设备发现结果截至 {observedTimeTitle(report!.identity_as_of)}，比镜像数据晚约 {funnelIdentityLag} 分钟；近期新配对可能还在处理中。</p>}
-      <div className="discovery-report-group"><h4>地址与 MAC</h4><p>IPv4 来自本站允许网段内的镜像流量两侧或设备事件，MAC 来自设备侧协议报文。前两项数地址，第三项数当前有效配对，不能相加；“无有效配对”不等于设备没有 MAC 或 IP。</p></div>
-      <div className="discovery-report-grid">
-        {metric('当前无有效 MAC 配对的 IPv4', funnel.ipv4_only, '个 IPv4；可能只有流量记录，或先前的绑定已失效')}
-        {metric('当前无有效 IPv4 配对的 MAC', funnel.mac_only, '个 MAC；可能只有其他网段或 IPv6 地址，或先前的绑定已失效')}
-        {metric('当前有效的 IP–MAC 配对', funnel.ip_mac_pairs, '种窗口内出现过、查询时仍有效的配对')}
+const count = (value: number) => value.toLocaleString('zh-CN')
+const percent = (value: number, total: number) => `${(value / total * 100).toFixed(1)}%`
+
+function CoverageRows({ rows, total, unit }: { rows: CoverageRow[]; total: number; unit: string }) {
+  return <ul className="coverage-breakdown">
+    {rows.map(({ label, value, color }) => <li key={label}>
+      <div className="coverage-breakdown-label">
+        <span>{label}</span>
+        <div><strong>{count(value)}</strong> <small>{unit}</small>{total > 0 && <small className="coverage-share">{percent(value, total)}</small>}</div>
       </div>
-      <div className="discovery-report-group"><h4>设备类型识别</h4><p>以本窗口出现过、查询时仍有效的 IP–MAC 配对为分母；只有设备类型已确认的配对计入识别数。同一设备有多个 IP 时会对应多个配对，因此这里是配对占比，不是物理设备台数占比。</p></div>
-      <div className="discovery-report-grid">
-        {metric('已识别设备类型的配对', funnel.typed_pairs, '种 IP–MAC 配对；对应的设备类型已确认')}
-        {metric('类型待确认的配对', typePendingPairs, '种 IP–MAC 配对；包含尚无设备记录的配对')}
-        <div className="discovery-report-metric discovery-report-rate" aria-label="已识别设备类型的配对占比"><span>已识别设备类型的配对占比</span><strong>{rate(funnel.typed_pairs, funnel.ip_mac_pairs)}</strong><small>{funnel.typed_pairs.toLocaleString('zh-CN')} / {funnel.ip_mac_pairs.toLocaleString('zh-CN')} 种配对</small><progress value={funnel.typed_pairs} max={funnel.ip_mac_pairs || 1}/></div>
-      </div>
-      <div className="discovery-report-group"><h4>MAC 地址分类</h4><p>按不同 MAC 去重。固定标志位区分本地管理与全局管理；全局管理地址再按 OUI 库分为匹配与未匹配。</p></div>
-      <div className="discovery-report-grid">
-        <div className="discovery-report-metric" aria-label="MAC OUI 匹配占比"><span>MAC OUI 匹配</span><strong>{rate(funnel.oui_matched, funnel.mac_total)}</strong><small>{funnel.oui_matched.toLocaleString('zh-CN')} / {funnel.mac_total.toLocaleString('zh-CN')} 个不同 MAC</small></div>
-        <div className="discovery-report-metric" aria-label="本地管理 MAC 占比"><span>本地管理 MAC</span><strong>{rate(funnel.locally_administered_mac, funnel.mac_total)}</strong><small>{funnel.locally_administered_mac.toLocaleString('zh-CN')} / {funnel.mac_total.toLocaleString('zh-CN')} 个不同 MAC；首字节本地管理位为 1</small></div>
-        {metric('无 OUI 且非本地管理 MAC', funnel.no_oui_global_mac, '按当前 OUI 库查无匹配的全局管理地址')}
-      </div>
-      <p className="discovery-report-boundary">上方本地管理 MAC 的数量和占比已按固定标志位计算。随机 MAC 通常使用这一位，但手工配置和虚拟网卡也能使用；标志位不记录生成方式，因此目前无法确认随机 MAC 的准确数量。OUI 匹配只说明地址前缀登记，不代表设备类型。当前 OUI 库：{funnel.oui_library_version}。</p>
-    </>}
-    <details className="discovery-report-details"><summary>查看设备观测与类型统计（另一统计口径）</summary>
-    <div className="discovery-report-evidence">
-    <div className="discovery-report-heading"><div><h3>设备发现观测</h3><Typography.Text type="secondary">{report ? `${windowLabel} · 观测截至 ${observedTimeTitle(report.as_of)} · 类型统计截至 ${observedTimeTitle(report.identity_as_of)}` : loading ? '正在读取现场统计' : '现场统计读取失败'}</Typography.Text></div></div>
-    <p className="discovery-report-boundary">此处只统计进入设备发现链的观测；上方镜像标识还包括流量两侧的本地 IPv4，因此两组总数不同。</p>
-    <div className="discovery-report-grid">
-      {metric('/24 地址分组', report?.subnet24, '窗口内地址按前三段分桶；不代表完整网段清单')}
-      {metric('IPv4 地址', report?.ipv4, '窗口内不同地址')}
-      {metric('MAC 地址', report?.mac, '窗口内设备侧绑定证据中的不同 MAC')}
-      {metric('已确认类型的设备', report?.identified, '按设备归属统计，不等于 IP 地址数')}
-      {metric('已确认的哑终端', report?.dumb_terminals, '属于上述设备数中的哑终端品类')}
+      {total > 0 && <progress className={`coverage-progress coverage-progress-${color ?? 'blue'}`} aria-label={label} value={value} max={total} />}
+    </li>)}
+  </ul>
+}
+
+export function DiscoveryCoverageReport({ report }: { report: CoverageReport }) {
+  const { typed_ipv4: typed, identity_no_type_ipv4: needsType, no_identity_ipv4: unlinked } = report
+  const total = typed !== undefined && needsType !== undefined && unlinked !== undefined
+    ? typed + needsType + unlinked : undefined
+  const lagMinutes = Math.round((Date.parse(report.as_of) - Date.parse(report.identity_as_of)) / 60_000)
+  const metrics = [
+    { label: '有设备观测的 IPv4', value: total ?? report.ipv4, unit: '个地址' },
+    { label: '观测到的 /24 分组', value: report.subnet24, unit: '组 IPv4' },
+    { label: '已确认硬件类型', value: report.identified, unit: '个发现身份', detail: `共 ${count(report.identity_total)} 个发现身份` },
+    { label: '已确认的哑终端', value: report.dumb_terminals, unit: '个发现身份', detail: '已包含在确认数中' },
+  ]
+  const breakdown = [
+    { label: '仅网络层 · ARP、NDP 等', value: report.untyped_network_only_ipv4 },
+    { label: '有 DHCP · 缺应用或设备公告', value: report.untyped_dhcp_only_ipv4 },
+    { label: '有应用或设备公告', value: report.untyped_application_ipv4 },
+    { label: '其他证据', value: report.untyped_other_ipv4 },
+  ].flatMap(({ label, value }) => value === undefined ? [] : [{ label, value }])
+
+  return <section className="coverage-content" aria-label="设备发现覆盖报表">
+    <div className="coverage-timestamps">
+      <span>{report.diagnostic_as_of
+        ? `设备观测截至 ${observedTimeTitle(report.diagnostic_as_of)}`
+        : `统计时间 ${observedTimeTitle(report.as_of)}`}</span>
+      <span>发现处理水位 {observedTimeTitle(report.identity_as_of)}</span>
+      {lagMinutes > 5 && <span className="coverage-warning">相对统计时间滞后约 {lagMinutes} 分钟</span>}
     </div>
-    {report && <p className="discovery-report-boundary">另有 IPv6 地址 {report.ipv6.toLocaleString('zh-CN')} 个；按 MAC 和接入位置统计为 {report.scoped_mac.toLocaleString('zh-CN')} 组，按设备归属统计为 {report.identity_total.toLocaleString('zh-CN')} 个。计数单位不同，不能相加。/24 分组只表示该地址段中至少看到一个 IP，并非完整网段清单。</p>}
+    <dl className="coverage-metrics">
+      {metrics.map(({ label, value, unit, detail }) => <div className="coverage-metric" key={label}>
+        <dt>{label}</dt><dd><strong>{count(value)}</strong> <span>{unit}</span></dd>
+        {detail && <dd className="coverage-metric-detail">{detail}</dd>}
+      </div>)}
+    </dl>
+    {total !== undefined && typed !== undefined && needsType !== undefined && unlinked !== undefined &&
+      <div className="coverage-panels">
+        <section className="coverage-panel" aria-labelledby="coverage-address-heading">
+          <header className="coverage-panel-heading">
+            <div><h4 id="coverage-address-heading">IPv4 识别进度</h4><p>按 {count(total)} 个有设备观测的 IPv4 地址去重</p></div>
+            {total > 0 && <div className="coverage-highlight"><strong>{percent(typed, total)}</strong><span>地址已有类型</span></div>}
+          </header>
+          {total > 0 ? <CoverageRows total={total} unit="个 IP" rows={[
+            { label: '已确认设备类型', value: typed, color: 'teal' },
+            { label: '已关联设备 · 类型待确认', value: needsType },
+            { label: '有设备观测 · 归属待核实', value: unlinked, color: 'slate' },
+          ]} /> : <p className="coverage-empty">选定范围内暂无设备侧 IPv4 观测。</p>}
+        </section>
+        <section className="coverage-panel" aria-labelledby="coverage-gap-heading">
+          <header className="coverage-panel-heading"><div><h4 id="coverage-gap-heading">类型待确认的证据</h4>
+            <p>分母为 {count(needsType)} 个已关联设备、类型待确认的 IP</p></div></header>
+          {breakdown.length > 0 && needsType > 0
+            ? <CoverageRows total={needsType} unit="个 IP" rows={breakdown}/>
+            : <p className="coverage-empty">{needsType === 0 ? '当前没有这类记录。' : '本次统计暂无协议分项。'}</p>}
+        </section>
+      </div>}
+    <p className="coverage-footnote">一个设备可能使用多个 IP 或出现在多个采集范围。/24 按观测地址分组，网络覆盖率需与镜像配置和台账核对。</p>
+  </section>
+}
+
+export function DiscoveryMirrorCoverage({ funnel }: { funnel?: MirrorFunnel }) {
+  if (!funnel) return <p className="coverage-empty">本次统计暂无镜像标识数据。</p>
+  if (funnel.status === 'initializing') return <p className="coverage-empty">镜像标识投影正在建立。</p>
+  return <section className="coverage-content" aria-label="镜像标识与配对">
+    <div className="coverage-timestamps">
+      {funnel.as_of && <span>镜像数据截至 {observedTimeTitle(funnel.as_of)}</span>}
+      <span>绑定状态截至 {observedTimeTitle(funnel.evaluated_at)}</span>
+      {funnel.status !== 'ready' && <span className="coverage-warning">{funnel.status === 'partial' ? '窗口覆盖不完整' : '镜像处理延迟'}
+        {funnel.available_from && ` · 覆盖起点 ${observedTimeTitle(funnel.available_from)}`}</span>}
     </div>
-    {Number.isFinite(lagMinutes) && lagMinutes > 0 && <p className="discovery-report-delay">设备类型统计比地址统计慢约 {lagMinutes} 分钟；近期流量仍可能在处理中。</p>}
-    {report?.typed_ipv4 !== undefined && <div className="discovery-report-evidence">
-      <div className="discovery-report-heading"><h4>设备类型识别进展：按 IP 统计</h4><Typography.Text type="secondary">设备观测截至 {report.diagnostic_as_of ? observedTimeTitle(report.diagnostic_as_of) : observedTimeTitle(report.as_of)}</Typography.Text></div>
-      <div className="discovery-report-evidence-stage">
-        {metric('已确认类型的 IP', report.typed_ipv4, '对应的设备已有明确类型；不等于设备台数')}
-        {metric('已关联设备，类型待确认的 IP', report.identity_no_type_ipv4, '看到了设备，但证据还不足以确定品类')}
-        {metric('暂时无法关联设备的 IP', report.no_identity_ipv4, '有设备观测，缺少可靠的设备侧 MAC 或归属')}
-      </div>
-      <div className="discovery-report-evidence-breakdown">
-        <h4>类型待确认的 IP：目前拿到了什么信息？</h4>
-        <div className="discovery-report-evidence-bars">
-          <label><span>只看到 ARP 等网络层信息</span><strong>{report.untyped_network_only_ipv4?.toLocaleString('zh-CN')}</strong><progress value={report.untyped_network_only_ipv4 || 0} max={report.identity_no_type_ipv4 || 1}/></label>
-          <label><span>拿到了 DHCP，没看到应用服务</span><strong>{report.untyped_dhcp_only_ipv4?.toLocaleString('zh-CN')}</strong><progress value={report.untyped_dhcp_only_ipv4 || 0} max={report.identity_no_type_ipv4 || 1}/></label>
-          <label><span>看到了应用或设备公告</span><strong>{report.untyped_application_ipv4?.toLocaleString('zh-CN')}</strong><progress value={report.untyped_application_ipv4 || 0} max={report.identity_no_type_ipv4 || 1}/></label>
-          <label><span>只有其他零散信息</span><strong>{report.untyped_other_ipv4?.toLocaleString('zh-CN')}</strong><progress value={report.untyped_other_ipv4 || 0} max={report.identity_no_type_ipv4 || 1}/></label>
-        </div>
-        <p className="discovery-report-boundary">上面三组 IP 不重复，合起来就是本窗口看到的 IPv4 地址。下面四组只拆解“已关联设备，类型待确认”的 IP：ARP 通常只能证明地址关系；DHCP 可能只提供系统线索；应用信息也可能是通用软件。要判断是流量缺特征、解析漏字段还是规则没覆盖，仍需逐 IP 查原始证据。只有连接记录、没有设备观测的 IP 不在这里。</p>
-      </div>
-    </div>}
-    </details>
+    <div className="coverage-panels">
+      <section className="coverage-panel" aria-labelledby="coverage-binding-heading">
+        <header className="coverage-panel-heading">
+          <div><h4 id="coverage-binding-heading">有效 IP–MAC 配对</h4><p>窗口内出现且查询时仍有效</p></div>
+          <div className="coverage-highlight"><strong>{count(funnel.ip_mac_pairs)}</strong><span>种配对</span></div>
+        </header>
+        <CoverageRows total={funnel.ip_mac_pairs} unit="种配对" rows={[
+          { label: '已确认设备类型', value: funnel.typed_pairs, color: 'teal' },
+          { label: '类型待确认', value: Math.max(0, funnel.ip_mac_pairs - funnel.typed_pairs), color: 'slate' },
+        ]} />
+        <p className="coverage-footnote">同一设备可对应多种配对，确认率按配对数计算。</p>
+      </section>
+      <section className="coverage-panel" aria-labelledby="coverage-mirror-address-heading">
+        <header className="coverage-panel-heading"><div><h4 id="coverage-mirror-address-heading">镜像可见地址</h4><p>窗口内分别对 IPv4、MAC 去重</p></div></header>
+        <dl className="coverage-mirror-rows">
+          <div><dt>IPv4</dt><dd>{count(funnel.ipv4_total)} 个</dd><dd>其中 {count(funnel.ipv4_only)} 个无有效 MAC 配对</dd></div>
+          <div><dt>MAC</dt><dd>{count(funnel.mac_total)} 个</dd><dd>其中 {count(funnel.mac_only)} 个无有效 IPv4 配对</dd></div>
+        </dl>
+        <details className="coverage-details">
+          <summary>查看 MAC 管理位和厂商前缀</summary>
+          <CoverageRows total={funnel.mac_total} unit="个 MAC" rows={[
+            { label: '全局管理 · 匹配 OUI', value: funnel.oui_matched },
+            { label: '本地管理', value: funnel.locally_administered_mac },
+            { label: '全局管理 · 无 OUI 匹配', value: funnel.no_oui_global_mac, color: 'slate' },
+          ]} />
+          <p className="coverage-footnote">本地管理位也可由虚拟网卡和手工配置使用。OUI 表示地址前缀登记。{funnel.oui_library_version && `库版本 ${funnel.oui_library_version}。`}</p>
+        </details>
+      </section>
+    </div>
   </section>
 }

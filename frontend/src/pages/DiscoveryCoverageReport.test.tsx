@@ -1,37 +1,42 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { it, expect } from 'vitest'
-import { DiscoveryCoverageReport } from './DiscoveryCoverageReport'
+import { DiscoveryCoverageReport, DiscoveryMirrorCoverage, type CoverageReport } from './DiscoveryCoverageReport'
 
-it('shows only live address and identity counts in the current observation section', () => {
-  render(<DiscoveryCoverageReport report={{as_of:'2026-11-15T11:00:00Z',identity_as_of:'2026-11-15T10:38:00Z',diagnostic_as_of:'2026-11-15T10:37:00Z',window:'24h',subnet24:1070,ipv4:15390,ipv6:12,mac:5144,scoped_mac:5200,ip_mac_pairs:4300,ipv4_with_mac:2500,ip_mac_unique_pairs:3100,ip_mac_valid_scoped_pairs:1400,multi_mac_ipv4:590,multi_scope_ip_mac_pairs:1380,blank_and_filled_vlan_pairs:1360,identified:329,dumb_terminals:76,identity_total:6285,typed_ipv4:300,identity_no_type_ipv4:1000,no_identity_ipv4:14090,untyped_network_only_ipv4:200,untyped_dhcp_only_ipv4:600,untyped_application_ipv4:190,untyped_other_ipv4:10,mirror_funnel:{status:'ready',evaluated_at:'2026-11-15T11:01:00Z',as_of:'2026-11-15T11:00:00Z',ipv4_total:5835,ipv4_only:3938,mac_total:3472,mac_only:767,ip_mac_pairs:4034,scoped_pairs:5483,trusted_identities:2867,identified_pairs:3559,typed_pairs:703,oui_matched:1111,locally_administered_mac:2359,no_oui_global_mac:2,oui_library_version:'test-oui'}}} loading={false} error={false} />)
-  const report = screen.getByLabelText('设备发现覆盖报表')
-  expect(report).toHaveTextContent('15,390')
-  expect(report).toHaveTextContent('绑定状态截至')
-  expect(report).toHaveTextContent('近 24 小时')
-  expect(report).toHaveTextContent('类型统计截至')
-  expect(report).toHaveTextContent('已确认类型的设备329')
-  expect(report).toHaveTextContent('已确认的哑终端76')
-  expect(report).toHaveTextContent('当前无有效 MAC 配对的 IPv43,938')
-  expect(report).toHaveTextContent('当前无有效 IPv4 配对的 MAC767')
-  expect(report).toHaveTextContent('当前有效的 IP–MAC 配对4,034')
-  expect(screen.getByText('当前无有效 MAC 配对的 IPv4').closest('.discovery-report-metric')).not.toHaveTextContent('5,835')
-  expect(screen.getByText('当前无有效 IPv4 配对的 MAC').closest('.discovery-report-metric')).not.toHaveTextContent('3,472')
-  expect(report).toHaveTextContent('查询时仍有效')
-  expect(report).toHaveTextContent('已识别设备类型的配对703')
-  expect(report).toHaveTextContent('类型待确认的配对3,331')
-  expect(report).toHaveTextContent('配对占比，不是物理设备台数占比')
-  expect(screen.getByLabelText('已识别设备类型的配对占比')).toHaveTextContent('17.4%')
-  expect(report).not.toHaveTextContent('有设备记录的组合占比')
-  expect(screen.getByLabelText('MAC OUI 匹配占比')).toHaveTextContent('32.0%')
-  expect(screen.getByLabelText('本地管理 MAC 占比')).toHaveTextContent('67.9%')
-  expect(report).toHaveTextContent('无 OUI 且非本地管理 MAC2')
-  expect(report).toHaveTextContent('已按固定标志位计算')
-  expect(report).toHaveTextContent('无法确认随机 MAC 的准确数量')
-  expect(report).not.toHaveTextContent('可信设备身份')
-  expect(report).not.toHaveTextContent('包含窗口内历史换绑')
-  expect(screen.getByText('查看设备观测与类型统计（另一统计口径）').closest('details')).not.toHaveAttribute('open')
-  expect(report).not.toHaveTextContent('已确认类型的 IP 占全部发现 IPv4')
-  expect(report).toHaveTextContent('已关联设备，类型待确认的 IP1,000')
-  expect(report).toHaveTextContent('拿到了 DHCP，没看到应用服务600')
-  expect(report).toHaveTextContent('慢约 22 分钟')
+const report: CoverageReport = {as_of:'2026-11-15T11:00:00Z',identity_as_of:'2026-11-15T10:38:00Z',diagnostic_as_of:'2026-11-15T10:37:00Z',window:'24h',subnet24:1070,ipv4:15390,ipv6:12,mac:5144,scoped_mac:5200,ip_mac_pairs:4300,ipv4_with_mac:2500,ip_mac_unique_pairs:3100,ip_mac_valid_scoped_pairs:1400,multi_mac_ipv4:590,multi_scope_ip_mac_pairs:1380,blank_and_filled_vlan_pairs:1360,identified:329,dumb_terminals:76,identity_total:6285,typed_ipv4:300,identity_no_type_ipv4:1000,no_identity_ipv4:14090,untyped_network_only_ipv4:200,untyped_dhcp_only_ipv4:600,untyped_application_ipv4:190,untyped_other_ipv4:10,mirror_funnel:{status:'ready',evaluated_at:'2026-11-15T11:01:00Z',as_of:'2026-11-15T11:00:00Z',ipv4_total:5835,ipv4_only:3938,mac_total:3472,mac_only:767,ip_mac_pairs:4034,scoped_pairs:5483,trusted_identities:2867,identified_pairs:3559,typed_pairs:703,oui_matched:1111,locally_administered_mac:2359,no_oui_global_mac:2,oui_library_version:'test-oui'}}
+
+it('uses one address denominator for the three IPv4 stages and a separate denominator for the gap breakdown', () => {
+  render(<DiscoveryCoverageReport report={report} />)
+  const coverage = screen.getByRole('region', {name:'设备发现覆盖报表'})
+  const progress = within(coverage).getByRole('region', {name:'IPv4 识别进度'})
+  expect(progress).toHaveTextContent('15,390 个有设备观测的 IPv4')
+  expect(progress).toHaveTextContent('1.9%')
+  expect(within(progress).getByRole('progressbar', {name:'已确认设备类型'})).toHaveAttribute('max','15390')
+  const gaps = within(coverage).getByRole('region', {name:'类型待确认的证据'})
+  expect(gaps).toHaveTextContent('1,000 个已关联设备')
+  const dhcp = within(gaps).getByRole('progressbar', {name:'有 DHCP · 缺应用或设备公告'})
+  expect(dhcp).toHaveAttribute('value','600')
+  expect(dhcp).toHaveAttribute('max','1000')
+  expect(coverage).not.toHaveTextContent('4,034')
+  expect(coverage).toHaveTextContent('滞后约 22 分钟')
+})
+
+it('displays the mirror ratio using valid pair counts and shows OUI only on demand', () => {
+  render(<DiscoveryMirrorCoverage funnel={report.mirror_funnel} />)
+  const pairs = screen.getByRole('region', {name:'有效 IP–MAC 配对'})
+  expect(pairs).toHaveTextContent('4,034种配对')
+  expect(pairs).toHaveTextContent('17.4%')
+  expect(within(pairs).getByRole('progressbar',{name:'已确认设备类型'})).toHaveAttribute('max','4034')
+  expect(screen.getByText('全局管理 · 匹配 OUI')).not.toBeVisible()
+  fireEvent.click(screen.getByText('查看 MAC 管理位和厂商前缀'))
+  expect(screen.getByText('全局管理 · 匹配 OUI')).toBeVisible()
+  expect(screen.getByText(/其中 3,938 个/)).toBeVisible()
+})
+
+it('keeps zero and absent breakdowns distinct', () => {
+  const view=render(<DiscoveryCoverageReport report={{...report, typed_ipv4:0, identity_no_type_ipv4:0, no_identity_ipv4:0}} />)
+  expect(screen.getByText('选定范围内暂无设备侧 IPv4 观测。')).toBeVisible()
+  expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+  view.rerender(<DiscoveryCoverageReport report={{...report, typed_ipv4:undefined}} />)
+  expect(screen.queryByRole('region',{name:'IPv4 识别进度'})).not.toBeInTheDocument()
+  expect(screen.getByText('15,390')).toBeVisible()
 })

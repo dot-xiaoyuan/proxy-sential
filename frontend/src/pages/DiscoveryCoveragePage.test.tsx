@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, expect, it, vi } from 'vitest'
 import { DiscoveryCoveragePage } from './DiscoveryCoveragePage'
@@ -24,7 +24,12 @@ it('loads the report as an independent page using the selected window', async ()
   expect(screen.getByRole('heading', {name:'设备发现覆盖报表'})).toBeVisible()
   await waitFor(() => expect(request).toHaveBeenCalledWith('/discovery/devices/coverage-report?window=168h', expect.anything()))
   await waitFor(() => expect(screen.getByLabelText('设备发现覆盖报表')).toHaveTextContent('2,830'))
-  expect(screen.getByLabelText('镜像可见标识统计')).not.toBeVisible()
-  screen.getByText('查看原因分析与镜像明细').click()
-  expect(screen.getByLabelText('镜像可见标识统计')).toBeVisible()
+  expect(screen.queryByLabelText('镜像可见标识统计')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('tab',{name:'镜像与配对'}))
+  expect(screen.getByText('镜像明细与台账对照')).toBeVisible()
+  expect(screen.queryByLabelText('镜像可见标识统计')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByText('镜像明细与台账对照'))
+  expect(await screen.findByLabelText('镜像可见标识统计')).toBeVisible()
+  fireEvent.click(screen.getByRole('tab',{name:'网段与 VLAN'}))
+  await waitFor(() => expect(request).toHaveBeenCalledWith('/discovery/devices/metadata?mode=passive&identity_scope=devices&window=168h', expect.anything()))
 })
