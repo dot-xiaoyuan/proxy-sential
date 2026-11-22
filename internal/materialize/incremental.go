@@ -39,6 +39,7 @@ type IncrementalOptions struct {
 
 type IncrementalResult struct {
 	Claims         int
+	FullBatch      bool
 	Features       int
 	Evidence       int
 	Snapshots      int
@@ -89,6 +90,7 @@ func RunIncrementalOnce(ctx context.Context, backend IncrementalStore, opts Incr
 		return IncrementalResult{}, err
 	}
 	result = IncrementalResult{Claims: len(claims)}
+	result.FullBatch = len(claims) == claimLimit
 	claimedAt := time.Now().UTC()
 	// In live mode the snapshot must be no earlier than the PG claim. A source
 	// feature accepted before its dirty generation was claimed must be inside
@@ -105,11 +107,11 @@ func RunIncrementalOnce(ctx context.Context, backend IncrementalStore, opts Incr
 			result.OldestClaimAge = claimedAt.Sub(firstDirty)
 		}
 	}
-	finished := make(map[string]bool, len(claims))
+	skipRelease := make(map[string]bool, len(claims))
 	defer func() {
-		pending := make([]store.RiskSubjectClaim, 0, len(claims)-len(finished))
+		pending := make([]store.RiskSubjectClaim, 0, len(claims)-len(skipRelease))
 		for _, claim := range claims {
-			if !finished[claim.Type+"\x00"+claim.ID] {
+			if !skipRelease[claim.Type+"\x00"+claim.ID] {
 				pending = append(pending, claim)
 			}
 		}
@@ -153,9 +155,12 @@ func RunIncrementalOnce(ctx context.Context, backend IncrementalStore, opts Incr
 				groups = append([][]store.RiskSubjectClaim{group[:middle], group[middle:]}, groups...)
 				continue
 			}
-			// Keep this generation pending, but let other claimed subjects make
-			// progress instead of allowing one hot IP to monopolize the queue.
-			boundErr = errors.Join(boundErr, fmt.Errorf("risk subject %s/%s remains pending: %w", group[0].Type, group[0].ID, groupErr))
+			// Retain the failed singleton's original lease until it expires. An
+			// immediate release would put the same oversized subject at the
+			// front of the next batch.
+			claim := group[0]
+			skipRelease[claim.Type+"\x00"+claim.ID] = true
+			boundErr = errors.Join(boundErr, fmt.Errorf("risk subject %s/%s remains pending: %w", claim.Type, claim.ID, groupErr))
 			continue
 		}
 		if groupErr != nil {
@@ -167,7 +172,7 @@ func RunIncrementalOnce(ctx context.Context, backend IncrementalStore, opts Incr
 		result.Committed += groupResult.Committed
 		result.Retried += groupResult.Retried
 		for _, claim := range group {
-			finished[claim.Type+"\x00"+claim.ID] = true
+			skipRelease[claim.Type+"\x00"+claim.ID] = true
 		}
 	}
 	return result, boundErr

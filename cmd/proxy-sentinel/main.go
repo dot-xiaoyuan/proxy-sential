@@ -1289,7 +1289,7 @@ func runRiskMaterialize(args []string) error {
 	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN")
 	clickhouseDSN := fs.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP DSN")
 	window := fs.Duration("window", 10*time.Minute, "rolling evidence window")
-	interval := fs.Duration("interval", 0, "materialization interval; defaults to 1s for incremental, 1m for legacy")
+	interval := fs.Duration("interval", 0, "base materialization interval; incremental workers can run at half the interval when full batches commit quickly")
 	limit := fs.Int("event-limit", 200000, "maximum events per rolling window")
 	incremental := fs.Bool("incremental", false, "evaluate only confirmed, dirty stream risk subjects")
 	claimLimit := fs.Int("claim-limit", 64, "requested dirty subjects per incremental transaction; worker caps a PG lease at 8 subjects")
@@ -1398,7 +1398,7 @@ func runRiskMaterialize(args []string) error {
 			}
 		}()
 	}
-	runOnce := func() error {
+	runOnce := func() (bool, error) {
 		runCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer cancel()
 		if *incremental {
@@ -1407,24 +1407,26 @@ func runRiskMaterialize(args []string) error {
 			// more than four seconds, and each timeout redoes the whole batch.
 			boundedCtx, stopBatch := context.WithTimeout(runCtx, 10*time.Second)
 			defer stopBatch()
+			started := time.Now()
 			result, err := materialize.RunIncrementalOnce(boundedCtx, backend, materialize.IncrementalOptions{SensorID: *sensorID, Window: *window, ClaimLimit: *claimLimit, FeatureLimit: *featureLimit, SkipExpiry: !*once})
 			if err != nil {
-				return err
+				return false, err
 			}
 			if result.Claims > 0 {
-				fmt.Fprintf(os.Stderr, "risk incremental: claims=%d committed=%d retried=%d features=%d evidence=%d snapshots=%d oldest_claim_age=%s\n", result.Claims, result.Committed, result.Retried, result.Features, result.Evidence, result.Snapshots, result.OldestClaimAge.Round(time.Millisecond))
+				fmt.Fprintf(os.Stderr, "risk incremental: claims=%d committed=%d retried=%d features=%d evidence=%d snapshots=%d oldest_claim_age=%s elapsed=%s\n", result.Claims, result.Committed, result.Retried, result.Features, result.Evidence, result.Snapshots, result.OldestClaimAge.Round(time.Millisecond), time.Since(started).Round(time.Millisecond))
 			}
-			return nil
+			return result.FullBatch && result.Committed == result.Claims, nil
 		}
 		result, err := materialize.RunOnce(runCtx, backend, materialize.Options{SharedAccess: *sharedAccess, RouterDedicated: *routerDedicated, SensorID: *sensorID, Window: *window, Limit: *limit})
 		if err != nil {
-			return err
+			return false, err
 		}
 		fmt.Fprintf(os.Stderr, "risk materialize: events=%d evidence=%d snapshots=%d duration=%s\n", result.Events, result.Evidence, result.Snapshots, result.CompletedAt.Sub(result.StartedAt).Round(time.Millisecond))
-		return nil
+		return false, nil
 	}
 	if *once {
-		return runOnce()
+		_, err := runOnce()
+		return err
 	}
 	workers := 1
 	if *incremental {
@@ -1432,10 +1434,12 @@ func runRiskMaterialize(args []string) error {
 		// absorb real source bursts without sharing one evaluation transaction.
 		workers = 2
 	}
-	runRiskWorkerLoops(ctx, *interval, workers, func() {
-		if err := runOnce(); err != nil && ctx.Err() == nil {
+	runRiskWorkerLoops(ctx, *interval, workers, func() bool {
+		full, err := runOnce()
+		if err != nil && ctx.Err() == nil {
 			fmt.Fprintf(os.Stderr, "risk materialize failed: %v\n", err)
 		}
+		return full
 	})
 	if windowLeaseErrors != nil {
 		select {
@@ -1447,20 +1451,31 @@ func runRiskMaterialize(args []string) error {
 	return nil
 }
 
-func runRiskWorkerLoops(ctx context.Context, interval time.Duration, workers int, run func()) {
+func riskWorkerDelay(interval, elapsed time.Duration, full bool) time.Duration {
+	fastInterval := max(100*time.Millisecond, interval/2)
+	if full && elapsed <= fastInterval {
+		interval = fastInterval
+	}
+	return max(0, interval-elapsed)
+}
+
+func runRiskWorkerLoops(ctx context.Context, interval time.Duration, workers int, run func() bool) {
 	var group sync.WaitGroup
 	for range workers {
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
+			timer := time.NewTimer(interval)
+			timer.Stop()
+			defer timer.Stop()
 			for ctx.Err() == nil {
-				run()
+				started := time.Now()
+				full := run()
+				timer.Reset(riskWorkerDelay(interval, time.Since(started), full))
 				select {
 				case <-ctx.Done():
 					return
-				case <-ticker.C:
+				case <-timer.C:
 				}
 			}
 		}()

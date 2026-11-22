@@ -57,10 +57,12 @@ func (s *DBStore) ClaimRiskSubjects(ctx context.Context, sensor string, limit in
 	if _, err := tx.ExecContext(ctx, `SET LOCAL synchronous_commit = off`); err != nil {
 		return nil, err
 	}
+	// New observations can refresh a pending generation without moving its
+	// original position in the queue.
 	rows, err := tx.QueryContext(ctx, `WITH picked AS (
  SELECT sensor_id,subject_type,subject_id FROM risk_feature_dirty_subjects
  WHERE sensor_id=$1 AND (claim_until IS NULL OR claim_until<now())
- ORDER BY last_dirty_at,subject_type,subject_id LIMIT $2 FOR UPDATE SKIP LOCKED
+ ORDER BY first_dirty_at,subject_type,subject_id LIMIT $2 FOR UPDATE SKIP LOCKED
 )
 UPDATE risk_feature_dirty_subjects q SET claim_until=now()+interval '15 seconds',claimed_generation=q.generation
 FROM picked p WHERE q.sensor_id=p.sensor_id AND q.subject_type=p.subject_type AND q.subject_id=p.subject_id

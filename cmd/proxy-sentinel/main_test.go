@@ -16,9 +16,10 @@ func TestRiskWorkerLoopsProcessIndependentBatches(t *testing.T) {
 	started := make(chan struct{}, 2)
 	done := make(chan struct{})
 	go func() {
-		runRiskWorkerLoops(ctx, time.Hour, 2, func() {
+		runRiskWorkerLoops(ctx, time.Hour, 2, func() bool {
 			started <- struct{}{}
 			<-ctx.Done()
+			return false
 		})
 		close(done)
 	}()
@@ -34,6 +35,27 @@ func TestRiskWorkerLoopsProcessIndependentBatches(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("risk workers did not stop after cancellation")
+	}
+}
+
+func TestRiskWorkerDelayAdaptsOnlyToFastFullBatches(t *testing.T) {
+	for _, tt := range []struct {
+		name              string
+		interval, elapsed time.Duration
+		full              bool
+		want              time.Duration
+	}{
+		{"full", time.Second, 180 * time.Millisecond, true, 320 * time.Millisecond},
+		{"partial or failed", time.Second, 180 * time.Millisecond, false, 820 * time.Millisecond},
+		{"database slowed down", time.Second, 550 * time.Millisecond, true, 450 * time.Millisecond},
+		{"minimum interval", 150 * time.Millisecond, 20 * time.Millisecond, true, 80 * time.Millisecond},
+		{"batch outlasts the interval", time.Second, 2 * time.Second, true, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := riskWorkerDelay(tt.interval, tt.elapsed, tt.full); got != tt.want {
+				t.Fatalf("delay=%v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

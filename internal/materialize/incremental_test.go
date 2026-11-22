@@ -155,7 +155,7 @@ func TestIncrementalRiskProcessesSingleSubjectBeyondOldDistinctLimit(t *testing.
 	claim := store.RiskSubjectClaim{SensorID: "sensor-a", Type: "ip", ID: "192.0.2.8", Generation: 4}
 	f := &incrementalFake{claims: []store.RiskSubjectClaim{claim}, cutoff: now.Add(-time.Hour), streamN: 20001}
 	result, err := RunIncrementalOnce(context.Background(), f, IncrementalOptions{SensorID: "sensor-a", AsOf: now, Window: 30 * time.Minute, SkipExpiry: true})
-	if err != nil || result.Features != 20001 || result.Committed != 1 || f.applied != 1 || f.released != 0 {
+	if err != nil || result.FullBatch || result.Features != 20001 || result.Committed != 1 || f.applied != 1 || f.released != 0 {
 		t.Fatalf("hot subject was truncated or not committed: result=%+v applied=%d released=%d err=%v", result, f.applied, f.released, err)
 	}
 }
@@ -181,7 +181,7 @@ func TestIncrementalRiskSplitsOversizedGroupWithoutSkippingClaims(t *testing.T) 
 	}
 	f := &incrementalFake{claims: claims, cutoff: now.Add(-time.Hour), boundGroupSize: 2}
 	result, err := RunIncrementalOnce(context.Background(), f, IncrementalOptions{SensorID: "sensor-a", AsOf: now, Window: 30 * time.Minute, SkipExpiry: true})
-	if err != nil || result.Committed != 8 || f.applied != 4 || f.released != 0 {
+	if err != nil || !result.FullBatch || result.Committed != 8 || f.applied != 4 || f.released != 0 {
 		t.Fatalf("group split lost risk claims: result=%+v groups=%v released=%v err=%v", result, f.appliedGroups, f.releasedClaims, err)
 	}
 	if f.claimLimit != 8 {
@@ -201,7 +201,7 @@ func TestIncrementalRiskHotSingletonStaysPendingWhileOtherClaimsCommit(t *testin
 	// still be evaluated and committed in the same claimed batch.
 	f.failBoundID = claims[0].ID
 	result, err := RunIncrementalOnce(context.Background(), f, IncrementalOptions{SensorID: "sensor-a", AsOf: now, Window: 30 * time.Minute, SkipExpiry: true})
-	if !errors.Is(err, store.ErrRiskFeatureStreamBound) || result.Committed != 1 || len(f.releasedClaims) != 1 || f.releasedClaims[0].ID != claims[0].ID {
-		t.Fatalf("hot singleton was acked or blocked other subjects: result=%+v released=%v err=%v", result, f.releasedClaims, err)
+	if !errors.Is(err, store.ErrRiskFeatureStreamBound) || result.Committed != 1 || len(f.releasedClaims) != 0 {
+		t.Fatalf("hot singleton lost its retry lease or blocked other subjects: result=%+v released=%v err=%v", result, f.releasedClaims, err)
 	}
 }

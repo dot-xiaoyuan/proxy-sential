@@ -19,7 +19,7 @@ func TestRiskDirtyQueueClaimsAndAcknowledgesOnlyClaimedGeneration(t *testing.T) 
 	lease := observed.Add(15 * time.Second)
 	mock.ExpectBegin()
 	mock.ExpectExec(`SET LOCAL synchronous_commit = off`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery(`WITH picked AS`).WithArgs("sensor-a", 128).WillReturnRows(
+	mock.ExpectQuery(`(?s)WITH picked AS.*ORDER BY first_dirty_at,subject_type,subject_id LIMIT`).WithArgs("sensor-a", 128).WillReturnRows(
 		sqlmock.NewRows([]string{"sensor_id", "subject_type", "subject_id", "claimed_generation", "claim_until", "last_observed_at", "first_dirty_at"}).AddRow("sensor-a", "ip", "192.0.2.8", int64(47), lease, observed, observed))
 	mock.ExpectCommit()
 	s := &DBStore{pg: &PostgresStore{db: db}}
