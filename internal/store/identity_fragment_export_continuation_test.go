@@ -179,6 +179,119 @@ func TestIdentityExportRepairsOnlySettledMissingSearchRows(t *testing.T) {
 	}
 }
 
+func TestIdentityExportRepairsOnlySettledMissingBodyRows(t *testing.T) {
+	t.Setenv("PROXY_SENTINEL_IDENTITY_SPLIT_PROGRESS", "true")
+	for _, name := range []string{"quiet", "active_insert", "recent"} {
+		t.Run(name, func(t *testing.T) {
+			fragment, _ := continuationIdentityFragment(t)
+			age := 2 * time.Hour
+			if name == "recent" {
+				age = 30 * time.Minute
+			}
+			fragment.Accepted = time.Now().UTC().Add(-age).Truncate(time.Microsecond)
+			fragment.Month = fragment.Accepted.Format("200601")
+			fragment.LastError = "archive_unconfirmed"
+			after := fragment.Accepted.Add(-time.Hour)
+			var events []normalized.Event
+			if err := json.Unmarshal(fragment.Payload, &events); err != nil {
+				t.Fatal(err)
+			}
+			second := events[0]
+			second.EventID = "identity-position-2"
+			var err error
+			fragment.Payload, err = json.Marshal(append(events, second))
+			if err != nil {
+				t.Fatal(err)
+			}
+			sum := sha256.Sum256(fragment.Payload)
+			fragment.Hash = hex.EncodeToString(sum[:])
+			fragment.Count = 2
+			segment, token, err := identityFragmentSegment(fragment)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prepared, err := prepareStreamEvents(segment)
+			if err != nil {
+				t.Fatal(err)
+			}
+			db, mock, err := sqlmock.New(sqlmock.ValueConverterOption(identityTestSliceConverter{}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			const lease = 9
+			expectIdentityFragmentClaim(mock, fragment, after, "attempted", "pending", lease)
+			if name == "quiet" {
+				expectIdentityCombinedBodyReceipt(mock, fragment, lease)
+				expectIdentitySearchReceipt(mock, fragment, lease+1)
+			} else {
+				mock.ExpectBegin()
+				mock.ExpectExec("(?s)UPDATE identity_ingest_fragments SET last_error=.*10 minutes").
+					WithArgs(fragment.BatchID, fragment.First, int64(lease), "archive_unconfirmed").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec("UPDATE identity_ingest_batches SET export_state='failed'").
+					WithArgs(fragment.BatchID, "archive_unconfirmed").WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectCommit()
+			}
+			bodyWrites, searchWrites, processChecks, bodyReads := 0, 0, 0, 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				data, _ := io.ReadAll(r.Body)
+				sql := string(data)
+				switch {
+				case strings.HasPrefix(sql, "INSERT INTO stream_event_body_evidence"):
+					bodyWrites++
+					repairToken := r.URL.Query().Get("insert_deduplication_token")
+					if processChecks < 2 || strings.Contains(sql, prepared[0].key) || !strings.Contains(sql, prepared[1].key) ||
+						len(repairToken) != 64 || repairToken == streamInsertSettings(token, "stream_event_body_evidence")["insert_deduplication_token"] {
+						t.Error("body repair did not exclusively restore the missing position with its repair token")
+					}
+				case strings.HasPrefix(sql, "INSERT INTO stream_event_search"):
+					searchWrites++
+					if bodyWrites != 1 || bodyReads < 3 {
+						t.Error("search insert preceded verification of the repaired body")
+					}
+				case strings.Contains(sql, "FROM system.asynchronous_inserts"):
+					_, _ = io.WriteString(w, "0\n")
+				case strings.Contains(sql, "FROM system.processes"):
+					processChecks++
+					if name == "active_insert" {
+						_, _ = io.WriteString(w, "1\n")
+					} else {
+						_, _ = io.WriteString(w, "0\n")
+					}
+				case strings.Contains(sql, "FROM stream_event_body_evidence"):
+					bodyReads++
+					for _, item := range prepared[:1+bodyWrites] {
+						_ = json.NewEncoder(w).Encode(map[string]string{"scope_id": item.scope, "event_key": item.key, "content_sha256": item.hash})
+					}
+				default:
+					t.Error("unexpected ClickHouse statement")
+					w.WriteHeader(http.StatusBadRequest)
+				}
+			}))
+			defer server.Close()
+			ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			backend := &DBStore{pg: &PostgresStore{db: db, sensorID: "ncu", identityDerivedAfter: after}, ch: ch}
+			err = backend.exportIdentityInboxFragment(context.Background())
+			if name == "quiet" && (err != nil || bodyWrites != 1 || searchWrites != 1) {
+				t.Fatalf("settled body did not repair: body=%d search=%d err=%v", bodyWrites, searchWrites, err)
+			}
+			if name != "quiet" && (!errors.Is(err, streamlog.ErrUnconfirmed) || bodyWrites != 0 || searchWrites != 0) {
+				t.Fatalf("unsettled body did not retain its attempted state: body=%d search=%d err=%v", bodyWrites, searchWrites, err)
+			}
+			if name == "active_insert" && processChecks != 1 || name == "recent" && processChecks != 0 {
+				t.Fatalf("unexpected repair eligibility: process checks=%d", processChecks)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func expectIdentityBodyReceipt(mock sqlmock.Sqlmock, fragment identityExportFragment, lease int64) {
 	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE identity_ingest_fragments SET body_state='completed'").

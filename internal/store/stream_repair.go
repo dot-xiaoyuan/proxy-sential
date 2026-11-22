@@ -414,9 +414,9 @@ func sortedStreamRepairTables(tables map[string]bool) []string {
 	return result
 }
 
-// requireQuietStreamRepair is only called with a stopped source lease held by
-// the operator command. Consecutive checks include queued async inserts and
-// active INSERT requests; no diagnostic query-log retention is needed.
+// requireQuietStreamRepair supplements the caller's source or fragment lease.
+// Consecutive checks include queued async inserts and active INSERT requests;
+// no diagnostic query-log retention is needed.
 func (s *ClickHouseStore) requireQuietStreamRepair(ctx context.Context, tables []string) error {
 	// Other sources can briefly occupy a shared body table after the repaired
 	// source has stopped. Give that queue a bounded chance to drain, but never

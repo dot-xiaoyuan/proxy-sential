@@ -38,8 +38,8 @@ type identityExportTiming struct {
 
 // PostgreSQL is the durable source for HTTP identity input. Each fragment has
 // its own fixed ClickHouse token and separate body/search acknowledgements.
-// An attempted write is verified before any further action. A settled search
-// gap can be repaired from the original fragment and its confirmed bodies.
+// An attempted write is verified before any further action. Settled gaps can
+// be repaired from the original fragment under the claimed export lease.
 func (s *DBStore) exportIdentityInboxFragment(ctx context.Context) error {
 	return s.exportIdentityInboxFragmentMeasured(ctx, nil)
 }
@@ -77,6 +77,9 @@ func (s *DBStore) exportIdentityInboxFragmentMeasured(ctx context.Context, timin
 			confirmed, err = s.ch.VerifyStreamBody(ctx, segment)
 			if err == nil && !confirmed {
 				err = streamlog.ErrUnconfirmed
+				if fragment.SearchState == "pending" && canRepairIdentityFragment(ctx, fragment) {
+					err = s.ch.repairIdentityFragmentBody(ctx, token, segment)
+				}
 			}
 		} else {
 			err = s.ch.WriteStreamBody(ctx, token, segment)
@@ -119,11 +122,7 @@ func (s *DBStore) exportIdentityInboxFragmentMeasured(ctx context.Context, timin
 		confirmed, err = s.ch.VerifyStreamSearch(ctx, segment)
 		if err == nil && !confirmed {
 			err = streamlog.ErrUnconfirmed
-			now := time.Now().UTC()
-			if fragment.KeyScheme == "source_position_v1" && fragment.LastError == "archive_unconfirmed" &&
-				now.Sub(fragment.Accepted) >= time.Hour &&
-				now.Before(fragment.Accepted.AddDate(1, 0, 0)) &&
-				identityImmediateSearchBudget(ctx) {
+			if canRepairIdentityFragment(ctx, fragment) {
 				err = s.ch.repairIdentityFragmentSearch(ctx, token, segment)
 			}
 		}
@@ -145,6 +144,26 @@ func (s *DBStore) exportIdentityInboxFragmentMeasured(ctx context.Context, timin
 		}
 	}
 	return err
+}
+
+func canRepairIdentityFragment(ctx context.Context, fragment identityExportFragment) bool {
+	now := time.Now().UTC()
+	return fragment.KeyScheme == "source_position_v1" && fragment.LastError == "archive_unconfirmed" &&
+		now.Sub(fragment.Accepted) >= time.Hour && now.Before(fragment.Accepted.AddDate(1, 0, 0)) &&
+		identityImmediateSearchBudget(ctx)
+}
+
+func (s *ClickHouseStore) repairIdentityFragmentBody(ctx context.Context, token string, segment streamlog.Segment) error {
+	// The caller reconstructed the source positions and verified the canonical
+	// PostgreSQL fragment hash before checking ClickHouse for missing bodies.
+	tables := make(map[string]bool)
+	for _, event := range segment.Events {
+		tables[streamBodyTable(streamEventRetention(event), segment.BodyLayout)] = true
+	}
+	if err := s.requireQuietStreamRepair(ctx, sortedStreamRepairTables(tables)); err != nil {
+		return err
+	}
+	return s.ReconcileStreamBody(ctx, token, segment)
 }
 
 func (s *ClickHouseStore) repairIdentityFragmentSearch(ctx context.Context, token string, segment streamlog.Segment) error {
