@@ -50,8 +50,12 @@ func TestHardwareSelectionKeepsOnlyCompactCandidateProjection(t *testing.T) {
 	if !strings.Contains(s.CTE, `GROUP BY identity_key COLLATE "C"`) {
 		t.Fatal("identity grouping differs from byte-exact cursor ordering")
 	}
-	if !strings.Contains(s.CTE, "observation_id=ANY(ARRAY(SELECT id FROM source_rows WHERE raw_mac=''))") || !strings.Contains(s.CTE, "i.observation_id=l.id AND l.raw_mac=''") {
-		t.Fatal("batched missing-MAC link lookup changed per-observation admission")
+	if strings.Contains(s.CTE, "link_exceptions AS") {
+		t.Fatal("candidate page scans historical identity links outside the request window")
+	}
+	if !strings.Contains(s.CTE, "i.observation_id=l.id AND l.raw_mac=''") ||
+		!strings.Contains(s.CTE, "ix.observation_id=l.id AND l.raw_mac<>''") {
+		t.Fatal("link lookups are not bounded to each candidate observation")
 	}
 	if !strings.Contains(s.CTE, "dl.sensor_id=l.sensor_id") || !strings.Contains(s.CTE, "dl.campus_id=l.source_campus") || !strings.Contains(s.CTE, "dl.event_id=l.id") {
 		t.Fatal("bounded lease lookup lost part of primary key")

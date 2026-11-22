@@ -387,10 +387,61 @@ func processHardwareIdentityGroup(ctx context.Context, db *sql.DB, sensor string
 }
 
 func processHardwareIdentityTx(ctx context.Context, tx *sql.Tx, key, reason string) (bool, string, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT data,first_seen,observed_at,active_until,revoked FROM passive_hardware_facts WHERE identity_key=$1 ORDER BY fact_key LIMIT 513`, key)
+	now := time.Now().UTC()
+	facts, err := loadHardwareFacts(ctx, tx, `WITH bounded AS MATERIALIZED (
+ SELECT fact_key,data,first_seen,observed_at,active_until,revoked
+ FROM passive_hardware_facts WHERE identity_key=$1 ORDER BY fact_key LIMIT 513
+)
+SELECT data,first_seen,observed_at,active_until,revoked
+FROM bounded WHERE (SELECT count(*) FROM bounded)<=512 ORDER BY fact_key`, key)
 	if err != nil {
 		return false, key, err
 	}
+	if len(facts) == 0 {
+		facts, err = loadHardwareFacts(ctx, tx, compactHardwareFactSQL, key, now)
+		if err != nil {
+			return false, key, err
+		}
+	}
+	return updateHardwareIdentity(ctx, tx, key, reason, facts, now)
+}
+
+// DNS-SD instance names may vary while the classifier input stays identical.
+// For overflowing identities only, retain one event per identical DNS-SD
+// payload and fold activity bounds across its copies. Receiver/model matching
+// compares event times, so preserve the input events for that cohort.
+const compactHardwareFactSQL = `WITH retained AS MATERIALIZED (
+ SELECT fact_key,source,first_seen,observed_at,active_until,revoked,data->'signals' signals,
+ coalesce((data->>'address_only')::boolean,false) address_only
+ FROM passive_hardware_facts WHERE identity_key=$1 ORDER BY fact_key LIMIT 4097
+), classified AS MATERIALIZED (
+ SELECT *,source='dns_sd' AND NOT revoked AND NOT address_only AND observed_at<=$2
+ AND NOT EXISTS (
+  SELECT 1 FROM retained WHERE NOT revoked AND signals @> '[{"field":"dns_sd_receiver_implementation"}]'::jsonb
+ ) AS foldable
+ FROM retained WHERE (SELECT count(*) FROM retained)<=4096
+), folded AS (
+ SELECT DISTINCT ON (signals) fact_key,
+ min(first_seen) OVER (PARTITION BY signals) first_seen,observed_at,
+ max(active_until) OVER (PARTITION BY signals) active_until,revoked
+ FROM classified WHERE foldable
+ ORDER BY signals,observed_at DESC,fact_key
+), selected AS (
+ SELECT fact_key,first_seen,observed_at,active_until,revoked FROM folded
+ UNION ALL
+ SELECT fact_key,first_seen,observed_at,active_until,revoked FROM classified WHERE NOT foldable
+ ORDER BY fact_key LIMIT 513
+)
+SELECT f.data,s.first_seen,s.observed_at,s.active_until,s.revoked
+FROM selected s JOIN passive_hardware_facts f ON f.identity_key=$1 AND f.fact_key=s.fact_key
+ORDER BY s.fact_key`
+
+func loadHardwareFacts(ctx context.Context, tx *sql.Tx, statement string, args ...any) ([]HardwareFact, error) {
+	rows, err := tx.QueryContext(ctx, statement, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 	facts := []HardwareFact{}
 	factBytes := 0
 	for rows.Next() {
@@ -399,17 +450,14 @@ func processHardwareIdentityTx(ctx context.Context, tx *sql.Tx, key, reason stri
 		var first, observed, until time.Time
 		var revoked bool
 		if err = rows.Scan(&raw, &first, &observed, &until, &revoked); err != nil {
-			rows.Close()
-			return false, key, err
+			return nil, err
 		}
 		factBytes += len(raw)
 		if factBytes > 1<<20 {
-			rows.Close()
-			return false, key, fmt.Errorf("hardware identity fact input exceeds 1 MiB")
+			return nil, fmt.Errorf("hardware identity fact input exceeds 1 MiB")
 		}
 		if err = json.Unmarshal(raw, &f); err != nil {
-			rows.Close()
-			return false, key, err
+			return nil, err
 		}
 		f.FirstSeen = first
 		f.ObservedAt = observed
@@ -417,14 +465,13 @@ func processHardwareIdentityTx(ctx context.Context, tx *sql.Tx, key, reason stri
 		f.Revoked = revoked
 		facts = append(facts, f)
 	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return false, key, err
-	}
+	return facts, rows.Err()
+}
+
+func updateHardwareIdentity(ctx context.Context, tx *sql.Tx, key, reason string, facts []HardwareFact, now time.Time) (bool, string, error) {
 	var previous *HardwareState
 	var oldRaw []byte
-	err = tx.QueryRowContext(ctx, `SELECT data FROM passive_hardware_current WHERE identity_key=$1`, key).Scan(&oldRaw)
+	err := tx.QueryRowContext(ctx, `SELECT data FROM passive_hardware_current WHERE identity_key=$1`, key).Scan(&oldRaw)
 	if err == nil {
 		previous = &HardwareState{}
 		if err = json.Unmarshal(oldRaw, previous); err != nil {
@@ -433,7 +480,7 @@ func processHardwareIdentityTx(ctx context.Context, tx *sql.Tx, key, reason stri
 	} else if err != sql.ErrNoRows {
 		return false, key, err
 	}
-	state, err := EvaluateHardwareFacts(facts, previous, time.Now().UTC())
+	state, err := EvaluateHardwareFacts(facts, previous, now)
 	if err != nil {
 		return false, key, err
 	}

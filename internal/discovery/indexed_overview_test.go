@@ -178,3 +178,55 @@ func TestHardwareIdentityScopeKeepsAddressCluesSearchable(t *testing.T) {
 		})
 	}
 }
+
+func TestHardwareIndexedPointLookupsPreserveIdentityAttribution(t *testing.T) {
+	db := hardwareIntegrationDB(t)
+	ctx := context.Background()
+	at := time.Now().UTC().Add(-time.Minute)
+	repo := Repository{DB: db, HardwareV2: true}
+	for _, tc := range []struct {
+		name, ip, mac, link, basis, want string
+	}{
+		{"ip-only with link", "192.0.2.1", "", "mac:02:00:00:00:00:11", "02:00:00:00:00:11", "mac:02:00:00:00:00:11"},
+		{"exception", "192.0.2.2", "02:00:00:00:00:12", "endpoint:linked", "02:00:00:00:00:12", "endpoint:linked"},
+		{"ordinary link", "192.0.2.3", "02:00:00:00:00:13", "mac:02:00:00:00:00:13", "02:00:00:00:00:13", ""},
+		{"same-scope lease", "192.0.2.4", "02:00:00:00:00:14", "", "", "mac:02:00:00:00:00:14"},
+		{"other-scope lease", "192.0.2.5", "02:00:00:00:00:15", "", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := hardwareTestObservation(at)
+			o.ID, o.EventID, o.IP, o.MAC, o.Origin = tc.ip, tc.ip, tc.ip, tc.mac, "dhcp"
+			o.ValidUntil = at.Add(time.Hour)
+			raw, err := json.Marshal(o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(`INSERT INTO discovery_observation_latest VALUES($1,$2,$3,$4,$5,false,$6)`,
+				o.ID, o.Key(), o.Origin, at, o.ValidUntil, raw); err != nil {
+				t.Fatal(err)
+			}
+			if tc.link != "" {
+				if _, err := db.Exec(`INSERT INTO discovery_identity_links VALUES($1,$2,jsonb_build_object('mac',$3::text))`, o.ID, tc.link, tc.basis); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				sensor := o.Node
+				if tc.want == "" {
+					sensor = "other-sensor"
+				}
+				if _, err := db.Exec(`INSERT INTO device_address_leases VALUES($1,'ack',$2,$3,'',$4)`,
+					o.ID, sensor, o.IP, "mac:"+o.MAC); err != nil {
+					t.Fatal(err)
+				}
+			}
+			page, err := repo.DevicesIndexed(ctx, DeviceQuery{Mode: "passive", IdentityScope: "devices", Search: tc.ip})
+			if err != nil {
+				t.Fatal(err)
+			}
+			items := page["items"].([]DeviceView)
+			if len(items) != 1 || items[0].EndpointID != tc.want {
+				t.Fatalf("wanted %q, got %+v", tc.want, items)
+			}
+		})
+	}
+}

@@ -10,6 +10,8 @@ func hardwareProfileCandidateSQL(role, confidence, conflict, seen string) string
 // Hardware classification already has an incremental authoritative projection.
 // Keep only scalar search/identity fields before pagination; the same statement
 // fetches the selected original rows by their MVCC tuple locator afterward.
+// Point-lookups keep the historical identity and lease tables out of the
+// candidate scan. The observation index still determines the query window.
 // No ctid is persisted, exported, or used across statements/snapshots.
 func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []string, candidateHaving, matchedWhere string) indexedDeviceSelection {
 	searchIP, searchName, searchType, searchManufacturer, searchModel := "''::text", "''::text", "''::text", "''::text", "''::text"
@@ -95,9 +97,6 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
   AND coalesce(m.data->>'node','')<>'' AND coalesce(m.data->>'site','')<>'' AND coalesce(m.data->>'domain','')<>''
   AND coalesce(m.data->>'mac','')='' AND m.data->'evidence'->'payload'->>'identity_status'='l2_mismatch'
   AND m.data->'evidence'->'payload'->>'claimed_ip'=m.data->>'ip'
-), link_exceptions AS MATERIALIZED (
- SELECT observation_id,endpoint_id FROM discovery_identity_links
- WHERE coalesce(basis->>'mac','')='' OR lower(endpoint_id)<>'mac:'||lower(basis->>'mac')
 ), source_rows AS MATERIALIZED (
  SELECT l.ctid observation_tid,l.id,l.device_key,l.origin,l.observed_at,l.valid_until,
  coalesce(l.data->>'node','') sensor_id,coalesce(l.data->>'site','') site_id,
@@ -113,17 +112,27 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
  ` + dhcpType + ` dhcp_candidate_type,
  (l.valid_until>now() AND l.data->>'confidence' IN ('strong','confirmed') AND coalesce(l.data->'evidence'->'observer'->>'capture_scope_issue','')='') service_clue_valid
  FROM discovery_observation_latest l WHERE ` + strings.Join(baseWhere, " AND ") + `
-), missing_mac_links AS MATERIALIZED (
- SELECT observation_id,endpoint_id FROM discovery_identity_links
- WHERE observation_id=ANY(ARRAY(SELECT id FROM source_rows WHERE raw_mac=''))
 ), candidate_links AS NOT MATERIALIZED (
  SELECT l.*,coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id) linked_endpoint
  FROM source_rows l
- LEFT JOIN missing_mac_links i ON i.observation_id=l.id AND l.raw_mac='' 
- LEFT JOIN link_exceptions ix ON ix.observation_id=l.id
- LEFT JOIN device_address_leases dl ON dl.event_id=l.id AND dl.action='ack'
- AND dl.sensor_id=l.sensor_id AND host(dl.ip)=l.raw_ip
- AND dl.campus_id=l.source_campus AND dl.endpoint_id='mac:'||lower(l.raw_mac)
+ LEFT JOIN LATERAL (
+  SELECT i.endpoint_id FROM discovery_identity_links i
+  WHERE i.observation_id=l.id AND l.raw_mac='' LIMIT 1
+ ) i ON true
+ LEFT JOIN LATERAL (
+  SELECT ix.endpoint_id FROM discovery_identity_links ix
+  WHERE ix.observation_id=l.id AND l.raw_mac<>''
+   AND (coalesce(ix.basis->>'mac','')='' OR lower(ix.endpoint_id)<>'mac:'||lower(ix.basis->>'mac'))
+  LIMIT 1
+ ) ix ON true
+ LEFT JOIN LATERAL (
+  SELECT dl.endpoint_id FROM device_address_leases dl
+  WHERE dl.event_id=l.id AND dl.action='ack'
+   AND dl.sensor_id=l.sensor_id AND host(dl.ip)=l.raw_ip
+   AND dl.campus_id=l.source_campus AND dl.endpoint_id='mac:'||lower(l.raw_mac)
+   AND i.endpoint_id IS NULL AND ix.endpoint_id IS NULL
+  LIMIT 1
+ ) dl ON true
 ), display_links AS NOT MATERIALIZED (
  SELECT l.*,CASE WHEN t.mac IS NOT NULL THEN 'mac:'||t.mac ELSE l.linked_endpoint END display_endpoint
  FROM candidate_links l LEFT JOIN trusted_address t ON t.observation_id=l.id

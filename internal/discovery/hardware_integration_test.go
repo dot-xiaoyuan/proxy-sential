@@ -253,6 +253,36 @@ func TestHardwareProjectionPostgresOverflowPreservesRetryState(t *testing.T) {
 	}
 }
 
+func TestHardwareProjectionPostgresCoalescesRepeatedDNSServiceEvidence(t *testing.T) {
+	db := hardwareIntegrationDB(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	o := hardwareTestObservation(now.Add(-time.Minute))
+	enqueueHardwareTest(t, db, o)
+	// The same announcement contents can have many service instance names.
+	// Keep the original observations and exercise the normal dirty worker.
+	if _, err := db.Exec(`INSERT INTO passive_hardware_facts(identity_key,fact_key,claim_key,sensor_id,campus_id,access_domain,vlan,vrf,mac,device_key,source,first_seen,
+ observed_at,active_until,revoked,evidence_id,data)
+ SELECT identity_key,'dns-'||i,'instance-'||i,sensor_id,campus_id,access_domain,vlan,vrf,mac,device_key,'dns_sd',$1::timestamptz-i*interval '1 minute',
+ $1::timestamptz-i*interval '1 second',$1::timestamptz,false,'dns-event-'||i,
+ data||jsonb_build_object('source','dns_sd','evidence_id','dns-event-'||i,'address_only',false,
+ 'signals','[{"protocol":"dns_sd","field":"service_type","value":"_ipp._tcp"}]'::jsonb)
+ FROM passive_hardware_facts CROSS JOIN generate_series(1,547) i`, now); err != nil {
+		t.Fatal(err)
+	}
+	processHardwareTest(t, db)
+	var pending, facts int
+	var status string
+	var first, last time.Time
+	if err := db.QueryRow(`SELECT (SELECT count(*) FROM passive_hardware_dirty),(SELECT count(*) FROM passive_hardware_facts),
+ hardware_type_status,first_seen,last_seen FROM passive_hardware_current`).Scan(&pending, &facts, &status, &first, &last); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 0 || facts != 548 || status != "identified" ||
+		!first.Equal(now.Add(-547*time.Minute)) || !last.Equal(now.Add(-time.Second)) {
+		t.Fatalf("unexpected projection: pending=%d facts=%d status=%s first=%s last=%s", pending, facts, status, first, last)
+	}
+}
+
 // This is deliberately opt-in: it measures a synthetic campus-sized replay on
 // local PostgreSQL, not a live 204 acceptance test or an HTTP latency promise.
 func TestHardwareProjectionPostgresScale5000(t *testing.T) {
