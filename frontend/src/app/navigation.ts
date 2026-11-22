@@ -77,7 +77,7 @@ export function routePermission(path: string, search: string): Permission | unde
 }
 export function visibleNavigation(session: Session) {
  return navigation.map(group => ({...group,items:group.items.flatMap(entry => {
-  if(entry.hidden)return []
+  if(entry.hidden || (entry.key === 'discovered-devices' && session.device_discovery_menu_hidden))return []
   if(!entry.permission || can(session,entry.permission))return [entry]
   const alternative=entry.readAlternatives?.find(option=>can(session,option.permission))
   return alternative?[{...entry,...alternative}]:[]

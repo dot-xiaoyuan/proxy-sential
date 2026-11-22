@@ -10,6 +10,30 @@ import (
 	"proxy-sentinel/internal/realtime"
 )
 
+func TestDeviceDiscoveryMenuFollowsServiceIntent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "service-expectations.json")
+	if deviceDiscoveryMenuHidden(path) {
+		t.Fatal("deployments without explicit service intent should retain the discovery menu")
+	}
+	for _, tt := range []struct {
+		intent string
+		hidden bool
+	}{
+		{intent: "stopped", hidden: true},
+		{intent: "running", hidden: false},
+	} {
+		t.Run(tt.intent, func(t *testing.T) {
+			raw := `{"proxy-sentinel-discovery.service":"` + tt.intent + `","proxy-sentinel-passive-discovery.service":"running"}`
+			if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if got := deviceDiscoveryMenuHidden(path); got != tt.hidden {
+				t.Fatalf("menu hidden = %v, want %v", got, tt.hidden)
+			}
+		})
+	}
+}
+
 func TestRiskWorkerLoopsProcessIndependentBatches(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

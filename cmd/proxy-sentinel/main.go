@@ -2006,6 +2006,7 @@ func runControlPlaneServe(args []string) error {
 	if err := controlplane.ValidateNativeTestListener(nativeActions, *addr); err != nil {
 		return err
 	}
+	serviceExpectations := filepath.Join(firstEnv("PROXY_SENTINEL_ROOT", "/opt/proxy-sentinel"), "config", "service-expectations.json")
 	return controlplane.Serve(controlplane.Options{
 		NativeActions:            nativeActions,
 		ProxyProtocolConfig:      *proxyConfigFile,
@@ -2015,6 +2016,7 @@ func runControlPlaneServe(args []string) error {
 		ShadowDir:                *shadowDir,
 		SensorID:                 *sensorID,
 		FrontendDir:              *frontendDir,
+		HideDiscoveryMenu:        deviceDiscoveryMenuHidden(serviceExpectations),
 		ReadOnly:                 *readOnly,
 		SharedObservationEnabled: *sharedObservationEnabled,
 		AllowIdentityIngest:      *allowIdentityIngest,
@@ -2061,6 +2063,22 @@ func runControlPlaneServe(args []string) error {
 func usageError() error {
 	return fmt.Errorf("usage: proxy-sentinel version\n       proxy-sentinel migrate [--postgres-dir migrations/postgres] [--clickhouse-dir migrations/clickhouse]\n       proxy-sentinel ingest run --eve /var/log/suricata/eve.json --postgres-dsn <dsn> --clickhouse-dsn <dsn>\n       proxy-sentinel read-model run --lane realtime|coarse|recognition|application|identity|inventory|inventory-backfill --postgres-dsn <dsn> --clickhouse-dsn <dsn>\n       proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel adapter zeek --input dhcp.log --output events.jsonl\n       proxy-sentinel adapter zeek --input software.log --output events.jsonl\n       proxy-sentinel adapter identity --source radius --input radius.jsonl --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]\n       proxy-sentinel evidence --input events.jsonl [--output evidence.json]\n       proxy-sentinel risk batch --input evidence.json --output risk-snapshots.json\n       proxy-sentinel risk list --input risk-snapshots.json [--min-level suspicious]\n       proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3\n       proxy-sentinel shadow run --eve /var/log/suricata/eve.json [--zeek-dhcp /opt/proxy-sentinel/data/zeek/logs/current/dhcp.log] [--zeek-software /opt/proxy-sentinel/data/zeek/logs/current/software.log] --state data/shadow/state.json --out-dir data/shadow\n       proxy-sentinel evaluate routers --manifest examples/router/golden/manifest.json --output report.json\n       proxy-sentinel router sample --interface ens1f1 --duration 5m --work-dir data/router-samples\n       proxy-sentinel backfill identity --postgres-dsn <dsn> --clickhouse-dsn <dsn> [--window 7d]\n" +
 		"       proxy-sentinel device-census --postgres-dsn <dsn> --clickhouse-dsn <dsn> [--sensor-id office-30] [--window 24h] [--json]\n       proxy-sentinel control-plane serve --addr :8080 --shadow-dir data/shadow --frontend-dir frontend/dist --read-only\n       proxy-sentinel validate known-devices --input examples/known-devices-template.csv [--events normalized-identity.jsonl] [--strict] --output -")
+}
+
+func deviceDiscoveryMenuHidden(path string) bool {
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+	var expectations map[string]string
+	if err == nil {
+		err = json.Unmarshal(raw, &expectations)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "read discovery service expectations: %v\n", err)
+		return false
+	}
+	return expectations["proxy-sentinel-discovery.service"] == "stopped"
 }
 
 func firstEnv(name, fallback string) string {

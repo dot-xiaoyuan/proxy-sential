@@ -49,6 +49,7 @@ type Options struct {
 	ShadowDir                string
 	SensorID                 string
 	FrontendDir              string
+	HideDiscoveryMenu        bool
 	ReadOnly                 bool
 	AllowIdentityIngest      bool
 	StorageMode              string
@@ -97,6 +98,7 @@ type Server struct {
 	shadowDir           string
 	sensorID            string
 	frontendDir         string
+	hideDiscoveryMenu   bool
 	readOnly            bool
 	allowIdentityIngest bool
 	reader              store.Reader
@@ -120,10 +122,11 @@ type Server struct {
 }
 
 type Session struct {
-	User        User     `json:"user"`
-	Role        string   `json:"role"`
-	Permissions []string `json:"permissions"`
-	CSRFToken   string   `json:"csrf_token,omitempty"`
+	User              User     `json:"user"`
+	Role              string   `json:"role"`
+	Permissions       []string `json:"permissions"`
+	CSRFToken         string   `json:"csrf_token,omitempty"`
+	HideDiscoveryMenu bool     `json:"device_discovery_menu_hidden,omitempty"`
 }
 
 type User struct {
@@ -465,6 +468,7 @@ func NewServerWithError(opts Options) (*Server, error) {
 		shadowDir:               shadowDir,
 		sensorID:                sensorID,
 		frontendDir:             opts.FrontendDir,
+		hideDiscoveryMenu:       opts.HideDiscoveryMenu,
 		readOnly:                opts.ReadOnly,
 		allowIdentityIngest:     opts.AllowIdentityIngest,
 		reader:                  reader,
@@ -1173,9 +1177,10 @@ func (s *Server) session() Session {
 		role = "operator"
 	}
 	return Session{
-		User:        user,
-		Role:        role,
-		Permissions: permissions,
+		User:              user,
+		Role:              role,
+		Permissions:       permissions,
+		HideDiscoveryMenu: s.hideDiscoveryMenu,
 	}
 }
 
@@ -1191,6 +1196,7 @@ func (s *Server) authenticate(r *http.Request) (Session, bool) {
 	}
 	session := sessionForUser(current.User)
 	session.CSRFToken = current.CSRFToken
+	session.HideDiscoveryMenu = s.hideDiscoveryMenu
 	return session, true
 }
 
@@ -1220,6 +1226,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: token, Path: "/", HttpOnly: true, Secure: s.auth.secure, SameSite: http.SameSiteStrictMode, MaxAge: int((12 * time.Hour).Seconds())})
 	session := sessionForUser(current.User)
 	session.CSRFToken = current.CSRFToken
+	session.HideDiscoveryMenu = s.hideDiscoveryMenu
 	s.appendAudit(r.Context(), "security.login", current.User.ID, "succeeded")
 	writeJSON(w, http.StatusOK, session)
 }

@@ -25,6 +25,10 @@ describe('menu and investigation navigation',()=>{
  expect(routeOwner('/ips/10.0.0.1','?return_to='+encodeURIComponent('/devices?tab=ip&ip=10.0.0.1'))?.entry.key).toBe('ip-observations')
  expect(routeOwner('/ips/10.0.0.1','?return_to='+encodeURIComponent('/activity?section=technical&window=7d'))?.entry.key).toBe('technical')
  })
+ it('hides the discovery menu when the deployment stops discovery',()=>{
+ const session: Session={user:{id:'operator',name:'operator'},role:'operator',permissions:['identity:read'],device_discovery_menu_hidden:true}
+ expect(visibleNavigation(session).find(g=>g.key==='assets')?.items.map(item=>item.title)).toEqual(['终端列表','路由器'])
+ })
  it('accepts only registered site routes and restores conditions',()=>{
  for(const path of ['https://evil.test','//evil.test','/events/arbitrary/route','/ips/10.0.0.1?return_to=/ips/10.0.0.1','/settings/security/unregistered','/events\\evil'])expect(safeReturnTo(path)).toBe('/events')
  const source='/events?window=30d&app_protocol=http2&cursor=40'

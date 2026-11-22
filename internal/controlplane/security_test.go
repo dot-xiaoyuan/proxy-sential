@@ -125,7 +125,7 @@ func TestLocalAuthEnforcesSessionCSRFAndViewerPermissions(t *testing.T) {
 	if err := os.WriteFile(authFile, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	server, err := NewServerWithError(Options{ShadowDir: dir, AuthFile: authFile})
+	server, err := NewServerWithError(Options{ShadowDir: dir, AuthFile: authFile, HideDiscoveryMenu: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,6 +152,20 @@ func TestLocalAuthEnforcesSessionCSRFAndViewerPermissions(t *testing.T) {
 	_ = response.Body.Close()
 	if session.Role != "viewer" || session.CSRFToken == "" || sessionHasPermission(session, "rules:reload") {
 		t.Fatalf("unexpected viewer session: %#v", session)
+	}
+	if !session.HideDiscoveryMenu {
+		t.Fatal("login response did not hide the discovery menu")
+	}
+
+	response, err = client.Get(httpServer.URL + "/api/v1/session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored Session
+	decodeErr := json.NewDecoder(response.Body).Decode(&restored)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK || decodeErr != nil || !restored.HideDiscoveryMenu {
+		t.Fatalf("restored session did not hide the discovery menu, status=%d err=%v", response.StatusCode, decodeErr)
 	}
 
 	request, _ := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/rules/reload", nil)
