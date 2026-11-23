@@ -7842,6 +7842,9 @@ export interface components {
             /** @enum {string} */
             attribution: "device" | "ip";
             candidate_type?: string;
+            /** @description Supplemental brand inferred from attributable device-service SNI observations. */
+            sni_brand_hint?: string;
+            sni_brand_conflict?: boolean;
             os_hint?: string;
             ntp_target?: string;
             cadence_minutes?: number;

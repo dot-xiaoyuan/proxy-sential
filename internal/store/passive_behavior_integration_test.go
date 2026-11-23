@@ -48,7 +48,8 @@ func TestPassiveBehaviorPostgresCommittedReplayAndRevocation(t *testing.T) {
 		exec(string(raw))
 	}
 	exec(`CREATE TABLE discovery_observations (id text,origin text,observed_at timestamptz,valid_until timestamptz,withdrawn boolean,data jsonb);
-CREATE TABLE passive_discovery_state (sensor_id text PRIMARY KEY,cursor_timestamp timestamptz NOT NULL)`)
+CREATE TABLE passive_discovery_state (sensor_id text PRIMARY KEY,cursor_timestamp timestamptz NOT NULL);
+CREATE TABLE passive_hardware_current (identity_key text PRIMARY KEY,hardware_type_status text,data jsonb)`)
 	at := time.Now().UTC().Add(-3 * time.Minute).Truncate(time.Second)
 	exec("INSERT INTO passive_discovery_state VALUES ('sensor',$1)", at.Add(-time.Second))
 	claims := `{"node":"sensor","site":"campus","domain":"mirror","vlan":"20","ip":"10.42.0.10","mac":"02:11:22:33:44:55"}`
@@ -66,6 +67,16 @@ CREATE TABLE passive_discovery_state (sensor_id text PRIMARY KEY,cursor_timestam
 	if err := store.stagePassiveBehavior(ctx, batch, items); err != nil {
 		t.Fatal(err)
 	}
+	tls, quic := event, event
+	tls.EventID, tls.SourceEventType = "tls", "ssl"
+	tls.Payload = map[string]any{"vlan": "20", "sni": "gdmf.apple.com"}
+	quic.EventID, quic.SourceEventType = "quic", "quic"
+	quic.Payload = map[string]any{"vlan": "20", "sni": "albert.apple.com"}
+	items = append(items, tls, quic)
+	// An older process already staged the original signals for this batch.
+	if err := store.stagePassiveBehavior(ctx, batch, items); err != nil {
+		t.Fatal(err)
+	}
 	process := func(want bool) {
 		t.Helper()
 		got, err := store.processPassiveBehavior(ctx, "sensor")
@@ -77,6 +88,7 @@ CREATE TABLE passive_discovery_state (sensor_id text PRIMARY KEY,cursor_timestam
 	exec("UPDATE ingest_batches SET status='committed',committed_at=$1", at.Add(time.Second))
 	process(false)
 	exec("UPDATE passive_discovery_state SET cursor_timestamp=$1", at)
+	process(true)
 	process(true)
 	if err := store.stagePassiveBehavior(ctx, batch, items); err != nil {
 		t.Fatal(err)
@@ -92,8 +104,14 @@ CREATE TABLE passive_discovery_state (sensor_id text PRIMARY KEY,cursor_timestam
 		t.Fatal("invalid generated key")
 	}
 	result, err := ReadPassiveBehavior(ctx, db, key, owner)
-	if err != nil || result.CandidateType != "video_device" || len(result.Items) != 2 {
+	if err != nil || result.CandidateType != "video_device" || result.SNIBrandHint != "Apple" || len(result.Items) != 4 {
 		t.Fatalf("behavior replay=%+v err=%v", result, err)
+	}
+	exec(`INSERT INTO passive_hardware_current VALUES ($1,'identified','{"manufacturer":"Hikvision"}')`,
+		discovery.HardwareIdentityKey("sensor", "campus", "mirror", "20", "", "02:11:22:33:44:55"))
+	result, err = ReadPassiveBehavior(ctx, db, key, owner)
+	if err != nil || !result.SNIBrandConflict || result.SNIBrandHint != "" {
+		t.Fatalf("independent hardware brand conflict was lost: %+v %v", result, err)
 	}
 	wrongScope := discovery.PassiveBehaviorKey("sensor", "campus", "mirror", "21", "", "02:11:22:33:44:55", "")
 	other, _ := discovery.ParsePassiveBehaviorKey(wrongScope)
@@ -126,7 +144,7 @@ CREATE TABLE passive_discovery_state (sensor_id text PRIMARY KEY,cursor_timestam
  (SELECT count(*) FROM passive_behavior_batch_work WHERE batch_id='replay' AND payload='[]'::jsonb AND processed_at IS NOT NULL)`).Scan(&windowCount, &completedSegments); err != nil {
 		t.Fatal(err)
 	}
-	if windowCount != 3 || completedSegments != replayCount/passiveBehaviorSegmentSize {
+	if windowCount != 5 || completedSegments != replayCount/passiveBehaviorSegmentSize {
 		t.Fatalf("repeated input grew windows=%d or left segments=%d", windowCount, completedSegments)
 	}
 	t.Logf("local duplicate replay: %d inputs, %d segments, %d total windows, %s", replayCount, completedSegments, windowCount, time.Since(start))

@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const passiveBehaviorVersion = "passive-behavior/v1"
+const passiveBehaviorVersion = "passive-behavior/v2"
 
 type PassiveBehaviorEvidence struct {
 	Kind       string    `json:"kind"`
@@ -21,15 +21,17 @@ type PassiveBehaviorEvidence struct {
 }
 
 type PassiveBehavior struct {
-	RuleVersion    string                    `json:"rule_version"`
-	Status         string                    `json:"status"`
-	Attribution    string                    `json:"attribution"`
-	CandidateType  string                    `json:"candidate_type,omitempty"`
-	OSHint         string                    `json:"os_hint,omitempty"`
-	NTPTarget      string                    `json:"ntp_target,omitempty"`
-	CadenceMinutes int                       `json:"cadence_minutes,omitempty"`
-	AsOf           time.Time                 `json:"as_of"`
-	Items          []PassiveBehaviorEvidence `json:"items"`
+	RuleVersion      string                    `json:"rule_version"`
+	Status           string                    `json:"status"`
+	Attribution      string                    `json:"attribution"`
+	CandidateType    string                    `json:"candidate_type,omitempty"`
+	SNIBrandHint     string                    `json:"sni_brand_hint,omitempty"`
+	SNIBrandConflict bool                      `json:"sni_brand_conflict,omitempty"`
+	OSHint           string                    `json:"os_hint,omitempty"`
+	NTPTarget        string                    `json:"ntp_target,omitempty"`
+	CadenceMinutes   int                       `json:"cadence_minutes,omitempty"`
+	AsOf             time.Time                 `json:"as_of"`
+	Items            []PassiveBehaviorEvidence `json:"items"`
 }
 
 func PassiveBehaviorReadEnabled() bool {
@@ -74,7 +76,7 @@ func PassiveBehaviorDomain(query string) string {
 
 // SummarizePassiveBehavior evaluates only current, independently attributed
 // signals. The result is supplemental evidence and cannot confirm hardware.
-func SummarizePassiveBehavior(items []PassiveBehaviorEvidence, trusted bool, at time.Time) PassiveBehavior {
+func SummarizePassiveBehavior(items []PassiveBehaviorEvidence, trusted bool, at time.Time, knownBrand string) PassiveBehavior {
 	result := PassiveBehavior{RuleVersion: passiveBehaviorVersion, Status: "ready", Attribution: "ip", AsOf: at, Items: []PassiveBehaviorEvidence{}}
 	if trusted {
 		result.Attribution = "device"
@@ -99,6 +101,8 @@ func SummarizePassiveBehavior(items []PassiveBehaviorEvidence, trusted bool, at 
 		}
 	}
 	if trusted {
+		brand := summarizeSNIBrand(result.Items, knownBrand, at)
+		result.SNIBrandHint, result.SNIBrandConflict = brand.Brand, brand.Status == "conflict"
 		candidates := make(map[string]struct{})
 		for _, rule := range passiveBehaviorRules {
 			if _, domain := kinds["vendor_domain"][rule.domain]; !domain {

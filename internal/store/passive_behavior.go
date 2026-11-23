@@ -74,6 +74,17 @@ func extractPassiveBehavior(event normalized.Event, scope passiveDiscoveryScope)
 	switch event.SourceEventType {
 	case "dns":
 		add(source, "vendor_domain", discovery.PassiveBehaviorDomain(passiveString(event.Payload, "query")))
+	case "tls", "ssl", "quic":
+		if ip := passiveString(event.Subject, "ip"); ip != "" && ip != source {
+			break
+		}
+		for _, key := range []string{"vlan", "vrf"} {
+			p, subject := passiveString(event.Payload, key), passiveString(event.Subject, key)
+			if p != "" && subject != "" && p != subject {
+				return nil
+			}
+		}
+		add(source, discovery.DeviceSNIKind, discovery.PassiveDeviceSNI(passiveString(event.Payload, "sni")))
 	case "conn", "syn_attempt", "syn_ack_observed":
 		proto := passiveString(event.Flow, "proto")
 		port, _ := passiveInt(event.Flow, "dst_port")
@@ -131,15 +142,20 @@ func (s *DBStore) stagePassiveBehavior(ctx context.Context, batch ingest.Batch, 
 	if err != nil {
 		return err
 	}
-	var items []passiveBehaviorInput
+	var items, deviceSNI []passiveBehaviorInput
 	for _, event := range events {
 		for _, item := range extractPassiveBehavior(event, scope) {
-			if item.Sensor == batch.SensorID {
+			if item.Sensor != batch.SensorID {
+				continue
+			}
+			if item.Kind == discovery.DeviceSNIKind {
+				deviceSNI = append(deviceSNI, item)
+			} else {
 				items = append(items, item)
 			}
 		}
 	}
-	if len(items) == 0 {
+	if len(items)+len(deviceSNI) == 0 {
 		return nil
 	}
 	tx, err := s.pg.db.BeginTx(ctx, nil)
@@ -147,6 +163,18 @@ func (s *DBStore) stagePassiveBehavior(ctx context.Context, batch ingest.Batch, 
 		return err
 	}
 	defer tx.Rollback()
+	if err := stagePassiveBehaviorSegments(ctx, tx, batch, items, false); err != nil {
+		return err
+	}
+	// Keep the original segment IDs and checksums stable when an earlier
+	// version staged this ingest batch before a restart or upgrade.
+	if err := stagePassiveBehaviorSegments(ctx, tx, batch, deviceSNI, true); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func stagePassiveBehaviorSegments(ctx context.Context, tx *sql.Tx, batch ingest.Batch, items []passiveBehaviorInput, deviceSNI bool) error {
 	for start := 0; start < len(items); start += passiveBehaviorSegmentSize {
 		selected := items[start:min(start+passiveBehaviorSegmentSize, len(items))]
 		var through time.Time
@@ -165,6 +193,9 @@ func (s *DBStore) stagePassiveBehavior(ctx context.Context, batch ingest.Batch, 
 		digest := sha256.Sum256(data)
 		checksum := hex.EncodeToString(digest[:])
 		segment := start / passiveBehaviorSegmentSize
+		if deviceSNI {
+			segment = -segment - 1
+		}
 		result, err := tx.ExecContext(ctx, `INSERT INTO passive_behavior_batch_work(batch_id,segment,sensor_id,payload,byte_size,payload_sha256,source_through)
  VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(batch_id,segment) DO NOTHING`, batch.BatchID, segment, batch.SensorID, string(data), len(data), checksum, through)
 		if err != nil {
@@ -184,7 +215,7 @@ func (s *DBStore) stagePassiveBehavior(ctx context.Context, batch ingest.Batch, 
 			}
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 type passiveBehaviorWindow struct {
@@ -370,12 +401,28 @@ func ReadPassiveBehavior(ctx context.Context, db *sql.DB, key string, owner disc
 )`, owner.Sensor).Scan(&gap); err != nil {
 		return discovery.PassiveBehavior{}, err
 	}
-	result := discovery.SummarizePassiveBehavior(items, trusted, now)
+	var knownBrand string
+	if trusted && !truncated && !gap {
+		for _, item := range items {
+			if item.Kind != discovery.DeviceSNIKind {
+				continue
+			}
+			err := db.QueryRowContext(ctx, `SELECT coalesce((
+ SELECT data->>'manufacturer' FROM passive_hardware_current WHERE identity_key=$1 AND hardware_type_status='identified'
+ ),'')`, discovery.HardwareIdentityKey(owner.Sensor, owner.Site, owner.Domain, owner.VLAN, owner.VRF, owner.MAC)).Scan(&knownBrand)
+			if err != nil {
+				return discovery.PassiveBehavior{}, err
+			}
+			break
+		}
+	}
+	result := discovery.SummarizePassiveBehavior(items, trusted, now, knownBrand)
 	if truncated || gap {
 		result.Status = "partial"
 		// The trace can still be examined, but unresolved input may carry a
 		// contradicting signal outside this bounded sample.
 		result.CandidateType = ""
+		result.SNIBrandHint = ""
 	}
 	return result, nil
 }

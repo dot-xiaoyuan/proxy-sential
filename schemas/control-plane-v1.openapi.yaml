@@ -8920,6 +8920,8 @@ components:
         status: { type: string, enum: [ready, partial] }
         attribution: { type: string, enum: [device, ip] }
         candidate_type: { type: string }
+        sni_brand_hint: { type: string, description: Supplemental brand inferred from attributable device-service SNI observations. }
+        sni_brand_conflict: { type: boolean }
         os_hint: { type: string }
         ntp_target: { type: string }
         cadence_minutes: { type: integer }
