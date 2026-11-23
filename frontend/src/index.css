@@ -6051,6 +6051,13 @@ pre.wrap-code {
 .coverage-chart-legend strong { color: #0f172a; font-weight: 650; }
 .coverage-chart-legend small { width: 42px; color: #475569; font-size: 11px; }
 .coverage-evidence-note { margin-top: 14px; padding: 8px 10px; border-radius: 6px; background: #f1f5f9; }
+.coverage-pending-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12px; color: #334155; }
+.coverage-pending-table th, .coverage-pending-table td { padding: 7px 4px; border-bottom: 1px solid #e2e8f0; text-align: right; overflow-wrap: anywhere; }
+.coverage-pending-table thead th { background: #f8fafc; font-weight: 650; }
+.coverage-pending-table th:first-child { width: 29%; text-align: left; }
+.coverage-pending-table td { font-variant-numeric: tabular-nums; }
+.coverage-protocol-replay > summary { cursor: pointer; font-weight: 650; }
+.coverage-protocol-replay > .coverage-breakdown { margin-top: 12px; }
 .coverage-evidence-note p { margin: 0; color: #475569; font-size: 12px; line-height: 1.5; }
 .coverage-evidence-note p + p { margin-top: 3px; }
 .coverage-evidence-note strong { color: #0f172a; }

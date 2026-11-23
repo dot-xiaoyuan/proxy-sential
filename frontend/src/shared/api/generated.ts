@@ -8028,6 +8028,22 @@ export interface components {
              * @description Discovery identities with a single profile type clue and without a confirmed hardware type.
              */
             profile_candidate_identities?: number;
+            /** @description Mutually exclusive IPv4 evidence groups for addresses without a confirmed hardware type, using the same snapshot as the coverage counts. */
+            ipv4_pending?: {
+                /** @enum {string} */
+                status: "with_profile" | "without_profile" | "withdrawn_confirmation" | "conflict" | "unlinked";
+                /** Format: int64 */
+                network_only: number;
+                /**
+                 * Format: int64
+                 * @description DHCP observations with no device protocol in the selected window.
+                 */
+                dhcp_only: number;
+                /** Format: int64 */
+                device_protocol: number;
+                /** Format: int64 */
+                other: number;
+            }[];
             /**
              * Format: date-time
              * @description Latest observation included in the IPv4 evidence buckets.

@@ -23,6 +23,14 @@ type CoverageIPv4TypeReview struct {
 	ConfirmedInactive     int64 `json:"confirmed_inactive"`
 }
 
+type CoverageIPv4PendingRow struct {
+	Status         string `json:"status"`
+	NetworkOnly    int64  `json:"network_only"`
+	DHCPOnly       int64  `json:"dhcp_only"`
+	DeviceProtocol int64  `json:"device_protocol"`
+	Other          int64  `json:"other"`
+}
+
 // CoverageReport counts addresses from the bounded discovery index. A /24 is
 // an observation bucket, not a claim about the campus routing configuration.
 type CoverageReport struct {
@@ -60,6 +68,7 @@ type CoverageReport struct {
 	IPv6BindingFreshness *CoverageBindingFreshness `json:"ipv6_binding_freshness,omitempty"`
 	IPv4TypeReview       *CoverageIPv4TypeReview   `json:"ipv4_type_review,omitempty"`
 	ProfileCandidates    *int64                    `json:"profile_candidate_identities,omitempty"`
+	IPv4Pending          []CoverageIPv4PendingRow  `json:"ipv4_pending,omitempty"`
 }
 
 var dumbHardwareTypes = map[string]bool{
@@ -75,16 +84,17 @@ func (r Repository) DiscoveryCoverageReport(ctx context.Context, sensor string, 
 	}
 	at := time.Now().UTC()
 	out := CoverageReport{AsOf: at}
-	var metadata IndexedDeviceMetadata
-	var identityTimedOut bool
 	group, readCtx := errgroup.WithContext(ctx)
 	group.Go(func() error {
-		identityCtx, cancel := context.WithTimeout(readCtx, 14*time.Second)
-		defer cancel()
-		var err error
-		metadata, err = r.DevicesIndexedMetadata(identityCtx, DeviceQuery{Mode: "passive", Window: window, SnapshotAt: at, SkipOverview: true})
-		if errors.Is(identityCtx.Err(), context.DeadlineExceeded) && readCtx.Err() == nil {
-			identityTimedOut = true
+		identityCtx, cancel := context.WithDeadline(readCtx, at.Add(14*time.Second))
+		err := coverageIdentityAndPendingCounts(identityCtx, r.DB, sensor, window, at, &out)
+		timedOut := errors.Is(identityCtx.Err(), context.DeadlineExceeded) && readCtx.Err() == nil
+		cancel()
+		if timedOut {
+			out.IdentityStatus = "timeout"
+			if err := coverageEvidenceCounts(readCtx, r.DB, sensor, at.Add(-window), at, &out); err != nil {
+				return fmt.Errorf("coverage evidence counts: %w", err)
+			}
 			return nil
 		}
 		if err != nil {
@@ -99,9 +109,6 @@ func (r Repository) DiscoveryCoverageReport(ctx context.Context, sensor string, 
 		if err := coverageAddressCounts(readCtx, r.DB, sensor, from, at, &out); err != nil {
 			return fmt.Errorf("coverage address counts: %w", err)
 		}
-		if err := coverageEvidenceCounts(readCtx, r.DB, sensor, from, at, &out); err != nil {
-			return fmt.Errorf("coverage evidence counts: %w", err)
-		}
 		var err error
 		out.MirrorFunnel, err = mirrorFunnelCounts(readCtx, r.DB, sensor, window)
 		return err
@@ -110,24 +117,13 @@ func (r Repository) DiscoveryCoverageReport(ctx context.Context, sensor string, 
 		return CoverageReport{}, err
 	}
 	out.Window = indexedWindowLabel(window)
-	if identityTimedOut {
-		out.IdentityStatus = "timeout"
-		return out, nil
-	}
-	out.IdentityAsOf = &metadata.AsOf
-	out.Identified, out.IdentityTotal = &metadata.Identified, &metadata.Total
-	var profileCandidates int64
-	for _, item := range metadata.CandidateTypes {
-		profileCandidates += item.Count
-	}
-	out.ProfileCandidates = &profileCandidates
-	var dumbTerminals int64
-	for _, item := range metadata.Types {
-		if dumbHardwareTypes[item.DeviceType] {
-			dumbTerminals += item.Count
+	if out.IdentityAsOf != nil {
+		if fresh := r.PassiveDiscoveryFreshness(ctx); fresh != nil {
+			if cutoff, ok := fresh["cursor_at"].(time.Time); ok && !cutoff.IsZero() {
+				out.IdentityAsOf = &cutoff
+			}
 		}
 	}
-	out.DumbTerminals = &dumbTerminals
 	return out, nil
 }
 
@@ -136,39 +132,27 @@ func (r Repository) DiscoveryCoverageReport(ctx context.Context, sensor string, 
 // address may have historical product evidence even if its latest observation
 // contains only ARP; origin buckets are therefore reported only for untyped
 // addresses with a hardware identity.
-func coverageEvidenceCounts(ctx context.Context, db *sql.DB, sensor string, from, until time.Time, out *CoverageReport) error {
-	// PostgreSQL underestimates the JSON IPv4 filter. Partitioning by device key
-	// avoids scanning all in-window hardware keys for every matching observation.
-	const statement = `WITH by_device AS (
- SELECT device_key,NULL::text ip,NULL::text origin,NULL::timestamptz observed_at,
-  true hardware,hardware_type_status='identified' typed,hardware_type_status='revoked' revoked_type,
-  hardware_type_status='revoked' AND hardware_type<>'' withdrawn_confirmation,
-  hardware_type_status='conflict' type_conflict,
-  hardware_type_status='identified' AND active_until>$3 typed_active
- FROM passive_hardware_current
- WHERE sensor_id=$1 AND last_seen>=$2 AND last_seen<$3
- UNION ALL
- SELECT l.device_key,l.data->>'ip',l.origin,l.observed_at,false,false,false,false,false,false
- FROM discovery_observation_latest l
- WHERE l.data->>'node'=$1 AND l.observed_at>=$2 AND l.observed_at<$3
-  AND NOT l.withdrawn
-  AND l.data->>'ip' ~ '^[0-9]{1,3}([.][0-9]{1,3}){3}$'
-), classified AS (
- SELECT ip,origin,observed_at,bool_or(hardware) OVER device has_identity,
-  bool_or(typed) OVER device typed,bool_or(revoked_type) OVER device revoked_type,
-  bool_or(withdrawn_confirmation) OVER device withdrawn_confirmation,
-  bool_or(type_conflict) OVER device type_conflict,bool_or(typed_active) OVER device typed_active
- FROM by_device WINDOW device AS (PARTITION BY device_key)
-), per_ip AS (
- SELECT ip,bool_or(has_identity) has_identity,bool_or(typed) typed,bool_or(revoked_type) revoked_type,
-  bool_or(withdrawn_confirmation) withdrawn_confirmation,bool_or(type_conflict) type_conflict,bool_or(typed_active) typed_active,
-  bool_or(origin='dhcp') dhcp,
-  bool_or(origin IN ('snmp','http_device','tls_device','dns_sd','ssdp','sadp','rtsp','sip','ws_discovery')) app,
-  bool_and(origin IN ('arp','ttl','ndp')) network_only,
-  max(observed_at) latest
- FROM classified WHERE ip IS NOT NULL GROUP BY ip
-)
-SELECT count(*) FILTER(WHERE typed),
+type coverageQueryRower interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func coverageEvidenceCounts(ctx context.Context, db coverageQueryRower, sensor string, from, until time.Time, out *CoverageReport) error {
+	return db.QueryRowContext(ctx, "WITH "+coveragePerIPSQL("$1", "$2", "$3", "", "false")+coverageEvidenceSelectSQL, sensor, from, until).
+		Scan(coverageEvidenceDestinations(out)...)
+}
+
+func coverageEvidenceDestinations(out *CoverageReport) []any {
+	out.IPv4TypeReview = &CoverageIPv4TypeReview{}
+	return []any{
+		&out.TypedIPv4, &out.IdentityNoTypeIPv4, &out.NoIdentityIPv4,
+		&out.UntypedNetworkOnlyIPv4, &out.UntypedDHCPOnlyIPv4,
+		&out.UntypedApplicationIPv4, &out.UntypedOtherIPv4, &out.RevokedTypeIPv4,
+		&out.IPv4TypeReview.WithdrawnConfirmation, &out.IPv4TypeReview.Conflict,
+		&out.IPv4TypeReview.ConfirmedInactive, &out.DiagnosticAsOf,
+	}
+}
+
+const coverageEvidenceSelectSQL = `SELECT count(*) FILTER(WHERE typed),
  count(*) FILTER(WHERE has_identity AND NOT typed),
  count(*) FILTER(WHERE NOT has_identity),
  count(*) FILTER(WHERE has_identity AND NOT typed AND network_only),
@@ -181,21 +165,43 @@ SELECT count(*) FILTER(WHERE typed),
  count(*) FILTER(WHERE typed AND NOT typed_active),
  max(latest)
 FROM per_ip`
-	var latest sql.NullTime
-	var review CoverageIPv4TypeReview
-	err := db.QueryRowContext(ctx, statement, sensor, from, until).Scan(
-		&out.TypedIPv4, &out.IdentityNoTypeIPv4, &out.NoIdentityIPv4,
-		&out.UntypedNetworkOnlyIPv4, &out.UntypedDHCPOnlyIPv4,
-		&out.UntypedApplicationIPv4, &out.UntypedOtherIPv4, &out.RevokedTypeIPv4,
-		&review.WithdrawnConfirmation, &review.Conflict, &review.ConfirmedInactive, &latest,
-	)
-	if err == nil {
-		out.IPv4TypeReview = &review
-	}
-	if latest.Valid {
-		out.DiagnosticAsOf = &latest.Time
-	}
-	return err
+
+func coveragePerIPSQL(sensor, from, until, profileJoin, hasProfile string) string {
+	// PostgreSQL underestimates the JSON IPv4 filter. Partitioning by device key
+	// avoids scanning all in-window hardware keys for every matching observation.
+	return fmt.Sprintf(`by_device AS (
+ SELECT h.device_key,NULL::text ip,NULL::text origin,NULL::timestamptz observed_at,
+  true hardware,hardware_type_status='identified' typed,hardware_type_status='revoked' revoked_type,
+  hardware_type_status='revoked' AND hardware_type<>'' withdrawn_confirmation,
+  hardware_type_status='conflict' type_conflict,
+  hardware_type_status='identified' AND active_until>%[3]s typed_active,
+  %[5]s has_profile
+ FROM passive_hardware_current h %[4]s
+ WHERE h.sensor_id=%[1]s AND h.last_seen>=%[2]s AND h.last_seen<%[3]s
+ UNION ALL
+ SELECT l.device_key,l.data->>'ip',l.origin,l.observed_at,false,false,false,false,false,false,false
+ FROM discovery_observation_latest l
+ WHERE l.data->>'node'=%[1]s AND l.observed_at>=%[2]s AND l.observed_at<%[3]s
+  AND NOT l.withdrawn
+  AND l.data->>'ip' ~ '^[0-9]{1,3}([.][0-9]{1,3}){3}$'
+), classified AS (
+ SELECT ip,origin,observed_at,bool_or(hardware) OVER device has_identity,
+  bool_or(typed) OVER device typed,bool_or(revoked_type) OVER device revoked_type,
+  bool_or(withdrawn_confirmation) OVER device withdrawn_confirmation,
+  bool_or(type_conflict) OVER device type_conflict,bool_or(typed_active) OVER device typed_active,
+  bool_or(has_profile) OVER device has_profile
+ FROM by_device WINDOW device AS (PARTITION BY device_key)
+), per_ip AS (
+ SELECT ip,bool_or(has_identity) has_identity,bool_or(typed) typed,bool_or(revoked_type) revoked_type,
+  bool_or(withdrawn_confirmation) withdrawn_confirmation,bool_or(type_conflict) type_conflict,bool_or(typed_active) typed_active,
+  bool_or(has_profile) has_profile,
+  bool_or(origin='dhcp') dhcp,
+  bool_or(origin IN ('snmp','http_device','tls_device','dns_sd','ssdp','sadp','rtsp','sip','ws_discovery')) app,
+  bool_and(origin IN ('arp','ttl','ndp')) network_only,
+  max(observed_at) latest
+ FROM classified WHERE ip IS NOT NULL GROUP BY ip
+)
+`, sensor, from, until, profileJoin, hasProfile)
 }
 
 func coverageAddressCounts(ctx context.Context, db *sql.DB, sensor string, from, until time.Time, out *CoverageReport) error {

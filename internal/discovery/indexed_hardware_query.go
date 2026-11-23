@@ -137,7 +137,7 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
  SELECT l.*,CASE WHEN t.mac IS NOT NULL THEN 'mac:'||t.mac ELSE l.linked_endpoint END display_endpoint
  FROM candidate_links l LEFT JOIN trusted_address t ON t.observation_id=l.id
 ), seed_rows AS MATERIALIZED (
- SELECT l.observation_tid,l.id,l.device_key,l.origin,l.observed_at,l.valid_until,
+ SELECT l.observation_tid,l.id,l.device_key,l.origin,l.observed_at,l.valid_until,l.sensor_id,
  l.search_ip,l.search_mac,l.search_name,l.search_device_type,` + searchManufacturerSQL + ` search_manufacturer,l.search_model,
  ` + identitySQL + ` identity_key,l.vlan,l.raw_ip,l.observation_capabilities,l.product_type,l.product_evidence,l.dhcp_candidate_type,l.service_clue_valid,
  (l.capture_scope_valid AND l.sensor_id<>'' AND l.site_id<>'' AND l.access_domain<>''
@@ -149,7 +149,7 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 ), recognition AS MATERIALIZED (
  ` + recognitionSource + `
 ), candidate_rows AS MATERIALIZED (
- SELECT l.observation_tid,l.id,l.device_key,l.origin,l.observed_at,l.valid_until,
+ SELECT l.observation_tid,l.id,l.device_key,l.origin,l.observed_at,l.valid_until,l.sensor_id,
  l.search_ip,l.search_mac,l.search_name,l.search_device_type,l.search_manufacturer,l.search_model,
  l.identity_key,l.vlan,l.observation_capabilities,l.raw_ip,l.product_type,l.product_evidence,l.service_clue_valid,l.linked_endpoint,l.recognition_endpoint,l.profile_identity_verified,
  ` + subnet + ` subnet,

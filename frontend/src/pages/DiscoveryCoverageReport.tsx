@@ -4,6 +4,7 @@ import { observedTimeTitle } from '../shared/ui/observedTime'
 export type CoverageReport = components['schemas']['DiscoveryCoverageReport']
 type MirrorFunnel = NonNullable<CoverageReport['mirror_funnel']>
 type BindingFreshness = components['schemas']['DiscoveryBindingFreshness']
+type PendingRow = NonNullable<CoverageReport['ipv4_pending']>[number]
 type CoverageRow = { label: string; value: number; color?: 'teal' | 'blue' | 'slate' | 'amber' | 'purple' }
 
 const count = (value: number) => value.toLocaleString('zh-CN')
@@ -56,6 +57,48 @@ function BindingFreshnessRows({ freshness }: { freshness: BindingFreshness }) {
     { label: '撤销或冲突待核实', value: uncertain, color: 'slate' },
     { label: '窗口内无绑定记录', value: noBinding, color: 'slate' },
   ]} />
+}
+
+const pendingLabels: Record<PendingRow['status'], string> = {
+  with_profile: '已有画像类型线索',
+  without_profile: '暂无画像类型线索',
+  withdrawn_confirmation: '曾确认后撤回',
+  conflict: '类型证据冲突',
+  unlinked: '地址归属待核实',
+}
+
+function CoveragePendingTable({ rows }: { rows: PendingRow[] }) {
+  const statuses = Object.keys(pendingLabels) as PendingRow['status'][]
+  return <table className="coverage-pending-table" aria-label="待确认 IPv4 的画像及协议证据">
+    <thead><tr>
+      <th scope="col">类型状态</th><th scope="col">仅网络层</th><th scope="col">有 DHCP</th>
+      <th scope="col">有设备协议</th><th scope="col">其他</th><th scope="col">合计</th>
+    </tr></thead>
+    <tbody>{statuses.map(status => {
+      const row = rows.find(item => item.status === status)
+      const { network_only = 0, dhcp_only = 0, device_protocol = 0, other = 0 } = row ?? {}
+      return <tr key={status}>
+        <th scope="row">{pendingLabels[status]}</th>
+        <td>{count(network_only)}</td><td>{count(dhcp_only)}</td>
+        <td>{count(device_protocol)}</td><td>{count(other)}</td>
+        <td><strong>{count(network_only + dhcp_only + device_protocol + other)}</strong></td>
+      </tr>
+    })}</tbody>
+  </table>
+}
+
+function CoverageProtocolReplay() {
+  return <details className="coverage-panel coverage-protocol-replay">
+    <summary>设备协议回放明细 · 11 月 23 日 18:54</summary>
+    <p className="coverage-footnote">2026/11/23 18:54 的固定 24 小时快照。从 1,062 条回放观测中追查 197 个已关联且有设备协议的待确认 IPv4。</p>
+    <CoverageRows total={197} unit="个 IP" rows={[
+      { label: '协议响应缺可信 MAC', value: 129, color: 'slate' },
+      { label: '已归属，缺规则可用字段', value: 24 },
+      { label: '有字段，单条回放未形成类型', value: 42 },
+      { label: '曾确认后撤回或类型冲突', value: 2, color: 'amber' },
+    ]} />
+    <p className="coverage-footnote">缺可信 MAC 的地址中，66 个已有交换机产品线索，1 个已有无线分布式主机产品线索。</p>
+  </details>
 }
 
 export function DiscoveryCoverageReport({ report }: { report: CoverageReport }) {
@@ -129,8 +172,13 @@ export function DiscoveryCoverageReport({ report }: { report: CoverageReport }) 
         </section>
         <section className="coverage-panel" aria-labelledby="coverage-gap-heading">
           <header className="coverage-panel-heading"><div><h4 id="coverage-gap-heading">类型待确认的证据</h4>
-            <p>分母为 {count(needsType)} 个已关联设备、类型待确认的 IP</p></div></header>
-          {breakdown.length > 0 && needsType > 0
+            <p>{report.ipv4_pending
+              ? `${count(needsType + unlinked)} 个 IPv4 暂无确认类型，含地址归属待核实。`
+              : `分母为 ${count(needsType)} 个已关联设备、类型待确认的 IP`}</p></div></header>
+          {report.ipv4_pending ? <>
+            <CoveragePendingTable rows={report.ipv4_pending} />
+            <p className="coverage-footnote">有 DHCP 一栏只统计窗口内暂无设备协议的地址。</p>
+          </> : breakdown.length > 0 && needsType > 0
             ? <CoverageRows total={needsType} unit="个 IP" rows={breakdown}/>
             : <p className="coverage-empty">{needsType === 0 ? '当前没有这类记录。' : '本次统计暂无协议分项。'}</p>}
           {report.revoked_type_ipv4 !== undefined && needsType > 0 && <div className="coverage-evidence-note">
@@ -139,6 +187,7 @@ export function DiscoveryCoverageReport({ report }: { report: CoverageReport }) 
           </div>}
         </section>
       </div>}
+    <CoverageProtocolReplay />
     {report.profile_candidate_identities !== undefined && <p className="coverage-footnote">另有 <strong>{count(report.profile_candidate_identities)} 个发现身份</strong>已有画像类型线索，待确认硬件类型。</p>}
     <p className="coverage-footnote">同一设备可能对应多个地址或采集范围。/24 分组按观测地址统计。</p>
   </section>

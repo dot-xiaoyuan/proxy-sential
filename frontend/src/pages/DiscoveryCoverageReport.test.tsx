@@ -35,7 +35,7 @@ it('displays the mirror ratio using valid pair counts and shows OUI only on dema
 it('keeps zero and absent breakdowns distinct', () => {
   const view=render(<DiscoveryCoverageReport report={{...report, typed_ipv4:0, identity_no_type_ipv4:0, no_identity_ipv4:0}} />)
   expect(screen.getByText('选定范围内暂无设备侧 IPv4 观测。')).toBeVisible()
-  expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+  expect(within(screen.getByRole('region', {name:'类型待确认的证据'})).queryByRole('progressbar')).not.toBeInTheDocument()
   view.rerender(<DiscoveryCoverageReport report={{...report, typed_ipv4:undefined}} />)
   expect(screen.queryByRole('region',{name:'观测 IPv4 的硬件类型确认覆盖'})).not.toBeInTheDocument()
   expect(screen.getByText('15,390')).toBeVisible()
@@ -67,4 +67,18 @@ it('splits prior confirmations and conflicts from other pending addresses withou
   expect(within(chart).getByText('已关联，尚待确认').closest('li')).toHaveTextContent('993')
   expect(within(chart).getByText('12 个')).toBeVisible()
   expect(chart).toHaveTextContent('1.9%')
+})
+
+it('shows the window evidence matrix and labels the protocol replay as a fixed snapshot', () => {
+  render(<DiscoveryCoverageReport report={{...report, ipv4_pending:[
+    { status:'with_profile', network_only:10, dhcp_only:40, device_protocol:5, other:0 },
+    { status:'without_profile', network_only:600, dhcp_only:200, device_protocol:145, other:0 },
+    { status:'unlinked', network_only:14090, dhcp_only:0, device_protocol:0, other:0 },
+  ]}} />)
+  const table = screen.getByRole('table', {name:'待确认 IPv4 的画像及协议证据'})
+  const row = within(table).getByRole('row', {name:/已有画像类型线索/})
+  expect(within(row).getAllByRole('cell').map(cell => cell.textContent)).toEqual(['10','40','5','0','55'])
+  fireEvent.click(screen.getByText('设备协议回放明细 · 11 月 23 日 18:54'))
+  expect(screen.getByText(/固定 24 小时快照/)).toBeVisible()
+  expect(screen.getByText('协议响应缺可信 MAC')).toBeVisible()
 })

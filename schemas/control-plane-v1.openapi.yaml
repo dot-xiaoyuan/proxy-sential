@@ -9035,6 +9035,18 @@ components:
         dumb_terminals: { type: integer, format: int64, minimum: 0 }
         identity_total: { type: integer, format: int64, minimum: 0 }
         profile_candidate_identities: { type: integer, format: int64, minimum: 0, description: Discovery identities with a single profile type clue and without a confirmed hardware type. }
+        ipv4_pending:
+          type: array
+          description: Mutually exclusive IPv4 evidence groups for addresses without a confirmed hardware type, using the same snapshot as the coverage counts.
+          items:
+            type: object
+            required: [status, network_only, dhcp_only, device_protocol, other]
+            properties:
+              status: { type: string, enum: [with_profile, without_profile, withdrawn_confirmation, conflict, unlinked] }
+              network_only: { type: integer, format: int64, minimum: 0 }
+              dhcp_only: { type: integer, format: int64, minimum: 0, description: DHCP observations with no device protocol in the selected window. }
+              device_protocol: { type: integer, format: int64, minimum: 0 }
+              other: { type: integer, format: int64, minimum: 0 }
         diagnostic_as_of: { type: string, format: date-time, description: Latest observation included in the IPv4 evidence buckets. }
         typed_ipv4: { type: integer, format: int64, minimum: 0, description: Distinct observed IPv4 addresses with at least one typed scoped identity. }
         identity_no_type_ipv4: { type: integer, format: int64, minimum: 0 }
