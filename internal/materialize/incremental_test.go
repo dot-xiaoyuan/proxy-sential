@@ -23,6 +23,7 @@ type incrementalFake struct {
 	facts          []evidence.Evidence
 	claimed        []store.RiskSubjectClaim
 	claimLimit     int
+	claimDelay     time.Duration
 	cutoff         time.Time
 	readCutoff     time.Time
 	expiryCalls    int
@@ -54,8 +55,26 @@ func TestIncrementalRiskCanKeepExpiryOutOfRealtimeBatch(t *testing.T) {
 
 func (f *incrementalFake) ClaimRiskSubjects(_ context.Context, _ string, limit int) ([]store.RiskSubjectClaim, error) {
 	f.claimLimit = limit
+	time.Sleep(f.claimDelay)
 	return f.claims[:min(limit, len(f.claims))], nil
 }
+
+func TestIncrementalRiskPreservesClaimElapsed(t *testing.T) {
+	now := time.Now().UTC()
+	delay := 2 * time.Millisecond
+	backend := &incrementalFake{
+		cutoff:     now.Add(-time.Minute),
+		claimDelay: delay,
+		claims:     []store.RiskSubjectClaim{{SensorID: "sensor-a", Type: "ip", ID: "192.0.2.1"}},
+	}
+	result, err := RunIncrementalOnce(context.Background(), backend, IncrementalOptions{
+		SensorID: "sensor-a", AsOf: now, SkipExpiry: true,
+	})
+	if err != nil || result.Committed != 1 || result.ClaimElapsed < delay {
+		t.Fatalf("claim timing was lost: committed=%d elapsed=%s err=%v", result.Committed, result.ClaimElapsed, err)
+	}
+}
+
 func (f *incrementalFake) StreamRiskFeatureEvents(_ context.Context, _ string, claims []store.RiskSubjectClaim, _, _, acceptedAfter time.Time, _ int, emit func(normalized.Event) error) (int, error) {
 	f.claimed = claims
 	f.readCutoff = acceptedAfter

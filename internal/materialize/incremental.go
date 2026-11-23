@@ -97,7 +97,7 @@ func RunIncrementalOnce(ctx context.Context, backend IncrementalStore, opts Incr
 	if err != nil || len(claims) == 0 {
 		return IncrementalResult{}, err
 	}
-	result = IncrementalResult{Claims: len(claims)}
+	result.Claims = len(claims)
 	result.FullBatch = len(claims) == claimLimit
 	claimedAt := time.Now().UTC()
 	// In live mode the snapshot must be no earlier than the PG claim. A source
