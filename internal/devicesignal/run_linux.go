@@ -204,7 +204,7 @@ func Run(ctx context.Context, opts Options) error {
 			if err := writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, at, selected); err != nil {
 				return err
 			}
-			if err := writeCaptureCoverage(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, "packet-sidecar", opts.CaptureScope, coverage); err != nil {
+			if err := writeCaptureCoverageDocument(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, "packet-sidecar", opts.CaptureScope, coverage, &state.ieee1905); err != nil {
 				return err
 			}
 			coverageFrom = end
@@ -268,6 +268,7 @@ func Run(ctx context.Context, opts Options) error {
 			state.resetHandshakes()
 			state.controlParseFailures = 0
 			state.controlKeyDrops = 0
+			state.ieee1905 = ieee1905CaptureStats{}
 			bucket = now.UTC().Truncate(opts.Bucket)
 		default:
 			if processed == 0 {
@@ -299,6 +300,7 @@ func Run(ctx context.Context, opts Options) error {
 					state.resetHandshakes()
 					state.controlParseFailures = 0
 					state.controlKeyDrops = 0
+					state.ieee1905 = ieee1905CaptureStats{}
 					bucket = now.UTC().Truncate(opts.Bucket)
 				case <-time.After(20 * time.Millisecond):
 				}

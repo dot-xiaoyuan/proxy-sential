@@ -2,8 +2,59 @@ package devicesignal
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
+
+	"proxy-sentinel/internal/sharedaccess"
 )
+
+func TestIEEE1905CoverageRecordsMemberSnapshotAvailability(t *testing.T) {
+	ethernet := []byte{0x01, 0x80, 0xc2, 0, 0, 0x13, 0x20, 0x3a, 0xeb, 0xe9, 0xde, 0x10, 0x89, 0x3a}
+	bucket := newCaptureBucket()
+	for i, message := range [][]byte{
+		{0, 0, 0, 0, 0, 1, 0, 0x80, 0, 0, 0},
+		{0, 0, 0, 2, 0, 2, 0, 0x80, 0, 0, 0},
+		{0, 0, 0, 3, 0, 3, 0, 0x80, 0, 0, 0},
+		{0, 0, 0, 3, 0, 4, 0, 0x80, 0x84, 0, 1, 0, 0, 0, 0},
+		{0, 0, 0, 3, 0, 5, 1, 0x80},
+		{0, 0, 0, 3, 0, 6, 0, 0x80, 0x84, 0, 10, 0},
+	} {
+		bucket.addFrame(append(append([]byte(nil), ethernet...), message...), nil)
+		if i == 2 && (len(bucket.controls) != 1 || bucket.controlParseFailures != 0) {
+			t.Fatal("a complete response with no member snapshot emitted evidence or changed coverage")
+		}
+	}
+	want := ieee1905CaptureStats{Frames: 6, TopologyQueries: 1, TopologyResponses: 4, WithMemberSnapshot: 1, WithoutMemberSnapshot: 1, FragmentedResponses: 1, MalformedResponses: 1}
+	if bucket.ieee1905 != want || bucket.controlParseFailures != 2 || len(bucket.controls) != 2 {
+		t.Fatalf("unexpected diagnostic counts or coverage: got %+v, parse failures %d, controls %d", bucket.ieee1905, bucket.controlParseFailures, len(bucket.controls))
+	}
+	at := time.Unix(100, 0).UTC()
+	coverage := sharedaccess.CoverageV2{SchemaVersion: "capture-coverage/v2", From: at, To: at.Add(30 * time.Second), KernelStatsKnown: true}
+	output := filepath.Join(t.TempDir(), "packet.jsonl")
+	if err := writeCaptureCoverageDocument(output, "sensor", "bond0", "instance", "packet-sidecar", nil, coverage, &bucket.ieee1905); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var event struct {
+		Payload struct {
+			Coverage struct {
+				sharedaccess.CoverageV2
+				IEEE1905 ieee1905CaptureStats `json:"ieee1905"`
+			} `json:"capture_coverage"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal(data, &event); err != nil {
+		t.Fatal(err)
+	}
+	if got := event.Payload.Coverage; got.IEEE1905 != want || got.CoverageV2 != coverage || !got.Complete() {
+		t.Fatalf("unexpected persisted diagnostics or coverage proof: %+v", got)
+	}
+}
 
 func TestIEEE1905EmptySnapshotRetainsBSSScope(t *testing.T) {
 	frame := []byte{

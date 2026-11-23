@@ -26,6 +26,7 @@ type captureBucket struct {
 	handshakeCandidateBytes int
 	controlParseFailures    int
 	controlKeyDrops         int
+	ieee1905                ieee1905CaptureStats
 }
 
 // At roughly 0.5-1 KiB per normalized JSON record, this hard ceiling keeps the
@@ -39,6 +40,37 @@ const maxHandshakeCandidateBytes = 24 << 20
 type handshakeCandidate struct {
 	summary *handshakeSummary
 	feature handshakeFeatureObservation
+}
+
+// Frame counts describe the mirror input before output deduplication.
+type ieee1905CaptureStats struct {
+	Frames                int `json:"frames"`
+	TopologyQueries       int `json:"topology_queries"`
+	TopologyResponses     int `json:"topology_responses"`
+	WithMemberSnapshot    int `json:"with_member_snapshot"`
+	WithoutMemberSnapshot int `json:"without_member_snapshot"`
+	FragmentedResponses   int `json:"fragmented_responses"`
+	MalformedResponses    int `json:"malformed_responses"`
+}
+
+func (s *ieee1905CaptureStats) observe(frame ieee1905FrameObservation) {
+	s.Frames++
+	switch frame.messageType {
+	case 0x0002:
+		s.TopologyQueries++
+	case 0x0003:
+		s.TopologyResponses++
+		switch {
+		case frame.fragmented:
+			s.FragmentedResponses++
+		case !frame.complete:
+			s.MalformedResponses++
+		case frame.snapshot:
+			s.WithMemberSnapshot++
+		default:
+			s.WithoutMemberSnapshot++
+		}
+	}
 }
 
 func newCaptureBucket() *captureBucket {
@@ -60,9 +92,12 @@ func (b *captureBucket) addFrame(frame []byte, scope *normalized.CaptureScope) {
 			}
 		}
 	}
-	controls, incompleteIEEE1905 := parseControlFramesWithCoverage(frame)
-	if incompleteIEEE1905 {
-		b.controlParseFailures++
+	controls, ieee1905 := parseControlFramesWithCoverage(frame)
+	if ieee1905.observed {
+		b.ieee1905.observe(ieee1905)
+		if !ieee1905.complete {
+			b.controlParseFailures++
+		}
 	}
 	for _, signal := range controls {
 		// ARP only serves dumb-terminal discovery and the device-center address history; router

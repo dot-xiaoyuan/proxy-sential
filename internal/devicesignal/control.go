@@ -78,17 +78,16 @@ func parseControlFrames(frame []byte) []controlSignal {
 }
 
 // A complete IEEE 1905 message may carry no facts used by this collector.
-// Only an incomplete or malformed message adds a coverage gap.
-func parseControlFramesWithCoverage(frame []byte) (signals []controlSignal, incompleteIEEE1905 bool) {
+// Report what arrived separately from the evidence emitted.
+func parseControlFramesWithCoverage(frame []byte) ([]controlSignal, ieee1905FrameObservation) {
 	ethernet, ok := parseEthernetFrame(frame)
 	if !ok {
-		return nil, false
+		return nil, ieee1905FrameObservation{}
 	}
 	if ethernet.etherType == 0x893a {
-		signals, complete := parseIEEE1905(ethernet)
-		return signals, !complete
+		return parseIEEE1905(ethernet)
 	}
-	return parseOtherControlFrames(ethernet), false
+	return parseOtherControlFrames(ethernet), ieee1905FrameObservation{}
 }
 
 func parseOtherControlFrames(ethernet ethernetFrame) []controlSignal {
@@ -173,15 +172,31 @@ type ieee1905BSSSnapshot struct {
 	ClientMACs []string `json:"client_macs"`
 }
 
-func parseIEEE1905(ethernet ethernetFrame) ([]controlSignal, bool) {
+type ieee1905FrameObservation struct {
+	messageType uint16
+	observed    bool
+	complete    bool
+	fragmented  bool
+	snapshot    bool
+}
+
+func parseIEEE1905(ethernet ethernetFrame) ([]controlSignal, ieee1905FrameObservation) {
 	// IEEE 1905.1 CMDUs use an eight-octet header followed by TLVs. Fragmented
 	// messages require reassembly, so only complete, unfragmented messages are
 	// emitted. Bit 7 of the flags octet marks the last fragment.
 	payload := ethernet.payload
-	if len(payload) < 8 || payload[0] != 0 || payload[6] != 0 || payload[7]&0x80 == 0 {
-		return nil, false
+	observation := ieee1905FrameObservation{observed: true}
+	if len(payload) >= 4 {
+		observation.messageType = binary.BigEndian.Uint16(payload[2:4])
 	}
-	messageType := binary.BigEndian.Uint16(payload[2:4])
+	if len(payload) < 8 || payload[0] != 0 {
+		return nil, observation
+	}
+	if payload[6] != 0 || payload[7]&0x80 == 0 {
+		observation.fragmented = true
+		return nil, observation
+	}
+	messageType := observation.messageType
 	messageID := binary.BigEndian.Uint16(payload[4:6])
 	sourceMAC := net.HardwareAddr(ethernet.source[:]).String()
 	alMAC := sourceMAC
@@ -194,14 +209,14 @@ func parseIEEE1905(ethernet ethernetFrame) ([]controlSignal, bool) {
 		kind, length := tlvs[0], int(binary.BigEndian.Uint16(tlvs[1:3]))
 		tlvs = tlvs[3:]
 		if length > len(tlvs) {
-			return nil, false
+			return nil, observation
 		}
 		value := tlvs[:length]
 		tlvs = tlvs[length:]
 		switch kind {
 		case 0:
 			if length != 0 {
-				return nil, false
+				return nil, observation
 			}
 			ended = true
 			tlvs = nil
@@ -219,7 +234,7 @@ func parseIEEE1905(ethernet ethernetFrame) ([]controlSignal, bool) {
 			}
 		case 0x92:
 			if messageType != 0x0001 || len(value) != 13 {
-				return nil, false
+				return nil, observation
 			}
 			state := "left"
 			if value[12]&0x80 != 0 {
@@ -230,21 +245,26 @@ func parseIEEE1905(ethernet ethernetFrame) ([]controlSignal, bool) {
 			})
 		case 0x84:
 			if messageType != 0x0003 {
-				return nil, false
+				return nil, observation
 			}
 			if hasSnapshot {
-				return nil, false
+				return nil, observation
 			}
 			parsed, bsses, valid := parseIEEE1905AssociatedClients(value)
 			if !valid {
-				return nil, false
+				return nil, observation
 			}
 			clients = append(clients, parsed...)
 			snapshots, hasSnapshot = bsses, true
 		}
 	}
 	if !ended {
-		return nil, false
+		return nil, observation
+	}
+	observation.complete = true
+	observation.snapshot = hasSnapshot
+	if messageType != 0x0000 && len(clients) == 0 && !hasSnapshot {
+		return nil, observation
 	}
 	base := map[string]any{
 		"origin": "ieee1905", "al_mac": alMAC, "ethernet_source_mac": sourceMAC, "message_type": int(messageType), "message_id": int(messageID),
@@ -284,7 +304,7 @@ func parseIEEE1905(ethernet ethernetFrame) ([]controlSignal, bool) {
 		snapshotPayload["bss_snapshots"] = snapshots
 		signals = append(signals, controlSignal{Kind: "ieee1905_client_snapshot", MAC: alMAC, VLAN: ethernet.vlan, Payload: snapshotPayload})
 	}
-	return signals, true
+	return signals, observation
 }
 
 func parseIEEE1905AssociatedClients(value []byte) ([]ieee1905ClientAssociation, []ieee1905BSSSnapshot, bool) {
