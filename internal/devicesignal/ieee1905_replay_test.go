@@ -1,6 +1,7 @@
 package devicesignal
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -98,6 +99,65 @@ func TestIEEE1905UsesOriginALMACInsteadOfRelayMAC(t *testing.T) {
 	signals := parseControlFrames(frame)
 	if len(signals) != 1 || signals[0].MAC != "22:33:44:55:66:77" || signals[0].Payload["ethernet_source_mac"] != "20:3a:eb:e9:de:10" {
 		t.Fatalf("relay MAC used as association owner: %+v", signals)
+	}
+}
+
+func TestIEEE1905TopologyResponseUsesDeviceInformationALMAC(t *testing.T) {
+	// The source of the unicast response is the transmitting interface.
+	header := []byte{
+		0x02, 0x11, 0x22, 0x33, 0x44, 0x10, 0x02, 0x11, 0x22, 0x33, 0x44, 0x01,
+		0x88, 0xa8, 0, 20, 0x81, 0, 0, 42, 0x89, 0x3a,
+		0, 0, 0, 3, 0, 9, 0, 0x80,
+	}
+	deviceInformation := []byte{
+		0x02, 0x11, 0x22, 0x33, 0x44, 0x02, 2,
+		0x02, 0x11, 0x22, 0x33, 0x44, 0x01, 0, 0, 0,
+		0x02, 0x11, 0x22, 0x33, 0x44, 0x03, 1, 0, 10,
+		0x02, 0x11, 0x22, 0x33, 0x44, 0x03, 0, 0, 0, 0,
+	}
+	snapshot := []byte{0x84, 0, 17, 1, 0x02, 0x11, 0x22, 0x33, 0x44, 0x03, 0, 1,
+		0x02, 0x11, 0x22, 0x33, 0x44, 0x04, 0, 12, 0, 0, 0}
+	for _, tt := range []struct {
+		name  string
+		value []byte
+		extra []byte
+		valid bool
+	}{
+		{name: "interface and AL MAC differ", value: deviceInformation, valid: true},
+		{name: "consistent AL MAC TLV", value: deviceInformation, extra: []byte{1, 0, 6, 0x02, 0x11, 0x22, 0x33, 0x44, 0x02}, valid: true},
+		{name: "conflicting AL MAC TLV", value: deviceInformation, extra: []byte{1, 0, 6, 0x02, 0x11, 0x22, 0x33, 0x44, 0x05}},
+		{name: "duplicate device information", value: deviceInformation, extra: []byte{3, 0, 7, 0x02, 0x11, 0x22, 0x33, 0x44, 0x05, 0}},
+		{name: "short device information", value: deviceInformation[:6]},
+		{name: "missing second interface", value: deviceInformation[:16]},
+		{name: "truncated media information", value: deviceInformation[:len(deviceInformation)-1]},
+		{name: "trailing device information", value: append(append([]byte(nil), deviceInformation...), 0)},
+		{name: "non-unicast AL MAC", value: []byte{1, 0, 0, 0, 0, 1, 0}},
+		{name: "zero AL MAC", value: []byte{0, 0, 0, 0, 0, 0, 0}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			frame := append(append([]byte(nil), header...), 3)
+			frame = binary.BigEndian.AppendUint16(frame, uint16(len(tt.value)))
+			frame = append(frame, tt.value...)
+			frame = append(frame, tt.extra...)
+			frame = append(frame, snapshot...)
+			signals, observation := parseControlFramesWithCoverage(frame)
+			if !tt.valid {
+				if len(signals) != 0 || observation.complete || observation.snapshot {
+					t.Fatalf("invalid device information supplied membership evidence: signals=%+v observation=%+v", signals, observation)
+				}
+				return
+			}
+			if len(signals) != 2 || !observation.complete || !observation.snapshot ||
+				signals[0].Kind != "ieee1905_client_association" || signals[1].Kind != "ieee1905_client_snapshot" {
+				t.Fatalf("valid topology response lost membership evidence: signals=%+v observation=%+v", signals, observation)
+			}
+			for _, signal := range signals {
+				if signal.MAC != "02:11:22:33:44:02" || signal.Payload["al_mac"] != signal.MAC ||
+					signal.Payload["ethernet_source_mac"] != "02:11:22:33:44:01" || signal.VLAN != 20 {
+					t.Fatalf("incorrect response owner or capture provenance: %+v", signal)
+				}
+			}
+		})
 	}
 }
 

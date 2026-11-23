@@ -199,7 +199,7 @@ func parseIEEE1905(ethernet ethernetFrame) ([]controlSignal, ieee1905FrameObserv
 	messageType := observation.messageType
 	messageID := binary.BigEndian.Uint16(payload[4:6])
 	sourceMAC := net.HardwareAddr(ethernet.source[:]).String()
-	alMAC := sourceMAC
+	alMAC, deviceALMAC := "", ""
 	interfaceMAC := ""
 	vendorOUI := ""
 	clients := []ieee1905ClientAssociation{}
@@ -222,11 +222,26 @@ func parseIEEE1905(ethernet ethernetFrame) ([]controlSignal, ieee1905FrameObserv
 			tlvs = nil
 		case 1:
 			if len(value) == 6 {
-				alMAC = net.HardwareAddr(value).String()
+				mac := net.HardwareAddr(value).String()
+				if messageType == 0x0003 && alMAC != "" && alMAC != mac {
+					return nil, observation
+				}
+				alMAC = mac
 			}
 		case 2:
 			if len(value) == 6 {
 				interfaceMAC = net.HardwareAddr(value).String()
+			}
+		case 3:
+			if messageType != 0x0003 {
+				continue
+			}
+			if deviceALMAC != "" {
+				return nil, observation
+			}
+			deviceALMAC = parseIEEE1905DeviceInformation(value)
+			if deviceALMAC == "" {
+				return nil, observation
 			}
 		case 0x0b:
 			if len(value) >= 3 {
@@ -260,6 +275,15 @@ func parseIEEE1905(ethernet ethernetFrame) ([]controlSignal, ieee1905FrameObserv
 	}
 	if !ended {
 		return nil, observation
+	}
+	if deviceALMAC != "" {
+		if alMAC != "" && alMAC != deviceALMAC {
+			return nil, observation
+		}
+		alMAC = deviceALMAC
+	}
+	if alMAC == "" {
+		alMAC = sourceMAC
 	}
 	observation.complete = true
 	observation.snapshot = hasSnapshot
@@ -305,6 +329,30 @@ func parseIEEE1905(ethernet ethernetFrame) ([]controlSignal, ieee1905FrameObserv
 		signals = append(signals, controlSignal{Kind: "ieee1905_client_snapshot", MAC: alMAC, VLAN: ethernet.vlan, Payload: snapshotPayload})
 	}
 	return signals, observation
+}
+
+// A topology response reports its AL MAC in the Device Information TLV
+// (IEEE 1905.1 Table 6-10). Its Ethernet source can be an interface MAC.
+func parseIEEE1905DeviceInformation(value []byte) string {
+	if len(value) < 7 || value[0]&1 != 0 || [6]byte(value[:6]) == ([6]byte{}) {
+		return ""
+	}
+	interfaces := value[7:]
+	const interfaceHeaderSize = 9
+	for i := 0; i < int(value[6]); i++ {
+		if len(interfaces) < interfaceHeaderSize {
+			return ""
+		}
+		size := interfaceHeaderSize + int(interfaces[interfaceHeaderSize-1])
+		if size > len(interfaces) {
+			return ""
+		}
+		interfaces = interfaces[size:]
+	}
+	if len(interfaces) != 0 {
+		return ""
+	}
+	return net.HardwareAddr(value[:6]).String()
 }
 
 func parseIEEE1905AssociatedClients(value []byte) ([]ieee1905ClientAssociation, []ieee1905BSSSnapshot, bool) {
