@@ -324,7 +324,8 @@ it('shows a detail error when the selected IP port read fails', async () => {
 it('does not query a historical address when the device has no current address', async () => {
   mockReads({ items: {} }, { ...device, current_addresses: [] })
   renderPanel()
-  await screen.findByText('最后地址 192.0.2.12')
+  expect(await screen.findByText('192.0.2.12')).toBeVisible()
+  expect(screen.getByText('最后观测 IP')).toBeVisible()
   fireEvent.click(screen.getByRole('button', { name: '查看详情' }))
   expect(observedCalls()).toHaveLength(0)
   expect(screen.queryByText('正在读取当前 IP 近 2 小时目标端口线索')).not.toBeInTheDocument()

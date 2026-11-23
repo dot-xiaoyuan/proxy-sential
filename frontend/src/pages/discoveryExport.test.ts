@@ -50,6 +50,16 @@ it('keeps expired product evidence separate from the effective type in CSV', () 
   expect(csv.split('\r\n')[1]).not.toContain('摄像机')
 })
 
+it('exports the last observed IP in its own column when the current binding has expired', () => {
+  const at = '2026-11-11T08:00:00Z'
+  const [header, row] = discoveryCSV([{
+    id: 'device', primary_ip: '192.0.2.7', current_addresses: [], last_observed_ip: '192.0.2.7', last_observed_ip_at: at,
+  }], {}).split('\r\n').map(line => line.split(','))
+  expect(row[header.indexOf('当前地址')]).toBe('')
+  expect(row[header.indexOf('最后观测 IP')]).toBe('192.0.2.7')
+  expect(row[header.indexOf('IP 观测时间')]).toBe(at)
+})
+
 it('exports the read-only review reason and leaves manual verification empty', () => {
   const csv = discoveryCSV([{id:'sample',review_reason:'address_only',review_observed_at:'2026-11-10T08:00:00Z'}],{})
   expect(csv).toContain('长期只有地址线索,2026-11-10T08:00:00Z,,,,,,')

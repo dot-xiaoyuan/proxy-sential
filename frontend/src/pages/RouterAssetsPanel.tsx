@@ -26,7 +26,13 @@ function currentAddresses(item: Device) {
 }
 
 function discoveryLink(item: Device) {
-  return `/devices?${new URLSearchParams({ tab: 'discovery', discovery_search: item.mac || item.primary_ip || item.name || '' })}`
+  return `/devices?${new URLSearchParams({ tab: 'discovery', discovery_search: item.mac || currentAddresses(item)[0] || item.last_observed_ip || item.name || '' })}`
+}
+
+function RouterAssetAddress({ item }: { item: Device }) {
+  const addresses = currentAddresses(item)
+  return <DeviceAddress name={item.name} mac={item.mac} ip={addresses[0]} addresses={addresses}
+    lastObservedIP={item.last_observed_ip} lastObservedAt={item.last_observed_ip_at} />
 }
 
 export function RouterAssetsPanel() {
@@ -93,7 +99,7 @@ export function RouterAssetsPanel() {
         const candidate = candidateByNeighbor.get((item.mac ?? '').toLowerCase())
         return <div className="router-device-cell">
           <DiscoveryDeviceIcon type={type} />
-          <DeviceAddress name={item.name} ip={currentAddresses(item)[0]} addresses={currentAddresses(item)} mac={item.mac} historicalIP={item.last_observed_ip} />
+          <RouterAssetAddress item={item} />
           {candidate && <Tooltip title={(candidate.evidence ?? []).join('；')}>
             <Typography.Text type="secondary" className="router-chassis-candidate">疑似同一机箱：{candidate.partner_ip} · {Math.round(candidate.confidence * 100)}%</Typography.Text>
           </Tooltip>}
@@ -162,11 +168,13 @@ export function RouterAssetsPanel() {
     </section>
     <Modal title="设备资料" className="discovery-evidence-modal" open={Boolean(selected)} onCancel={() => setSelected(undefined)} footer={selected ? <Link to={discoveryLink(selected)}>在发现设备中查看</Link> : null}>
       {selected && <>
-        <DeviceAddress name={selected.name} ip={currentAddresses(selected)[0]} addresses={currentAddresses(selected)} mac={selected.mac} historicalIP={selected.last_observed_ip} />
+        <RouterAssetAddress item={selected} />
         <dl className="discovery-detail-facts">
           {[
             ['设备类型', selected.classification_status === 'expired' ? `历史${label}（类型证据已过期）` : label],
             ['厂商', selected.manufacturer], ['型号', selected.model_name], ['网络域', selected.domain], ['VLAN', selected.vlan],
+            ['最后观测 IP', currentAddresses(selected).length ? selected.last_observed_ip : ''],
+            ['IP 最后观测时间', observedTimeTitle(selected.last_observed_ip_at)],
             ['采集传感器', selected.sensor_id], ['首次观测', observedTimeTitle(selected.first_seen)], ['最近观测', observedTimeTitle(selected.last_seen)],
           ].filter(([, value]) => Boolean(value)).map(([title, value]) => <div key={title}><dt>{title}</dt><dd>{value}</dd></div>)}
         </dl>

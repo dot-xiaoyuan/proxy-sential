@@ -91,7 +91,8 @@ it('keeps expired router classification explicitly historical and never displays
   fireEvent.click(screen.getByRole('button', { name: '刷新设备' }))
   expect(await screen.findByText('历史路由器')).toBeVisible()
   expect(screen.getByText('类型证据已过期')).toBeVisible()
-  expect(screen.getByText('历史 IP：192.0.2.9')).toBeVisible()
+  expect(screen.getByText('192.0.2.9')).toBeVisible()
+  expect(screen.getByText('最后观测 IP')).toBeVisible()
   expect(screen.queryByText('192.0.2.10')).not.toBeInTheDocument()
 })
 

@@ -210,6 +210,11 @@ ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
 			return nil, err
 		}
 	}
+	if r.HardwareV2 {
+		if err := attachScopedDiscoveryAddresses(ctx, db, items, now); err != nil {
+			return nil, err
+		}
+	}
 	services, linked := 0, 0
 	for _, item := range items {
 		if len(item.Capabilities) > 0 {

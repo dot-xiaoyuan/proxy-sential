@@ -8980,8 +8980,9 @@ components:
         domain: { type: string }
         vlan: { type: string }
         sensor_id: { type: string }
-        current_addresses: { type: array, items: { type: string } }
-        last_observed_ip: { type: string }
+        current_addresses: { type: array, items: { type: string }, description: "当前证据有效的地址。空数组表示无有效绑定。" }
+        last_observed_ip: { type: string, description: "设备最后一次可信观测的 IP，可能已经过期。" }
+        last_observed_ip_at: { type: string, format: date-time, description: "该 IP 的观测时间，与设备最近观测时间分别记录。" }
         result_version: { type: integer, format: int64 }
         id: { type: string }
         primary_ip: { type: string }

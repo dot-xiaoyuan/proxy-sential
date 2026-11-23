@@ -7909,8 +7909,15 @@ export interface components {
             domain?: string;
             vlan?: string;
             sensor_id?: string;
+            /** @description 当前证据有效的地址。空数组表示无有效绑定。 */
             current_addresses?: string[];
+            /** @description 设备最后一次可信观测的 IP，可能已经过期。 */
             last_observed_ip?: string;
+            /**
+             * Format: date-time
+             * @description 该 IP 的观测时间，与设备最近观测时间分别记录。
+             */
+            last_observed_ip_at?: string;
             /** Format: int64 */
             result_version?: number;
             id: string;

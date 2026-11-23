@@ -292,6 +292,9 @@ type DeviceView struct {
 	LastProductAt        *time.Time          `json:"last_product_at,omitempty"`
 	ID                   string              `json:"id"`
 	PrimaryIP            string              `json:"primary_ip,omitempty"`
+	CurrentAddresses     *[]string           `json:"current_addresses,omitempty"`
+	LastObservedIP       string              `json:"last_observed_ip,omitempty"`
+	LastObservedIPAt     *time.Time          `json:"last_observed_ip_at,omitempty"`
 	Addresses            []string            `json:"addresses"`
 	AddressDetails       []AddressDetail     `json:"address_details"`
 	HistoricalAddresses  []HistoricalAddress `json:"historical_addresses"`

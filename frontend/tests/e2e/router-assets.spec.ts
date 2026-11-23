@@ -19,7 +19,9 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
         const response = url.pathname.endsWith('/metadata') ? { total: 2, as_of: stamp, count_unit: 'trusted_discovery_identity' } : {
           items: [
             { id: 'router-current', mac: '02:20:40:00:00:04', name: '教学楼路由设备', device_type: type, category: 'network', identity_kind: 'link_layer_device', manufacturer: 'Huawei', model_name: 'AR6120', classification_status: 'identified', first_seen: stamp, last_seen: stamp, current: true, current_addresses: ['192.0.2.41'], primary_ip: '192.0.2.41', last_observed_ip: '192.0.2.41', protocols: ['lldp', 'dhcp'], capabilities: ['routing'], observations: [], evidence_count: 2, domain: '教学网', vlan: '20' },
-            { id: 'router-expired', mac: '02:20:40:00:00:05', name: '历史路由记录', device_type: '', last_device_type: type, category: 'network', identity_kind: 'link_layer_device', classification_status: 'expired', first_seen: stamp, last_seen: stamp, current: false, current_addresses: [], primary_ip: '192.0.2.42', last_observed_ip: '192.0.2.42', protocols: ['dhcp'], capabilities: [], observations: [], evidence_count: 1 },
+            { id: 'router-expired', mac: '02:20:40:00:00:05', name: '历史路由记录', device_type: '', last_device_type: type, category: 'network', identity_kind: 'link_layer_device', classification_status: 'expired', first_seen: stamp, last_seen: stamp, current: false, current_addresses: [], primary_ip: '192.0.2.42', last_observed_ip: '192.0.2.42', last_observed_ip_at: '2026-11-19T02:15:00Z', protocols: ['arp'], capabilities: [], observations: [
+              { id: 'arp-prior', event_id: 'arp-20261119', origin: 'arp', ip: '192.0.2.42', observed_at: '2026-11-19T02:15:00Z', valid_until: '2026-11-19T02:25:00Z', explanation: 'ARP 链路层地址声明' },
+            ], evidence_count: 1 },
           ], limit: 20, next_cursor: '', has_more: false,
         }
         return new Response(JSON.stringify(response), { headers: { 'Content-Type': 'application/json' } })
@@ -29,7 +31,8 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await expect(page.getByText('共 2 条设备记录', { exact: true })).toBeVisible()
     await expect(page.getByText('教学楼路由设备', { exact: true })).toBeVisible()
     await expect(page.getByText('历史路由器', { exact: true })).toBeVisible()
-    await expect(page.getByText('历史 IP：192.0.2.42', { exact: true })).toBeVisible()
+    await expect(page.getByText('192.0.2.42', { exact: true })).toBeVisible()
+    await expect(page.getByText(/^最后观测 IP · /)).toBeVisible()
     await expect(page.getByText('设备类型用于资产管理；违规与共享行为需另行核验。', { exact: true })).toBeVisible()
     await expect(page.locator('.ant-pagination-next')).toHaveClass(/ant-pagination-disabled/)
     await expect(page.locator('.ant-pagination-prev')).toHaveClass(/ant-pagination-disabled/)
@@ -66,10 +69,15 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     expect(probe.clippedButtons).toEqual([])
     expect(probe.selectedContrast).toBeGreaterThanOrEqual(4.5)
     if (viewport.width < 560) expect(probe.rowDisplay).not.toBe('table-row')
-    await page.getByRole('button', { name: '查看设备', exact: true }).first().click()
-    await expect(page.getByRole('dialog', { name: '设备资料' })).toBeVisible()
-    await expect(page.getByRole('dialog', { name: '设备资料' })).toHaveCSS('opacity', '1')
+    await page.getByRole('button', { name: '查看设备', exact: true }).last().click()
+    const dialog = page.getByRole('dialog', { name: '设备资料' })
+    await expect(dialog).toBeVisible()
+    await expect(dialog).toHaveCSS('opacity', '1')
     await expect(page.getByRole('link', { name: '在发现设备中查看' })).toHaveAttribute('href', /discovery_search=02/)
+    await expect(dialog.getByText('192.0.2.42', { exact: true }).first()).toBeVisible()
+    await expect(dialog.getByText('IP 最后观测时间')).toBeVisible()
+    await dialog.getByText('ARP 地址声明', { exact: true }).click()
+    await expect(dialog.getByText('历史观测', { exact: true })).toBeVisible()
     await page.screenshot({ path: info.outputPath('router-asset-details.png'), fullPage: true, animations: 'disabled' })
     expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 2)).toBe(false)
     expect(errors).toEqual([])

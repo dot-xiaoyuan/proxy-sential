@@ -19,11 +19,13 @@ export function DiscoveryEvidenceSummary({observations}:{observations:EvidenceOb
     <summary><span className="discovery-protocol-heading"><strong>{protocols[origin]??origin}</strong><span>{rows.reduce((n,g)=>n+g.count,0)} 条摘要 · {rows.length} 组内容</span></span><span className="discovery-protocol-overview">{kinds.map(kind=><Tag key={kind}>{services[kind]??kind}</Tag>)}<Typography.Text type="secondary">{first===last?observedTimeTitle(first):`${observedTimeTitle(first)} 至 ${observedTimeTitle(last)}`}</Typography.Text></span></summary>
     <div className="discovery-protocol-records">{rows.map(group=>{
      const o=group.sample,payload=o.evidence?.payload
+     const addressObservation = Boolean(o.ip && (origin === 'arp' || origin === 'ndp' || origin === 'dhcp'))
+     const status = addressObservation && group.state === 'expired' ? '历史观测' : states[group.state]
      const service=evidenceService(o)
      const target=typeof payload?.service_target==='string'?payload.service_target:''
      const instance=typeof payload?.service_instance==='string'?payload.service_instance:''
      const identity=o.origin==='sadp'&&o.model_name?`自报型号 ${o.model_name}`:o.origin==='sip'||o.origin==='rtsp'?(typeof payload?.user_agent==='string'&&payload.user_agent?`${o.origin==='sip'?'话机标识':'客户端标识'} ${payload.user_agent}`:(typeof payload?.server==='string'&&payload.server?`服务端标识 ${payload.server}`:'')):''
-     return <article key={group.key} className="discovery-evidence-fact"><div className="discovery-evidence-fact-heading"><strong>{service?services[service]??service:o.explanation||protocols[origin]||origin}</strong><Tag color={group.state==='withdrawn'?'warning':undefined}>{states[group.state]}</Tag>{group.count>1&&<Tag>相同内容 {group.count} 条</Tag>}</div>
+     return <article key={group.key} className="discovery-evidence-fact"><div className="discovery-evidence-fact-heading"><strong>{service?services[service]??service:o.explanation||protocols[origin]||origin}</strong><Tag color={group.state==='withdrawn'?'warning':undefined}>{status}</Tag>{group.count>1&&<Tag>相同内容 {group.count} 条</Tag>}</div>
       {service&&<Typography.Text className="discovery-identifier">{service}{o.port?` · ${o.port}`:''}</Typography.Text>}
       {service&&o.explanation&&<Typography.Text type="secondary">{o.explanation}</Typography.Text>}
       {identity&&<Typography.Text className="discovery-identifier">{identity}</Typography.Text>}

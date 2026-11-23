@@ -9,6 +9,8 @@ type ExportableDevice = HardwareView & {
   mac?: string
   primary_ip?: string
   current_addresses?: string[]
+  last_observed_ip?: string
+  last_observed_ip_at?: string
   device_type?: string
   last_product_type?: string
   last_product_at?: string
@@ -114,13 +116,13 @@ function deviceType(item: ExportableDevice, types: Record<string, string>): stri
 }
 
 export function discoveryCSV(items: ExportableDevice[], types: Record<string, string>): string {
-  const rows: string[][] = [['标识', '名称', 'MAC', '当前地址', '设备类型', '历史型号类型', '型号自报时间', '品牌', '型号', '操作系统', '网络域', 'VLAN', '采集传感器', '证据状态', '识别置信度', '识别规则', '窗口内首次观测', '最近观测', '证据数', '待核实原因', '核实线索时间', '硬件类型状态', '类型依据时间', '活动状态', '硬件规则版本', '硬件来源引用', '人工核实类型', '人工核实型号', '实物或台账依据', '镜像覆盖核对', '核实时间', '核实人', 'IP 产品线索', '产品证据时间', '响应作用域', '产品原文引用', '产品匹配状态']]
+  const rows: string[][] = [['标识', '名称', 'MAC', '当前地址', '设备类型', '历史型号类型', '型号自报时间', '品牌', '型号', '操作系统', '网络域', 'VLAN', '采集传感器', '证据状态', '识别置信度', '识别规则', '窗口内首次观测', '最近观测', '证据数', '待核实原因', '核实线索时间', '硬件类型状态', '类型依据时间', '活动状态', '硬件规则版本', '硬件来源引用', '人工核实类型', '人工核实型号', '实物或台账依据', '镜像覆盖核对', '核实时间', '核实人', 'IP 产品线索', '产品证据时间', '响应作用域', '产品原文引用', '产品匹配状态', '最后观测 IP', 'IP 观测时间']]
   for (const item of items) {
     rows.push([
       item.id ?? '',
       item.name ?? '',
       item.mac ?? '',
-      (item.current_addresses?.length ? item.current_addresses.join(';') : item.primary_ip) ?? '',
+      item.current_addresses?.join(';') ?? item.primary_ip ?? '',
       deviceType(item, types),
       item.last_product_type ? types[item.last_product_type] ?? item.last_product_type : '',
       item.last_product_at ?? '',
@@ -149,6 +151,8 @@ export function discoveryCSV(items: ExportableDevice[], types: Record<string, st
       (item.product_clues ?? []).map(clue => [clue.sensor_id, clue.site, clue.domain, clue.vlan, clue.vrf].filter(Boolean).join('|')).join(';'),
       (item.product_clues ?? []).map(clue => JSON.stringify({ event_id: clue.event_id, raw_ref: clue.raw_ref, rule_version: clue.rule_version })).join(';'),
       (item.product_clues ?? []).map(clue => clue.product_status).join(';'),
+      item.last_observed_ip ?? '',
+      item.last_observed_ip_at ?? '',
     ])
   }
   return rows.map(row => row.map(csvCell).join(',')).join('\r\n') + '\r\n'
