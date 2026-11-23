@@ -17,6 +17,12 @@ type CoverageBindingFreshness struct {
 	NoBinding int64 `json:"no_binding"`
 }
 
+type CoverageIPv4TypeReview struct {
+	WithdrawnConfirmation int64 `json:"withdrawn_confirmation"`
+	Conflict              int64 `json:"conflict"`
+	ConfirmedInactive     int64 `json:"confirmed_inactive"`
+}
+
 // CoverageReport counts addresses from the bounded discovery index. A /24 is
 // an observation bucket, not a claim about the campus routing configuration.
 type CoverageReport struct {
@@ -52,6 +58,8 @@ type CoverageReport struct {
 
 	IPv4BindingFreshness *CoverageBindingFreshness `json:"ipv4_binding_freshness,omitempty"`
 	IPv6BindingFreshness *CoverageBindingFreshness `json:"ipv6_binding_freshness,omitempty"`
+	IPv4TypeReview       *CoverageIPv4TypeReview   `json:"ipv4_type_review,omitempty"`
+	ProfileCandidates    *int64                    `json:"profile_candidate_identities,omitempty"`
 }
 
 var dumbHardwareTypes = map[string]bool{
@@ -108,6 +116,11 @@ func (r Repository) DiscoveryCoverageReport(ctx context.Context, sensor string, 
 	}
 	out.IdentityAsOf = &metadata.AsOf
 	out.Identified, out.IdentityTotal = &metadata.Identified, &metadata.Total
+	var profileCandidates int64
+	for _, item := range metadata.CandidateTypes {
+		profileCandidates += item.Count
+	}
+	out.ProfileCandidates = &profileCandidates
 	var dumbTerminals int64
 	for _, item := range metadata.Types {
 		if dumbHardwareTypes[item.DeviceType] {
@@ -128,21 +141,27 @@ func coverageEvidenceCounts(ctx context.Context, db *sql.DB, sensor string, from
 	// avoids scanning all in-window hardware keys for every matching observation.
 	const statement = `WITH by_device AS (
  SELECT device_key,NULL::text ip,NULL::text origin,NULL::timestamptz observed_at,
-  true hardware,hardware_type_status='identified' typed,hardware_type_status='revoked' revoked_type
+  true hardware,hardware_type_status='identified' typed,hardware_type_status='revoked' revoked_type,
+  hardware_type_status='revoked' AND hardware_type<>'' withdrawn_confirmation,
+  hardware_type_status='conflict' type_conflict,
+  hardware_type_status='identified' AND active_until>$3 typed_active
  FROM passive_hardware_current
  WHERE sensor_id=$1 AND last_seen>=$2 AND last_seen<$3
  UNION ALL
- SELECT l.device_key,l.data->>'ip',l.origin,l.observed_at,false,false,false
+ SELECT l.device_key,l.data->>'ip',l.origin,l.observed_at,false,false,false,false,false,false
  FROM discovery_observation_latest l
  WHERE l.data->>'node'=$1 AND l.observed_at>=$2 AND l.observed_at<$3
   AND NOT l.withdrawn
   AND l.data->>'ip' ~ '^[0-9]{1,3}([.][0-9]{1,3}){3}$'
 ), classified AS (
  SELECT ip,origin,observed_at,bool_or(hardware) OVER device has_identity,
-  bool_or(typed) OVER device typed,bool_or(revoked_type) OVER device revoked_type
+  bool_or(typed) OVER device typed,bool_or(revoked_type) OVER device revoked_type,
+  bool_or(withdrawn_confirmation) OVER device withdrawn_confirmation,
+  bool_or(type_conflict) OVER device type_conflict,bool_or(typed_active) OVER device typed_active
  FROM by_device WINDOW device AS (PARTITION BY device_key)
 ), per_ip AS (
  SELECT ip,bool_or(has_identity) has_identity,bool_or(typed) typed,bool_or(revoked_type) revoked_type,
+  bool_or(withdrawn_confirmation) withdrawn_confirmation,bool_or(type_conflict) type_conflict,bool_or(typed_active) typed_active,
   bool_or(origin='dhcp') dhcp,
   bool_or(origin IN ('snmp','http_device','tls_device','dns_sd','ssdp','sadp','rtsp','sip','ws_discovery')) app,
   bool_and(origin IN ('arp','ttl','ndp')) network_only,
@@ -157,14 +176,22 @@ SELECT count(*) FILTER(WHERE typed),
  count(*) FILTER(WHERE has_identity AND NOT typed AND app),
  count(*) FILTER(WHERE has_identity AND NOT typed AND NOT network_only AND NOT dhcp AND NOT app),
  count(*) FILTER(WHERE has_identity AND NOT typed AND revoked_type),
+ count(*) FILTER(WHERE NOT typed AND withdrawn_confirmation),
+ count(*) FILTER(WHERE NOT typed AND NOT withdrawn_confirmation AND type_conflict),
+ count(*) FILTER(WHERE typed AND NOT typed_active),
  max(latest)
 FROM per_ip`
 	var latest sql.NullTime
+	var review CoverageIPv4TypeReview
 	err := db.QueryRowContext(ctx, statement, sensor, from, until).Scan(
 		&out.TypedIPv4, &out.IdentityNoTypeIPv4, &out.NoIdentityIPv4,
 		&out.UntypedNetworkOnlyIPv4, &out.UntypedDHCPOnlyIPv4,
-		&out.UntypedApplicationIPv4, &out.UntypedOtherIPv4, &out.RevokedTypeIPv4, &latest,
+		&out.UntypedApplicationIPv4, &out.UntypedOtherIPv4, &out.RevokedTypeIPv4,
+		&review.WithdrawnConfirmation, &review.Conflict, &review.ConfirmedInactive, &latest,
 	)
+	if err == nil {
+		out.IPv4TypeReview = &review
+	}
 	if latest.Valid {
 		out.DiagnosticAsOf = &latest.Time
 	}

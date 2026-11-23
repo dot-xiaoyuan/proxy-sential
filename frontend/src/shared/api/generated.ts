@@ -8024,6 +8024,11 @@ export interface components {
             /** Format: int64 */
             identity_total?: number;
             /**
+             * Format: int64
+             * @description Discovery identities with a single profile type clue and without a confirmed hardware type.
+             */
+            profile_candidate_identities?: number;
+            /**
              * Format: date-time
              * @description Latest observation included in the IPv4 evidence buckets.
              */
@@ -8047,9 +8052,26 @@ export interface components {
             untyped_other_ipv4?: number;
             /**
              * Format: int64
-             * @description Subset of associated IPv4 addresses awaiting type confirmation with a revoked hardware conclusion in at least one observed identity. The cause of revocation is not classified.
+             * @description Pending IPv4 addresses associated with at least one revoked hardware state
              */
             revoked_type_ipv4?: number;
+            ipv4_type_review?: {
+                /**
+                 * Format: int64
+                 * @description Pending IPv4 addresses associated with a revoked hardware state that retained its prior confirmed type.
+                 */
+                withdrawn_confirmation: number;
+                /**
+                 * Format: int64
+                 * @description Pending IPv4 addresses with conflicting hardware type evidence and no retained revoked confirmation.
+                 */
+                conflict: number;
+                /**
+                 * Format: int64
+                 * @description Confirmed IPv4 addresses with no associated confirmed identity having a still-valid activity observation.
+                 */
+                confirmed_inactive: number;
+            };
             mirror_funnel: components["schemas"]["DiscoveryMirrorFunnel"];
         };
         DiscoveryMirrorFunnel: {

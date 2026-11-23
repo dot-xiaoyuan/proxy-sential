@@ -6036,6 +6036,8 @@ pre.wrap-code {
 .coverage-chart-teal { --coverage-chart-color: #0f766e; }
 .coverage-chart-blue { --coverage-chart-color: #3b69ad; }
 .coverage-chart-slate { --coverage-chart-color: #94a3b8; }
+.coverage-chart-amber { --coverage-chart-color: #b45309; }
+.coverage-chart-purple { --coverage-chart-color: #7e22ce; }
 .coverage-donut-value { font-size: 23px; font-weight: 700; fill: #0f172a; font-variant-numeric: tabular-nums; }
 .coverage-donut-unit { font-size: 10px; fill: #475569; }
 .coverage-chart-legend, .coverage-mirror-chart { list-style: none; margin: 0; padding: 0; }

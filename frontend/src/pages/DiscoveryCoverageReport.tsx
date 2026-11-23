@@ -4,7 +4,7 @@ import { observedTimeTitle } from '../shared/ui/observedTime'
 export type CoverageReport = components['schemas']['DiscoveryCoverageReport']
 type MirrorFunnel = NonNullable<CoverageReport['mirror_funnel']>
 type BindingFreshness = components['schemas']['DiscoveryBindingFreshness']
-type CoverageRow = { label: string; value: number; color?: 'teal' | 'blue' | 'slate' }
+type CoverageRow = { label: string; value: number; color?: 'teal' | 'blue' | 'slate' | 'amber' | 'purple' }
 
 const count = (value: number) => value.toLocaleString('zh-CN')
 const percent = (value: number, total: number) => `${(value / total * 100).toFixed(1)}%`
@@ -60,6 +60,7 @@ function BindingFreshnessRows({ freshness }: { freshness: BindingFreshness }) {
 
 export function DiscoveryCoverageReport({ report }: { report: CoverageReport }) {
   const { typed_ipv4: typed, identity_no_type_ipv4: needsType, no_identity_ipv4: unlinked } = report
+  const review = report.ipv4_type_review
   const total = typed !== undefined && needsType !== undefined && unlinked !== undefined
     ? typed + needsType + unlinked : undefined
   const lagMinutes = report.identity_as_of ? Math.round((Date.parse(report.as_of) - Date.parse(report.identity_as_of)) / 60_000) : 0
@@ -112,14 +113,19 @@ export function DiscoveryCoverageReport({ report }: { report: CoverageReport }) 
       <div className="coverage-panels">
         <section className="coverage-panel" aria-labelledby="coverage-address-heading">
           <header className="coverage-panel-heading">
-            <div><h4 id="coverage-address-heading">观测 IPv4 的类型确认占比</h4><p>{count(typed)} / {count(total)} 个有设备观测的 IPv4 对应已确认类型</p></div>
+            <div><h4 id="coverage-address-heading">观测 IPv4 的硬件类型确认覆盖</h4><p>{count(typed)} / {count(total)} 个有设备观测的 IPv4 对应已确认硬件类型</p></div>
             {total > 0 && <div className="coverage-highlight"><strong>{percent(typed, total)}</strong></div>}
           </header>
           {total > 0 ? <CoverageDonut label="IPv4 地址类型确认构成" total={total} unit="个 IPv4 地址" rows={[
-            { label: '对应已确认类型', value: typed, color: 'teal' },
-            { label: '已关联设备，类型待确认', value: needsType },
+            { label: '已确认硬件类型', value: typed, color: 'teal' },
+            { label: '已关联，尚待确认', value: needsType - (review?.withdrawn_confirmation ?? 0) - (review?.conflict ?? 0) },
+            ...(review ? [
+              { label: '曾确认，现已撤回', value: review.withdrawn_confirmation, color: 'amber' as const },
+              { label: '类型证据冲突', value: review.conflict, color: 'purple' as const },
+            ] : []),
             { label: '归属待核实', value: unlinked, color: 'slate' },
           ]} /> : <p className="coverage-empty">选定范围内暂无设备侧 IPv4 观测。</p>}
+          <p className="coverage-footnote">按所选窗口内的 IPv4 地址去重，包含历史绑定。{review && <>有 <strong>{count(review.confirmed_inactive)} 个</strong>地址的设备活动线索已到期，仍计入已确认。</>}</p>
         </section>
         <section className="coverage-panel" aria-labelledby="coverage-gap-heading">
           <header className="coverage-panel-heading"><div><h4 id="coverage-gap-heading">类型待确认的证据</h4>
@@ -128,12 +134,13 @@ export function DiscoveryCoverageReport({ report }: { report: CoverageReport }) 
             ? <CoverageRows total={needsType} unit="个 IP" rows={breakdown}/>
             : <p className="coverage-empty">{needsType === 0 ? '当前没有这类记录。' : '本次统计暂无协议分项。'}</p>}
           {report.revoked_type_ipv4 !== undefined && needsType > 0 && <div className="coverage-evidence-note">
-            <p>待确认地址中，<strong>{count(report.revoked_type_ipv4)} 个</strong>关联到已撤销的类型结论。</p>
-            <p>证据失效、结论撤销等都可能触发这一状态，现有统计未区分具体原因。</p>
+            <p>待确认地址中，<strong>{count(report.revoked_type_ipv4)} 个</strong>关联到撤回状态，包含撤回的候选线索。</p>
+            {review && <p>其中 <strong>{count(review.withdrawn_confirmation)} 个</strong>地址关联到曾确认的硬件类型。</p>}
           </div>}
         </section>
       </div>}
-    <p className="coverage-footnote">地址图按 IPv4 去重，上方硬件类型按发现身份计数。同一设备可能对应多个地址或采集范围。/24 分组按观测地址统计。</p>
+    {report.profile_candidate_identities !== undefined && <p className="coverage-footnote">另有 <strong>{count(report.profile_candidate_identities)} 个发现身份</strong>已有画像类型线索，待确认硬件类型。</p>}
+    <p className="coverage-footnote">同一设备可能对应多个地址或采集范围。/24 分组按观测地址统计。</p>
   </section>
 }
 

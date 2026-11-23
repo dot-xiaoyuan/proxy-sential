@@ -55,8 +55,11 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
 
     await page.goto('/devices/coverage')
     const report = page.getByRole('region',{name:'设备发现覆盖报表'})
-    const stages = report.getByRole('region',{name:'观测 IPv4 的类型确认占比'})
+    const stages = report.getByRole('region',{name:'观测 IPv4 的硬件类型确认覆盖'})
     await expect(stages).toContainText('33.3%')
+    await expect(stages).toContainText('曾确认，现已撤回')
+    await expect(stages).toContainText('仍计入已确认')
+    await expect(report.getByText(/已有画像类型线索，待确认硬件类型/)).toContainText('2 个发现身份')
     await expect(stages.getByRole('img',{name:/IPv4 地址类型确认构成/})).toBeVisible()
     await expect(report.getByRole('region',{name:'类型待确认的证据'})).toContainText('仅网络层')
     const freshness = report.getByRole('region', {name:'IPv4 绑定时效', exact:true})

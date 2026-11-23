@@ -7,7 +7,7 @@ const report: CoverageReport = {as_of:'2026-11-15T11:00:00Z',identity_as_of:'202
 it('uses one address denominator for the three IPv4 stages and a separate denominator for the gap breakdown', () => {
   render(<DiscoveryCoverageReport report={report} />)
   const coverage = screen.getByRole('region', {name:'设备发现覆盖报表'})
-  const progress = within(coverage).getByRole('region', {name:'观测 IPv4 的类型确认占比'})
+  const progress = within(coverage).getByRole('region', {name:'观测 IPv4 的硬件类型确认覆盖'})
   expect(progress).toHaveTextContent('15,390 个有设备观测的 IPv4')
   expect(progress).toHaveTextContent('1.9%')
   expect(within(progress).getByRole('img', {name:/IPv4 地址类型确认构成/})).toHaveAttribute('aria-label','IPv4 地址类型确认构成 · 15,390 个 IPv4 地址')
@@ -37,7 +37,7 @@ it('keeps zero and absent breakdowns distinct', () => {
   expect(screen.getByText('选定范围内暂无设备侧 IPv4 观测。')).toBeVisible()
   expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
   view.rerender(<DiscoveryCoverageReport report={{...report, typed_ipv4:undefined}} />)
-  expect(screen.queryByRole('region',{name:'观测 IPv4 的类型确认占比'})).not.toBeInTheDocument()
+  expect(screen.queryByRole('region',{name:'观测 IPv4 的硬件类型确认覆盖'})).not.toBeInTheDocument()
   expect(screen.getByText('15,390')).toBeVisible()
 })
 
@@ -51,14 +51,20 @@ it('keeps address coverage visible when identity totals time out', () => {
     dumb_terminals: undefined,
   }} />)
   expect(screen.getByRole('status')).toHaveTextContent('身份统计读取超时')
-  expect(screen.getByRole('region', { name: '观测 IPv4 的类型确认占比' })).toHaveTextContent('15,390')
+  expect(screen.getByRole('region', { name: '观测 IPv4 的硬件类型确认覆盖' })).toHaveTextContent('15,390')
   expect(screen.queryByText('发现处理水位', { exact: false })).not.toBeInTheDocument()
   expect(screen.queryByText('个发现身份', { exact: true })).not.toBeInTheDocument()
 })
 
-it('shows revoked type conclusions as a subset of addresses still awaiting confirmation', () => {
-  render(<DiscoveryCoverageReport report={{...report, revoked_type_ipv4: 25}} />)
+it('splits prior confirmations and conflicts from other pending addresses without losing inactive confirmed types', () => {
+  render(<DiscoveryCoverageReport report={{...report, revoked_type_ipv4: 25, profile_candidate_identities: 120,
+    ipv4_type_review: { withdrawn_confirmation: 4, conflict: 3, confirmed_inactive: 12 }}} />)
   expect(screen.getByText('25 个')).toBeVisible()
-  expect(screen.getByText(/现有统计未区分具体原因/)).toBeVisible()
-  expect(screen.getByRole('region', {name:'类型待确认的证据'})).toHaveTextContent('1,000 个已关联设备')
+  expect(screen.getByText('120 个发现身份')).toBeVisible()
+  const chart = screen.getByRole('region', {name:'观测 IPv4 的硬件类型确认覆盖'})
+  expect(within(chart).getByText('曾确认，现已撤回').closest('li')).toHaveTextContent('4')
+  expect(within(chart).getByText('类型证据冲突').closest('li')).toHaveTextContent('3')
+  expect(within(chart).getByText('已关联，尚待确认').closest('li')).toHaveTextContent('993')
+  expect(within(chart).getByText('12 个')).toBeVisible()
+  expect(chart).toHaveTextContent('1.9%')
 })

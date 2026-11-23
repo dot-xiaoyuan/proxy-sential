@@ -84,7 +84,7 @@ func TestCoverageEvidenceCountsPostgresFeatureAndIdentityBoundary(t *testing.T) 
 	db.SetMaxOpenConns(1)
 	defer db.Close()
 	_, err = db.Exec(`CREATE TEMP TABLE discovery_observation_latest (device_key text,origin text,observed_at timestamptz,withdrawn boolean,data jsonb);
-CREATE TEMP TABLE passive_hardware_current (device_key text,sensor_id text,last_seen timestamptz,hardware_type_status text)`)
+CREATE TEMP TABLE passive_hardware_current (device_key text,sensor_id text,last_seen timestamptz,hardware_type_status text,hardware_type text,active_until timestamptz)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,9 +95,9 @@ CREATE TEMP TABLE passive_hardware_current (device_key text,sensor_id text,last_
 			t.Fatal(e)
 		}
 	}
-	bind := func(key, status string) {
+	bind := func(key, status, hardwareType string) {
 		t.Helper()
-		if _, e := db.Exec(`INSERT INTO passive_hardware_current VALUES($1,'campus-204',$2,$3)`, key, now, status); e != nil {
+		if _, e := db.Exec(`INSERT INTO passive_hardware_current VALUES($1,'campus-204',$2,$3,$4,$5)`, key, now, status, hardwareType, now.Add(-time.Minute)); e != nil {
 			t.Fatal(e)
 		}
 	}
@@ -107,17 +107,25 @@ CREATE TEMP TABLE passive_hardware_current (device_key text,sensor_id text,last_
 	put("10.2.0.4", "four", "sadp")
 	put("10.2.0.5", "five", "arp")
 	put("10.2.0.6", "six", "sip")
-	bind("one", "revoked")
-	bind("two", "candidate")
-	bind("three", "candidate")
-	bind("four", "identified")
+	put("10.2.0.7", "seven", "arp")
+	put("10.2.0.8", "eight", "arp")
+	put("10.2.0.4", "seven", "arp")
+	bind("one", "revoked", "")
+	bind("two", "candidate", "")
+	bind("three", "candidate", "")
+	bind("four", "identified", "printer")
+	bind("seven", "revoked", "router")
+	bind("eight", "conflict", "")
 	var got CoverageReport
 	if err = coverageEvidenceCounts(context.Background(), db, "campus-204", now.Add(-time.Hour), now.Add(time.Second), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.TypedIPv4 != 1 || got.IdentityNoTypeIPv4 != 3 || got.NoIdentityIPv4 != 2 ||
-		got.UntypedNetworkOnlyIPv4 != 1 || got.UntypedDHCPOnlyIPv4 != 1 ||
-		got.UntypedApplicationIPv4 != 1 || got.UntypedOtherIPv4 != 0 || got.RevokedTypeIPv4 != 1 || got.DiagnosticAsOf == nil {
+	if got.TypedIPv4 != 1 || got.IdentityNoTypeIPv4 != 5 || got.NoIdentityIPv4 != 2 ||
+		got.UntypedNetworkOnlyIPv4 != 3 || got.UntypedDHCPOnlyIPv4 != 1 ||
+		got.UntypedApplicationIPv4 != 1 || got.UntypedOtherIPv4 != 0 || got.RevokedTypeIPv4 != 2 || got.DiagnosticAsOf == nil {
 		t.Fatalf("unexpected evidence buckets: %+v", got)
+	}
+	if got.IPv4TypeReview == nil || *got.IPv4TypeReview != (CoverageIPv4TypeReview{WithdrawnConfirmation: 1, Conflict: 1, ConfirmedInactive: 1}) {
+		t.Fatalf("unexpected type review: %+v", got.IPv4TypeReview)
 	}
 }

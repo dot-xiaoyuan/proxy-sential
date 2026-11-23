@@ -9034,6 +9034,7 @@ components:
         identified: { type: integer, format: int64, minimum: 0 }
         dumb_terminals: { type: integer, format: int64, minimum: 0 }
         identity_total: { type: integer, format: int64, minimum: 0 }
+        profile_candidate_identities: { type: integer, format: int64, minimum: 0, description: Discovery identities with a single profile type clue and without a confirmed hardware type. }
         diagnostic_as_of: { type: string, format: date-time, description: Latest observation included in the IPv4 evidence buckets. }
         typed_ipv4: { type: integer, format: int64, minimum: 0, description: Distinct observed IPv4 addresses with at least one typed scoped identity. }
         identity_no_type_ipv4: { type: integer, format: int64, minimum: 0 }
@@ -9042,7 +9043,14 @@ components:
         untyped_dhcp_only_ipv4: { type: integer, format: int64, minimum: 0 }
         untyped_application_ipv4: { type: integer, format: int64, minimum: 0 }
         untyped_other_ipv4: { type: integer, format: int64, minimum: 0 }
-        revoked_type_ipv4: { type: integer, format: int64, minimum: 0, description: Subset of associated IPv4 addresses awaiting type confirmation with a revoked hardware conclusion in at least one observed identity. The cause of revocation is not classified. }
+        revoked_type_ipv4: { type: integer, format: int64, minimum: 0, description: Pending IPv4 addresses associated with at least one revoked hardware state, including withdrawn candidates without a prior confirmed type. }
+        ipv4_type_review:
+          type: object
+          required: [withdrawn_confirmation, conflict, confirmed_inactive]
+          properties:
+            withdrawn_confirmation: { type: integer, format: int64, minimum: 0, description: Pending IPv4 addresses associated with a revoked hardware state that retained its prior confirmed type. }
+            conflict: { type: integer, format: int64, minimum: 0, description: Pending IPv4 addresses with conflicting hardware type evidence and no retained revoked confirmation. }
+            confirmed_inactive: { type: integer, format: int64, minimum: 0, description: Confirmed IPv4 addresses with no associated confirmed identity having a still-valid activity observation. }
         mirror_funnel: { $ref: '#/components/schemas/DiscoveryMirrorFunnel' }
     DiscoveryMirrorFunnel:
       type: object
