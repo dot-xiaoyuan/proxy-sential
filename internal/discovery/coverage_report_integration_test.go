@@ -28,7 +28,7 @@ func TestCoverageAddressCountsPostgresScopeAndGateway(t *testing.T) {
 	now := time.Now().UTC()
 	put := func(sensor, origin, ip, mac, vlan, status string, at, validUntil time.Time) {
 		t.Helper()
-		_, e := db.Exec(`INSERT INTO discovery_observation_latest VALUES($1,$2,$8,false,jsonb_build_object('node',$3::text,'site','campus','domain','mirror','vlan',$4::text,'vrf','','ip',$5::text,'mac',$6::text,'evidence',jsonb_build_object('payload',jsonb_build_object('identity_status',$7::text))))`, origin, at, sensor, vlan, ip, mac, status, validUntil)
+		_, e := db.Exec(`INSERT INTO discovery_observation_latest VALUES($1,$2,$8,false,jsonb_build_object('node',$3::text,'site','campus','domain','mirror','vlan',$4::text,'vrf','','ip',$5::text,'mac',$6::text,'confidence','confirmed','evidence',jsonb_build_object('payload',jsonb_build_object('identity_status',$7::text))))`, origin, at, sensor, vlan, ip, mac, status, validUntil)
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -52,6 +52,23 @@ func TestCoverageAddressCountsPostgresScopeAndGateway(t *testing.T) {
 		got.IPv4WithMAC != 3 || got.IPMACUniquePairs != 4 || got.IPMACValidScopedPairs != 4 ||
 		got.MultiMACIPv4 != 1 || got.MultiScopeIPMACPairs != 1 || got.BlankAndFilledVLANPairs != 0 {
 		t.Fatalf("cross-scope or gateway count: %+v", got)
+	}
+	past := now.Add(-time.Hour)
+	put("campus-204", "arp", "10.1.1.3", "00:11:22:33:44:55", "10", "", past, now)
+	put("campus-204", "ndp", "fe80::2", "00:11:22:33:44:55", "10", "", past, now)
+	put("campus-204", "arp", "10.1.1.4", "00:11:22:33:44:55", "10", "", now, active)
+	put("campus-204", "arp", "10.1.1.4", "00:11:22:33:44:66", "10", "", now, active)
+	put("campus-204", "arp", "10.1.1.5", "00:11:22:33:44:55", "10", "", now, active)
+	if _, err = db.Exec(`INSERT INTO discovery_observation_latest
+SELECT 'dhcp',$1::timestamptz,$1::timestamptz,true,data FROM discovery_observation_latest WHERE data->>'ip'='10.1.1.5'`, now); err != nil {
+		t.Fatal(err)
+	}
+	if err = coverageAddressCounts(context.Background(), db, "campus-204", now.Add(-24*time.Hour), now.Add(time.Second), &got); err != nil {
+		t.Fatal(err)
+	}
+	if *got.IPv4BindingFreshness != (CoverageBindingFreshness{Current: 3, Expired: 1, Uncertain: 2, NoBinding: 1}) ||
+		*got.IPv6BindingFreshness != (CoverageBindingFreshness{Current: 1, Expired: 1}) {
+		t.Fatalf("unexpected address freshness: IPv4 %+v, IPv6 %+v", got.IPv4BindingFreshness, got.IPv6BindingFreshness)
 	}
 }
 

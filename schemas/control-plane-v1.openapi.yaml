@@ -9001,6 +9001,14 @@ components:
         evidence_count: { type: integer }
         endpoint_id: { type: string }
         observations: { type: array, items: { $ref: '#/components/schemas/DiscoveryObservation' } }
+    DiscoveryBindingFreshness:
+      type: object
+      required: [current, expired, uncertain, no_binding]
+      properties:
+        current: { type: integer, format: int64, minimum: 0, description: Distinct IPs with a valid unambiguous binding in at least one observed scope. }
+        expired: { type: integer, format: int64, minimum: 0, description: Distinct IPs with observed bindings that have all expired naturally. }
+        uncertain: { type: integer, format: int64, minimum: 0, description: Distinct IPs without a valid unambiguous binding that have a withdrawal or a binding conflict. }
+        no_binding: { type: integer, format: int64, minimum: 0, description: Distinct IPs with no binding record in the selected window. }
     DiscoveryCoverageReport:
       type: object
       required: [as_of, window, subnet24, ipv4, ipv6, mac, ip_mac_pairs, scoped_mac, mirror_funnel]
@@ -9012,6 +9020,8 @@ components:
         subnet24: { type: integer, format: int64, minimum: 0 }
         ipv4: { type: integer, format: int64, minimum: 0 }
         ipv6: { type: integer, format: int64, minimum: 0 }
+        ipv4_binding_freshness: { $ref: '#/components/schemas/DiscoveryBindingFreshness' }
+        ipv6_binding_freshness: { $ref: '#/components/schemas/DiscoveryBindingFreshness' }
         mac: { type: integer, format: int64, minimum: 0 }
         ip_mac_pairs: { type: integer, format: int64, minimum: 0 }
         ipv4_with_mac: { type: integer, format: int64, minimum: 0, description: Distinct IPv4 addresses with trusted device-side MAC bindings in the window. }
@@ -9044,6 +9054,7 @@ components:
         available_from: { type: string, format: date-time, description: First source event covered by the mirror census. }
         ipv4_total: { type: integer, format: int64, minimum: 0, description: Distinct local IPv4 values visible in mirrored flow or discovery events. }
         ipv4_only: { type: integer, format: int64, minimum: 0, description: Distinct local IPv4 values without a currently valid unambiguous device-side MAC binding. }
+        ipv4_binding_freshness: { $ref: '#/components/schemas/DiscoveryBindingFreshness' }
         mac_total: { type: integer, format: int64, minimum: 0, description: Distinct trusted device-side MAC values. }
         mac_only: { type: integer, format: int64, minimum: 0, description: Distinct device-side MAC values without a currently valid unambiguous IPv4 binding. }
         ip_mac_pairs: { type: integer, format: int64, minimum: 0, description: Distinct raw IPv4 and MAC combinations observed in the window and still valid without withdrawal or scope conflict at evaluated_at. }

@@ -39,7 +39,7 @@ CREATE TEMP TABLE passive_hardware_current (identity_key text,scope_key text,mac
 			t.Fatal(e)
 		}
 	}
-	for _, ip := range []string{"10.0.0.1", "10.0.0.2", "10.0.0.3"} {
+	for _, ip := range []string{"10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4", "10.0.0.5", "10.0.0.6"} {
 		putID("ip", ip, 4)
 	}
 	for _, mac := range []string{"00:0c:29:00:00:01", "00:0c:29:00:00:02", "00:0c:29:00:00:03", "00:0c:29:00:00:04", "00:0c:29:00:00:05", "02:11:22:33:44:55"} {
@@ -55,6 +55,8 @@ CREATE TEMP TABLE passive_hardware_current (identity_key text,scope_key text,mac
 		{"10.0.0.2", "02:11:22:33:44:55", now.Add(time.Hour)},
 		{"10.0.0.3", "00:0c:29:00:00:04", now.Add(time.Hour)},
 		{"10.0.0.3", "00:0c:29:00:00:05", now.Add(time.Hour)},
+		{"10.0.0.4", "00:0c:29:00:00:05", now.Add(-time.Hour)},
+		{"10.0.0.5", "00:0c:29:00:00:05", now.Add(-time.Hour)},
 	} {
 		if _, err = db.Exec(`INSERT INTO passive_census_binding_current VALUES('scope',$1,$2,$3,$4,false,false)`, item.ip, item.mac, observed, item.until); err != nil {
 			t.Fatal(err)
@@ -72,12 +74,18 @@ CREATE TEMP TABLE passive_hardware_current (identity_key text,scope_key text,mac
 	if _, err = db.Exec(`UPDATE passive_census_binding_current SET observed_at=$1 WHERE ip='10.0.0.3' AND mac='00:0c:29:00:00:05'`, now.Add(-25*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = db.Exec(`UPDATE passive_census_binding_current SET withdrawn=true WHERE ip='10.0.0.5'`); err != nil {
+		t.Fatal(err)
+	}
 	got, err := mirrorFunnelCounts(context.Background(), db, "campus-204", 24*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.IPv4Total != 3 || got.IPv4Only != 1 || got.MACTotal != 6 || got.MACOnly != 4 ||
+	if got.IPv4Total != 6 || got.IPv4Only != 4 || got.MACTotal != 6 || got.MACOnly != 4 ||
 		got.IPMACPairs != 2 || got.ScopedPairs != 2 || got.TrustedIdentities != 2 || got.IdentifiedPairs != 2 || got.TypedPairs != 1 || got.TypedIdentities != 1 {
 		t.Fatalf("expired rebinding or candidate type counted as identified: %+v", got)
+	}
+	if *got.IPv4BindingFreshness != (CoverageBindingFreshness{Current: 2, Expired: 1, Uncertain: 2, NoBinding: 1}) {
+		t.Fatalf("unexpected mirror address freshness: %+v", got.IPv4BindingFreshness)
 	}
 }

@@ -3,6 +3,7 @@ import { observedTimeTitle } from '../shared/ui/observedTime'
 
 export type CoverageReport = components['schemas']['DiscoveryCoverageReport']
 type MirrorFunnel = NonNullable<CoverageReport['mirror_funnel']>
+type BindingFreshness = components['schemas']['DiscoveryBindingFreshness']
 type CoverageRow = { label: string; value: number; color?: 'teal' | 'blue' | 'slate' }
 
 const count = (value: number) => value.toLocaleString('zh-CN')
@@ -47,6 +48,16 @@ function CoverageRows({ rows, total, unit }: { rows: CoverageRow[]; total: numbe
   </ul>
 }
 
+function BindingFreshnessRows({ freshness }: { freshness: BindingFreshness }) {
+  const { current, expired, uncertain, no_binding: noBinding } = freshness
+  return <CoverageRows total={current + expired + uncertain + noBinding} unit="个地址" rows={[
+    { label: '当前有效绑定', value: current, color: 'teal' },
+    { label: '仅有过期绑定', value: expired },
+    { label: '撤销或冲突待核实', value: uncertain, color: 'slate' },
+    { label: '窗口内无绑定记录', value: noBinding, color: 'slate' },
+  ]} />
+}
+
 export function DiscoveryCoverageReport({ report }: { report: CoverageReport }) {
   const { typed_ipv4: typed, identity_no_type_ipv4: needsType, no_identity_ipv4: unlinked } = report
   const total = typed !== undefined && needsType !== undefined && unlinked !== undefined
@@ -81,6 +92,22 @@ export function DiscoveryCoverageReport({ report }: { report: CoverageReport }) 
         {detail && <dd className="coverage-metric-detail">{detail}</dd>}
       </div>)}
     </dl>
+    {(report.ipv4_binding_freshness || report.ipv6_binding_freshness) &&
+      <section className="coverage-panel" aria-labelledby="coverage-freshness-heading">
+        <header className="coverage-panel-heading">
+          <div><h4 id="coverage-freshness-heading">地址绑定时效</h4><p>按所选窗口内的设备观测地址去重，统计时仍有有效绑定的地址优先计入当前有效。</p></div>
+        </header>
+        <div className="coverage-panels">
+          {report.ipv4_binding_freshness && <section aria-label="IPv4 绑定时效">
+            <h5 className="coverage-binding-family">IPv4 · {count(report.ipv4)} 个地址</h5>
+            <BindingFreshnessRows freshness={report.ipv4_binding_freshness} />
+          </section>}
+          {report.ipv6_binding_freshness && <section aria-label="IPv6 绑定时效">
+            <h5 className="coverage-binding-family">IPv6 · {count(report.ipv6)} 个地址</h5>
+            <BindingFreshnessRows freshness={report.ipv6_binding_freshness} />
+          </section>}
+        </div>
+      </section>}
     {total !== undefined && typed !== undefined && needsType !== undefined && unlinked !== undefined &&
       <div className="coverage-panels">
         <section className="coverage-panel" aria-labelledby="coverage-address-heading">
@@ -142,8 +169,12 @@ export function DiscoveryMirrorCoverage({ funnel }: { funnel?: MirrorFunnel }) {
       </section>
       <section className="coverage-panel" aria-labelledby="coverage-mirror-address-heading">
         <header className="coverage-panel-heading"><div><h4 id="coverage-mirror-address-heading">镜像可见地址</h4><p>窗口内分别对 IPv4、MAC 去重</p></div></header>
+        {funnel.ipv4_binding_freshness && <section aria-label="镜像 IPv4 绑定时效">
+          <h5 className="coverage-binding-family">IPv4 · {count(funnel.ipv4_total)} 个地址</h5>
+          <BindingFreshnessRows freshness={funnel.ipv4_binding_freshness} />
+        </section>}
         <ul className="coverage-mirror-chart" aria-label="镜像可见地址的有效配对占比">
-          {identifiers.map(({ label, total, only, other }) => <li key={label}>
+          {identifiers.filter(({ label }) => label !== 'IPv4' || !funnel.ipv4_binding_freshness).map(({ label, total, only, other }) => <li key={label}>
             <div className="coverage-mirror-chart-label"><strong>{label}</strong><span>{count(total)} 个</span></div>
             {total > 0 && <progress className="coverage-progress coverage-progress-teal" aria-label={`${label} 有有效配对`} value={total - only} max={total} />}
             <div className="coverage-mirror-chart-caption">

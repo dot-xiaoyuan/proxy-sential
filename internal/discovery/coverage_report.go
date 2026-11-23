@@ -10,6 +10,13 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+type CoverageBindingFreshness struct {
+	Current   int64 `json:"current"`
+	Expired   int64 `json:"expired"`
+	Uncertain int64 `json:"uncertain"`
+	NoBinding int64 `json:"no_binding"`
+}
+
 // CoverageReport counts addresses from the bounded discovery index. A /24 is
 // an observation bucket, not a claim about the campus routing configuration.
 type CoverageReport struct {
@@ -42,6 +49,9 @@ type CoverageReport struct {
 	UntypedOtherIPv4        int64        `json:"untyped_other_ipv4"`
 	RevokedTypeIPv4         int64        `json:"revoked_type_ipv4"`
 	MirrorFunnel            MirrorFunnel `json:"mirror_funnel"`
+
+	IPv4BindingFreshness *CoverageBindingFreshness `json:"ipv4_binding_freshness,omitempty"`
+	IPv6BindingFreshness *CoverageBindingFreshness `json:"ipv6_binding_freshness,omitempty"`
 }
 
 var dumbHardwareTypes = map[string]bool{
@@ -163,15 +173,18 @@ FROM per_ip`
 
 func coverageAddressCounts(ctx context.Context, db *sql.DB, sensor string, from, until time.Time, out *CoverageReport) error {
 	const statement = `WITH observed AS MATERIALIZED (
- SELECT l.data->>'ip' ip,lower(coalesce(l.data->>'mac','')) mac,l.valid_until,
+ SELECT l.data->>'ip' ip,lower(coalesce(l.data->>'mac','')) mac,l.valid_until,l.observed_at,l.withdrawn,
   coalesce(l.data->>'node','') sensor,coalesce(l.data->>'site','') site,
   coalesce(l.data->>'domain','') domain,coalesce(l.data->>'vlan','') vlan,
   coalesce(l.data->>'vrf','') vrf,
+  (l.origin IN ('arp','ndp','dhcp') AND l.data->>'confidence'='confirmed'
+   AND coalesce(l.data->'evidence'->'observer'->>'capture_scope_issue','')=''
+   AND coalesce(l.data->'evidence'->'payload'->>'endpoint_identity_unverified','')<>'true') address_claim,
   (l.origin IN ('arp','dhcp') OR
    (l.origin='sadp' AND l.data->'evidence'->'payload'->>'identity_status' IN ('direct_l2','arp_binding')) OR
    (l.origin='dns_sd' AND l.data->'evidence'->'payload'->>'l2_source_mac_direct'='true')) binding
  FROM discovery_observation_latest l
- WHERE l.observed_at>=$2 AND l.observed_at<=$3 AND NOT l.withdrawn
+ WHERE l.observed_at>=$2 AND l.observed_at<=$3
   AND l.data->>'node'=$1
 ), addresses AS (
  SELECT *,ip ~ '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' v4,
@@ -181,13 +194,42 @@ func coverageAddressCounts(ctx context.Context, db *sql.DB, sensor string, from,
  FROM observed
 ), scoped AS MATERIALIZED (
  SELECT ip,mac,sensor,site,domain,vlan,vrf,v4,bool_or(valid_until>$3) valid
- FROM addresses WHERE trusted_pair GROUP BY ip,mac,sensor,site,domain,vlan,vrf,v4
+ FROM addresses WHERE trusted_pair AND NOT withdrawn GROUP BY ip,mac,sensor,site,domain,vlan,vrf,v4
 ), ipv4_pairs AS MATERIALIZED (
  SELECT ip,mac,count(*) scopes,bool_or(vlan='') blank_vlan,bool_or(vlan<>'') filled_vlan
  FROM scoped WHERE v4 GROUP BY ip,mac
+), claims AS (
+ SELECT ip,mac,site,domain,vlan,vrf,
+  max(observed_at) FILTER (WHERE NOT withdrawn) last_claim,
+  max(observed_at) FILTER (WHERE NOT withdrawn AND valid_until>$3) last_live,
+  max(observed_at) FILTER (WHERE withdrawn) last_withdrawal
+ FROM addresses
+ WHERE address_claim AND site<>'' AND domain<>'' AND (v4 OR v6)
+  AND mac ~ '^[0-9a-f][02468ace](:[0-9a-f]{2}){5}$' AND mac<>'00:00:00:00:00:00'
+ GROUP BY ip,mac,site,domain,vlan,vrf
+), scope_freshness AS (
+ SELECT ip,count(*) FILTER(WHERE last_live IS NOT NULL AND (last_withdrawal IS NULL OR last_live>last_withdrawal)) live_count,
+  bool_or(last_withdrawal IS NOT NULL AND (last_claim IS NULL OR last_withdrawal>=last_claim)) withdrawn
+ FROM claims GROUP BY ip,site,domain,vlan,vrf
+), ip_freshness AS (
+ SELECT ip,CASE WHEN bool_or(live_count=1) THEN 'current'
+  WHEN bool_or(live_count>1 OR withdrawn) THEN 'uncertain' ELSE 'expired' END freshness
+ FROM scope_freshness GROUP BY ip
+), observed_ips AS MATERIALIZED (
+ SELECT DISTINCT ip,v4,v6 FROM addresses WHERE NOT withdrawn AND (v4 OR v6)
+), freshness_counts AS (
+ SELECT count(*) FILTER(WHERE i.v4 AND f.freshness='current') current_v4,
+  count(*) FILTER(WHERE i.v4 AND f.freshness='expired') expired_v4,
+  count(*) FILTER(WHERE i.v4 AND f.freshness='uncertain') uncertain_v4,
+  count(*) FILTER(WHERE i.v4 AND f.ip IS NULL) no_binding_v4,
+  count(*) FILTER(WHERE i.v6 AND f.freshness='current') current_v6,
+  count(*) FILTER(WHERE i.v6 AND f.freshness='expired') expired_v6,
+  count(*) FILTER(WHERE i.v6 AND f.freshness='uncertain') uncertain_v6,
+  count(*) FILTER(WHERE i.v6 AND f.ip IS NULL) no_binding_v6
+ FROM observed_ips i LEFT JOIN ip_freshness f USING(ip)
 )
-SELECT count(DISTINCT split_part(ip,'.',1)||'.'||split_part(ip,'.',2)||'.'||split_part(ip,'.',3)) FILTER(WHERE v4),
- count(DISTINCT ip) FILTER(WHERE v4), count(DISTINCT ip) FILTER(WHERE v6),
+SELECT (SELECT count(DISTINCT split_part(ip,'.',1)||'.'||split_part(ip,'.',2)||'.'||split_part(ip,'.',3)) FROM observed_ips WHERE v4),
+ (SELECT count(*) FROM observed_ips WHERE v4), (SELECT count(*) FROM observed_ips WHERE v6),
  (SELECT count(DISTINCT mac) FROM scoped),
  (SELECT count(*) FROM scoped),
  (SELECT count(*) FROM (SELECT DISTINCT sensor,site,domain,vlan,vrf,mac FROM scoped) unique_scoped_macs),
@@ -196,11 +238,19 @@ SELECT count(DISTINCT split_part(ip,'.',1)||'.'||split_part(ip,'.',2)||'.'||spli
  (SELECT count(*) FROM scoped WHERE v4 AND valid),
  (SELECT count(*) FROM (SELECT ip FROM ipv4_pairs GROUP BY ip HAVING count(*)>1) multi_mac),
  (SELECT count(*) FROM ipv4_pairs WHERE scopes>1),
- (SELECT count(*) FROM ipv4_pairs WHERE blank_vlan AND filled_vlan)
-FROM addresses`
-	return db.QueryRowContext(ctx, statement, sensor, from, until).Scan(
+ (SELECT count(*) FROM ipv4_pairs WHERE blank_vlan AND filled_vlan),
+ current_v4,expired_v4,uncertain_v4,no_binding_v4,current_v6,expired_v6,uncertain_v6,no_binding_v6
+FROM freshness_counts`
+	var v4, v6 CoverageBindingFreshness
+	err := db.QueryRowContext(ctx, statement, sensor, from, until).Scan(
 		&out.Subnet24, &out.IPv4, &out.IPv6, &out.MAC, &out.IPMACPairs, &out.ScopedMAC,
 		&out.IPv4WithMAC, &out.IPMACUniquePairs, &out.IPMACValidScopedPairs,
 		&out.MultiMACIPv4, &out.MultiScopeIPMACPairs, &out.BlankAndFilledVLANPairs,
+		&v4.Current, &v4.Expired, &v4.Uncertain, &v4.NoBinding,
+		&v6.Current, &v6.Expired, &v6.Uncertain, &v6.NoBinding,
 	)
+	if err == nil {
+		out.IPv4BindingFreshness, out.IPv6BindingFreshness = &v4, &v6
+	}
+	return err
 }

@@ -7940,6 +7940,28 @@ export interface components {
             endpoint_id?: string;
             observations: components["schemas"]["DiscoveryObservation"][];
         };
+        DiscoveryBindingFreshness: {
+            /**
+             * Format: int64
+             * @description Distinct IPs with a valid unambiguous binding in at least one observed scope.
+             */
+            current: number;
+            /**
+             * Format: int64
+             * @description Distinct IPs with observed bindings that have all expired naturally.
+             */
+            expired: number;
+            /**
+             * Format: int64
+             * @description Distinct IPs without a valid unambiguous binding that have a withdrawal or a binding conflict.
+             */
+            uncertain: number;
+            /**
+             * Format: int64
+             * @description Distinct IPs with no binding record in the selected window.
+             */
+            no_binding: number;
+        };
         DiscoveryCoverageReport: {
             /** Format: date-time */
             as_of: string;
@@ -7957,6 +7979,8 @@ export interface components {
             ipv4: number;
             /** Format: int64 */
             ipv6: number;
+            ipv4_binding_freshness?: components["schemas"]["DiscoveryBindingFreshness"];
+            ipv6_binding_freshness?: components["schemas"]["DiscoveryBindingFreshness"];
             /** Format: int64 */
             mac: number;
             /** Format: int64 */
@@ -8056,6 +8080,7 @@ export interface components {
              * @description Distinct local IPv4 values without a currently valid unambiguous device-side MAC binding.
              */
             ipv4_only: number;
+            ipv4_binding_freshness?: components["schemas"]["DiscoveryBindingFreshness"];
             /**
              * Format: int64
              * @description Distinct trusted device-side MAC values.

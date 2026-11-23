@@ -33,6 +33,8 @@ type MirrorFunnel struct {
 	LocallyAdminMAC   int64      `json:"locally_administered_mac"`
 	NoOUIGlobalMAC    int64      `json:"no_oui_global_mac"`
 	OUILibraryVersion string     `json:"oui_library_version"`
+
+	IPv4BindingFreshness *CoverageBindingFreshness `json:"ipv4_binding_freshness,omitempty"`
 }
 
 func classifyMirrorMACs(library *fingerprint.Library, macs []string) (matched, local, unmatched int64) {
@@ -93,7 +95,7 @@ func mirrorFunnelCounts(ctx context.Context, db *sql.DB, sensor string, window t
 ), unambiguous AS MATERIALIZED (
  SELECT scope_key,ip,min(mac) mac,max(observed_at) observed_at
  FROM passive_census_binding_current
- WHERE valid_until>$4 AND NOT withdrawn
+ WHERE valid_until>$4 AND NOT withdrawn AND observed_at<=$3
  GROUP BY scope_key,ip HAVING count(*)=1
 ), scoped_pairs AS MATERIALIZED (
  SELECT b.scope_key,b.ip,b.mac,h.identity_key,h.hardware_type,h.hardware_type_status
@@ -104,10 +106,23 @@ func mirrorFunnelCounts(ctx context.Context, db *sql.DB, sensor string, window t
   AND h.sensor_id=$1 AND h.first_seen<=$3 AND h.last_seen<=$3
  WHERE b.observed_at>=$2 AND b.observed_at<=$3
 ), raw_pairs AS MATERIALIZED (
- SELECT DISTINCT ip,mac FROM scoped_pairs
-), typed_pairs AS MATERIALIZED (
- SELECT DISTINCT ip,mac FROM scoped_pairs
- WHERE hardware_type_status='identified' AND hardware_type<>''
+ SELECT ip,mac,bool_or(identity_key IS NOT NULL) identified,
+  bool_or(hardware_type_status='identified' AND hardware_type<>'') typed
+ FROM scoped_pairs GROUP BY ip,mac
+), observed_bindings AS (
+ SELECT b.ip,bool_or(b.withdrawn OR b.valid_until>$4) uncertain
+ FROM ids i
+ JOIN passive_census_binding_current b ON b.scope_key=i.scope_key AND b.ip=i.value
+ JOIN ids m ON m.scope_key=b.scope_key AND m.kind='mac' AND m.value=b.mac
+ WHERE i.kind='ip' AND i.ip_family=4 AND b.observed_at>=$2 AND b.observed_at<=$3
+ GROUP BY b.ip
+), freshness_counts AS (
+ SELECT count(*) FILTER(WHERE p.ip IS NOT NULL) current,
+  count(*) FILTER(WHERE p.ip IS NULL AND b.uncertain=false) expired,
+  count(*) FILTER(WHERE p.ip IS NULL AND b.uncertain=true) uncertain,
+  count(*) FILTER(WHERE p.ip IS NULL AND b.ip IS NULL) no_binding
+ FROM ips i LEFT JOIN (SELECT DISTINCT ip FROM raw_pairs) p USING(ip)
+ LEFT JOIN observed_bindings b USING(ip)
 )
 SELECT (SELECT count(*) FROM ips),
  (SELECT count(*) FROM ips WHERE NOT EXISTS(SELECT 1 FROM raw_pairs p WHERE p.ip=ips.ip)),
@@ -116,20 +131,24 @@ SELECT (SELECT count(*) FROM ips),
  (SELECT count(*) FROM raw_pairs),
  (SELECT count(*) FROM scoped_pairs),
  (SELECT count(DISTINCT identity_key) FROM scoped_pairs WHERE identity_key IS NOT NULL),
- (SELECT count(*) FROM raw_pairs p WHERE EXISTS(
-  SELECT 1 FROM scoped_pairs s WHERE s.ip=p.ip AND s.mac=p.mac AND s.identity_key IS NOT NULL)),
- (SELECT count(*) FROM typed_pairs),
+ (SELECT count(*) FROM raw_pairs WHERE identified),
+ (SELECT count(*) FROM raw_pairs WHERE typed),
  (SELECT count(DISTINCT identity_key) FROM scoped_pairs WHERE hardware_type_status='identified' AND hardware_type<>''),
- (SELECT coalesce(jsonb_agg(mac),'[]'::jsonb) FROM macs)`
+ (SELECT coalesce(jsonb_agg(mac),'[]'::jsonb) FROM macs),
+ current,expired,uncertain,no_binding
+FROM freshness_counts`
 	var rawMACs []byte
+	var freshness CoverageBindingFreshness
 	err = tx.QueryRowContext(ctx, statement, sensor, cutoff, source.Time, result.EvaluatedAt).Scan(
 		&result.IPv4Total, &result.IPv4Only, &result.MACTotal, &result.MACOnly,
 		&result.IPMACPairs, &result.ScopedPairs, &result.TrustedIdentities,
 		&result.IdentifiedPairs, &result.TypedPairs, &result.TypedIdentities, &rawMACs,
+		&freshness.Current, &freshness.Expired, &freshness.Uncertain, &freshness.NoBinding,
 	)
 	if err != nil {
 		return MirrorFunnel{}, fmt.Errorf("mirror census funnel: %w", err)
 	}
+	result.IPv4BindingFreshness = &freshness
 	var macs []string
 	if err = json.Unmarshal(rawMACs, &macs); err != nil {
 		return MirrorFunnel{}, err

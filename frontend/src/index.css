@@ -6005,6 +6005,7 @@ pre.wrap-code {
   margin-bottom: 14px; min-width: 0;
 }
 .coverage-panel-heading h4 { margin: 0; font-size: 16px; color: #0f172a; font-weight: 650; }
+.coverage-binding-family { margin: 0 0 8px; color: #334155; font-size: 14px; font-weight: 650; }
 .coverage-panel-heading p { margin: 3px 0 0; color: #475569; font-size: 12px; }
 .coverage-highlight { display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; color: #475569; font-size: 12px; }
 .coverage-highlight strong { color: #115e59; font-size: 22px; line-height: 1.25; }
