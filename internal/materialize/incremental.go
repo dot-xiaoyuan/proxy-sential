@@ -191,9 +191,9 @@ func evaluateRiskClaimGroup(ctx context.Context, backend IncrementalStore, opts 
 	if err != nil {
 		return result, err
 	}
-	pageSize := min(opts.FeatureLimit, 5000)
+	blockSize := min(opts.FeatureLimit, 5000)
 	featureStarted := time.Now()
-	result.Features, err = backend.StreamRiskFeatureEvents(ctx, opts.SensorID, claims, opts.AsOf.Add(-opts.Window), opts.AsOf, freshCutoff, pageSize, analyzer.Add)
+	result.Features, err = backend.StreamRiskFeatureEvents(ctx, opts.SensorID, claims, opts.AsOf.Add(-opts.Window), opts.AsOf, freshCutoff, blockSize, analyzer.Add)
 	result.FeatureElapsed = time.Since(featureStarted)
 	if err != nil {
 		return result, fmt.Errorf("read affected risk features: %w", err)
