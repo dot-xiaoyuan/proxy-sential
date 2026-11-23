@@ -1,5 +1,5 @@
 import { LockOutlined, SafetyCertificateOutlined, UserOutlined } from '@ant-design/icons'
-import { Button, Form, Input } from 'antd'
+import { Button, Form, Input, Typography } from 'antd'
 import { useState } from 'react'
 
 import { ApiError } from '../shared/api/client'
@@ -30,7 +30,7 @@ export function LoginPage() {
 
   return (
     <main className="login-page">
-      <section className="login-card" aria-labelledby="login-card-title">
+      <div className="login-layout">
         <header className="login-topbar">
           <span className="login-mark" aria-hidden="true"><SafetyCertificateOutlined /></span>
           <div className="login-brand-copy">
@@ -38,39 +38,45 @@ export function LoginPage() {
             <span>高校网络风险运营平台</span>
           </div>
         </header>
-        <div className="login-card-body">
-          <h1 id="login-card-title">登录</h1>
 
-          {login.isError && <AppErrorAlert className="margin-bottom-md" title="登录失败" message={loginErrorMessage(login.error)} />}
-          <Form
-            className="login-form"
-            layout="vertical"
-            requiredMark={false}
-            onFinish={(values: { username: string; password: string }) => login.mutate(values)}
-            onValuesChange={() => { if (login.isError) login.reset() }}
-          >
-            <Form.Item label="账号" name="username" rules={[{ required: true, message: '请输入账号' }]}>
-              <Input autoFocus autoComplete="username" placeholder="请输入账号" prefix={<UserOutlined />} />
-            </Form.Item>
-            <Form.Item
-              label="密码"
-              name="password"
-              rules={[{ required: true, message: '请输入密码' }]}
-              extra={capsLock ? <span className="login-caps-hint">大写锁定已开启</span> : undefined}
+        <div className="login-main">
+          <section className="login-card" aria-labelledby="login-card-title">
+            <div className="login-card-heading">
+              <Typography.Title level={1} id="login-card-title">登录</Typography.Title>
+            </div>
+
+            {login.isError && <AppErrorAlert className="margin-bottom-md" title="登录失败" message={loginErrorMessage(login.error)} />}
+            <Form
+              className="login-form"
+              layout="vertical"
+              onFinish={(values: { username: string; password: string }) => login.mutate(values)}
+              onValuesChange={() => { if (login.isError) login.reset() }}
             >
-              <Input.Password
-                autoComplete="current-password"
-                placeholder="请输入密码"
-                prefix={<LockOutlined />}
-                onKeyDown={event => setCapsLock(event.getModifierState('CapsLock'))}
-                onKeyUp={event => setCapsLock(event.getModifierState('CapsLock'))}
-                onBlur={() => setCapsLock(false)}
-              />
-            </Form.Item>
-            <Button block htmlType="submit" loading={login.isPending} type="primary" autoInsertSpace={false}>登录</Button>
-          </Form>
+              <Form.Item label="账号" name="username" rules={[{ required: true, message: '请输入账号' }]}>
+                <Input autoFocus autoComplete="username" placeholder="请输入账号" prefix={<UserOutlined />} />
+              </Form.Item>
+              <Form.Item
+                label="密码"
+                name="password"
+                rules={[{ required: true, message: '请输入密码' }]}
+                extra={capsLock ? <span className="login-caps-hint">大写锁定已开启</span> : undefined}
+              >
+                <Input.Password
+                  autoComplete="current-password"
+                  placeholder="请输入密码"
+                  prefix={<LockOutlined />}
+                  onKeyDown={event => setCapsLock(event.getModifierState('CapsLock'))}
+                  onKeyUp={event => setCapsLock(event.getModifierState('CapsLock'))}
+                  onBlur={() => setCapsLock(false)}
+                />
+              </Form.Item>
+              <Button block htmlType="submit" loading={login.isPending} type="primary">登 录</Button>
+            </Form>
+
+          </section>
         </div>
-      </section>
+
+      </div>
     </main>
   )
 }

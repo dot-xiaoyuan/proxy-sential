@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 for (const viewport of [{ width:390, height:844 }, { width:1198, height:1171 }, { width:1280, height:800 }, { width:1440, height:900 }]) {
-  test(`abstract background and centered login at ${viewport.width}`, async ({ page }, info) => {
+  test(`original centered login and single focus border at ${viewport.width}`, async ({ page }, info) => {
     await page.setViewportSize(viewport)
     await page.addInitScript(() => {
       const fetchOriginal = window.fetch
@@ -28,40 +28,47 @@ for (const viewport of [{ width:390, height:844 }, { width:1198, height:1171 }, 
       const backdrop = card.closest('.login-page')!
       const backdropBounds = backdrop.getBoundingClientRect()
       const button = getComputedStyle(card.querySelector('button[type=submit]')!)
-      const active = getComputedStyle(card.querySelector('.ant-input-affix-wrapper')!)
+      const brand = backdrop.querySelector('.login-topbar')!
       return {
         overflows: document.documentElement.scrollWidth > innerWidth + 2,
         backgroundSize: getComputedStyle(backdrop).backgroundSize,
         fullViewport: backdropBounds.width >= innerWidth - 1 && backdropBounds.height >= innerHeight - 1,
         cardFits: panel.right <= innerWidth && panel.left >= 0,
+        separateBrand: !card.contains(brand) && brand.getBoundingClientRect().bottom < panel.top,
         panelCenter: (panel.left + panel.right) / 2,
         panelWidth: panel.width,
         buttonHeight: card.querySelector('button[type=submit]')!.getBoundingClientRect().height,
         radius: getComputedStyle(card).borderRadius,
         wrap: button.whiteSpace,
         shrink: button.flexShrink,
-        focusBorder: active.borderTopColor,
-        focusShadow: active.boxShadow,
       }
     })
     expect(probe).toMatchObject({
-      overflows:false, backgroundSize:'cover', fullViewport:true, cardFits:true,
-      radius:'8px', wrap:'nowrap', shrink:'0', focusBorder:'rgb(37, 99, 235)', focusShadow:'none',
+      overflows:false, backgroundSize:'cover, auto', fullViewport:true, cardFits:true, separateBrand:true,
+      radius:'8px', wrap:'nowrap', shrink:'0', buttonHeight:48,
     })
-    if (viewport.width < 680) {
-      expect(Math.abs(probe.panelCenter - viewport.width / 2)).toBeLessThan(2)
-      expect(probe.panelWidth).toBeGreaterThanOrEqual(350)
-      expect(probe.buttonHeight).toBeGreaterThanOrEqual(48)
-    } else {
-      expect(probe.panelCenter).toBeGreaterThan(viewport.width * .52)
-      expect(probe.panelCenter).toBeLessThan(viewport.width * .58)
-      expect(probe.panelWidth).toBeGreaterThanOrEqual(500)
-      expect(probe.buttonHeight).toBeGreaterThanOrEqual(54)
+    expect(Math.abs(probe.panelCenter - viewport.width / 2)).toBeLessThan(2)
+    expect(probe.panelWidth).toBe(Math.min(440, viewport.width - 32))
+
+    const username = page.getByLabel('账号')
+    const password = page.getByLabel('密码', { exact: true })
+    await expect(username).toBeFocused()
+    for (const input of [username, password]) {
+      await expect(input).toBeFocused()
+      const wrapper = page.locator('.ant-input-affix-wrapper').filter({ has: input })
+      await expect(wrapper).toHaveCSS('border-top-color', 'rgb(34, 87, 167)')
+      await expect(wrapper).toHaveCSS('border-top-width', '1px')
+      await expect(wrapper).toHaveCSS('box-shadow', 'none')
+      await expect(wrapper).toHaveCSS('outline-style', 'none')
+      await expect(input).toHaveCSS('box-shadow', 'none')
+      await expect(input).toHaveCSS('outline-style', 'none')
+      if (input === username) await input.press('Tab')
     }
+    await username.focus()
     await page.screenshot({path:info.outputPath(`login-${viewport.width}.png`), animations:'disabled'})
-    await page.getByLabel('账号').fill('layout-test')
-    await page.getByLabel('密码').fill('rejected-fixture-password')
-    await page.getByRole('button', {name:'登录'}).click()
+    await username.fill('layout-test')
+    await password.fill('rejected-fixture-password')
+    await page.getByRole('button', {name:/^登\s*录$/}).click()
     await expect(page.getByText('账号或密码不正确，请重新输入。')).toBeVisible()
     expect(errors).toEqual([])
   })
