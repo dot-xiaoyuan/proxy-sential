@@ -1,4 +1,4 @@
-// passive-hardware-audit replays locally exported discovery observations without
+// passive-hardware-audit replays locally exported observations and frozen facts without
 // connecting to a database or modifying a projection. It does not assert truth
 // labels, physical-device counts, or field deployment acceptance.
 package main
@@ -136,8 +136,11 @@ func audit(r io.Reader) (report, error) {
 }
 
 func main() {
-	input := flag.String("input", "", "local JSONL {as_of,observation} snapshot")
+	input := flag.String("input", "", "local JSONL observation or hardware fact snapshot")
 	output := flag.String("output", "", "complete JSON report; stdout if empty")
+	baseline := flag.String("baseline-bundle", "", "verified V8 bundle for a frozen hardware-fact snapshot")
+	candidate := flag.String("candidate-bundle", "", "optional verified V8 bundle to compare against the baseline")
+	developmentOnly := flag.Bool("development-only", false, "evaluate only the development split")
 	flag.Parse()
 	if *input == "" {
 		fmt.Fprintln(os.Stderr, "--input is required")
@@ -149,7 +152,15 @@ func main() {
 		os.Exit(1)
 	}
 	defer f.Close()
-	result, err := audit(f)
+	var result any
+	switch {
+	case *baseline != "":
+		result, err = compareSnapshot(f, *baseline, *candidate, *developmentOnly)
+	case *candidate != "" || *developmentOnly:
+		err = fmt.Errorf("snapshot comparison requires --baseline-bundle")
+	default:
+		result, err = audit(f)
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

@@ -43,3 +43,25 @@ func TestZeekRawReferenceSurvivesBatchRetryAndKeepsOriginalRecordHash(t *testing
 		t.Fatal("retry changed original reference")
 	}
 }
+
+func TestSSDPSourceFileReference(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "signals.jsonl")
+	raw := `{"schema_version":"v1","event_id":"old-advert","type":"device","timestamp":"2026-11-22T12:00:00Z","source":"packet-sidecar","source_event_type":"ssdp","subject":{"ip":"192.0.2.1"},"payload":{"is_announcement":true}}`
+	if err := os.WriteFile(path, []byte(raw+"\r\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	b := &fakeBackend{}
+	opts := Options{SensorID: "campus", MaxBatchBytes: 1 << 20, StoreTimeout: time.Second}
+	for i := 0; i < 2; i++ {
+		b.found = false
+		if err := ProcessOnce(context.Background(), b, opts, Source{Kind: "device-signals", Path: path}); err != nil {
+			t.Fatal(err)
+		}
+		e := b.events[i]
+		sum := sha256.Sum256([]byte(raw))
+		ref, _ := e.RawRef["ingest_source_ref"].(map[string]any)
+		if e.EventID != "old-advert" || e.RawRef["content_sha256"] != hex.EncodeToString(sum[:]) || ref["file_id"] != b.batches[0].FileID {
+			t.Fatalf("missing original JSONL reference: %+v", e.RawRef)
+		}
+	}
+}

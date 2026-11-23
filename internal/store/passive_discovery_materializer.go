@@ -438,6 +438,9 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 		o.NameEncoding = passiveString(event.Payload, nameField+"_encoding")
 		o.Confidence = "confirmed"
 		o.ValidUntil = at.Add(time.Duration(passiveTTL(event.Payload, 24*3600)) * time.Second)
+		if discovery.HardwareProjectionEnabled() {
+			setPassiveDHCPCandidate(&o, discovery.DHCPLeaseCandidateType(o))
+		}
 	case "arp":
 		if mac == "" || !scope.allows(ip) {
 			return discovery.Observation{}, "arp_out_of_scope"
@@ -848,9 +851,14 @@ var mdnsInstanceAddress = regexp.MustCompile(`\(([0-9]{1,3}(?:\.[0-9]{1,3}){3})\
 func annotatePassiveDHCPClientCandidate(o *discovery.Observation) {
 	p := o.Evidence.Payload
 	kind := discovery.PassiveDHCPClientCandidate(passiveString(p, "vendor_class"), passiveString(p, "hostname"), passiveString(p, "requested_options"))
+	setPassiveDHCPCandidate(o, kind)
+}
+
+func setPassiveDHCPCandidate(o *discovery.Observation, kind string) {
 	if kind == "" {
 		return
 	}
+	p := o.Evidence.Payload
 	fields := make(map[string]any, len(p)+1)
 	for key, value := range p {
 		fields[key] = value

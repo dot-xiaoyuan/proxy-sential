@@ -49,6 +49,16 @@ type HardwareState struct {
 }
 
 func EvaluateHardwareFacts(facts []HardwareFact, previous *HardwareState, now time.Time) (HardwareState, error) {
+	return evaluateHardwareFacts(facts, previous, now, fingerprint.EvaluateHardware)
+}
+
+// ReplayHardwareFacts uses a verified snapshot catalog without changing the
+// installed library, while sharing the current projection's evaluation.
+func ReplayHardwareFacts(facts []HardwareFact, previous *HardwareState, now time.Time, catalog *fingerprint.HardwareCatalog) (HardwareState, error) {
+	return evaluateHardwareFacts(facts, previous, now, catalog.Evaluate)
+}
+
+func evaluateHardwareFacts(facts []HardwareFact, previous *HardwareState, now time.Time, evaluate func(fingerprint.HardwareInput, time.Time) fingerprint.HardwareResult) (HardwareState, error) {
 	if len(facts) == 0 || len(facts) > 512 {
 		return HardwareState{}, fmt.Errorf("hardware identity has %d facts; expected 1..512", len(facts))
 	}
@@ -56,6 +66,7 @@ func EvaluateHardwareFacts(facts []HardwareFact, previous *HardwareState, now ti
 	first := facts[0]
 	s := HardwareState{IdentityKey: first.IdentityKey, ScopeKey: census.ScopeKey(first.SensorID, first.CampusID, first.AccessDomain, first.VLAN, first.VRF), DeviceKey: first.DeviceKey, SensorID: first.SensorID, CampusID: first.CampusID, AccessDomain: first.AccessDomain, VLAN: first.VLAN, VRF: first.VRF, MAC: first.MAC, FirstSeen: first.FirstSeen, LastSeen: first.ObservedAt}
 	evidence := []fingerprint.EvidenceSignal{}
+	var originalRecords map[string]bool
 	addressOnly := true
 	var latestNonAddress, latestAddress, firstAddress time.Time
 	revoked := false
@@ -87,8 +98,14 @@ func EvaluateHardwareFacts(facts []HardwareFact, previous *HardwareState, now ti
 		}
 		revoked = revoked || f.Revoked && len(f.Signals) > 0
 		evidence = append(evidence, f.Evidence()...)
+		if f.hasReferencedProductRecord() {
+			if originalRecords == nil {
+				originalRecords = make(map[string]bool)
+			}
+			originalRecords[f.EvidenceID] = true
+		}
 	}
-	result := fingerprint.EvaluateHardware(fingerprint.HardwareInput{IdentityTrusted: true, Evidence: evidence}, now)
+	result := evaluate(fingerprint.HardwareInput{IdentityTrusted: true, Evidence: evidence, MAC: first.MAC, OriginalRecords: originalRecords}, now)
 	if result.Incomplete {
 		return HardwareState{}, fmt.Errorf("incomplete hardware evaluation: %s", result.Error)
 	}

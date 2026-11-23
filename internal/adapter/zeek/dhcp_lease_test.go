@@ -51,3 +51,14 @@ func TestDHCPMessageWithMissingOrInvalidIdentityStaysNonProjectable(t *testing.T
 		}
 	}
 }
+
+func TestDHCPProductVendorIsWireField(t *testing.T) {
+	p := dhcpPayload(map[string]string{"client_software": "software summary", "vendor_class": "HUAWEI:openharmony:SGT-AL50"})
+	if p["dhcp_product_vendor_class"] != "HUAWEI:openharmony:SGT-AL50" || p["vendor_class"] != "software summary" {
+		t.Fatalf("lost exact Option 60 or changed legacy preference: %+v", p)
+	}
+	p = dhcpPayload(map[string]string{"client_software": "HUAWEI:openharmony:SGT-AL50"})
+	if p["dhcp_product_vendor_class"] != nil {
+		t.Fatal("software summary counted as Option 60")
+	}
+}

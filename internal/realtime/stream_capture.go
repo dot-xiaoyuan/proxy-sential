@@ -303,6 +303,10 @@ func assignStreamPositionKeys(events []normalized.Event, source Source, epoch, f
 		}
 		events[i].RawRef["producer_event_id"] = events[i].EventID
 		events[i].RawRef["source_offset"] = position
+		dhcpProfile := (source.Kind == "zeek-dhcp" || source.Kind == "zeek-dhcp-binding") && (events[i].Payload["dhcp_product_vendor_class"] != nil || events[i].Payload["dhcp_option60_present"] == true)
+		if dhcpProfile || (source.Kind == "device-signals" && packetSSDPRecord(events[i])) {
+			events[i].RawRef["original_file_id"] = fileID
+		}
 		events[i].EventID = "stream-" + hex.EncodeToString(sum[:16])
 		if events[i].Type == "proxy_transaction" && source.ProxyProducer != nil {
 			if err := proxyprotocol.Sign(&events[i], *source.ProxyProducer); err != nil {

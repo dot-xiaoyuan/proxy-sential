@@ -86,7 +86,14 @@ func AuditHardwareObservation(o Observation, at time.Time) (HardwareObservationA
 	}
 	evidence := (HardwareFact{Signals: a.RuleInputs, EvidenceID: o.EventID, ObservedAt: o.ObservedAt, Revoked: o.Withdrawn}).Evidence()
 	a.FieldReplay = fingerprint.EvaluateHardware(fingerprint.HardwareInput{IdentityTrusted: true, Evidence: evidence}, at)
-	a.Result = fingerprint.EvaluateHardware(fingerprint.HardwareInput{IdentityTrusted: fact != nil, Evidence: evidence}, at)
+	var input fingerprint.HardwareInput
+	if fact != nil {
+		input = fingerprint.HardwareInput{IdentityTrusted: true, Evidence: fact.Evidence(), MAC: fact.MAC}
+		if fact.hasReferencedProductRecord() {
+			input.OriginalRecords = map[string]bool{fact.EvidenceID: true}
+		}
+	}
+	a.Result = fingerprint.EvaluateHardware(input, at)
 	if fact == nil && a.FieldReplay.Type != "" {
 		a.Reasons = append(a.Reasons, "product_fields_match_but_hardware_ownership_not_proven")
 	} else if len(a.RuleInputs) > 0 && a.FieldReplay.Type == "" && !a.FieldReplay.Incomplete && !o.Withdrawn && !o.ObservedAt.After(at) {

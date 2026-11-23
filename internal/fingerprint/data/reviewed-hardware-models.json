@@ -1146,6 +1146,174 @@
         "Mac17",
         "MacSamba"
       ]
+    },
+    {
+      "id": "hp-laserjet-tank-mfp-260x",
+      "pattern": "(?i)^HP LaserJet Tank MFP 260x(?:-AirPrint)?$",
+      "field": "dns_sd_referenced_model",
+      "type": "printer",
+      "model": "HP LaserJet Tank MFP 260x",
+      "manufacturer": "HP",
+      "capabilities": [
+        "scanning"
+      ],
+      "source_url": "https://h10032.www1.hp.com/ctg/Manual/c08371828.pdf",
+      "rationale": "The HP setup guide documents the 260x multifunction printer series. The DNS-SD label can end with the AirPrint service designation and does not identify an individual submodel. Require a referenced original announcement from a reviewed IEEE MA-L prefix: a campus mDNS relay also advertises printer model labels.",
+      "positive": [
+        "HP LaserJet Tank MFP 260x",
+        "HP LaserJet Tank MFP 260x-AirPrint"
+      ],
+      "negative": [
+        "HP LaserJet Tank MFP 160x",
+        "HP LaserJet Tank MFP",
+        "HP LaserJet Tank MFP 260x firmware",
+        "HP LaserJet Tank MFP 260x0"
+      ],
+      "version": "hardware-model-review-2026-11-23.1",
+      "mac_prefixes": [
+        "30:13:8b"
+      ]
+    },
+    {
+      "id": "sharp-mx-c2622r",
+      "pattern": "(?i)^SHARP MX-C2622R$",
+      "field": "dns_sd_referenced_model",
+      "type": "printer",
+      "model": "SHARP MX-C2622R",
+      "manufacturer": "Sharp",
+      "capabilities": [
+        "scanning"
+      ],
+      "source_url": "https://www.cqc.com.cn/www/upload/files/upload/resources/file/2025/04/07/62828.pdf#page=20",
+      "rationale": "CQC certificate CQC20701243837 explicitly names SHARP MX-C2622R as digital multifunction office equipment. The scoped device advertises IPP and the complete model. Require a referenced original announcement from a reviewed IEEE MA-L prefix: a campus mDNS relay also advertises printer model labels.",
+      "positive": [
+        "SHARP MX-C2622R"
+      ],
+      "negative": [
+        "SHARP",
+        "SHARP MX-C2622",
+        "SHARP MX-C2622RX",
+        "SHARP MX-C2622R firmware",
+        "SHARP MX-C2651R"
+      ],
+      "version": "hardware-model-review-2026-11-23.1",
+      "mac_prefixes": [
+        "14:50:51"
+      ]
+    },
+    {
+      "id": "hikvision-sadp-ds-ipc-b12-i",
+      "field": "sadp_referenced_model",
+      "pattern": "^DS-IPC-B12-I$",
+      "type": "camera",
+      "model": "DS-IPC-B12-I",
+      "manufacturer": "Hikvision",
+      "version": "hardware-model-review-2026-11-23.2",
+      "source_url": "https://zfcg.henan.gov.cn/cmsweb81e27e/nas/webfile2024/hkgq/rootfiles/2024/09/11/bea6c4d3cdac449d9d39365a71f53e40.pdf#page=307",
+      "rationale": "The public procurement equipment schedule names the manufacturer, exact code and network camera category. The attributed SADP response must reference the original payload.",
+      "positive": [
+        "DS-IPC-B12-I"
+      ],
+      "negative": [
+        "DS-IPC-B12-I2",
+        "DS-IPC-B12",
+        "Hikvision"
+      ]
+    },
+    {
+      "id": "h3c-s24g-u-dhcp-switch",
+      "field": "dhcp_product_model",
+      "pattern": "^S24G-U$",
+      "type": "switch",
+      "model": "S24G-U",
+      "manufacturer": "H3C",
+      "version": "hardware-model-review-2026-11-23.3",
+      "source_url": "https://www.h3c.com/cn/Service/Document_Software/Document_Center/Home/Switches/00-Public/Quick_Starts/Quick_Installation/H3C_Mini_S16G-U_S24G-U_QS-5PW101/",
+      "rationale": "H3C documents the exact S24G-U Ethernet switch. Require the original CloudSwitch_1 Option 60, model hostname with the bound MAC suffix, and H3C prefix 743A20 listed in the verified IEEE catalog.",
+      "positive": [
+        "S24G-U"
+      ],
+      "negative": [
+        "S24G",
+        "S16G-U",
+        "CloudSwitch_1"
+      ]
+    },
+    {
+      "id": "dhcp-airengine-5762-10",
+      "field": "dhcp_product_model",
+      "pattern": "^AirEngine 5762-10$",
+      "type": "access_point",
+      "model": "AirEngine 5762-10",
+      "manufacturer": "Huawei",
+      "version": "hardware-model-review-2026-11-23.5",
+      "source_url": "https://e.huawei.com/en/products/wlan/indoor-access-points/airengine-5762-10",
+      "rationale": "The manufacturer documents this exact model and device class. The original scoped REQUEST/ACK must match the reviewed vendor field and IEEE prefix. Device-specific hostname checks are enforced by the DHCP adapter.",
+      "positive": [
+        "AirEngine 5762-10"
+      ],
+      "negative": [
+        "AirEngine 5762-10 Pro",
+        "Huawei",
+        "AirEngine 5762-100"
+      ]
+    },
+    {
+      "id": "dhcp-yls220-24g2f",
+      "field": "dhcp_product_model",
+      "pattern": "^YLS220-24G2F$",
+      "type": "switch",
+      "model": "YLS220-24G2F",
+      "manufacturer": "TP-Link",
+      "version": "hardware-model-review-2026-11-23.5",
+      "source_url": "https://service.tp-link.com.cn/download/202211/YLS220-24G2F%20V1.0%E5%AE%89%E8%A3%85%E6%89%8B%E5%86%8C%201.0.0.pdf",
+      "rationale": "The manufacturer documents this exact model and device class. The original scoped REQUEST/ACK must match the reviewed vendor field and IEEE prefix. Device-specific hostname checks are enforced by the DHCP adapter.",
+      "positive": [
+        "YLS220-24G2F"
+      ],
+      "negative": [
+        "YLS220-24G2F Pro",
+        "TP-Link",
+        "YLS220-24G2F0"
+      ]
+    },
+    {
+      "id": "dhcp-tl-sg2008d",
+      "field": "dhcp_product_model",
+      "pattern": "^TL-SG2008D$",
+      "type": "switch",
+      "model": "TL-SG2008D",
+      "manufacturer": "TP-Link",
+      "version": "hardware-model-review-2026-11-23.5",
+      "source_url": "https://www.tp-link.com.cn/product_1936.html?v=specification",
+      "rationale": "The manufacturer documents this exact model and device class. The original scoped REQUEST/ACK must match the reviewed vendor field and IEEE prefix. Device-specific hostname checks are enforced by the DHCP adapter.",
+      "positive": [
+        "TL-SG2008D"
+      ],
+      "negative": [
+        "TL-SG2008D Pro",
+        "TP-Link",
+        "TL-SG2008D0"
+      ]
+    },
+    {
+      "id": "dhcp-nx30",
+      "field": "dhcp_product_model",
+      "pattern": "^NX30$",
+      "type": "router",
+      "model": "NX30",
+      "manufacturer": "H3C",
+      "version": "hardware-model-review-2026-11-23.5",
+      "source_url": "https://www.h3c.com/cn/Products_And_Solution/IntelligentTerminalProducts/Star_Products/Home_Network/N/NX30/",
+      "rationale": "The manufacturer documents this exact model and device class. The original scoped REQUEST/ACK must match the reviewed vendor field and IEEE prefix. Device-specific hostname checks are enforced by the DHCP adapter.",
+      "positive": [
+        "NX30"
+      ],
+      "negative": [
+        "NX30 Pro",
+        "H3C",
+        "NX300"
+      ]
     }
   ]
 }

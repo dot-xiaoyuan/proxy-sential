@@ -784,8 +784,17 @@ func dhcpPayload(fields map[string]string) map[string]any {
 	}
 	copyNormalizedPayloadName(payload, fields, "host_name", "hostname")
 	copyNormalizedPayloadName(payload, fields, "hostname", "hostname")
+	// The legacy hint prefers software. Preserve the wire option independently,
+	// using a marker when the existing string already contains the same bytes.
 	copyPayload(payload, fields, "client_software", "vendor_class")
 	copyPayload(payload, fields, "vendor_class", "vendor_class")
+	if value := first(fields, "vendor_class"); value != "" && len(value) <= 255 {
+		if value == payload["vendor_class"] {
+			payload["dhcp_option60_present"] = true
+		} else {
+			payload["dhcp_product_vendor_class"] = value
+		}
+	}
 	copyPayload(payload, fields, "requested_options", "requested_options")
 	copyPayload(payload, fields, "option_order", "dhcp_options")
 	copyPayload(payload, fields, "client_id_hwtype", "client_id_hwtype")

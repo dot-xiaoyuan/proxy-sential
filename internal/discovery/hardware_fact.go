@@ -157,24 +157,86 @@ func (o *Observation) MarkUnattributedSNMPClue() {
 
 var dhcpProductClass = regexp.MustCompile(`(?i)^(?:H3C\. H3C (WA[0-9][A-Z0-9-]{1,30})|HUAWEI:router:((?:AX|WS)[0-9][A-Z0-9-]{1,30}):[0-9A-Z.:_-]{1,40})$`)
 
-func dhcpACKProductModel(o Observation) string {
+func dhcpACKProfile(o Observation) (product, candidateType string) {
 	p := o.Evidence.Payload
 	if o.Withdrawn || !o.ValidUntil.After(o.ObservedAt) || o.IP == "" ||
 		o.IP != str(p, "assigned_addr") || p["discovery_scope_conflict"] == true || p["request_only"] == true {
-		return ""
+		return "", ""
 	}
 	if vlan := str(p, "dhcp_capture_vlan"); vlan != "" && vlan != o.VLAN {
-		return ""
+		return "", ""
 	}
 	actions := strings.FieldsFunc(strings.ToUpper(str(p, "msg_types")), func(r rune) bool { return r == ',' || r == ' ' })
 	if !slices.Contains(actions, "ACK") || slices.Contains(actions, "NAK") || slices.Contains(actions, "RELEASE") {
-		return ""
+		return "", ""
 	}
 	match := dhcpProductClass.FindStringSubmatch(strings.TrimSpace(str(p, "vendor_class")))
-	if match == nil {
+	if match != nil {
+		return strings.ToUpper(firstText(match[1], match[2])), ""
+	}
+	// These two fields come from the client side of the same acknowledged
+	// exchange. The catalog only accepts complete manufacturer-listed codes.
+	if !slices.Contains(actions, "REQUEST") || !hasOriginalFileRecord(o.Evidence.RawRef) ||
+		o.Evidence.Source != "zeek" || o.VLAN == "" || str(p, "dhcp_capture_vlan") != o.VLAN ||
+		!strings.EqualFold(str(p, "mac"), o.MAC) {
+		return "", ""
+	}
+	option60 := str(p, "dhcp_product_vendor_class")
+	if option60 == "" && p["dhcp_option60_present"] == true {
+		option60 = str(p, "vendor_class")
+	}
+	host := str(p, "hostname")
+	if code := dhcpInfrastructureCode(option60, host, o.MAC); code != "" {
+		return code, ""
+	}
+	vendor := strings.Split(option60, ":")
+	if len(vendor) == 3 && vendor[0] == "HUAWEI" && (vendor[1] == "openharmony" || vendor[1] == "android") &&
+		vendor[2] == host {
+		if kind := dhcpReportedType(vendor[2]); kind != "" {
+			return vendor[2], kind
+		}
+	}
+	return "", ""
+}
+
+// The prefixes below are the registered vendor prefixes verified in the V8
+// IEEE table. Products with device-specific hostnames must also match the
+// original client MAC, including the suffix advertised by that product.
+func dhcpInfrastructureCode(option60, host, mac string) string {
+	mac = strings.ToLower(mac)
+	switch option60 {
+	case "CloudSwitch_1":
+		if len(mac) == 17 && strings.HasPrefix(mac, "74:3a:20:") && host == "S24G-U_"+strings.ToUpper(strings.ReplaceAll(mac[12:], ":", "")) {
+			return "S24G-U"
+		}
+	case "huawei AP":
+		if strings.HasPrefix(mac, "28:41:ec:") && host == "Huawei AP-AirEngine5762-10-"+mac {
+			return "AirEngine 5762-10"
+		}
+	case "YLS220-24G2F":
+		if strings.HasPrefix(mac, "78:60:5b:") && host == option60 {
+			return option60
+		}
+	case "TL-SG2008D":
+		if strings.HasPrefix(mac, "9c:47:82:") {
+			return option60
+		}
+	case "H3C NX30":
+		if strings.HasPrefix(mac, "70:c6:dd:") && host == "H3C_NX30" {
+			return "NX30"
+		}
+	}
+	return ""
+}
+
+// DHCPLeaseCandidateType returns a model-derived type clue for an attributed
+// lease. The hardware projection keeps the self-report out of confirming rules.
+func DHCPLeaseCandidateType(o Observation) string {
+	if o.Origin != "dhcp" || o.Node == "" || o.Site == "" || o.Domain == "" || o.MAC == "" || !hardwareDirectOwnership(o) {
 		return ""
 	}
-	return strings.ToUpper(firstText(match[1], match[2]))
+	_, kind := dhcpACKProfile(o)
+	return kind
 }
 
 // HardwareFactFromObservation never promotes legacy classifications: it adapts
@@ -226,7 +288,12 @@ func hardwareObservationSignals(o Observation) ([]StoredHardwareSignal, error) {
 	fields := map[string]string{}
 	switch o.Origin {
 	case "dhcp":
-		fields["dhcp_product_model"] = dhcpACKProductModel(o)
+		code, candidate := dhcpACKProfile(o)
+		if candidate != "" {
+			fields["dhcp_reported_model"] = code
+		} else {
+			fields["dhcp_product_model"] = code
+		}
 	case "dhcp_client":
 		if hardwareDirectOwnership(o) {
 			for _, key := range []string{"vendor_class", "requested_options", "hostname", "dhcp_options", "client_id_hwtype", "client_id_hwaddr", "client_chaddr"} {
@@ -344,4 +411,30 @@ func (f HardwareFact) Evidence() []fingerprint.EvidenceSignal {
 		out = append(out, fingerprint.EvidenceSignal{Protocol: protocol, Field: s.Field, Value: s.Value, Direction: direction, Association: "direct", SourceFamily: s.Protocol, EventID: f.EvidenceID, ObservedAt: f.ObservedAt, ValidUntil: validUntil})
 	}
 	return out
+}
+
+func (f HardwareFact) hasReferencedProductRecord() bool {
+	if f.Revoked {
+		return false
+	}
+	if f.Source == "sadp" {
+		return validOriginalDigest(str(f.RawRef, "payload_sha256"))
+	}
+	return f.Source == "dns_sd" && hasOriginalFileRecord(f.RawRef)
+}
+
+func hasOriginalFileRecord(ref map[string]any) bool {
+	if !validOriginalDigest(str(ref, "content_sha256")) {
+		return false
+	}
+	batch, _ := ref["ingest_source_ref"].(map[string]any)
+	return str(batch, "file_id") != "" || str(ref, "original_file_id") != ""
+}
+
+func validOriginalDigest(digest string) bool {
+	if len(digest) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(digest)
+	return err == nil
 }

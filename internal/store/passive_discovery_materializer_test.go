@@ -591,3 +591,33 @@ func TestPassiveDiscoveryTTLOSHint(t *testing.T) {
 		}
 	}
 }
+
+func TestACKModelSelfReportProducesOnlyScopedCandidate(t *testing.T) {
+	const raw = `{"ts":1794710000,"capture_vlan":"2702/15","mac":"00:11:22:33:44:55","assigned_addr":"192.168.0.63","lease_time":"3600","msg_types":"REQUEST,ACK","vendor_class":"HUAWEI:openharmony:SGT-AL50","client_software":"summary","host_name":"SGT-AL50"}`
+	var data bytes.Buffer
+	if _, err := zeek.Convert(strings.NewReader(raw+"\n"), &data, zeek.Options{SensorID: "sensor", LogKind: "dhcp"}); err != nil {
+		t.Fatal(err)
+	}
+	var e normalized.Event
+	if err := json.NewDecoder(&data).Decode(&e); err != nil {
+		t.Fatal(err)
+	}
+	e.Observer["interface"] = "mirror"
+	e.RawRef["ingest_source_ref"] = map[string]any{"file_id": "original-file"}
+	scope, _ := parsePassiveDiscoveryScope("192.168.0.0/24")
+	t.Setenv("PROXY_SENTINEL_HARDWARE_SHADOW", "false")
+	t.Setenv("PROXY_SENTINEL_HARDWARE_V2", "false")
+	old, reason := passiveObservation(e, scope)
+	if reason != "" || old.Evidence.Payload["dhcp_candidate_type"] != nil {
+		t.Fatalf("legacy observation: %+v %s", old, reason)
+	}
+	t.Setenv("PROXY_SENTINEL_HARDWARE_V2", "true")
+	o, reason := passiveObservation(e, scope)
+	if reason != "" || o.Evidence.Payload["dhcp_candidate_type"] != "mobile" || e.Payload["dhcp_candidate_type"] != nil {
+		t.Fatalf("missing or leaked candidate: %+v %s", o, reason)
+	}
+	f, err := discovery.HardwareFactFromObservation(o)
+	if err != nil || f == nil || len(f.Signals) != 1 || f.Signals[0].Field != "dhcp_reported_model" {
+		t.Fatalf("wrong model evidence: %+v %v", f, err)
+	}
+}

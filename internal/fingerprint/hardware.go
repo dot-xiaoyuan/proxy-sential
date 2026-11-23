@@ -27,6 +27,8 @@ const hardwareMaxEvidenceSignals = 512
 type HardwareInput struct {
 	Evidence        []EvidenceSignal
 	IdentityTrusted bool
+	MAC             string
+	OriginalRecords map[string]bool
 }
 type HardwareSource struct {
 	Source       string            `json:"source"`
@@ -120,6 +122,7 @@ type hardwareModelRule struct {
 	Negative     []string `json:"negative"`
 	SourceURL    string   `json:"source_url,omitempty"`
 	Capabilities []string `json:"capabilities,omitempty"`
+	MACPrefixes  []string `json:"mac_prefixes,omitempty"`
 	compiled     *regexp.Regexp
 }
 type nativeHardwareRule struct {
@@ -252,11 +255,25 @@ func ParseHardwareCatalog(data, provenance []byte, extra ...[]byte) (*HardwareCa
 		if err := verifyRaw(r.RawRef, r.RawSHA256); err != nil {
 			return nil, err
 		}
-		if r.Field != "" && r.Field != "dhcp_product_model" && r.Field != "sip_user_agent" && r.Field != "rtsp_user_agent" && r.Field != "sadp_model" && r.Field != "dns_sd_model" {
+		switch r.Field {
+		case "", "dhcp_product_model", "sip_user_agent", "rtsp_user_agent", "sadp_model", "dns_sd_model", "dns_sd_referenced_model", "sadp_referenced_model":
+		default:
 			return nil, fmt.Errorf("model %s has unsupported model field %q", r.ID, r.Field)
 		}
 		if r.TypeOnly && (r.Model != "" || CanonicalHardwareType(r.Type) == "") {
 			return nil, fmt.Errorf("type-only rule %s must have a valid type and no model", r.ID)
+		}
+		if r.Field == "dns_sd_referenced_model" {
+			if len(r.MACPrefixes) == 0 || len(r.MACPrefixes) > 16 {
+				return nil, fmt.Errorf("model %s requires bounded MAC prefixes", r.ID)
+			}
+			for _, prefix := range r.MACPrefixes {
+				if !hardwareMACPrefix.MatchString(prefix) {
+					return nil, fmt.Errorf("model %s has invalid MAC prefix", r.ID)
+				}
+			}
+		} else if len(r.MACPrefixes) != 0 {
+			return nil, fmt.Errorf("model %s has MAC prefixes without a referenced DNS-SD field", r.ID)
 		}
 		add(r.Source, true)
 		var err error
@@ -511,6 +528,25 @@ func CanonicalHardwareType(value string) string {
 }
 
 var appleTVCompatibilityModel = regexp.MustCompile(`(?i)^AppleTV[0-9]+,[0-9]+$`)
+var hardwareMACPrefix = regexp.MustCompile(`^[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}$`)
+
+func (r hardwareModelRule) acceptsSignal(s EvidenceSignal, input HardwareInput) bool {
+	if r.Field == "sadp_referenced_model" {
+		return s.Protocol == "sadp" && s.Field == "sadp_model" && input.OriginalRecords[s.EventID]
+	}
+	if r.Field == "dns_sd_referenced_model" {
+		if s.Protocol != "dns_sd" || s.Field != "dns_sd_model" || !input.OriginalRecords[s.EventID] {
+			return false
+		}
+		for _, prefix := range r.MACPrefixes {
+			if strings.HasPrefix(input.MAC, prefix+":") {
+				return true
+			}
+		}
+		return false
+	}
+	return r.Field == s.Field || r.Field == "" && s.Field != "dhcp_product_model" && s.Field != "sip_user_agent" && s.Field != "rtsp_user_agent"
+}
 
 func hardwareEvidenceDirection(s EvidenceSignal) (string, bool) {
 	switch s.Field {
@@ -721,8 +757,7 @@ func (h *HardwareCatalog) Evaluate(input HardwareInput, now time.Time) HardwareR
 		}
 		if hardwareModelField(s.Field) {
 			for _, r := range h.models {
-				// The DHCP model field only uses rules reviewed for a client self-report.
-				if r.Field != s.Field && (r.Field != "" || s.Field == "dhcp_product_model" || s.Field == "sip_user_agent" || s.Field == "rtsp_user_agent") {
+				if !r.acceptsSignal(s, input) {
 					continue
 				}
 				report := reports[r.Source]

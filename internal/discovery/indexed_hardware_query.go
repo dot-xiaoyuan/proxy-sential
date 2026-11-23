@@ -17,7 +17,7 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 	searchIP, searchName, searchType, searchManufacturer, searchModel := "''::text", "''::text", "''::text", "''::text", "''::text"
 	dhcpType := "''::text"
 	if query.DeviceType != "" || query.includeCandidateTypes || query.View == "iot" || query.Capability == "dumb" {
-		dhcpType = `CASE WHEN l.origin='dhcp_client' AND l.valid_until>now() THEN coalesce(l.data->'evidence'->'payload'->>'dhcp_candidate_type','') ELSE '' END`
+		dhcpType = `CASE WHEN l.origin IN ('dhcp_client','dhcp') AND NOT l.withdrawn AND l.valid_until>now() THEN coalesce(l.data->'evidence'->'payload'->>'dhcp_candidate_type','') ELSE '' END`
 	}
 	profileType := "''::text"
 	if query.Search != "" {

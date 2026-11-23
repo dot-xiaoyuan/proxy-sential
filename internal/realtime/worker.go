@@ -205,8 +205,11 @@ func processOnce(ctx context.Context, backend Backend, opts Options, source Sour
 	batchID := stableID(opts.SensorID, source.Kind, source.Path, fileID, fmt.Sprint(start), fmt.Sprint(end), checksum)
 	now := time.Now().UTC()
 	batch := ingest.Batch{BatchID: batchID, SensorID: opts.SensorID, SourceKind: source.Kind, SourcePath: source.Path, FileID: fileID, StartOffset: start, EndOffset: end, Checksum: checksum, Status: "started", StartedAt: now.Format(time.RFC3339Nano)}
-	if strings.HasPrefix(source.Kind, "zeek-") {
+	if strings.HasPrefix(source.Kind, "zeek-") || source.Kind == "device-signals" {
 		for i := range events {
+			if source.Kind == "device-signals" && !packetSSDPRecord(events[i]) {
+				continue
+			}
 			if events[i].Type == "proxy_transaction" {
 				continue
 			}
@@ -352,7 +355,7 @@ func normalize(source Source, chunk []byte, absoluteOffset int64, sensorID strin
 			return nil, stats, err
 		}
 	case "device-signals", "shared-device-signals":
-		return normalizeDeviceSignals(input, sensorID)
+		return normalizeDeviceSignals(input, sensorID, source.Kind == "device-signals")
 	default:
 		return nil, stats, fmt.Errorf("unsupported ingest source kind %q", source.Kind)
 	}
@@ -371,7 +374,11 @@ func normalize(source Source, chunk []byte, absoluteOffset int64, sensorID strin
 	return events, stats, nil
 }
 
-func normalizeDeviceSignals(input []byte, sensorID string) ([]normalized.Event, normalizedStats, error) {
+func packetSSDPRecord(e normalized.Event) bool {
+	return e.Type == "device" && e.Source == "packet-sidecar" && e.SourceEventType == "ssdp"
+}
+
+func normalizeDeviceSignals(input []byte, sensorID string, referenceSSDP bool) ([]normalized.Event, normalizedStats, error) {
 	stats := normalizedStats{ByType: map[string]int{}}
 	events := []normalized.Event{}
 	scanner := bufio.NewScanner(bytes.NewReader(input))
@@ -395,6 +402,14 @@ func normalizeDeviceSignals(input []byte, sensorID string) ([]normalized.Event, 
 			event.Observer = map[string]any{}
 		}
 		event.Observer["sensor_id"] = sensorID
+		if referenceSSDP && packetSSDPRecord(event) {
+			if event.RawRef == nil {
+				event.RawRef = map[string]any{}
+			}
+			sum := sha256.Sum256(scanner.Bytes())
+			event.RawRef["content_sha256"] = hex.EncodeToString(sum[:])
+			event.RawRef["content_hash_scope"] = "log_record_without_line_ending"
+		}
 		events = append(events, event)
 		stats.Emitted++
 		stats.ByType[event.Type]++

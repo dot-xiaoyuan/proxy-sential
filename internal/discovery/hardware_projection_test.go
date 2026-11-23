@@ -30,6 +30,41 @@ func TestHardwareFactsAreScopedAndRequireOwnership(t *testing.T) {
 	}
 }
 
+func TestReferencedPrinterRejectsRelayAndUntraceableAnnouncement(t *testing.T) {
+	now := time.Date(2026, 11, 23, 6, 0, 0, 0, time.UTC)
+	for _, test := range []struct {
+		name, mac, model, digest, fileID string
+		withdrawn                        bool
+		want                             string
+	}{
+		{"HP source with original", "30:13:8b:00:00:01", "HP LaserJet Tank MFP 260x", strings.Repeat("a", 64), "mdns:1", false, "printer"},
+		{"Sharp source with original", "14:50:51:00:00:01", "SHARP MX-C2622R", strings.Repeat("a", 64), "mdns:1", false, "printer"},
+		{"relay advertising the same HP model", "00:0b:86:00:00:01", "HP LaserJet Tank MFP 260x", strings.Repeat("a", 64), "mdns:1", false, ""},
+		{"prefix without exact model", "30:13:8b:00:00:01", "HP LaserJet Tank MFP", strings.Repeat("a", 64), "mdns:1", false, ""},
+		{"digest with no original file", "30:13:8b:00:00:01", "HP LaserJet Tank MFP 260x", strings.Repeat("a", 64), "", false, ""},
+		{"invalid digest", "30:13:8b:00:00:01", "HP LaserJet Tank MFP 260x", strings.Repeat("z", 64), "mdns:1", false, ""},
+		{"withdrawal", "30:13:8b:00:00:01", "HP LaserJet Tank MFP 260x", strings.Repeat("a", 64), "mdns:1", true, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			o := hardwareTestObservation(now)
+			o.Origin, o.MAC, o.ModelName, o.Withdrawn = "dns_sd", test.mac, test.model, test.withdrawn
+			o.Evidence.Payload = map[string]any{"l2_source_mac_direct": true, "responder_l2_mac": test.mac, "service_type": "_ipp._tcp"}
+			o.Evidence.RawRef = map[string]any{
+				"content_sha256":    test.digest,
+				"ingest_source_ref": map[string]any{"file_id": test.fileID},
+			}
+			fact, err := HardwareFactFromObservation(o)
+			if err != nil || fact == nil {
+				t.Fatalf("fact=%+v error=%v", fact, err)
+			}
+			state, err := EvaluateHardwareFacts([]HardwareFact{*fact}, nil, now)
+			if err != nil || state.HardwareType != test.want {
+				t.Fatalf("type=%q want=%q error=%v", state.HardwareType, test.want, err)
+			}
+		})
+	}
+}
+
 func TestHardwareDHCPModelUsesOnlyAttributedACK(t *testing.T) {
 	at := time.Date(2026, 11, 15, 2, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {

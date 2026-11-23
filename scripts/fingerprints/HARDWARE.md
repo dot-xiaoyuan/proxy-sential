@@ -44,3 +44,17 @@ CLI 不访问现场，不发送探测，不导入运行中的规则包。默认�
 `_leboremote._tcp` 的 `packagename=com.tcl.MultiScreenInteraction_TV` 作为接收端软件证据保留，不映射 TCL 硬件品牌。同一可信作用域身份中，AppleTV 型号声明处于该公告有效窗口时，暂不作为苹果硬件型号确认。允许五分钟记录先后差；缺 TTL 的旧记录仅采用五分钟窗口。撤销的标记不参与判断，后续超出公告窗口的型号可重新评估，跨身份输入直接拒绝。原 TXT 和各服务证据不删除。
 
 原文恢复器新增 `snapshot-original --original-kind rtsp-device` / `apply-original`，复用 DHCP 的行哈希、文件身份、固定 30 天窗口、2 MiB/5,000 条分页、1 MiB/50 条事务、背压与检查点流程。新 schema 为 `protocol-original-file-replay/v1`；旧 DHCP 清单和检查点保持原 schema/哈希语义。仅受控 RTSP 原文可进入新增入口，不改实时消费游标。
+
+### DNS-SD 打印机原文归属与同批对照
+
+`dns_sd_referenced_model` 规则从已有同作用域硬件事实读取精确型号、原始日志文件引用和记录摘要，并要求设备 MAC 命中该型号已审核的前缀。各条件同时满足才形成硬件类型。转发的广告可保留在原有观测中。此字段在旧应用的 V8 校验中会显式报错。
+
+`passive-hardware-audit --input snapshot.jsonl --baseline-bundle old.tar.gz --candidate-bundle new.tar.gz --output comparison.json` 使用本地冻结文件比较类型、型号、冲突和证据。输入首行包含 `kind=meta`、`from`、`as_of` 和 `cohort`，后续每行包含 `kind=device`、`key`、`split`、`state`、`facts` 和 `overflow`。身份 SHA-256 首字节小于 179 的记录进入开发集，`--development-only` 只评估该组。导出保存截止前的支持事实、撤销记录及实际投影状态，并记录来源水位。回放输出保留输入哈希、超限和现场状态与截止回放的差异。
+
+### DHCP 产品自报及 SSDP 原文复核
+
+204 的 DHCP 租约同时保留 Zeek 的原有厂商提示和实际 Option 60 产品字段。交换机规则要求同一次 REQUEST/ACK 的地址、MAC 与采集 VLAN 一致，有文件和行摘要，Option 60 为 `CloudSwitch_1`，主机名中的型号和 MAC 末四位符合已审定的 H3C 前缀。另外四项审定型号覆盖华为 AirEngine 5762-10、TP-Link YLS220-24G2F 和 TL-SG2008D，以及 H3C NX30。AP 的主机名还必须含同一 MAC 的全长字符串。海康 DS-IPC-B12-I 规则要求有可信归属的 SADP 产品响应及载荷摘要。
+
+华为手机和平板的完整产品码可以给出品类线索。类型取自官方清单，厂商字段与主机名必须在同一条有原文引用的租约记录中完全相符。租约中的 `dhcp_candidate_type` 用于候选筛选，硬件事实中的 `dhcp_reported_model` 保留自报码。客户端 HTTP 型号适合独立复核，核对时使用请求方 IP、原文时间和完整作用域，并排除歧义绑定。[华为设备型号清单](https://developer.huawei.com/consumer/cn/doc/harmonyos-releases/support-device/)
+
+新采集的 SSDP 观测保留原始 sidecar JSONL 行摘要。普通入库保留文件身份、批次范围和批次摘要，流式入库保留文件身份与源偏移。该摘要校验采集器的输出记录。核对历史采集记录需实际匹配原有事件、时间、作用域和产品字段。
