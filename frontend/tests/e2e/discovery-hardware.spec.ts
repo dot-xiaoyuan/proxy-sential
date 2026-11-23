@@ -10,10 +10,19 @@ test('persistent hardware, activity, and sources remain distinct at three viewpo
   await expect(page.locator('.passive-ledger-table')).toBeVisible()
   await page.evaluate(async()=>{const path='/src/mocks/hardwareReplay.ts';const fixture=await import(path);fixture.installHardwareReplay()})
   await page.getByRole('button',{name:'刷新数据'}).click()
-  await expect(page.getByText('回放多功能打印机',{exact:true})).toBeVisible()
+  const ledger = page.locator('.passive-ledger-table')
+  const printer = ledger.locator('tr[data-row-key]').filter({ has: page.getByRole('button', {name:'00:11:22:33:44:55', exact:true}) })
+  await expect(printer.locator('.discovery-identity-name')).toHaveText('回放多功能打印机')
+  await expect(ledger.getByRole('button', {name:'回放多功能打印机', exact:true})).toHaveCount(0)
+  await expect(ledger.getByRole('button', {name:'00:11:22:33:44:66', exact:true})).toBeVisible()
   await expect(page.getByText('最近活动线索已过期',{exact:true})).toBeVisible()
-  await expect(page.getByLabel('发现设备总览')).toContainText('已确认硬件类型（合计 2）')
+  await expect(page.getByLabel('发现设备总览')).toContainText('已确认 2')
+  const observation = ledger.getByRole('row').filter({hasText:'192.0.2.40'})
+  await expect(observation.getByRole('button', {name:'地址线索', exact:true})).toBeVisible()
+  await expect(observation.getByRole('button', {name:'192.0.2.40', exact:true})).toHaveCount(0)
+  await page.getByRole('button',{name:'统计与类型线索'}).click()
   await expect(page.getByLabel('画像类型线索').getByRole('button', {name:/手机/})).toBeVisible()
+  await page.getByRole('button',{name:'收起统计'}).click()
   await expect(page.locator('.passive-ledger-table').getByText('手机 · 画像线索',{exact:true})).toBeVisible()
   await expect(page.locator('.center-list-surface.is-updating')).toHaveCount(0)
   for(const viewport of [{width:390,height:844},{width:1280,height:800},{width:1440,height:900}]){
@@ -29,7 +38,7 @@ test('persistent hardware, activity, and sources remain distinct at three viewpo
     // The mobile table is taller than the viewport: scrolling its wrapper can
     // leave the first row above the clipped app-content scroller. Visibility
     // alone permits offscreen elements and does not wait for responsive paint.
-    const deviceButton=page.locator('.passive-ledger-table').getByRole('button',{name:'回放多功能打印机',exact:true})
+    const deviceButton=page.locator('.passive-ledger-table').getByRole('button',{name:'00:11:22:33:44:55',exact:true})
     await deviceButton.scrollIntoViewIfNeeded()
     await expect(deviceButton).toBeInViewport({ratio:1})
     await expect.poll(()=>deviceButton.evaluate(async button=>{

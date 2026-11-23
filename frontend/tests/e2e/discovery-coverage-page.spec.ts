@@ -55,7 +55,7 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
 
     await page.goto('/devices/coverage')
     const report = page.getByRole('region',{name:'设备发现覆盖报表'})
-    const stages = report.getByRole('region',{name:'IPv4 识别进度'})
+    const stages = report.getByRole('region',{name:'观测 IPv4 的类型确认占比'})
     await expect(stages).toContainText('33.3%')
     await expect(stages.getByRole('img',{name:/IPv4 地址类型确认构成/})).toBeVisible()
     await expect(report.getByRole('region',{name:'类型待确认的证据'})).toContainText('仅网络层')

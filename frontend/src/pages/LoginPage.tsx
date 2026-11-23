@@ -31,15 +31,14 @@ export function LoginPage() {
   return (
     <main className="login-page">
       <div className="login-layout">
-        <header className="login-topbar">
-          <span className="login-mark" aria-hidden="true"><SafetyCertificateOutlined /></span>
-          <div className="login-brand-copy">
-            <strong>Proxy Sentinel</strong>
-            <span>高校网络风险运营平台</span>
-          </div>
-        </header>
-
         <div className="login-main">
+          <header className="login-topbar">
+            <span className="login-mark" aria-hidden="true"><SafetyCertificateOutlined /></span>
+            <div className="login-brand-copy">
+              <strong>Proxy Sentinel</strong>
+              <span>高校网络风险运营平台</span>
+            </div>
+          </header>
           <section className="login-card" aria-labelledby="login-card-title">
             <div className="login-card-heading">
               <h1 id="login-card-title">登录</h1>
@@ -76,7 +75,7 @@ export function LoginPage() {
 
           </section>
         </div>
-
+        <div className="login-visual" aria-hidden="true" />
       </div>
     </main>
   )

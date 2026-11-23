@@ -127,7 +127,9 @@ it('shows the filtered discovery metadata total when the cursor page has no tota
   const overview = await screen.findByLabelText('发现设备总览')
   await waitFor(()=>expect(overview).toHaveTextContent('共 84 个设备'))
   expect(summary).toHaveTextContent('本页明确类型 1')
-  expect(await within(screen.getByRole('table')).findByRole('button', { name: '无线接入点' })).toBeVisible()
+  const table = within(screen.getByRole('table'))
+  expect(await table.findByRole('button', { name: '02:00:00:20:40:01' })).toBeVisible()
+  expect(table.getByText('无线接入点', {exact:true})).toBeVisible()
   expect(screen.queryByText('待分类')).not.toBeInTheDocument()
 })
 
@@ -266,7 +268,7 @@ it('counts recent observations beyond the configured five-minute discovery holdb
   await waitFor(()=>expect(summary).toHaveTextContent('本页近15分钟观测 1'))
 })
 
-it('shows a MAC fallback once and explains the virtualisation hint in details', async () => {
+it('shows the MAC as the only identifier title and explains the virtualisation hint in details', async () => {
   const mac = 'bc:24:11:ed:70:89'
   mockReads()
   const read = request.getMockImplementation()!
@@ -281,8 +283,8 @@ it('shows a MAC fallback once and explains the virtualisation hint in details', 
     return read(path)
   })
   renderPanel()
-  const row = (await screen.findByRole('button',{name:'BC-24-11-ED-70-89'})).closest('tr')!
-  expect(within(row).queryByText(mac,{exact:true})).not.toBeInTheDocument()
+  const row = (await screen.findByRole('button',{name:mac})).closest('tr')!
+  expect(within(row).queryByText('BC-24-11-ED-70-89',{exact:true})).not.toBeInTheDocument()
   expect(within(row).getByText('虚拟化线索')).toBeInTheDocument()
   fireEvent.click(within(row).getByRole('button',{name:'查看详情'}))
   expect(await screen.findByText(/MAC 前缀匹配网卡厂商 Proxmox/)).toHaveTextContent('可能来自虚拟机或虚拟网卡')
@@ -404,7 +406,7 @@ it('labels address-only observations and keeps the same IP in different VLANs in
     ], has_more: false })
     : read(path))
   renderPanel()
-  const remarks = await screen.findAllByRole('button', { name: '192.168.1.1' })
+  const remarks = await screen.findAllByRole('button', { name: '地址线索' })
   expect(remarks).toHaveLength(2)
   const row = remarks[0].closest('tr')!
   expect(within(row).getAllByText('192.168.1.1')).toHaveLength(1)
@@ -418,7 +420,7 @@ it('labels address-only observations and keeps the same IP in different VLANs in
   expect(within(explanation.closest('.discovery-evidence-modal') as HTMLElement).queryByText('当前地址', { exact: true })).toBeNull()
 })
 
-it('uses an observed product model for the title while retaining its IP and ownership status', async () => {
+it('shows the observed model separately from the address identity', async () => {
   mockReads()
   const read = request.getMockImplementation()!
   const manufacturer = 'Ruijie Networks Co., Ltd. (formerly Start Network Technology Co., Ltd.)'
@@ -432,8 +434,9 @@ it('uses an observed product model for the title while retaining its IP and owne
     }], has_more: false })
     : read(path))
   renderPanel()
-  const row = (await screen.findByRole('button',{name:'S5310-24SFP4XS-E'})).closest('tr')!
+  const row = (await screen.findByRole('button',{name:'地址线索'})).closest('tr')!
   expect(within(row).getByText('10.161.255.2')).toBeVisible()
+  expect(within(row).getByText('S5310-24SFP4XS-E')).toHaveAttribute('title', '自报型号 S5310-24SFP4XS-E，归属待核实')
   expect(within(row).getByText('产品线索 · 归属待核实')).toBeVisible()
   expect(row.querySelector('[data-label="设备类型"]')?.textContent).toBe('交换机 · 线索')
   expect(row).not.toHaveTextContent(manufacturer)
@@ -467,12 +470,12 @@ it('removes previous rows when a filter changes after one discovery key was spli
   const splitRows=['one','two','three'].map((name,index)=>({...device,id:'shared-discovery-key',name:`打印机 ${name}`,device_type:'printer',mac:'00:11:22:33:44:55',observations:[{id:`evidence-${index}`,origin:'dns_sd',observed_at:device.last_seen}]}))
   request.mockImplementation((path:string,options?:unknown)=>path.startsWith('/discovery/devices?')?Promise.resolve({items:path.includes('type=access_point')?[{...device,id:'ap-key',name:'筛选后的 AP',device_type:'access_point',observations:[{id:'ap-evidence',origin:'arp',observed_at:device.last_seen}]}]:splitRows,has_more:false}):read(path,options))
   renderPanel()
-  await screen.findByRole('button',{name:'打印机 three'})
+  await screen.findByText('打印机 three')
   await selectDiscoveryType(/^无线接入点/)
-  await screen.findByRole('button',{name:'筛选后的 AP'})
-  expect(screen.queryByRole('button',{name:'打印机 one'})).not.toBeInTheDocument()
-  expect(screen.queryByRole('button',{name:'打印机 two'})).not.toBeInTheDocument()
-  expect(screen.queryByRole('button',{name:'打印机 three'})).not.toBeInTheDocument()
+  await screen.findByText('筛选后的 AP')
+  expect(screen.queryByText('打印机 one')).not.toBeInTheDocument()
+  expect(screen.queryByText('打印机 two')).not.toBeInTheDocument()
+  expect(screen.queryByText('打印机 three')).not.toBeInTheDocument()
   const duplicateKeys=errorLog.mock.calls.filter(args=>args.map(String).join(' ').includes('same key'))
   errorLog.mockRestore()
   expect(duplicateKeys).toEqual([])
@@ -571,7 +574,7 @@ it('exports the filtered discovery rows as CSV', async () => {
 it('shows fingerprint matches for linked discovery devices', async () => {
   mockReads(undefined, { ...device, endpoint_id: 'mac:00:11:22:33:44:55' })
   renderPanel()
-  fireEvent.click(await screen.findByRole('button', { name: '192.0.2.10' }))
+  fireEvent.click(await screen.findByRole('button', { name: '查看详情' }))
   await waitFor(() => expect(screen.getByText('指纹库命中（端点识别）')).toBeInTheDocument())
   expect(screen.getByText('Hikvision DHCP options')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: '查看终端画像' })).toBeInTheDocument()
@@ -600,7 +603,7 @@ it('filters by device category from advanced filters', async () => {
 it('shows detail navigation across the current page', async () => {
   mockReads()
   renderPanel()
-  fireEvent.click(await screen.findByRole('button', { name: '192.0.2.10' }))
+  fireEvent.click(await screen.findByRole('button', { name: '查看详情' }))
   await waitFor(() => expect(screen.getByText('1 / 1')).toBeInTheDocument())
   expect(screen.getByRole('button', { name: '上一台' })).toBeDisabled()
   expect(screen.getByRole('button', { name: '下一台' })).toBeDisabled()

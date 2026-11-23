@@ -7,13 +7,13 @@ const report: CoverageReport = {as_of:'2026-11-15T11:00:00Z',identity_as_of:'202
 it('uses one address denominator for the three IPv4 stages and a separate denominator for the gap breakdown', () => {
   render(<DiscoveryCoverageReport report={report} />)
   const coverage = screen.getByRole('region', {name:'设备发现覆盖报表'})
-  const progress = within(coverage).getByRole('region', {name:'IPv4 识别进度'})
+  const progress = within(coverage).getByRole('region', {name:'观测 IPv4 的类型确认占比'})
   expect(progress).toHaveTextContent('15,390 个有设备观测的 IPv4')
   expect(progress).toHaveTextContent('1.9%')
   expect(within(progress).getByRole('img', {name:/IPv4 地址类型确认构成/})).toHaveAttribute('aria-label','IPv4 地址类型确认构成 · 15,390 个 IPv4 地址')
   const gaps = within(coverage).getByRole('region', {name:'类型待确认的证据'})
   expect(gaps).toHaveTextContent('1,000 个已关联设备')
-  const dhcp = within(gaps).getByRole('progressbar', {name:'有 DHCP · 缺应用或设备公告'})
+  const dhcp = within(gaps).getByRole('progressbar', {name:'有 DHCP · 缺设备协议证据'})
   expect(dhcp).toHaveAttribute('value','600')
   expect(dhcp).toHaveAttribute('max','1000')
   expect(coverage).not.toHaveTextContent('4,034')
@@ -37,7 +37,7 @@ it('keeps zero and absent breakdowns distinct', () => {
   expect(screen.getByText('选定范围内暂无设备侧 IPv4 观测。')).toBeVisible()
   expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
   view.rerender(<DiscoveryCoverageReport report={{...report, typed_ipv4:undefined}} />)
-  expect(screen.queryByRole('region',{name:'IPv4 识别进度'})).not.toBeInTheDocument()
+  expect(screen.queryByRole('region',{name:'观测 IPv4 的类型确认占比'})).not.toBeInTheDocument()
   expect(screen.getByText('15,390')).toBeVisible()
 })
 
@@ -51,7 +51,7 @@ it('keeps address coverage visible when identity totals time out', () => {
     dumb_terminals: undefined,
   }} />)
   expect(screen.getByRole('status')).toHaveTextContent('身份统计读取超时')
-  expect(screen.getByRole('region', { name: 'IPv4 识别进度' })).toHaveTextContent('15,390')
+  expect(screen.getByRole('region', { name: '观测 IPv4 的类型确认占比' })).toHaveTextContent('15,390')
   expect(screen.queryByText('发现处理水位', { exact: false })).not.toBeInTheDocument()
   expect(screen.queryByText('个发现身份', { exact: true })).not.toBeInTheDocument()
 })

@@ -56,12 +56,12 @@ export function DiscoveryCoverageReport({ report }: { report: CoverageReport }) 
     { label: '有设备观测的 IPv4', value: total ?? report.ipv4, unit: '个地址' },
     { label: '观测到的 /24 分组', value: report.subnet24, unit: '组 IPv4' },
     { label: '已确认硬件类型', value: report.identified, unit: '个发现身份',
-      detail: report.identity_total !== undefined ? `共 ${count(report.identity_total)} 个发现身份` : undefined },
+      detail: report.identity_total !== undefined ? `窗口内共 ${count(report.identity_total)} 条发现记录` : undefined },
     { label: '已确认的哑终端', value: report.dumb_terminals, unit: '个发现身份', detail: '已包含在确认数中' },
   ]
   const breakdown = [
     { label: '仅网络层 · ARP、NDP 等', value: report.untyped_network_only_ipv4 },
-    { label: '有 DHCP · 缺应用或设备公告', value: report.untyped_dhcp_only_ipv4 },
+    { label: '有 DHCP · 缺设备协议证据', value: report.untyped_dhcp_only_ipv4 },
     { label: '有设备协议证据', value: report.untyped_application_ipv4 },
     { label: '其他证据', value: report.untyped_other_ipv4 },
   ].flatMap(({ label, value }) => value === undefined ? [] : [{ label, value }])
@@ -85,8 +85,8 @@ export function DiscoveryCoverageReport({ report }: { report: CoverageReport }) 
       <div className="coverage-panels">
         <section className="coverage-panel" aria-labelledby="coverage-address-heading">
           <header className="coverage-panel-heading">
-            <div><h4 id="coverage-address-heading">IPv4 识别进度</h4><p>按 {count(total)} 个有设备观测的 IPv4 地址去重</p></div>
-            {total > 0 && <div className="coverage-highlight"><strong>{percent(typed, total)}</strong><span>地址对应已确认类型</span></div>}
+            <div><h4 id="coverage-address-heading">观测 IPv4 的类型确认占比</h4><p>{count(typed)} / {count(total)} 个有设备观测的 IPv4 对应已确认类型</p></div>
+            {total > 0 && <div className="coverage-highlight"><strong>{percent(typed, total)}</strong></div>}
           </header>
           {total > 0 ? <CoverageDonut label="IPv4 地址类型确认构成" total={total} unit="个 IPv4 地址" rows={[
             { label: '对应已确认类型', value: typed, color: 'teal' },
@@ -106,7 +106,7 @@ export function DiscoveryCoverageReport({ report }: { report: CoverageReport }) 
           </div>}
         </section>
       </div>}
-    <p className="coverage-footnote">一个设备可能使用多个 IP 或出现在多个采集范围。/24 按观测地址分组，网络覆盖率需与镜像配置和台账核对。</p>
+    <p className="coverage-footnote">地址图按 IPv4 去重，上方硬件类型按发现身份计数。同一设备可能对应多个地址或采集范围。/24 分组按观测地址统计。</p>
   </section>
 }
 
