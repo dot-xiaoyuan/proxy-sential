@@ -3383,12 +3383,11 @@ pre.wrap-code {
 }
 .login-page {
   display: grid;
-  align-items: center;
-  justify-items: end;
+  place-items: center;
   min-height: 100vh;
   min-height: 100svh;
-  padding: clamp(24px, 5vh, 52px) clamp(32px, 6.5vw, 140px);
-  background: #e2e8f0 url('/login-network-panorama.webp') 32% center / cover no-repeat;
+  padding: clamp(24px, 5vh, 52px) clamp(20px, 4vw, 64px);
+  background: #f8faf9 url('/login-traffic-network.svg') center / cover no-repeat;
 }
 
 .login-card {
@@ -3399,11 +3398,12 @@ pre.wrap-code {
   width: min(100%, clamp(460px, 42vw, 580px));
   min-width: 0;
   min-height: clamp(500px, 64vh, 610px);
+  margin-inline-start: min(9vw, 144px);
   padding: clamp(32px, 3.7vw, 54px);
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   background: #fff;
-  box-shadow: 0 22px 56px rgba(15, 23, 42, .22);
+  box-shadow: 0 24px 60px rgba(39, 87, 117, .13);
 }
 
 .login-topbar { display: flex; align-items: center; gap: 14px; min-width: 0; }
@@ -3426,8 +3426,8 @@ pre.wrap-code {
 .login-caps-hint { color: #9a5908; font-size: 12px; }
 
 @media (max-width: 680px) {
-  .login-page { justify-items: center; padding: 14px; background-position: 25% center; }
-  .login-card { width: min(100%, 440px); min-height: 0; gap: 28px; padding: 26px 22px; }
+  .login-page { padding: 14px; background-position: 14% center; }
+  .login-card { width: min(100%, 440px); min-height: 0; margin-inline-start: 0; gap: 28px; padding: 26px 22px; }
   .login-card-body h1 { margin-bottom: 22px; font-size: 29px; }
   .login-form .ant-input-affix-wrapper, .login-form .ant-btn-primary { min-height: 48px; height: 48px; }
 }

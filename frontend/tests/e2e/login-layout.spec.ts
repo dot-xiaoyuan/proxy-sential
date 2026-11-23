@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 for (const viewport of [{ width:390, height:844 }, { width:1198, height:1171 }, { width:1280, height:800 }, { width:1440, height:900 }]) {
-  test(`panoramic login and large form at ${viewport.width}`, async ({ page }, info) => {
+  test(`abstract background and centered login at ${viewport.width}`, async ({ page }, info) => {
     await page.setViewportSize(viewport)
     await page.addInitScript(() => {
       const fetchOriginal = window.fetch
@@ -17,10 +17,12 @@ for (const viewport of [{ width:390, height:844 }, { width:1198, height:1171 }, 
     page.on('pageerror', error => errors.push(error.message))
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
     page.on('requestfailed', request => errors.push(request.url()))
-    const imageResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/login-network-panorama.webp')
+    const imageResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/login-traffic-network.svg')
     await page.goto('/devices?tab=discovery')
     await expect(page.getByRole('heading', {name:'登录'})).toBeVisible()
-    expect((await imageResponse).ok()).toBe(true)
+    const backdropResponse = await imageResponse
+    expect(backdropResponse.ok()).toBe(true)
+    expect(backdropResponse.headers()['content-type']).toContain('image/svg+xml')
     const probe = await page.locator('.login-card').evaluate(card => {
       const panel = card.getBoundingClientRect()
       const backdrop = card.closest('.login-page')!
@@ -51,7 +53,8 @@ for (const viewport of [{ width:390, height:844 }, { width:1198, height:1171 }, 
       expect(probe.panelWidth).toBeGreaterThanOrEqual(350)
       expect(probe.buttonHeight).toBeGreaterThanOrEqual(48)
     } else {
-      expect(probe.panelCenter).toBeGreaterThan(viewport.width * .68)
+      expect(probe.panelCenter).toBeGreaterThan(viewport.width * .52)
+      expect(probe.panelCenter).toBeLessThan(viewport.width * .58)
       expect(probe.panelWidth).toBeGreaterThanOrEqual(500)
       expect(probe.buttonHeight).toBeGreaterThanOrEqual(54)
     }
