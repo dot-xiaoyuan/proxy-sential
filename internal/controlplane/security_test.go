@@ -125,7 +125,7 @@ func TestLocalAuthEnforcesSessionCSRFAndViewerPermissions(t *testing.T) {
 	if err := os.WriteFile(authFile, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	server, err := NewServerWithError(Options{ShadowDir: dir, AuthFile: authFile})
+	server, err := NewServerWithError(Options{ShadowDir: dir, AuthFile: authFile, HideDiscoveryMenu: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestLocalAuthEnforcesSessionCSRFAndViewerPermissions(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = response.Body.Close()
-	if session.Role != "viewer" || session.CSRFToken == "" || sessionHasPermission(session, "rules:reload") {
+	if session.Role != "viewer" || session.CSRFToken == "" || !session.HideDiscoveryMenu || sessionHasPermission(session, "rules:reload") {
 		t.Fatalf("unexpected viewer session: %#v", session)
 	}
 
@@ -159,6 +159,14 @@ func TestLocalAuthEnforcesSessionCSRFAndViewerPermissions(t *testing.T) {
 	response, err = client.Do(request)
 	if err != nil || response.StatusCode != http.StatusForbidden {
 		t.Fatalf("viewer write must return 403: status=%v err=%v", response.StatusCode, err)
+	}
+	_ = response.Body.Close()
+	response, err = client.Get(httpServer.URL + "/api/v1/session")
+	if err != nil || response.StatusCode != http.StatusOK {
+		t.Fatalf("could not load the logged-in session: status=%v err=%v", response.StatusCode, err)
+	}
+	if err := json.NewDecoder(response.Body).Decode(&session); err != nil || !session.HideDiscoveryMenu {
+		t.Fatalf("discovery menu preference lost after login: %v %+v", err, session)
 	}
 	_ = response.Body.Close()
 

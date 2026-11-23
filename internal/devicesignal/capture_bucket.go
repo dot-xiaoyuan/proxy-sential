@@ -1,6 +1,7 @@
 package devicesignal
 
 import (
+	"net/netip"
 	"os"
 	"time"
 
@@ -21,6 +22,8 @@ type captureBucket struct {
 	handshakeExcludedFrames int
 	handshakeParseFailures  int
 	handshakeFeatureSamples int
+	handshakeCandidates     []handshakeCandidate
+	handshakeCandidateBytes int
 	controlParseFailures    int
 	controlKeyDrops         int
 }
@@ -30,6 +33,13 @@ type captureBucket struct {
 // if an adversarial or asymmetric mirror produces maximal key diversity.
 const maxPacketBucketKeys = 50000
 const maxHandshakeFeatureSamples = 32768
+const maxHandshakeCandidates = 131072
+const maxHandshakeCandidateBytes = 24 << 20
+
+type handshakeCandidate struct {
+	summary *handshakeSummary
+	feature handshakeFeatureObservation
+}
 
 func newCaptureBucket() *captureBucket {
 	return &captureBucket{packets: map[packetBucketKey]int{}, controls: map[string]controlSignal{}, handshakes: map[handshakeKey]*handshakeSummary{}}
@@ -103,6 +113,10 @@ func (b *captureBucket) addHandshake(frame []byte) {
 			return
 		}
 	}
+	b.recordHandshake(observation)
+}
+
+func (b *captureBucket) recordHandshake(observation handshakeObservation) {
 	key := handshakeKey{IP: observation.IP, MAC: observation.MAC}
 	summary := b.handshakes[key]
 	if summary == nil {
@@ -110,10 +124,56 @@ func (b *captureBucket) addHandshake(frame []byte) {
 			b.droppedPacketKeys++
 			return
 		}
-		summary = &handshakeSummary{snis: map[string]bool{}, alpns: map[string]bool{}, hosts: map[string]bool{}, userAgents: map[string]bool{}}
+		summary = newHandshakeSummary()
 		b.handshakes[key] = summary
 	}
-	before := len(summary.samples)
-	summary.add(observation, maxHandshakeFeatureSamples-b.handshakeFeatureSamples)
-	b.handshakeFeatureSamples += len(summary.samples) - before
+	if !b.handshakeCaptureV2 {
+		before := len(summary.samples)
+		summary.add(observation, maxHandshakeFeatureSamples-b.handshakeFeatureSamples)
+		b.handshakeFeatureSamples += len(summary.samples) - before
+		return
+	}
+
+	summary.addMetadata(observation)
+	feature, ok := observation.feature()
+	if !ok {
+		return
+	}
+	// Keep only parsed feature fields until the bucket's output devices are
+	// known. A dropped candidate may contain multiple fingerprint families.
+	size := len(feature.eventID) + len(feature.userAgent) + len(feature.ja3) + len(feature.ja4)
+	if len(b.handshakeCandidates) >= maxHandshakeCandidates || b.handshakeCandidateBytes+size > maxHandshakeCandidateBytes {
+		summary.overflow++
+		return
+	}
+	b.handshakeCandidates = append(b.handshakeCandidates, handshakeCandidate{summary: summary, feature: feature})
+	b.handshakeCandidateBytes += size
+}
+
+func (b *captureBucket) selectHandshakes(limit int, bucket time.Time, priorityCIDRs []netip.Prefix) []handshakeKey {
+	keys := selectHandshakeKeys(b.handshakes, limit, bucket, priorityCIDRs)
+	if len(b.handshakeCandidates) == 0 {
+		return keys
+	}
+	selected := make(map[*handshakeSummary]bool, len(keys))
+	for _, key := range keys {
+		selected[b.handshakes[key]] = true
+	}
+	budget := maxHandshakeFeatureSamples
+	for _, candidate := range b.handshakeCandidates {
+		if selected[candidate.summary] {
+			budget -= candidate.summary.addFeature(candidate.feature, budget)
+		}
+	}
+	return keys
+}
+
+func (b *captureBucket) resetHandshakes() {
+	b.handshakes = make(map[handshakeKey]*handshakeSummary)
+	b.handshakeParseFailures = 0
+	b.handshakeExcludedFrames = 0
+	b.handshakeFeatureSamples = 0
+	clear(b.handshakeCandidates)
+	b.handshakeCandidates = b.handshakeCandidates[:0]
+	b.handshakeCandidateBytes = 0
 }

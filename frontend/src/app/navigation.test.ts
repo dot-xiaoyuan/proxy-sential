@@ -6,6 +6,7 @@ describe('menu and investigation navigation',()=>{
  it('has stable menu groups and detail ownership',()=>{
  expect(navigation.map(g=>g.title)).toEqual(['运营工作台','防代理报表','AI 中转站','风险运营','设备中心','网络分析','策略与验证','系统管理'])
  expect(visibleNavigation({user:{id:'admin',name:'admin'},role:'admin',permissions:['identity:read','events:read']} as Session).find(g=>g.key==='assets')?.items.map(item=>item.title)).toEqual(['终端列表','路由器','发现设备'])
+ expect(visibleNavigation({user:{id:'admin',name:'admin'},role:'admin',permissions:['identity:read','events:read'],device_discovery_menu_hidden:true} as Session).find(g=>g.key==='assets')?.items.map(item=>item.title)).toEqual(['终端列表','路由器'])
  expect(navigation.find(g=>g.key==='risk')?.items.map(item=>item.title)).toEqual(['共享发现与核验','策略与处置记录'])
  expect(routeOwner('/discovery','')?.entry.key).toBe('discovered-devices')
  expect(routeOwner('/devices','')?.entry.key).toBe('devices')

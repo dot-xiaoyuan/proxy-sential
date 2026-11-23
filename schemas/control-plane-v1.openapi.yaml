@@ -7396,6 +7396,8 @@ components:
             $ref: "#/components/schemas/Permission"
         csrf_token:
           type: string
+        device_discovery_menu_hidden:
+          type: boolean
     RiskCase:
       type: object
       required: [case_id, subject_type, subject_id, status, priority, risk_score, risk_confidence, assessment_level, due_at, first_seen, last_seen, created_at, updated_at]

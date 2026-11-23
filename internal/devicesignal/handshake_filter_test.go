@@ -3,6 +3,7 @@ package devicesignal
 import (
 	"encoding/binary"
 	"testing"
+	"time"
 )
 
 // runClassicBPF interprets the opcodes libpcap emits for this filter and returns the accept
@@ -170,6 +171,7 @@ func TestHandshakeEvidenceProgramAndCoverageClassifyLargeClientHello(t *testing.
 		if bucket.handshakeParseFailures != 1 || bucket.handshakeExcludedFrames != 1 || len(bucket.handshakes) != 1 {
 			t.Fatalf("unexpected coverage counters: %+v", bucket)
 		}
+		bucket.selectHandshakes(1, time.Unix(1800, 0), nil)
 		for _, summary := range bucket.handshakes {
 			if summary.truncated != 1 || summary.count != 2 || len(summary.samples) == 0 {
 				t.Fatalf("clipped evidence lost or fingerprinted: %+v", summary)

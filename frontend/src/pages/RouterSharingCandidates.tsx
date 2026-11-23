@@ -1,5 +1,5 @@
 import { Notice as Alert } from '../shared/ui/Notice'
-import { useEffect, useState } from 'react'
+import { useEffect, useEffectEvent, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Segmented, Select, Tag } from 'antd'
@@ -22,7 +22,14 @@ export function RouterSharingCandidates() {
  const [accountGroup,setAccountGroup]=useUrlState('router_accounts','all',['all','linked','empty'],['router_sharing_page','router_sharing_cursors'])
  const [routerStatus,setRouterStatus]=useUrlState('router_status','',['','candidate','likely','confirmed'],['router_sharing_page','router_sharing_cursors'])
  const [searchInput,setSearchInput]=useState(keyword)
- useEffect(()=>{const timer=globalThis.setTimeout(()=>{if(searchInput.trim()!==keyword){setKeyword(searchInput.trim());pagination.reset()}},300);return()=>globalThis.clearTimeout(timer)},[searchInput])
+ const applySearch=useEffectEvent((value:string)=>{
+  const next=value.trim()
+  if(next!==keyword)setKeyword(next)
+ })
+ useEffect(()=>{
+  const timer=globalThis.setTimeout(()=>applySearch(searchInput),300)
+  return()=>globalThis.clearTimeout(timer)
+ },[searchInput])
  const query=new URLSearchParams({role:'router',router_status:routerStatus,identity_state:'supported',keyword,limit:String(pagination.pageSize),cursor:pagination.cursor})
  if(accountGroup!=='all')query.set('has_account',String(accountGroup==='linked'))
  const profiles=useQuery({queryKey:['router-sharing-candidates',query.toString()],queryFn:()=>request<Profiles>(`/shared-access/devices?${query}`),refetchInterval:30000})
@@ -42,7 +49,7 @@ export function RouterSharingCandidates() {
     searchPlaceholder="IP、MAC、账号、品牌或型号"
     searchValue={searchInput}
     onSearchChange={setSearchInput}
-    filters={<><Segmented className="shared-account-range" aria-label="账号关联范围" value={accountGroup} options={[{label:'全部账号范围',value:'all'},{label:'有关联账号',value:'linked'},{label:'无关联账号',value:'empty'}]} onChange={value=>{setAccountGroup(String(value));pagination.reset()}} /><Select aria-label="路由身份状态" className="shared-profile-filter" value={routerStatus} onChange={value=>{setRouterStatus(value);pagination.reset()}} options={[{value:'',label:'全部身份状态'},...Object.entries(routerStatusLabels).map(([value,label])=>({value,label}))]} /></>}
+    filters={<><Segmented className="shared-account-range" aria-label="账号关联范围" value={accountGroup} options={[{label:'全部账号范围',value:'all'},{label:'有关联账号',value:'linked'},{label:'无关联账号',value:'empty'}]} onChange={setAccountGroup} /><Select aria-label="路由身份状态" className="shared-profile-filter" value={routerStatus} onChange={setRouterStatus} options={[{value:'',label:'全部身份状态'},...Object.entries(routerStatusLabels).map(([value,label])=>({value,label}))]} /></>}
   />
   <section className="surface">
     <AppListHeader title="路由器共享核验" count={total===undefined?undefined:`${total} 条`} actions={<Link to="/devices?tab=network&routers_view=router">查看路由器资产</Link>} />

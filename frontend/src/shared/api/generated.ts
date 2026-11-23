@@ -7126,6 +7126,7 @@ export interface components {
             role: components["schemas"]["Role"];
             permissions: components["schemas"]["Permission"][];
             csrf_token?: string;
+            device_discovery_menu_hidden?: boolean;
         };
         RiskCase: {
             case_id: string;

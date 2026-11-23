@@ -284,38 +284,64 @@ func newHandshakeSummary() *handshakeSummary {
 }
 
 func (s *handshakeSummary) add(o handshakeObservation, sampleBudget int) {
+	s.addMetadata(o)
+	if feature, ok := o.feature(); ok {
+		s.addFeature(feature, sampleBudget)
+	}
+}
+
+type handshakeFeatureObservation struct {
+	eventID, userAgent, ja3, ja4 string
+	observedAt                   time.Time
+	destinationPort              uint16
+}
+
+func (o handshakeObservation) feature() (handshakeFeatureObservation, bool) {
+	if o.Truncated || o.EventID == "" || o.ObservedAt.IsZero() || (o.UserAgent == "" && o.JA3 == "" && o.JA4 == "") {
+		return handshakeFeatureObservation{}, false
+	}
+	return handshakeFeatureObservation{
+		eventID: o.EventID, userAgent: o.UserAgent, ja3: o.JA3, ja4: o.JA4,
+		observedAt: o.ObservedAt, destinationPort: o.DestinationPort,
+	}, true
+}
+
+func (s *handshakeSummary) addFeature(o handshakeFeatureObservation, sampleBudget int) int {
+	before := len(s.samples)
+	bucket := o.observedAt.Unix() / 5
+	for _, feature := range []struct{ family, value string }{{"user_agent", o.userAgent}, {"ja3", o.ja3}, {"ja4", o.ja4}} {
+		family, value := feature.family, feature.value
+		if value == "" {
+			continue
+		}
+		key := family + "/" + o.eventID
+		if _, ok := s.samples[key]; ok {
+			continue
+		}
+		bucketKey := family + "/" + value + "/" + strconv.FormatInt(bucket, 10)
+		if s.sampleCounts[bucketKey] >= 3 {
+			continue
+		}
+		// Repeated samples never use a slot or count as omitted.
+		if sampleBudget <= 0 || len(s.samples) >= 288 {
+			s.overflow++
+			continue
+		}
+		if s.samples == nil {
+			s.samples = map[string]sharedaccess.HandshakeSample{}
+			s.sampleCounts = map[string]int{}
+		}
+		sampleBudget--
+		s.sampleCounts[bucketKey]++
+		s.samples[key] = sharedaccess.HandshakeSample{Family: family, Value: value, EventID: o.eventID, ObservedAt: o.observedAt, Bucket: bucket, DestinationPort: o.destinationPort}
+	}
+	return len(s.samples) - before
+}
+
+func (s *handshakeSummary) addMetadata(o handshakeObservation) {
 	s.count++
 	if o.Truncated {
 		s.truncated++
-	}
-	if !o.Truncated && o.EventID != "" && !o.ObservedAt.IsZero() {
-		for _, feature := range []struct{ family, value string }{{"user_agent", o.UserAgent}, {"ja3", o.JA3}, {"ja4", o.JA4}} {
-			family, value := feature.family, feature.value
-			if value == "" {
-				continue
-			}
-			key := family + "/" + o.EventID
-			if _, ok := s.samples[key]; ok {
-				continue
-			}
-			bucketKey := family + "/" + value + "/" + strconv.FormatInt(o.ObservedAt.Unix()/5, 10)
-			if s.sampleCounts[bucketKey] >= 3 {
-				continue
-			}
-			// A repeated sample never uses a slot or counts as omitted. A
-			// fresh sample blocked by either bound leaves the coverage gap.
-			if sampleBudget <= 0 || len(s.samples) >= 288 {
-				s.overflow++
-				continue
-			}
-			if s.samples == nil {
-				s.samples = map[string]sharedaccess.HandshakeSample{}
-				s.sampleCounts = map[string]int{}
-			}
-			sampleBudget--
-			s.sampleCounts[bucketKey]++
-			s.samples[key] = sharedaccess.HandshakeSample{Family: family, Value: value, EventID: o.EventID, ObservedAt: o.ObservedAt, Bucket: o.ObservedAt.Unix() / 5, DestinationPort: o.DestinationPort}
-		}
 	}
 	add := func(set map[string]bool, value string) {
 		if value != "" {
@@ -343,8 +369,8 @@ func sortedHandshakeValues(set map[string]bool) []string {
 
 // writeHandshakeBucket writes one device-signal event per device, in the same JSONL format
 // as the TTL and router signals, so ingest reads it through the device-signals source.
-func writeHandshakeBucket(path, sensorID, interfaceName, instance string, scope *normalized.CaptureScope, priorityCIDRs []netip.Prefix, bucket time.Time, summaries map[handshakeKey]*handshakeSummary) error {
-	if len(summaries) == 0 {
+func writeHandshakeBucket(path, sensorID, interfaceName, instance string, scope *normalized.CaptureScope, bucket time.Time, summaries map[handshakeKey]*handshakeSummary, keys []handshakeKey) error {
+	if len(keys) == 0 {
 		return nil
 	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640)
@@ -352,7 +378,6 @@ func writeHandshakeBucket(path, sensorID, interfaceName, instance string, scope 
 		return err
 	}
 	defer file.Close()
-	keys := selectHandshakeKeys(summaries, handshakeBucketLimit(), bucket, priorityCIDRs)
 	encoder := json.NewEncoder(file)
 	kept := map[handshakeKey]bool{}
 	omitted := map[netip.Addr]int{}

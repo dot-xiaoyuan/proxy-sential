@@ -1,11 +1,9 @@
 package materialize
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -47,6 +45,10 @@ type IncrementalResult struct {
 	Committed      int
 	Retried        int
 	OldestClaimAge time.Duration
+	ClaimElapsed   time.Duration
+	FeatureElapsed time.Duration
+	ScoreElapsed   time.Duration
+	ApplyElapsed   time.Duration
 }
 
 func RunIncrementalOnce(ctx context.Context, backend IncrementalStore, opts IncrementalOptions) (result IncrementalResult, err error) {
@@ -89,7 +91,9 @@ func RunIncrementalOnce(ctx context.Context, backend IncrementalStore, opts Incr
 			return IncrementalResult{}, fmt.Errorf("queue expired risk subjects: %w", err)
 		}
 	}
+	claimStarted := time.Now()
 	claims, err := backend.ClaimRiskSubjects(ctx, opts.SensorID, claimLimit)
+	result.ClaimElapsed = time.Since(claimStarted)
 	if err != nil || len(claims) == 0 {
 		return IncrementalResult{}, err
 	}
@@ -146,6 +150,9 @@ func RunIncrementalOnce(ctx context.Context, backend IncrementalStore, opts Incr
 		group := groups[0]
 		groups = groups[1:]
 		groupResult, groupErr := evaluateRiskClaimGroup(ctx, backend, opts, freshCutoff, group)
+		result.FeatureElapsed += groupResult.FeatureElapsed
+		result.ScoreElapsed += groupResult.ScoreElapsed
+		result.ApplyElapsed += groupResult.ApplyElapsed
 		if errors.Is(groupErr, store.ErrRiskFeatureStreamBound) {
 			if len(group) > 1 {
 				middle := len(group) / 2
@@ -185,10 +192,13 @@ func evaluateRiskClaimGroup(ctx context.Context, backend IncrementalStore, opts 
 		return result, err
 	}
 	pageSize := min(opts.FeatureLimit, 5000)
+	featureStarted := time.Now()
 	result.Features, err = backend.StreamRiskFeatureEvents(ctx, opts.SensorID, claims, opts.AsOf.Add(-opts.Window), opts.AsOf, freshCutoff, pageSize, analyzer.Add)
+	result.FeatureElapsed = time.Since(featureStarted)
 	if err != nil {
 		return result, fmt.Errorf("read affected risk features: %w", err)
 	}
+	scoreStarted := time.Now()
 	analyzed := analyzer.Result()
 	kept := make([]evidence.Evidence, 0, len(analyzed.Evidence))
 	seenEvidence := make(map[string]bool, len(analyzed.Evidence))
@@ -208,21 +218,17 @@ func evaluateRiskClaimGroup(ctx context.Context, backend IncrementalStore, opts 
 		kept = append(kept, item)
 	}
 	result.Evidence = len(kept)
-	encoded, err := json.Marshal(evidence.Result{Evidence: kept})
-	if err != nil {
-		return result, err
-	}
-	scored, err := risk.Batch(bytes.NewReader(encoded))
-	if err != nil {
-		return result, fmt.Errorf("score affected risk evidence: %w", err)
-	}
+	scored := risk.ScoreEvidence(kept)
 	for _, snapshot := range scored.Snapshots {
 		if !selected[riskSnapshotClaimKey(snapshot)] {
 			return result, errors.New("risk scorer emitted an unclaimed subject")
 		}
 	}
 	result.Snapshots = len(scored.Snapshots)
+	result.ScoreElapsed = time.Since(scoreStarted)
+	applyStarted := time.Now()
 	committedCount, err := backend.ApplyStreamRiskEvaluation(ctx, opts.SensorID, claims, kept, scored.Snapshots, opts.AsOf)
+	result.ApplyElapsed = time.Since(applyStarted)
 	if err != nil {
 		return result, fmt.Errorf("commit affected risk facts: %w", err)
 	}

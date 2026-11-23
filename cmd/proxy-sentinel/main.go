@@ -1413,7 +1413,9 @@ func runRiskMaterialize(args []string) error {
 				return false, err
 			}
 			if result.Claims > 0 {
-				fmt.Fprintf(os.Stderr, "risk incremental: claims=%d committed=%d retried=%d features=%d evidence=%d snapshots=%d oldest_claim_age=%s elapsed=%s\n", result.Claims, result.Committed, result.Retried, result.Features, result.Evidence, result.Snapshots, result.OldestClaimAge.Round(time.Millisecond), time.Since(started).Round(time.Millisecond))
+				fmt.Fprintf(os.Stderr, "risk incremental: claims=%d committed=%d retried=%d features=%d evidence=%d snapshots=%d oldest_claim_age=%s claim_ms=%d feature_ms=%d score_ms=%d apply_ms=%d elapsed=%s\n",
+					result.Claims, result.Committed, result.Retried, result.Features, result.Evidence, result.Snapshots, result.OldestClaimAge.Round(time.Millisecond),
+					result.ClaimElapsed.Milliseconds(), result.FeatureElapsed.Milliseconds(), result.ScoreElapsed.Milliseconds(), result.ApplyElapsed.Milliseconds(), time.Since(started).Round(time.Millisecond))
 			}
 			return result.FullBatch && result.Committed == result.Claims, nil
 		}
@@ -2015,6 +2017,7 @@ func runControlPlaneServe(args []string) error {
 		ShadowDir:                *shadowDir,
 		SensorID:                 *sensorID,
 		FrontendDir:              *frontendDir,
+		HideDiscoveryMenu:        deviceDiscoveryMenuHidden(filepath.Join(firstEnv("PROXY_SENTINEL_ROOT", "/opt/proxy-sentinel"), "config", "service-expectations.json")),
 		ReadOnly:                 *readOnly,
 		SharedObservationEnabled: *sharedObservationEnabled,
 		AllowIdentityIngest:      *allowIdentityIngest,
@@ -2056,6 +2059,22 @@ func runControlPlaneServe(args []string) error {
 		PostgresMigrationsDir: *postgresMigrationsDir,
 		SignalFreshness:       signalExpectations,
 	})
+}
+
+func deviceDiscoveryMenuHidden(path string) bool {
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+	var services map[string]string
+	if err == nil {
+		err = json.Unmarshal(raw, &services)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "read discovery service expectations: %v\n", err)
+		return false
+	}
+	return services["proxy-sentinel-discovery.service"] == "stopped"
 }
 
 func usageError() error {
