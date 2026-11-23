@@ -27,7 +27,7 @@
 | 账号、认证会话与身份历史 | EndpointDetailsPage 相关身份/地址内容；/accounts/*、/endpoints/*、/integrations/4k-directory（含用户地址的返回项） | 用每条会话的用户 IP 和时间关联，账号多会话不能压成一个楼宇 | 中 |
 | 发现、路由器与共享设备 | DiscoveryPage、RouterObservationsPanel/Details、SharedAccessPage、SharedDeviceProfiles；/discovery/*、/router-observations*、/shared-access/devices、/shared-access/observations | 观测地址归属不冒充在线状态；路由器或共享出口的楼宇不能自动传给后面的所有终端 | 中 |
 | 风险、研判与案件 | RisksPage、ActiveRiskIps、ReviewPage/Details、CasesPage/Details、SharedAccessPage；/risks、/proxy-reviews*、/cases*、/shared-access/reviews* | 区分当前风险位置与案件证据发生时位置；列表、详情、历史记录一致 | 中至大 |
-| 标准事件、DPI 与活动分析 | EventsPage、RecordDetailsPages、ActivityPage、ApplicationActivity、FingerprintConflictMatrix；/events*、/dpi/flows*、/dpi/fingerprint-conflicts、/activity/*、/application-activity* | 主体 IP、源 IP、目的 IP 各自解释角色；只有属于已配置校园范围的目的 IP 才显示校园楼宇 | 中至大 |
+| 标准事件、DPI 与活动分析 | EventsPage、RecordDetailsPages、ActivityPage、FingerprintConflictMatrix；/events*、/dpi/flows*、/dpi/fingerprint-conflicts、/activity/* | 主体 IP、源 IP、目的 IP 各自解释角色；只有属于已配置校园范围的目的 IP 才显示校园楼宇 | 中至大 |
 | 黑白名单、例外与目标对象 | WhitelistPage、BlacklistPage、CampusExceptionsPage、DestinationTargetsPage；对应管理接口 | 单 IP 可补充位置；CIDR 或 IP 集合可能跨多楼，不能拿一个地址代表整段；域名不能凭临时 DNS 结果固定楼宇 | 中 |
 | 策略审批、处置与通知 | ApprovalPreview、ActionHistory/ActionRecordsPage、PolicyExecutions、NotificationsPage；/actions*、/policy-executions*、/notifications* | 只给具有目标 IP/会话的记录增加位置依据；通知模板扩展受控变量；不改变处罚目标、权限或策略范围 | 中 |
 | 总览、报告与导出 | OverviewPage、BehaviorReportsPage、ActivityPage；/overview、/behavior-reports*、/exports* | IP 明细附加楼宇；按楼宇汇总另接统计结果；导出与页面采用同一归属口径和版本 | 明细中，聚合大 |

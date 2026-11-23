@@ -170,7 +170,7 @@ Environment=PROXY_SENTINEL_IDENTITY_EVENTBUS_READ=true
 - 数据年龄从 45 分钟降到约 2–3 分钟；
 - discovery/identity Kafka lag 仍为 0。
 
-Suricata/EVE 当前暂停；应用访问页保留已产生的数据。后续若重新开启，需要先限制 EVE 事件类型/速率，避免再次拖慢发现投影。
+Suricata/EVE 当前暂停。后续若重新开启，需要先限制 EVE 事件类型/速率，避免再次拖慢发现投影。
 
 ## 2026-10-30 22:40 发现投影恢复
 

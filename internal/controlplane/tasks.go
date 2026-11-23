@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	"proxy-sentinel/internal/appdomain"
 	"proxy-sentinel/internal/fingerprint"
 )
 
@@ -53,7 +52,7 @@ func asynchronousOperation(method, path string) bool {
 		return false
 	}
 	switch path {
-	case "/application-library/pull", "/application-library/import", "/device-fingerprint-library/update", "/device-fingerprint-library/import", "/device-fingerprint-library/validate":
+	case "/device-fingerprint-library/update", "/device-fingerprint-library/import", "/device-fingerprint-library/validate":
 		return true
 	}
 	return strings.HasPrefix(path, "/actions/connectors/") && (strings.HasSuffix(path, "/test") || strings.HasSuffix(path, "/4k-database") || strings.HasSuffix(path, "/4k-sync"))
@@ -169,8 +168,6 @@ func (s *Server) submitOperationTask(w http.ResponseWriter, r *http.Request, pat
 		defer part.Close()
 		source = part
 		contentType = "application/gzip"
-	} else if path == "/application-library/import" {
-		limit = int64(appdomain.MaxBundleBytes)
 	}
 	if source == nil {
 		source = strings.NewReader("")
@@ -181,16 +178,6 @@ func (s *Server) submitOperationTask(w http.ResponseWriter, r *http.Request, pat
 	if err != nil || n > limit {
 		writeError(w, 400, "task_input_invalid", "input exceeds limit or upload failed")
 		return
-	}
-	if path == "/application-library/pull" {
-		raw, e := os.ReadFile(input)
-		var params struct {
-			Token string `json:"token"`
-		}
-		if e != nil || json.Unmarshal(raw, &params) != nil {
-			writeError(w, 400, "application_update_failed", "invalid pull parameters")
-			return
-		}
 	}
 	if strings.HasSuffix(path, "/import") || strings.HasSuffix(path, "/validate") {
 		reader, e := os.Open(input)

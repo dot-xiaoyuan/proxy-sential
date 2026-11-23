@@ -72,8 +72,8 @@ func TestActivityV3FinalizationRepairBoundedPostgres(t *testing.T) {
 
 // A device that stops sending traffic must still finalize its last live bucket.
 func TestActivityV3QuietBucketSchedulesFinalization(t *testing.T) {
-	d := appIntegrationDB(t)
-	s, ctx := d.store, context.Background()
+	s := newActivityIntegrationStore(t)
+	ctx := context.Background()
 	if _, err := s.ensureActivityV3Cutover(ctx); err != nil {
 		t.Fatal(err)
 	}

@@ -366,7 +366,7 @@ if [[ "$preflight_only" == true ]]; then
   log "preflight completed; current release was not modified"
   exit 0
 fi
-mkdir -p "$root/releases" "$root/config" "$root/data/device-fingerprints" "$root/data/device-signals" "$root/data/applications" "$root/backups"
+mkdir -p "$root/releases" "$root/config" "$root/data/device-fingerprints" "$root/data/device-signals" "$root/backups"
 chmod 0700 "$root/config" "$root/backups"
 mkdir "$stage_dir"
 paused_writers=()
@@ -418,15 +418,15 @@ PROXY_SENTINEL_STORAGE_MODE=db "$stage_dir/bin/proxy-sentinel" migrate \
   --clickhouse-dir "$stage_dir/migrations/clickhouse" \
   --timeout "${PROXY_SENTINEL_MIGRATION_TIMEOUT:-2h}" >/dev/null
 restore_writers
-completed_backfills="$(docker exec proxy-sentinel-postgres sh -c 'psql -Atq -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT count(*) FROM application_read_model_backfills WHERE status='"'"'completed'"'"' AND name IN ('"'"'latest-observations-v1'"'"','"'"'normalized-event-features-v1'"'"','"'"'activity-chart-buckets-v2'"'"','"'"'application-observation-buckets-v2'"'"')"')"
-if [[ "${PROXY_SENTINEL_RUN_LEGACY_BACKFILL:-false}" == true && "$completed_backfills" != 4 ]]; then
+completed_backfills="$(docker exec proxy-sentinel-postgres sh -c 'psql -Atq -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT count(*) FROM application_read_model_backfills WHERE status='"'"'completed'"'"' AND name IN ('"'"'normalized-event-features-v1'"'"','"'"'activity-chart-buckets-v2'"'"')"')"
+if [[ "${PROXY_SENTINEL_RUN_LEGACY_BACKFILL:-false}" == true && "$completed_backfills" != 2 ]]; then
   log "preparing historical statistics read models"
   PROXY_SENTINEL_STORAGE_MODE=db "$stage_dir/bin/proxy-sentinel" migrate \
     --postgres-dir "$stage_dir/migrations/postgres" \
     --clickhouse-dir "$stage_dir/migrations/clickhouse" \
-    --backfill-application-read-model \
+    --backfill-activity-read-model \
     --timeout "${PROXY_SENTINEL_MIGRATION_TIMEOUT:-2h}" >/dev/null
-elif [[ "$completed_backfills" == 4 ]]; then
+elif [[ "$completed_backfills" == 2 ]]; then
   log "historical statistics read models are already complete; skipping synchronous backfill"
 else
   log "legacy historical backfill is disabled; bounded v3 models start at cutover"
@@ -452,16 +452,12 @@ if [[ "$prepare_only" == true ]]; then
 fi
 mv "$stage_dir" "$release_dir"
 trap - EXIT
-cat > "$release_dir/deployment-manifest.json" <<EOF
-{"version":"$version","installed_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","postgres_image":"$POSTGRES_IMAGE","postgres_version":"${POSTGRES_IMAGE_VERSION:-unknown}","clickhouse_image":"$CLICKHOUSE_IMAGE","clickhouse_version":"${CLICKHOUSE_IMAGE_VERSION:-unknown}"}
-EOF
-
 unit_backup="$(mktemp -d /tmp/proxy-sentinel-units.XXXXXX)"
 old_target="$(readlink -f "$root/current" 2>/dev/null || true)"
 if [[ "$old_target" == "$root/current" || "$old_target" != "$root/releases/"* || ! -d "$old_target" ]]; then
   old_target=""
 fi
-for unit in proxy-sentinel-control-plane.service proxy-sentinel-ingest.service proxy-sentinel-risk-materializer.service proxy-sentinel-device-signal.service proxy-sentinel-shadow.service proxy-sentinel-shadow.timer proxy-sentinel-suricata.service proxy-sentinel-zeek.service proxy-sentinel-logrotate.service proxy-sentinel-logrotate.timer proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-inventory.service proxy-sentinel-inventory-backfill.service proxy-sentinel-identity-materializer.service proxy-sentinel-application-materializer.service proxy-sentinel-proxy-source-refresh.service proxy-sentinel-proxy-source-refresh.timer; do
+for unit in proxy-sentinel-control-plane.service proxy-sentinel-ingest.service proxy-sentinel-risk-materializer.service proxy-sentinel-device-signal.service proxy-sentinel-shadow.service proxy-sentinel-shadow.timer proxy-sentinel-suricata.service proxy-sentinel-zeek.service proxy-sentinel-logrotate.service proxy-sentinel-logrotate.timer proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-inventory.service proxy-sentinel-inventory-backfill.service proxy-sentinel-identity-materializer.service proxy-sentinel-proxy-source-refresh.service proxy-sentinel-proxy-source-refresh.timer; do
   [[ -f "/etc/systemd/system/$unit" ]] && cp -a "/etc/systemd/system/$unit" "$unit_backup/$unit"
 done
 site_units=()
@@ -470,14 +466,26 @@ for unit in proxy-sentinel-suricata.service proxy-sentinel-zeek.service proxy-se
     site_units+=("$unit")
   fi
 done
+retired_worker=proxy-sentinel-application-materializer.service
+retired_worker_active=false
+retired_worker_enabled=false
+case "$(systemctl show "$retired_worker" -p ActiveState --value 2>/dev/null || true)" in
+  active|activating|reloading) retired_worker_active=true ;;
+esac
+if [[ "$(systemctl is-enabled "$retired_worker" 2>/dev/null || true)" == enabled ]]; then retired_worker_enabled=true; fi
+
+cat > "$release_dir/deployment-manifest.json" <<EOF
+{"version":"$version","installed_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","retired_application_worker_active":$retired_worker_active,"retired_application_worker_enabled":$retired_worker_enabled,"postgres_image":"$POSTGRES_IMAGE","postgres_version":"${POSTGRES_IMAGE_VERSION:-unknown}","clickhouse_image":"$CLICKHOUSE_IMAGE","clickhouse_version":"${CLICKHOUSE_IMAGE_VERSION:-unknown}"}
+EOF
+
 rollback_install() {
   log "health check failed; rolling application and systemd units back"
   systemctl stop proxy-sentinel-control-plane.service proxy-sentinel-ingest.service proxy-sentinel-risk-materializer.service \
     proxy-sentinel-device-signal.service proxy-sentinel-suricata.service proxy-sentinel-zeek.service \
     proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service \
-    proxy-sentinel-recognition-materializer.service proxy-sentinel-inventory.service proxy-sentinel-inventory-backfill.service proxy-sentinel-identity-materializer.service proxy-sentinel-application-materializer.service proxy-sentinel-proxy-source-refresh.timer proxy-sentinel-proxy-source-refresh.service >/dev/null 2>&1 || true
+    proxy-sentinel-recognition-materializer.service proxy-sentinel-inventory.service proxy-sentinel-inventory-backfill.service proxy-sentinel-identity-materializer.service proxy-sentinel-proxy-source-refresh.timer proxy-sentinel-proxy-source-refresh.service >/dev/null 2>&1 || true
   if [[ -n "$old_target" ]]; then ln -sfn "$old_target" "$root/current.next"; mv -Tf "$root/current.next" "$root/current"; else rm -f "$root/current"; fi
-  for unit in proxy-sentinel-control-plane.service proxy-sentinel-ingest.service proxy-sentinel-risk-materializer.service proxy-sentinel-device-signal.service proxy-sentinel-shadow.service proxy-sentinel-shadow.timer proxy-sentinel-suricata.service proxy-sentinel-zeek.service proxy-sentinel-logrotate.service proxy-sentinel-logrotate.timer proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-inventory.service proxy-sentinel-inventory-backfill.service proxy-sentinel-identity-materializer.service proxy-sentinel-application-materializer.service proxy-sentinel-proxy-source-refresh.service proxy-sentinel-proxy-source-refresh.timer; do
+  for unit in proxy-sentinel-control-plane.service proxy-sentinel-ingest.service proxy-sentinel-risk-materializer.service proxy-sentinel-device-signal.service proxy-sentinel-shadow.service proxy-sentinel-shadow.timer proxy-sentinel-suricata.service proxy-sentinel-zeek.service proxy-sentinel-logrotate.service proxy-sentinel-logrotate.timer proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-inventory.service proxy-sentinel-inventory-backfill.service proxy-sentinel-identity-materializer.service proxy-sentinel-proxy-source-refresh.service proxy-sentinel-proxy-source-refresh.timer; do
     if [[ -f "$unit_backup/$unit" ]]; then cp -a "$unit_backup/$unit" "/etc/systemd/system/$unit"; else rm -f "/etc/systemd/system/$unit"; fi
   done
   systemctl daemon-reload
@@ -488,17 +496,21 @@ rollback_install() {
   for unit in ${site_units[@]+"${site_units[@]}"}; do systemctl start "$unit" >/dev/null 2>&1 || true; done
   systemctl start proxy-sentinel-risk-materializer.service proxy-sentinel-shadow.timer >/dev/null 2>&1 || true
   # The stop above also took the projection workers down. Restarting only the
-  # control plane leaves the read model, recognition, inventory, identity and
-  # application layers silently disabled after a rollback, so bring every enabled
+  # control plane leaves the read model, recognition, inventory and identity
+  # workers disabled after a rollback, so bring every enabled
   # worker back and clear the failed state left by a SIGKILL timeout.
-  for unit in proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-inventory.service proxy-sentinel-inventory-backfill.service proxy-sentinel-identity-materializer.service proxy-sentinel-application-materializer.service; do
+  for unit in proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-inventory.service proxy-sentinel-inventory-backfill.service proxy-sentinel-identity-materializer.service; do
     systemctl is-enabled --quiet "$unit" 2>/dev/null || continue
     systemctl reset-failed "$unit" >/dev/null 2>&1 || true
     systemctl restart "$unit" >/dev/null 2>&1 || log "failed to restore $unit after rollback"
   done
+  if [[ "$retired_worker_enabled" == true ]]; then systemctl enable "$retired_worker" || log "failed to enable $retired_worker after rollback"; fi
+  if [[ "$retired_worker_active" == true ]]; then systemctl start "$retired_worker" || log "failed to start $retired_worker after rollback"; fi
   systemctl restart proxy-sentinel-control-plane.service >/dev/null 2>&1 || true
 }
 trap rollback_install ERR
+if [[ "$retired_worker_enabled" == true ]]; then systemctl disable "$retired_worker"; fi
+if [[ "$retired_worker_active" == true || "$retired_worker_enabled" == true ]]; then systemctl stop "$retired_worker"; fi
 
 if [[ -n "$old_target" ]]; then ln -sfn "$old_target" "$root/previous.next"; mv -Tf "$root/previous.next" "$root/previous"; fi
 ln -sfn "$release_dir" "$root/current.next"
@@ -514,7 +526,7 @@ Type=simple
 WorkingDirectory=$root/current
 EnvironmentFile=$runtime_env
 EnvironmentFile=-$root/config/proxy-source.env
-ExecStart=$root/current/bin/proxy-sentinel control-plane serve --addr $control_addr --shadow-dir $root/data/shadow --sensor-id $sensor_id --frontend-dir $root/current/frontend/dist --storage-mode db --read-only=$read_only --applications-dir $root/data/applications --device-fingerprint-dir $root/data/device-fingerprints --device-fingerprint-auto-update=false --postgres-migrations-dir $root/current/migrations/postgres
+ExecStart=$root/current/bin/proxy-sentinel control-plane serve --addr $control_addr --shadow-dir $root/data/shadow --sensor-id $sensor_id --frontend-dir $root/current/frontend/dist --storage-mode db --read-only=$read_only --device-fingerprint-dir $root/data/device-fingerprints --device-fingerprint-auto-update=false --postgres-migrations-dir $root/current/migrations/postgres
 Restart=always
 RestartSec=5
 NoNewPrivileges=true
@@ -523,7 +535,7 @@ PrivateTmp=true
 WantedBy=multi-user.target
 EOF
 
-for unit in proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-inventory.service proxy-sentinel-inventory-backfill.service proxy-sentinel-identity-materializer.service proxy-sentinel-application-materializer.service proxy-sentinel-proxy-source-refresh.service proxy-sentinel-proxy-source-refresh.timer; do
+for unit in proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-inventory.service proxy-sentinel-inventory-backfill.service proxy-sentinel-identity-materializer.service proxy-sentinel-proxy-source-refresh.service proxy-sentinel-proxy-source-refresh.timer; do
   sed "s#/opt/proxy-sentinel#$root#g" "$release_dir/deploy/systemd/$unit" > "/etc/systemd/system/$unit"
 done
 
@@ -739,7 +751,6 @@ EOF
 fi
 
 [[ -s "$release_dir/assets/device-fingerprints/bootstrap.tar.gz" ]] || die "release contains no device fingerprint pack"
-[[ -s "$release_dir/assets/applications/bootstrap.tar.gz" ]] || die "release contains no application bootstrap pack"
 "$release_dir/bin/proxy-sentinel" device-fingerprint verify --bundle "$release_dir/assets/device-fingerprints/bootstrap.tar.gz" >/dev/null
 if [[ -f "$root/data/device-fingerprints/current/manifest.json" ]]; then
   log "preserving installed device fingerprint pack; bootstrap is for first install only"
@@ -803,7 +814,7 @@ if [[ "$manage_zeek" == true ]]; then systemctl enable --now proxy-sentinel-zeek
 if [[ "$manage_device_signals" == true ]]; then systemctl enable --now proxy-sentinel-device-signal.service; else disable_installer_units proxy-sentinel-device-signal.service; fi
 if [[ "$ingest_enabled" == true ]]; then systemctl enable --now proxy-sentinel-ingest.service; else disable_installer_units proxy-sentinel-ingest.service; fi
 systemctl disable --now proxy-sentinel-risk-materializer.service proxy-sentinel-shadow.timer >/dev/null 2>&1 || true
-systemctl enable --now proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-inventory.service proxy-sentinel-inventory-backfill.service proxy-sentinel-identity-materializer.service proxy-sentinel-application-materializer.service proxy-sentinel-control-plane.service
+systemctl enable --now proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-inventory.service proxy-sentinel-inventory-backfill.service proxy-sentinel-identity-materializer.service proxy-sentinel-control-plane.service
 # `enable --now` does not restart an already running service during an
 # in-place upgrade. Restart each enabled long-running worker so no process
 # keeps executing the binary from the previous release symlink.
@@ -812,7 +823,7 @@ if [[ "$manage_zeek" == true ]]; then systemctl restart proxy-sentinel-zeek.serv
 if [[ "$manage_device_signals" == true ]]; then systemctl restart proxy-sentinel-device-signal.service; fi
 if [[ "$ingest_enabled" == true ]]; then systemctl restart proxy-sentinel-ingest.service; fi
 for unit in ${site_units[@]+"${site_units[@]}"}; do systemctl restart "$unit"; done
-for unit in proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-inventory.service proxy-sentinel-inventory-backfill.service proxy-sentinel-identity-materializer.service proxy-sentinel-application-materializer.service; do
+for unit in proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-inventory.service proxy-sentinel-inventory-backfill.service proxy-sentinel-identity-materializer.service; do
   # Under disk pressure a worker can exceed its stop timeout, be SIGKILLed and
   # report a failed restart for one unit. Retry once so a transient stall does not
   # abort the whole upgrade and roll the site back.
@@ -823,7 +834,7 @@ for unit in proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model
 done
 systemctl restart proxy-sentinel-control-plane.service
 
-# Seven projection workers restart at once here, and readiness reports not-ready until
+# Projection workers restart at once here, and readiness reports not-ready until
 # their beacons resume; on a saturated disk that window has exceeded the previous 100
 # seconds and rolled a healthy release back. Allow up to five minutes before failing.
 for _ in $(seq 1 60); do

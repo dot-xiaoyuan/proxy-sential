@@ -891,28 +891,11 @@ func (s *DBStore) ReadModelStatus(ctx context.Context) (map[string]any, error) {
 			routerState["last_success_at"] = routerSuccess.Time.UTC().Format(time.RFC3339Nano)
 		}
 	}
-	applicationState := map[string]any{}
-	if applicationRows, applicationErr := s.pg.db.QueryContext(ctx, `SELECT lane,job,updated_at FROM application_processing_jobs ORDER BY lane`); applicationErr == nil {
-		for applicationRows.Next() {
-			var lane string
-			var job []byte
-			var updatedAt time.Time
-			if applicationRows.Scan(&lane, &job, &updatedAt) == nil {
-				var value map[string]any
-				if json.Unmarshal(job, &value) == nil {
-					value["updated_at"] = updatedAt.UTC().Format(time.RFC3339Nano)
-					applicationState[lane] = value
-				}
-			}
-		}
-		applicationRows.Close()
-	}
 	return map[string]any{
 		"states":                    states,
 		"jobs":                      jobs,
 		"recognition":               map[string]any{"pending": recognitionPending, "failed_ten_times": recognitionFailures},
 		"router_recognition":        routerState,
-		"application_processing":    applicationState,
 		"event_id_index_cutover":    strings.TrimSpace(os.Getenv("PROXY_SENTINEL_EVENT_ID_INDEX_CUTOVER")),
 		"event_id_index_v2_cutover": strings.TrimSpace(os.Getenv("PROXY_SENTINEL_EVENT_ID_INDEX_V2_CUTOVER")),
 	}, nil

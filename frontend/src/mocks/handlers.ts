@@ -11,7 +11,6 @@ import { proxyProof } from './proxyProtocol'
 import { domainOnlyDevice, domainOnlyProfile } from './brandInference'
 import { policyHandlers } from './policies'
 import { behaviorReportHandlers, blacklistHandlers, destinationTargetHandlers, notificationHandlers } from './notifications'
-import { applicationHandlers } from './applications'
 import { routerObservationHandlers } from './routerObservations'
 import { violationHandlers } from './violation'
 import { delay, http, HttpResponse } from 'msw'
@@ -142,7 +141,6 @@ export const handlers = [
  ...discoveryHandlers,
  ...routerObservationHandlers,
  http.get("/api/v1/events/proxy-fixture",()=>HttpResponse.json({event_id:"proxy-fixture",type:"proxy_transaction",source:"zeek",timestamp:proxyProof.response_at,proxy_protocol:proxyProof})),
-  ...applicationHandlers,
   ...policyHandlers,
   http.get('/api/v1/session', async () => {
     await delay(120)

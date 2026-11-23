@@ -12,8 +12,7 @@ import (
 )
 
 func TestActivityChartBucketReplay(t *testing.T) {
-	d := appIntegrationDB(t)
-	s := d.store
+	s := newActivityIntegrationStore(t)
 	ctx := context.Background()
 	sensor := fmt.Sprintf("chart-replay-%d", time.Now().UnixNano())
 	base := time.Now().UTC().Truncate(24 * time.Hour).Add(-3*24*time.Hour + time.Hour)

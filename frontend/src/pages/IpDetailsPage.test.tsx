@@ -12,7 +12,6 @@ vi.mock('../shared/api/queries', () => ({
   useIpEvidence: () => ({}), useIpEvents: () => ({}), useIpActivity: () => ({}),
   useCreateLabel: () => ({ isPending: false, mutate: vi.fn() }),
 }))
-vi.mock('../features/applications/ApplicationActivity', () => ({ ApplicationActivity: () => null }))
 afterEach(cleanup)
 const risk: RiskSnapshot = { ip: '192.0.2.82', score: 59, level: 'suspicious', confidence: .79, window: '10m', evidence_ids: ['proof-fixture'], summary: '客户端协议线索，需要复核', recommended_action: 'shadow_watch', updated_at: '2026-10-01T00:00:00Z', suspected_device_count: 0, device_confidence: 0 }
 const inventory: IpDeviceInventory = { ip: risk.ip, window: '24h', suspected_device_count: 1, confidence: .82, status: 'single_candidate', summary: '单个设备候选', signals: [], conflicts: [], devices: [{ device_id: 'fixture-device', ip: risk.ip, label: '设备候选', brand: 'unknown', vendor: '未获取厂商', os_family: 'Linux', device_type: 'desktop', model: '', confidence: .82, signal_count: 1, strong_signal_count: 1, medium_signal_count: 0, weak_signal_count: 0, signals: [], fingerprints: [], summary: '原始设备线索保留' }] }

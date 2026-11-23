@@ -124,7 +124,7 @@ func TestOperationTaskCancellationDoesNotMisreportAtomicActivation(t *testing.T)
 	s, actor := taskIntegrationServer(t)
 	id := "task-atomic-" + shortToken(16)
 	actorJSON, _ := json.Marshal(actor)
-	_, err := s.operations.db.Exec(`INSERT INTO control_plane_tasks(task_id,kind,status,created_by,request_hash,actor,method,request_path,content_type,input_path,worker_id) VALUES($1,'/application-library/import','running',$2,'hash',$3,'POST','/api/v1/application-library/import','application/gzip','unused','atomic-worker')`, id, actor.User.ID, actorJSON)
+	_, err := s.operations.db.Exec(`INSERT INTO control_plane_tasks(task_id,kind,status,created_by,request_hash,actor,method,request_path,content_type,input_path,worker_id) VALUES($1,'/device-fingerprint-library/import','running',$2,'hash',$3,'POST','/api/v1/device-fingerprint-library/import','application/gzip','unused','atomic-worker')`, id, actor.User.ID, actorJSON)
 	if err != nil {
 		t.Fatal(err)
 	}

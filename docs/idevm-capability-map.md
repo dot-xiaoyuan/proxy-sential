@@ -178,7 +178,7 @@ TL;DR：204 条里 34 条不适用、11 条已重合、55 条部分重合、104 
 | 120 | 准入策略 | `GET /v3/internet/search` | 准入控制策略查询 | product-policy 只读快照 | 部分重合 |
 | 121 | 域名策略 | `POST /v3/domain/create` | 新增域名策略 | 无策略下发 | 不适用 |
 | 122 | 域名策略 | `POST /v3/domain/delete` | 删除域名策略 | 无策略下发 | 不适用 |
-| 123 | 域名策略 | `GET /v3/domain/search` | 域名策略查询 | /application-library 应用域名库（只读） | 部分重合 |
+| 123 | 域名策略 | `GET /v3/domain/search` | 域名策略查询 | — | 未实现 |
 | 124 | 域名策略 | `POST /v3/domain/update` | 修改域名策略 | 无策略下发 | 不适用 |
 | 125 | 在线会话 | `GET /v3/online` | 在线会话列表 | 身份在线会话（只读） | 部分重合 |
 | 126 | 在线会话 | `GET /v3/online/count` | 在线数统计 | 在线身份计数（只读） | 部分重合 |

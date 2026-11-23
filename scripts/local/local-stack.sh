@@ -144,7 +144,7 @@ EOF
 
 prepare_dirs() {
   mkdir -p "$data_dir/db/postgres" "$data_dir/db/clickhouse/data" "$data_dir/db/clickhouse/logs" \
-    "$data_dir/shadow" "$data_dir/applications" "$data_dir/device-fingerprints" \
+    "$data_dir/shadow" "$data_dir/device-fingerprints" \
     "$data_dir/exports" "$run_dir" "$log_dir"
 }
 
@@ -205,15 +205,15 @@ apply_migrations() {
   "$bin" migrate --postgres-dir "$root/migrations/postgres" \
     --clickhouse-dir "$root/migrations/clickhouse" --timeout 30m >/dev/null
   local completed
-  completed="$(pg_query "SELECT count(*) FROM application_read_model_backfills WHERE status='completed' AND name IN ('latest-observations-v1','normalized-event-features-v1','activity-chart-buckets-v2','application-observation-buckets-v2')")"
-  if [ "${completed:-0}" = "4" ]; then
+  completed="$(pg_query "SELECT count(*) FROM application_read_model_backfills WHERE status='completed' AND name IN ('normalized-event-features-v1','activity-chart-buckets-v2')")"
+  if [ "${completed:-0}" = "2" ]; then
     log "统计读模型回填已完成，跳过"
     return 0
   fi
   log "准备统计读模型（空库约 1 分钟）"
   "$bin" migrate --postgres-dir "$root/migrations/postgres" \
     --clickhouse-dir "$root/migrations/clickhouse" \
-    --backfill-application-read-model --timeout 2h >/dev/null
+    --backfill-activity-read-model --timeout 2h >/dev/null
 }
 
 ensure_admin() {
@@ -611,7 +611,6 @@ start_control_plane() {
     --frontend-dir "$frontend_dir" \
     --storage-mode db \
     --read-only=false \
-    --applications-dir "$data_dir/applications" \
     --device-fingerprint-dir "$data_dir/device-fingerprints" \
     --device-fingerprint-auto-update=false \
     --export-dir "$data_dir/exports" \

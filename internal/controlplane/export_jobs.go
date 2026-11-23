@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"proxy-sentinel/internal/appdomain"
 	"sort"
 	"time"
 )
@@ -37,13 +36,12 @@ func (m *exportManager) cancel(id string) (ExportJob, error) {
 
 // Private task metadata is persisted independently of public API fields.
 type persistedExport struct {
-	Query          *appdomain.Query `json:"application_query,omitempty"`
-	Job            ExportJob        `json:"job"`
-	IdempotencyKey string           `json:"idempotency_key,omitempty"`
+	Job            ExportJob `json:"job"`
+	IdempotencyKey string    `json:"idempotency_key,omitempty"`
 }
 
 func (m *exportManager) persistLocked(job ExportJob) error {
-	raw, err := json.Marshal(persistedExport{Job: job, IdempotencyKey: job.IdempotencyKey, Query: job.ApplicationQuery})
+	raw, err := json.Marshal(persistedExport{Job: job, IdempotencyKey: job.IdempotencyKey})
 	if err != nil {
 		return err
 	}
@@ -89,12 +87,15 @@ func (m *exportManager) restore() error {
 			return fmt.Errorf("restore export metadata: %w", err)
 		}
 		job := persisted.Job
+		// Retired exports remain on disk and are never requeued as CSV jobs.
+		if job.Kind == "unknown-domains" {
+			continue
+		}
 		if filepath.Base(job.ExportID) != job.ExportID || job.ExportID == "" || !validExportKind(job.Kind) {
 			return fmt.Errorf("invalid export metadata")
 		}
 		job.IdempotencyKey = persisted.IdempotencyKey
-		job.ApplicationQuery = persisted.Query
-		job.FilePath = exportFilePath(m.dir, job)
+		job.FilePath = filepath.Join(m.dir, job.ExportID+".csv")
 		if job.Status == "running" {
 			job.Status = "queued"
 			if err = os.Remove(job.FilePath + ".tmp"); err != nil && !os.IsNotExist(err) {
@@ -125,7 +126,7 @@ func (m *exportManager) submit(job ExportJob) (ExportJob, error) {
 	pending := 0
 	for _, existing := range m.jobs {
 		if job.IdempotencyKey != "" && existing.CreatedBy == job.CreatedBy && existing.IdempotencyKey == job.IdempotencyKey {
-			if existing.Kind != job.Kind || existing.From != job.From || existing.To != job.To || approvalJSON(existing.ApplicationQuery) != approvalJSON(job.ApplicationQuery) {
+			if existing.Kind != job.Kind || existing.From != job.From || existing.To != job.To {
 				return ExportJob{}, fmt.Errorf("idempotency key reused with different parameters")
 			}
 			return existing, nil

@@ -1,6 +1,5 @@
 import { Notice as Alert } from '../shared/ui/Notice'
 import { FingerprintCatalog } from "../features/fingerprints/FingerprintCatalog";
-import { ApplicationLibrary } from "../features/applications/ApplicationLibrary";
 import { AIRelayIndicatorLibrary } from "../features/airelay/AIRelayIndicatorLibrary";
 import { useSearchParams } from 'react-router-dom';
 import { useState } from "react";
@@ -33,10 +32,9 @@ export function RulesPage() {
   const { message } = AntApp.useApp();
   const [params,setParams] = useSearchParams();
   const requestedTab = params.get("tab")
-  const fallbackTab = can(session.data, 'dpi:read') ? 'application-domains'
-    : can(session.data, 'identity:read') ? 'fingerprints'
+  const fallbackTab = can(session.data, 'identity:read') ? 'fingerprints'
     : 'ai-relay'
-  const activeTab = !requestedTab || requestedTab === 'risk' ? fallbackTab : requestedTab
+  const activeTab = requestedTab === 'fingerprints' || requestedTab === 'ai-relay' ? requestedTab : fallbackTab
   const fingerprintLibrary = useDeviceFingerprintLibrary(activeTab==="fingerprints");
   const validateBundle = useValidateDeviceFingerprintBundle();
   const importBundle = useImportDeviceFingerprintBundle();
@@ -164,11 +162,11 @@ export function RulesPage() {
             规则与特征库
           </Typography.Title>
           <Typography.Text type="secondary">
-            维护应用域名、AI 中转站和设备特征库，查看各库实际生效版本。
+            维护 AI 中转站域名库和设备特征库，查看生效版本。
           </Typography.Text>
         </div>
       </div>
-      <AppFactBar items={['风险规则暂不支持在线热重载；应用域名库与设备特征库分别按实际生效版本运行']} />
+      <AppFactBar items={['风险规则暂不支持在线热重载']} />
       <section className="surface operations-tabs-surface">
         <Tabs
           activeKey={activeTab}
@@ -274,7 +272,6 @@ export function RulesPage() {
                 </div>
               ),
             },
-            {key:"application-domains", label:"应用域名特征库", disabled:!can(session.data,'dpi:read'), children:<ApplicationLibrary />},
             {key:"ai-relay", label:"AI 中转站域名库", disabled:!can(session.data,'risks:read'), children:<AIRelayIndicatorLibrary />},
           ]}
         />

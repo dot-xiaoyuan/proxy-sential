@@ -23,7 +23,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 build_root="$(mktemp -d "${TMPDIR:-/tmp}/proxy-sentinel-release.XXXXXX")"
 trap 'rm -rf "$build_root"' EXIT
 release_dir="$build_root/release"
-  mkdir -p "$release_dir/bin" "$release_dir/frontend" "$release_dir/scripts" "$release_dir/deploy/compose" "$release_dir/deploy/clickhouse" "$release_dir/deploy/logrotate" "$release_dir/assets/device-fingerprints" "$release_dir/assets/applications"
+  mkdir -p "$release_dir/bin" "$release_dir/frontend" "$release_dir/scripts" "$release_dir/deploy/compose" "$release_dir/deploy/clickhouse" "$release_dir/deploy/logrotate" "$release_dir/assets/device-fingerprints"
 
 (
   cd "$repo_root"
@@ -70,7 +70,6 @@ JS
   mkdir -p "$release_dir/collectors"
   cp -R collectors/zeek "$release_dir/collectors/zeek"
   go run ./cmd/proxy-sentinel device-fingerprint build-embedded --version "offline-$version" --output "$release_dir/assets/device-fingerprints/bootstrap.tar.gz"
-  cp examples/application-domain/contract-fixture.tar.gz "$release_dir/assets/applications/bootstrap.tar.gz"
   cp deploy/compose/storage.yml "$release_dir/deploy/compose/storage.yml"
   cp deploy/clickhouse/production-system-logs.xml "$release_dir/deploy/clickhouse/production-system-logs.xml"
   cp deploy/logrotate/proxy-sentinel-shared-signals "$release_dir/deploy/logrotate/proxy-sentinel-shared-signals"

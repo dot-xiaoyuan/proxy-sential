@@ -135,9 +135,9 @@ func TestActivityV3RealtimeCheckpointPreservesLastSuccessPostgres(t *testing.T) 
 }
 
 func TestActivityV3QuietWorkerPublishesAndRemainsHealthy(t *testing.T) {
-	d := appIntegrationDB(t)
+	activity := newActivityIntegrationStore(t)
 	s := activityV3PrivatePostgres(t)
-	s.ch = d.store.ch
+	s.ch = activity.ch
 	ctx := context.Background()
 	now := time.Now().UTC()
 	bucket := now.Truncate(time.Hour).Add(-2 * time.Hour)

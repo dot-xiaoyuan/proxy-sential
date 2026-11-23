@@ -62,7 +62,7 @@ export function DiscoveryCoverageReport({ report }: { report: CoverageReport }) 
   const breakdown = [
     { label: '仅网络层 · ARP、NDP 等', value: report.untyped_network_only_ipv4 },
     { label: '有 DHCP · 缺应用或设备公告', value: report.untyped_dhcp_only_ipv4 },
-    { label: '有应用或设备公告', value: report.untyped_application_ipv4 },
+    { label: '有设备协议证据', value: report.untyped_application_ipv4 },
     { label: '其他证据', value: report.untyped_other_ipv4 },
   ].flatMap(({ label, value }) => value === undefined ? [] : [{ label, value }])
 

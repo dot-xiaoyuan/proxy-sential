@@ -98,7 +98,7 @@ WHERE sensor_id=$1 AND endpoint_id=$2 AND action='ack' AND observed_at<=$3 AND v
 }
 
 func (s *DBStore) claimSharedDeviceProfileJob(ctx context.Context, worker string) (sharedDeviceProfileJob, bool, error) {
-	owner := worker + ":" + appToken()
+	owner := worker + ":" + shortStoreToken(32)
 	tx, err := s.pg.db.BeginTx(ctx, nil)
 	if err != nil {
 		return sharedDeviceProfileJob{}, false, err

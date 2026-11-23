@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { ArrowRightOutlined, FileSearchOutlined, LaptopOutlined, RadarChartOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { ArrowRightOutlined, LaptopOutlined, RadarChartOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import { Button, Segmented, Skeleton } from 'antd'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
@@ -27,7 +27,6 @@ const eventLabels: Record<string, string> = {
 }
 
 type Discovery = components['schemas']['DiscoveryDeviceMetadata']
-type Applications = components['schemas']['ApplicationReport']
 type Ranking = { key: string; label: string; count: number; to?: string }
 
 function useReportData<T>(path: string, enabled: boolean) {
@@ -115,21 +114,16 @@ export function DataReportPage() {
   const readIdentity = can(session, 'identity:read')
   const readTraffic = can(session, 'dpi:read')
   const activity = useReportData<ActivityOverview>(`/activity/overview?window=${period.value}&view=summary`, readTraffic)
-  const applications = useReportData<Applications>(`/application-activity?window=${period.value}`, readTraffic)
   const inventory = useReportData<DeviceInventoryMetadataResponse>(`/device-inventory/metadata?view=recent&window=${period.value}`, readIdentity)
   const discovery = useReportData<Discovery>(`/discovery/devices/metadata?mode=passive&identity_scope=devices&overview=false&window=${period.discovery}`, readIdentity)
   const traffic = activity.data
-  const apps = applications.data
   const terminals = inventory.data
   const discovered = discovery.data
   const currentInventory = terminals?.read_model_state
-  const disabledApplications = applications.error instanceof ApiError && applications.error.status === 503 &&
-    /"applications_disabled"/.test(applications.error.message)
   const inventoryPreparing = currentInventory?.available === false ||
     (inventory.error instanceof ApiError && /"inventory_projection_not_ready"/.test(inventory.error.message))
   const activityNote = traffic?.data_freshness
   const networkUrl = `/activity?section=access&tab=network&window=${period.value}`
-  const appUrl = `/activity?section=applications&window=${period.value}`
   const inventoryUrl = `/devices?tab=terminal&view=recent&window=${period.value}`
   const discoveryUrl = `/devices?tab=discovery&discovery_window=${period.discovery}`
   const coverageUrl = `/devices/coverage?window=${period.discovery}`
@@ -137,7 +131,7 @@ export function DataReportPage() {
   const confirmedLabel = hardware ? '已确认硬件类型' : '已识别类型'
   const queries = [
     ...(readIdentity ? [discovery, inventory] : []),
-    ...(readTraffic ? [activity, applications] : []),
+    ...(readTraffic ? [activity] : []),
   ]
 
   return <main className="page data-report-page">
@@ -152,10 +146,7 @@ export function DataReportPage() {
     </header>
 
     <dl className="data-report-metrics" aria-label="核心数据">
-      {readTraffic && <>
-        <Metric label="标准事件" value={traffic?.event_count} unit="条" icon={<ThunderboltOutlined aria-hidden="true" />} loading={activity.isFetching} />
-        <Metric label="应用观测" value={disabledApplications ? undefined : apps?.observation_count} unit="条" icon={<FileSearchOutlined aria-hidden="true" />} loading={applications.isFetching} />
-      </>}
+      {readTraffic && <Metric label="标准事件" value={traffic?.event_count} unit="条" icon={<ThunderboltOutlined aria-hidden="true" />} loading={activity.isFetching} />}
       {readIdentity && <>
         <Metric label="近期终端" value={inventoryPreparing ? undefined : terminals?.total} unit="个" icon={<LaptopOutlined aria-hidden="true" />} loading={inventory.isFetching} />
         <Metric label="发现记录" value={discovered?.total} unit="条" icon={<RadarChartOutlined aria-hidden="true" />} primary loading={discovery.isFetching} />
@@ -207,47 +198,27 @@ export function DataReportPage() {
       </Panel>
     </div>}
 
-    {readTraffic && <div className="data-report-grid">
-      <Panel id="traffic" title="网络访问" hint="按标准事件汇总观测地址和访问对象"
-        links={[{ label: '访问分析', to: networkUrl }]} asOf={activityNote?.as_of || traffic?.statistics_as_of}
-        busy={activity.isFetching} loadingLabel={activity.isFetching && !traffic ? '正在读取网络访问统计…' : undefined}
-        message={activity.isError && !traffic
-          ? (activity.error instanceof ApiError && activity.error.status === 504 ? '网络访问统计读取超时，请刷新重试。' : '网络访问统计读取失败，请刷新重试。')
-          : undefined}
-        note={activity.isError && traffic ? '刷新失败，保留上次统计。' :
-          activityNote?.status === 'warming' ? '访问统计正在生成，当前统计可能不完整。' :
-          activityNote?.status === 'stale' || activityNote?.status === 'delayed' ? '访问统计有延迟。' :
-          activityNote?.partial ? '访问统计仅覆盖部分时间范围。' : undefined}>
-        {traffic && <>
-          <Counts values={[
-            { label: '活跃 IP', value: traffic.active_ip_count, unit: '个' },
-            { label: '访问对象', value: traffic.access_object_count, unit: '个' },
-          ]} />
-          <RankList title="事件类型" scale={traffic.event_count} empty="当前范围没有事件记录。"
-            rows={(traffic.event_type_counts ?? []).map(row => ({
-              key: row.value, label: eventLabels[row.value] ?? row.value, count: row.count,
-            }))} />
-        </>}
-      </Panel>
-      <Panel id="applications" title="应用识别" hint="域名与协议特征产生的应用观测"
-        links={[{ label: '应用访问', to: appUrl }]} asOf={disabledApplications ? undefined : apps?.statistics_as_of || apps?.as_of}
-        busy={applications.isFetching} loadingLabel={applications.isFetching && !apps ? '正在读取应用观测…' : undefined}
-        message={disabledApplications ? '应用观测尚未启用。' :
-          applications.isError && !apps ? '应用观测读取失败。' : undefined}
-        note={applications.isError && apps && !disabledApplications ? '刷新失败，保留上次统计。' : undefined}>
-        {apps && <>
-          <Counts values={[
-            { label: '待补特征观测', value: apps.unknown_observations, unit: '条' },
-            { label: 'DNS 观测', value: apps.dns_observations, unit: '条' },
-          ]} />
-          <RankList title="应用排行 · 按已识别连接" empty="当前范围暂无可列出的已识别连接。"
-            rows={(apps.items ?? []).map(row => ({
-              key: row.application_id ?? row.name ?? '', label: row.name ?? '', count: row.connection_count ?? 0,
-              to: row.application_id ? `${appUrl}&application_id=${encodeURIComponent(row.application_id)}` : undefined,
-            }))} />
-        </>}
-      </Panel>
-    </div>}
+    {readTraffic && <Panel id="traffic" title="网络访问" hint="按标准事件汇总观测地址和访问对象"
+      links={[{ label: '访问分析', to: networkUrl }]} asOf={activityNote?.as_of || traffic?.statistics_as_of}
+      busy={activity.isFetching} loadingLabel={activity.isFetching && !traffic ? '正在读取网络访问统计…' : undefined}
+      message={activity.isError && !traffic
+        ? (activity.error instanceof ApiError && activity.error.status === 504 ? '网络访问统计读取超时，请刷新重试。' : '网络访问统计读取失败，请刷新重试。')
+        : undefined}
+      note={activity.isError && traffic ? '刷新失败，保留上次统计。' :
+        activityNote?.status === 'warming' ? '访问统计正在生成，当前统计可能不完整。' :
+        activityNote?.status === 'stale' || activityNote?.status === 'delayed' ? '访问统计有延迟。' :
+        activityNote?.partial ? '访问统计仅覆盖部分时间范围。' : undefined}>
+      {traffic && <>
+        <Counts values={[
+          { label: '活跃 IP', value: traffic.active_ip_count, unit: '个' },
+          { label: '访问对象', value: traffic.access_object_count, unit: '个' },
+        ]} />
+        <RankList title="事件类型" scale={traffic.event_count} empty="当前范围没有事件记录。"
+          rows={(traffic.event_type_counts ?? []).map(row => ({
+            key: row.value, label: eventLabels[row.value] ?? row.value, count: row.count,
+          }))} />
+      </>}
+    </Panel>}
     <p className="data-report-footnote">
       各板块独立统计，事件、IP、台账终端和发现记录分别按各自口径计数。
       {hardware && ' 纯地址线索可在发现列表切换查看。'}

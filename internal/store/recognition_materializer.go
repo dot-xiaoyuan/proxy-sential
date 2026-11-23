@@ -60,7 +60,7 @@ FROM endpoint_recognition_jobs WHERE endpoint_id=$1 FOR UPDATE`, job.EndpointID,
 
 func (s *DBStore) claimRecognitionJob(ctx context.Context, worker string) (recognitionJob, bool, error) {
 	// Each claim needs its own token, including retries by the same worker.
-	owner := worker + ":" + appToken()
+	owner := worker + ":" + shortStoreToken(32)
 	lane := 0
 	if strings.HasSuffix(worker, "-3") {
 		if !fingerprint.HistoryBackfillEnabled() {

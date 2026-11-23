@@ -70,7 +70,6 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.signalMetrics(w)
-	s.applicationMetrics(ctx, w)
 	s.identityMetrics(ctx, w)
 }
 
@@ -149,11 +148,6 @@ func (s *Server) healthSnapshot(ctx context.Context) (map[string]componentHealth
 		check("storage", true, func() error { return checker.Health(ctx) })
 	} else {
 		components["storage"] = componentHealth{Status: "file_mode"}
-	}
-	if s.applications != nil && s.applications.Status().Enabled {
-		if models, ok := s.reader.(interface{ ApplicationReadModelHealth(context.Context) error }); ok {
-			check("application_read_model", false, func() error { return models.ApplicationReadModelHealth(ctx) })
-		}
 	}
 	if s.auth != nil && s.auth.db != nil {
 		check("authentication", true, func() error { return s.auth.db.PingContext(ctx) })

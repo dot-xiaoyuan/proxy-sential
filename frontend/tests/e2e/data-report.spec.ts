@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }, { width: 1440, height: 900 }]) {
-  test(`global data report shows the four datasets at ${viewport.width}`, async ({ page }, info) => {
+  test(`global data report shows the three datasets at ${viewport.width}`, async ({ page }, info) => {
     const failures: string[] = []
     const requests: URL[] = []
     page.on('pageerror', error => failures.push(error.message))
@@ -14,16 +14,17 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await expect(page.getByRole('heading', { name: '全局数据报表' })).toBeVisible()
 
     const report = page.locator('.data-report-page')
-    await expect(report.locator('.data-report-metrics dd strong')).toHaveCount(4)
+    await expect(report.locator('.data-report-metrics dd strong')).toHaveCount(3)
     await expect(report.locator('.data-report-metrics')).toContainText('发现记录')
     const discovered = report.getByRole('region', { name: '发现设备' })
     await expect(discovered.getByRole('heading', { name: '识别构成' })).toBeVisible()
     await expect(discovered.getByRole('link', { name: /打印机|摄像机|摄像头/ }).first()).toBeVisible()
     await expect(report.getByRole('region', { name: '网络访问' })).toContainText('活跃 IP')
-    await expect(report.getByRole('region', { name: '应用识别' })).toContainText('腾讯视频')
+    await expect(report.getByRole('region', { name: '应用识别' })).toHaveCount(0)
+    await expect(report.locator('.data-report-metrics')).not.toContainText('应用观测')
     await expect(report.getByRole('region', { name: '终端台账' }).getByRole('link', { name: '终端列表' }))
       .toHaveAttribute('href', '/devices?tab=terminal&view=recent&window=24h')
-    await expect(report.locator('time')).toHaveCount(4)
+    await expect(report.locator('time')).toHaveCount(3)
     expect(requests.some(url => url.pathname === '/api/v1/system/status')).toBe(false)
 
     await page.screenshot({ path: info.outputPath(`data-report-${viewport.width}.png`), fullPage: true, animations: 'disabled' })
@@ -56,7 +57,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     const initialEvents = await report.locator('.data-report-metrics dd strong').first().textContent()
     await report.getByText('近 7 天', { exact: true }).click()
     await expect(page).toHaveURL(/window=7d/)
-    await expect(report.locator('.data-report-metrics dd strong')).toHaveCount(4)
+    await expect(report.locator('.data-report-metrics dd strong')).toHaveCount(3)
     await expect(report.locator('.data-report-metrics dd strong').first()).not.toHaveText(initialEvents ?? '')
     await expect(discovered.getByRole('link', { name: '覆盖报表' })).toHaveAttribute('href', '/devices/coverage?window=168h')
     await expect(discovered.getByRole('link', { name: '待核实' })).toHaveAttribute(
@@ -67,13 +68,52 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
       url.searchParams.get('identity_scope') === 'devices')).toBe(true)
     expect(requests.some(url => url.pathname.endsWith('/activity/overview') &&
       url.searchParams.get('window') === '7d' && url.searchParams.get('view') === 'summary')).toBe(true)
-    const updated = page.waitForRequest(request => request.url().includes('/application-activity?window=7d'))
+    const updated = page.waitForRequest(request => request.url().includes('/activity/overview?window=7d'))
     await report.getByRole('button', { name: '刷新' }).click()
     await updated
+    expect(requests.some(url => /\/api\/v1\/application-(activity|library)/.test(url.pathname))).toBe(false)
     expect(failures).toEqual([])
     await discovered.getByRole('link', { name: '覆盖报表' }).click()
     await expect(page).toHaveURL(/\/devices\/coverage\?window=168h/)
     await expect(page.getByRole('heading', { name: '发现覆盖报表' })).toBeVisible()
+  })
+
+  test(`old links open the remaining pages at ${viewport.width}`, async ({ page }, info) => {
+    const failures: string[] = []
+    const removedRequests: string[] = []
+    page.on('pageerror', error => failures.push(error.message))
+    page.on('console', entry => { if (entry.type() === 'error') failures.push(entry.text()) })
+    page.on('response', response => { if (response.status() >= 400) failures.push(`${response.status()} ${response.url()}`) })
+    page.on('request', request => {
+      if (/\/api\/v1\/application-(activity|library)/.test(new URL(request.url()).pathname)) {
+        removedRequests.push(request.url())
+      }
+    })
+    await page.setViewportSize(viewport)
+    const pages = [
+      { path: '/activity?section=applications', visible: '应用协议', removed: '应用访问', shot: 'access' },
+      { path: '/settings/rules?tab=application-domains', visible: '设备特征库', removed: '应用域名特征库', shot: 'rules' },
+      { path: '/ips/10.255.0.59?tab=applications', visible: '终端识别', removed: '应用访问', shot: 'ip' },
+    ]
+    for (const { path, visible, removed, shot } of pages) {
+      await page.goto(path)
+      await expect(page.getByRole('tab', { name: visible })).toBeVisible()
+      await expect(page.getByRole('tab', { name: removed })).toHaveCount(0)
+      await page.screenshot({
+        path: info.outputPath(`without-application-${shot}-${viewport.width}.png`),
+        fullPage: true,
+        animations: 'disabled',
+      })
+      const probe = await page.getByRole('tab', { name: visible }).evaluate(tab => ({
+        viewport: innerWidth,
+        document: document.documentElement.scrollWidth,
+        tabFits: tab.scrollWidth <= tab.clientWidth + 2,
+      }))
+      expect(probe.document).toBeLessThanOrEqual(probe.viewport + 2)
+      expect(probe.tabFits).toBe(true)
+    }
+    expect(removedRequests).toEqual([])
+    expect(failures).toEqual([])
   })
 }
 
@@ -123,15 +163,12 @@ test('both reports show an animated loading state and recover after a timeout', 
   }
 })
 
-test('disabled application observations and failed discovery remain distinct from a real zero', async ({ page }) => {
+test('failed discovery remains distinct from a real zero', async ({ page }) => {
   await page.addInitScript(() => {
     const original = window.fetch
     window.fetch = (...args) => {
       const path = new URL(String(args[0]), window.location.href).pathname
       const headers = { 'Content-Type': 'application/json' }
-      if (path.endsWith('/application-activity')) {
-        return Promise.resolve(new Response(JSON.stringify({ code: 'applications_disabled' }), { status: 503, headers }))
-      }
       if (path.endsWith('/discovery/devices/metadata')) {
         return Promise.resolve(new Response(JSON.stringify({ code: 'read_discovery_failed' }), { status: 504, headers }))
       }
@@ -142,14 +179,13 @@ test('disabled application observations and failed discovery remain distinct fro
     }
   })
   await page.goto('/reports/data')
-  await expect(page.getByRole('region', { name: '应用识别' })).toContainText('应用观测尚未启用')
   await expect(page.getByRole('region', { name: '发现设备' })).toContainText('发现统计读取失败')
   await expect(page.getByRole('region', { name: '终端台账' })).toContainText('当前范围没有终端记录')
   await expect(page.locator('.data-report-metric').filter({ hasText: '近期终端' }).locator('dd strong')).toHaveText('0')
-  await expect(page.locator('.data-report-metric').filter({ hasText: /应用观测|发现记录/ }).locator('dd')).toHaveCount(0)
+  await expect(page.locator('.data-report-metric').filter({ hasText: '发现记录' }).locator('dd')).toHaveCount(0)
 })
 
-test('a DPI-only viewer receives the traffic and application panels', async ({ page }) => {
+test('a DPI-only viewer receives the traffic panel', async ({ page }) => {
   const identityRequests: string[] = []
   page.on('request', request => {
     if (/\/api\/v1\/(discovery\/|device-inventory)/.test(request.url())) identityRequests.push(request.url())
@@ -165,7 +201,6 @@ test('a DPI-only viewer receives the traffic and application panels', async ({ p
   })
   await page.goto('/reports/data')
   await expect(page.getByRole('region', { name: '网络访问' })).toContainText('活跃 IP')
-  await expect(page.getByRole('region', { name: '应用识别' })).toContainText('应用排行')
   await expect(page.getByRole('region', { name: '终端台账' })).toHaveCount(0)
   await expect(page.getByRole('region', { name: '发现设备' })).toHaveCount(0)
   expect(identityRequests).toEqual([])

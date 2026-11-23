@@ -59,7 +59,6 @@ const variants: Entry[] = [
 	{ url: '/shared-access?tab=devices', pattern: '/shared-access', label: '共享发现', kind: 'page' },
 	{ url: '/shared-access?tab=observations', pattern: '/shared-access', label: '共享发现', kind: 'page', heading: '共享发现' },
 	{ url: '/shared-access?tab=reviews', pattern: '/shared-access', label: '账号复核', kind: 'page', heading: '账号复核' },
-	{ url: '/activity?section=applications', pattern: '/activity', label: '应用访问', kind: 'page', heading: '应用访问' },
 	{ url: '/activity?section=access', pattern: '/activity', label: '访问分析', kind: 'page', heading: '访问分析' },
 	{ url: '/activity?section=technical', pattern: '/activity', label: '技术指纹', kind: 'page', heading: '技术指纹' },
 	{ url: '/actions?tab=executions', pattern: '/actions', label: '处置记录', kind: 'page', heading: '处置记录' },

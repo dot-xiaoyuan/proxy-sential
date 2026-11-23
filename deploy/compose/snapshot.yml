@@ -54,7 +54,6 @@ services:
       - --read-only=false
       - --shadow-dir=/workspace/data/dev184/shadow
       - --frontend-dir=/workspace/frontend/dist
-      - --applications-dir=/workspace/data/dev184/applications
       - --device-fingerprint-dir=/workspace/data/dev184/device-fingerprints
       - --device-fingerprint-auto-update=false
       - --export-dir=/workspace/data/dev184/exports

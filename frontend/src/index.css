@@ -3719,21 +3719,7 @@ pre.wrap-code {
   }
 }
 
-/* Application observations: compact slate surfaces and responsive cards. */
-.application-content { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.application-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; min-width: 0; }
-.application-toolbar .ant-input-affix-wrapper, .application-toolbar .ant-select { width: 180px; max-width: 100%; }
-.application-content .ant-btn, .application-content .ant-tag, .application-content .ant-badge { white-space: nowrap; flex-shrink: 0; }
-.application-identifier { overflow-wrap: anywhere; min-width: 0; }
-.application-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 14px; margin: 0; }
-.application-metrics dt, .application-card dt { color: #475569; font-size: 12px; }
-.application-metrics dd { margin: 4px 0 0; font-size: 22px; font-weight: 600; overflow-wrap: anywhere; }
-.application-card { border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
-.application-card dl { margin: 0; display: grid; gap: 10px; }
-.application-card dd { margin: 3px 0 0; overflow-wrap: anywhere; color: #334155; }
-.application-drawer .ant-drawer-body { min-width: 0; }
 @media (max-width: 559px) {
- .application-toolbar .ant-input-affix-wrapper, .application-toolbar .ant-select { flex: 1 1 140px; }
 }
 
 /* Device brand inference uses an explicit hypothesis label and wrapping evidence. */
@@ -3757,11 +3743,6 @@ pre.wrap-code {
  .endpoint-details-page .ant-tabs-ink-bar { display: none; }
 }
 
-.application-runtime-config { display: grid; gap: 10px; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 16px; min-width: 0; }
-.application-runtime-config > label:first-child { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
-.application-runtime-config .ant-switch { flex-shrink: 0; }
-.application-runtime-config .ant-input, .application-runtime-config .ant-input-affix-wrapper { min-width: 0; width: 100%; }
-@media (max-width: 560px) { .application-runtime-config { padding: 14px; } }
 
 .policies-page { display: grid; gap: 20px; min-width: 0; }
 .policy-toolbar, .policy-tags { display: flex; flex-wrap: wrap; gap: 10px; margin-block: 12px; align-items: center; }
@@ -3826,18 +3807,6 @@ pre.wrap-code {
  .proxy-protocol-fields { grid-template-columns: minmax(0, 1fr); }
 }
 
-.application-task-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
-.application-task-card { border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; min-width: 0; }
-.application-task-card dl { display: grid; gap: 8px; margin: 12px 0; }
-.application-task-card dt { color: #475569; font-size: 12px; }
-.application-task-card dd { margin: 0; font-weight: 500; overflow-wrap: anywhere; }
-.application-task-card .ant-typography, .application-task-card .app-notice { overflow-wrap: anywhere; }
-.application-task-grid > .ant-typography { grid-column: 1 / -1; }
-@media (max-width: 900px) { .application-task-grid { grid-template-columns: 1fr; } }
-@media (max-width: 559px) { .application-task-card { padding: 14px; } }
-.application-metrics .application-job-summary { font-size: 16px; }
-.application-job-summary span { white-space: nowrap; }
-.application-runtime-config .ant-input-number { width: 160px; max-width: 100%; }
 /* Native action observations share the neutral evidence presentation. */
 .native-observations { display: grid; gap: 14px; }
 .native-observation { border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; }
@@ -4046,7 +4015,7 @@ pre.wrap-code {
 .shared-access-id { overflow-wrap: anywhere; font-size: 12px; }
 .shared-access-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .shared-access-page .ant-btn,.shared-access-page .ant-tag { white-space: nowrap; flex-shrink: 0; }
-@media(max-width:560px) { .shared-access-item, .application-card, .evidence-item-card, .case-history-record { padding: 14px; } .shared-health-card .ant-card-body { padding: 14px; } .shared-access-page .ant-card-extra { max-width: 100%; overflow-wrap: anywhere; } }
+@media(max-width:560px) { .shared-access-item, .evidence-item-card, .case-history-record { padding: 14px; } .shared-health-card .ant-card-body { padding: 14px; } .shared-access-page .ant-card-extra { max-width: 100%; overflow-wrap: anywhere; } }
 
 .shared-access-page .ant-card-head-wrapper { flex-wrap: wrap; gap: 8px; }
 .shared-access-page .ant-card-head-title { white-space: normal; overflow-wrap: anywhere; min-width: 0; }
@@ -6382,16 +6351,14 @@ pre.wrap-code {
 .data-report-counts dt a:hover, .data-report-ranking li a:hover { text-decoration: underline; }
 .data-report-counts dd { margin: 0; font-weight: 630; font-size: 16px; line-height: 1.35; }
 .data-report-counts dd small { font-weight: 400; }
-.data-report-traffic > .data-report-counts,
-.data-report-applications > .data-report-counts {
+.data-report-traffic > .data-report-counts {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   margin: 0 0 12px;
   padding: 8px 0;
   gap: 12px;
   border-bottom: 1px solid var(--data-report-border);
 }
-.data-report-traffic > .data-report-counts div,
-.data-report-applications > .data-report-counts div { justify-content: flex-start; flex-wrap: wrap; }
+.data-report-traffic > .data-report-counts div { justify-content: flex-start; flex-wrap: wrap; }
 .data-report-ranking ol {
   display: grid;
   gap: 8px;
@@ -6459,6 +6426,7 @@ pre.wrap-code {
   .data-report-period > span { display: none; }
   .data-report-period .ant-segmented-item-label { padding-inline: 7px; font-size: 12px; }
   .data-report-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .data-report-metric:first-child:nth-last-child(3) { grid-column: 1 / -1; }
   .data-report-panel, .data-report-metric { padding: 14px; }
   .data-report-metric { min-height: 82px; padding-block: 10px; }
   .data-report-discovery-body { grid-template-columns: minmax(0, 1fr); }

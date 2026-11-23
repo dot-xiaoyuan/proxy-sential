@@ -65,3 +65,16 @@ func TestExportEndpointGeneratesDownloadAsynchronously(t *testing.T) {
 		t.Fatalf("download status=%d headers=%v", download.Code, download.Header())
 	}
 }
+
+func TestRetiredApplicationRoutesReturnNotFound(t *testing.T) {
+	server := NewServer(Options{ShadowDir: t.TempDir()})
+	for _, path := range []string{"/application-library", "/application-activity", "/application-activity/observations", "/application-activity/unknown-domains"} {
+		t.Run(path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1"+path, nil))
+			if response.Code != http.StatusNotFound {
+				t.Fatalf("retired endpoint returned %d: %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}

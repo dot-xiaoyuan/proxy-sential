@@ -107,14 +107,39 @@ rollback() {
   current_target="$(readlink -f "$root/current")"
   previous_target="$(readlink -f "$root/previous")"
   case "$current_target:$previous_target" in "$root"/releases/*:"$root"/releases/*) ;; *) echo "unsafe release links" >&2; exit 1 ;; esac
+  local retired_worker=proxy-sentinel-application-materializer.service
+  local restore_worker=""
+  if [[ -f "$previous_target/deploy/systemd/$retired_worker" && ! -f "$current_target/deploy/systemd/$retired_worker" ]]; then
+    restore_worker="$(python3 - "$current_target/deployment-manifest.json" <<'PYTHON'
+import json, sys
+with open(sys.argv[1]) as source:
+    retired = json.load(source)
+if retired.get("retired_application_worker_enabled") is True:
+    print("enabled")
+if retired.get("retired_application_worker_active") is True:
+    print("active")
+PYTHON
+)"
+  elif [[ -f "$current_target/deploy/systemd/$retired_worker" && ! -f "$previous_target/deploy/systemd/$retired_worker" ]]; then
+    if [[ "$(systemctl is-enabled "$retired_worker" 2>/dev/null || true)" == enabled ]]; then
+      systemctl disable "$retired_worker"
+    fi
+    systemctl stop "$retired_worker"
+  fi
   ln -sfn "$previous_target" "$root/current.next"
   mv -Tf "$root/current.next" "$root/current"
   ln -sfn "$current_target" "$root/previous.next"
   mv -Tf "$root/previous.next" "$root/previous"
   systemctl daemon-reload
-  for unit in proxy-sentinel-control-plane proxy-sentinel-ingest proxy-sentinel-ingest-stream-dhcp-layered-r8 proxy-sentinel-ingest-stream-packet-layered-r7 proxy-sentinel-ingest-stream-handshake-layered-r7 proxy-sentinel-risk-materializer proxy-sentinel-device-signal proxy-sentinel-read-model-realtime proxy-sentinel-read-model-coarse proxy-sentinel-recognition-materializer proxy-sentinel-application-materializer proxy-sentinel-discovery; do
+  for unit in proxy-sentinel-control-plane proxy-sentinel-ingest proxy-sentinel-ingest-stream-dhcp-layered-r8 proxy-sentinel-ingest-stream-packet-layered-r7 proxy-sentinel-ingest-stream-handshake-layered-r7 proxy-sentinel-risk-materializer proxy-sentinel-device-signal proxy-sentinel-read-model-realtime proxy-sentinel-read-model-coarse proxy-sentinel-recognition-materializer proxy-sentinel-discovery; do
     if systemctl is-active --quiet "$unit.service"; then systemctl restart "$unit.service"; fi
   done
+  if [[ -f "$previous_target/deploy/systemd/$retired_worker" ]]; then
+    if [[ "$restore_worker" == *enabled* ]]; then systemctl enable "$retired_worker"; fi
+    if [[ "$restore_worker" == *active* ]] || systemctl is-active --quiet "$retired_worker"; then
+      systemctl restart "$retired_worker"
+    fi
+  fi
   wait_ready || { echo "rollback health check failed" >&2; exit 1; }
   echo "rolled back to $(basename "$previous_target")"
 }

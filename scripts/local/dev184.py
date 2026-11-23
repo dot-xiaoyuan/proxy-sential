@@ -129,7 +129,6 @@ def capture(resume=None):
     specs = [
         ('normalized_events', f"sensor_id='{sensor}' AND timestamp BETWEEN {bound}-INTERVAL 6 HOUR AND {bound}", 'LIMIT 10000 BY type LIMIT 120000'),
         ('ingest_diagnostics', f'timestamp <= {bound}', 'LIMIT 10000'),
-        ('application_observations', f'timestamp <= {bound}', 'LIMIT 100000'),
         ('activity_chart_facts_5m_v3', f'bucket_start BETWEEN {bound}-INTERVAL 6 HOUR AND {bound}', 'LIMIT 200000'),
         ('activity_chart_facts_hour_v3', f'bucket_start BETWEEN {bound}-INTERVAL 7 DAY AND {bound}', 'LIMIT 100000'),
         ('activity_chart_facts_day_v3', f'bucket_start BETWEEN {bound}-INTERVAL 7 DAY AND {bound}', 'LIMIT 100000'),

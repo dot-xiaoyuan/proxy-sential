@@ -292,7 +292,9 @@ func (s *DBStore) processDomainBatch(ctx context.Context, batch domainBatch) err
 }
 
 func (s *DBStore) reconcileDomainWindow(ctx context.Context) error {
-	if applicationHistoryDisabled() {
+	// Keep the historical domain reconciliation gate used by existing deployments.
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("PROXY_SENTINEL_APPLICATION_HISTORY_DISABLED")), "true") ||
+		strings.EqualFold(strings.TrimSpace(os.Getenv("PROXY_SENTINEL_IDENTITY_POLICY_FRESH_ONLY")), "true") {
 		return nil
 	}
 	library := fingerprint.Default()

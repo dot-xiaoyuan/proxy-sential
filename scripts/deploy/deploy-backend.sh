@@ -46,7 +46,7 @@ COPYFILE_DISABLE=1 tar --no-xattrs -czf - -C "$work_dir" bin migrations systemd 
     "$stage/bin/proxy-sentinel" migrate \
       --postgres-dir "$stage/migrations/postgres" \
       --clickhouse-dir "$stage/migrations/clickhouse" \
-      --backfill-application-read-model --timeout "${PROXY_SENTINEL_MIGRATION_TIMEOUT:-2h}"
+      --backfill-activity-read-model --timeout "${PROXY_SENTINEL_MIGRATION_TIMEOUT:-2h}"
   fi
   mkdir -p /opt/proxy-sentinel/current/migrations
   cp -R "$stage/migrations/postgres" "$stage/migrations/clickhouse" /opt/proxy-sentinel/current/migrations/

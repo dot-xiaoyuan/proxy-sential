@@ -2,7 +2,6 @@ import {
   Notice as Alert } from '../shared/ui/Notice'
 import { safeReturnTo } from '../app/navigation'
 import { useUrlState } from '../shared/ui/useUrlState'
-import { ApplicationActivity } from "../features/applications/ApplicationActivity";
 import { IpTrafficObservations } from '../widgets/IpTrafficObservations'
 
 import { Link,
@@ -49,7 +48,7 @@ import { AppErrorAlert, AppFactBar, AppListHeader, AppTable, formatDateTime } fr
 export function IpDetailsPage() {
   const rawIp = useParams().ip ?? "";
   const ip = decodeURIComponent(rawIp);
-  const [params]=useSearchParams();const [activeTab,setActiveTab]=useUrlState("tab","devices",["devices","activity","applications","evidence"]);
+  const [params]=useSearchParams();const [activeTab,setActiveTab]=useUrlState("tab","devices",["devices","activity","evidence"]);
   const session = useSession();
   const risk = useIpRisk(ip);
   const evidence = useIpEvidence(ip, { limit: 20 }, activeTab === "evidence" && can(session.data,"evidence:read"));
@@ -179,13 +178,11 @@ export function IpDetailsPage() {
           items={[
             { key: "devices", label: "终端识别" },
             { key: "activity", label: "访问画像" },
-            { key: "applications", label: "应用访问" },
             { key: "evidence", label: "证据与技术信息" },
           ]}
         />
       </section>
 
-      {activeTab === "applications" && <section className="surface"><ApplicationActivity ip={ip} /></section>}
 
       {activeTab === "devices" && (
         <section className="surface">

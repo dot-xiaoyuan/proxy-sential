@@ -20,7 +20,6 @@ import (
 	"proxy-sentinel/internal/adapter/identity"
 	"proxy-sentinel/internal/adapter/suricata"
 	"proxy-sentinel/internal/adapter/zeek"
-	"proxy-sentinel/internal/appdomain"
 	"proxy-sentinel/internal/controlplane"
 	"proxy-sentinel/internal/devicesignal"
 	"proxy-sentinel/internal/evaluation"
@@ -107,8 +106,6 @@ func run(args []string) error {
 		return runDeviceCensus(args[1:])
 	case "router":
 		return runRouter(args[1:])
-	case "application-library":
-		return runApplicationLibrary(args[1:])
 	case "migrate":
 		return runMigrate(args[1:])
 	case "version":
@@ -121,58 +118,13 @@ func run(args []string) error {
 	}
 }
 
-func runApplicationLibrary(args []string) error {
-	if len(args) < 1 {
-		return fmt.Errorf("usage: proxy-sentinel application-library install --dir DIR --input FILE | rollback --dir DIR --version VERSION | status --dir DIR")
-	}
-	command := args[0]
-	fs := flag.NewFlagSet("application-library "+command, flag.ContinueOnError)
-	dir := fs.String("dir", "", "application library directory")
-	input := fs.String("input", "", "reviewed application bundle")
-	targetVersion := fs.String("version", "", "retained application version")
-	if err := fs.Parse(args[1:]); err != nil {
-		return err
-	}
-	if strings.TrimSpace(*dir) == "" {
-		return fmt.Errorf("--dir is required")
-	}
-	manager, err := appdomain.OpenManager(*dir)
-	if err != nil {
-		return err
-	}
-	switch command {
-	case "install":
-		if strings.TrimSpace(*input) == "" {
-			return fmt.Errorf("--input is required")
-		}
-		raw, readErr := os.ReadFile(*input)
-		if readErr != nil {
-			return readErr
-		}
-		if err = manager.Import(raw); err != nil {
-			return err
-		}
-	case "rollback":
-		if strings.TrimSpace(*targetVersion) == "" {
-			return fmt.Errorf("--version is required")
-		}
-		if err = manager.Rollback(*targetVersion); err != nil {
-			return err
-		}
-	case "status":
-	default:
-		return fmt.Errorf("unsupported application-library command %q", command)
-	}
-	return writeJSON(os.Stdout, manager.Status())
-}
-
 func runReadModel(args []string) error {
 	if len(args) < 1 || args[0] != "run" {
-		return fmt.Errorf("usage: proxy-sentinel read-model run --lane realtime|coarse|recognition|application|identity|inventory|inventory-backfill --postgres-dsn <dsn> --clickhouse-dsn <dsn>")
+		return fmt.Errorf("usage: proxy-sentinel read-model run --lane realtime|coarse|recognition|identity|inventory|inventory-backfill --postgres-dsn <dsn> --clickhouse-dsn <dsn>")
 	}
 	fs := flag.NewFlagSet("read-model run", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	lane := fs.String("lane", "", "worker lane: realtime, coarse, recognition, application, identity, inventory, or inventory-backfill")
+	lane := fs.String("lane", "", "worker lane: realtime, coarse, recognition, identity, inventory, or inventory-backfill")
 	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN")
 	clickhouseDSN := fs.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP DSN")
 	sensorID := fs.String("sensor-id", "office-30", "sensor identifier")
@@ -182,14 +134,12 @@ func runReadModel(args []string) error {
 	identityRefreshDeviceInventory := fs.Bool("identity-refresh-device-inventory", true, "refresh current device inventory from identity evidence")
 	identityDeviceOnly := fs.Bool("identity-device-only", false, "materialize device events only: leases, endpoints and device profiles, without sessions or IP history")
 	identitySkipHistory := fs.Bool("identity-skip-history", false, "write sessions and endpoints but no IP/MAC or access history rows")
-	applicationsDir := fs.String("applications-dir", "/opt/proxy-sentinel/data/applications", "durable application library directory")
-	applicationsBootstrap := fs.String("applications-bootstrap", "", "optional reviewed bootstrap application bundle used only when the library is empty")
 	sharedAccessConfigPath := fs.String("shared-access-config", os.Getenv("PROXY_SENTINEL_SHARED_ACCESS_CONFIG"), "controlled shared evidence source registration (recognition lane)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
-	if *lane != "realtime" && *lane != "coarse" && *lane != "recognition" && *lane != "application" && *lane != "identity" && *lane != "inventory" && *lane != "inventory-backfill" {
-		return fmt.Errorf("--lane must be realtime, coarse, recognition, application, identity, inventory, or inventory-backfill")
+	if *lane != "realtime" && *lane != "coarse" && *lane != "recognition" && *lane != "identity" && *lane != "inventory" && *lane != "inventory-backfill" {
+		return fmt.Errorf("--lane must be realtime, coarse, recognition, identity, inventory, or inventory-backfill")
 	}
 	if strings.TrimSpace(*postgresDSN) == "" || strings.TrimSpace(*clickhouseDSN) == "" {
 		return fmt.Errorf("--postgres-dsn and --clickhouse-dsn are required")
@@ -210,7 +160,7 @@ func runReadModel(args []string) error {
 		fmt.Fprintln(os.Stderr, "inventory-backfill lane is retired; the inventory lane bootstraps endpoint state")
 		<-ctx.Done()
 	case "realtime":
-		backend.RunRealtimeReadModels(ctx)
+		backend.RunActivityV3Realtime(ctx)
 	case "coarse":
 		backend.RunActivityV3Coarse(ctx)
 	case "identity":
@@ -237,32 +187,7 @@ func runReadModel(args []string) error {
 			backend.SetSharedBehaviorOptions(sharedCfg.SkipCaptureVerification, sharedCfg.MinDeviceBound)
 		}
 		backend.RunRecognitionMaterializer(ctx)
-	case "application":
-		service, openErr := appdomain.OpenServiceWithDefault(*applicationsDir, backend, true)
-		if openErr != nil {
-			return openErr
-		}
-		configPath := filepath.Join(*applicationsDir, "config.json")
-		if _, statErr := os.Stat(configPath); os.IsNotExist(statErr) {
-			config := service.Status().Config
-			config.Enabled = true
-			if config.HistoryIntervalMS == 0 {
-				config.HistoryIntervalMS = 5000
-			}
-			if configureErr := service.Configure(config); configureErr != nil {
-				return configureErr
-			}
-		}
-		if service.Library.Status().Version == "" && strings.TrimSpace(*applicationsBootstrap) != "" {
-			raw, readErr := os.ReadFile(*applicationsBootstrap)
-			if readErr != nil {
-				return fmt.Errorf("read application bootstrap bundle: %w", readErr)
-			}
-			if importErr := service.ChangeLibrary(raw, ""); importErr != nil {
-				return fmt.Errorf("install application bootstrap bundle: %w", importErr)
-			}
-		}
-		service.Run(ctx)
+
 	}
 	return nil
 }
@@ -740,7 +665,7 @@ func runMigrate(args []string) error {
 	clickhouseDSN := fs.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP DSN (defaults to PROXY_SENTINEL_CLICKHOUSE_DSN)")
 	postgresDir := fs.String("postgres-dir", "migrations/postgres", "PostgreSQL migration directory")
 	clickhouseDir := fs.String("clickhouse-dir", "migrations/clickhouse", "ClickHouse migration directory")
-	backfill := fs.Bool("backfill-application-read-model", false, "resume bounded latest-event read-model backfill after migration")
+	backfill := fs.Bool("backfill-activity-read-model", false, "resume bounded latest-event read-model backfill after migration")
 	migrationTimeout := fs.Duration("timeout", 5*time.Minute, "migration and resumable read-model backfill deadline")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -756,7 +681,7 @@ func runMigrate(args []string) error {
 		return fmt.Errorf("ClickHouse migration failed: %w", err)
 	}
 	if *backfill {
-		if err := store.BackfillApplicationReadModel(ctx, *postgresDSN, *clickhouseDSN); err != nil {
+		if err := store.BackfillActivityReadModel(ctx, *postgresDSN, *clickhouseDSN); err != nil {
 			return err
 		}
 	}
@@ -1832,6 +1757,9 @@ func readNormalizedEventsFile(path string) ([]normalized.Event, error) {
 func runControlPlaneServe(args []string) error {
 	fs := flag.NewFlagSet("control-plane serve", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	// Older installed service units still pass these options.
+	fs.String("applications-dir", "", "deprecated; accepted for existing service units")
+	fs.Bool("applications-enabled", false, "deprecated; accepted for existing service units")
 	addr := fs.String("addr", ":8080", "HTTP listen address")
 	shadowDir := fs.String("shadow-dir", "/opt/proxy-sentinel/data/shadow", "shadow output directory")
 	sensorID := fs.String("sensor-id", "office-30", "sensor identifier")
@@ -1845,8 +1773,6 @@ func runControlPlaneServe(args []string) error {
 	eventRetention := fs.Duration("event-retention", 7*24*time.Hour, "normalized event retention target, documented for DB deployments")
 	diagnosticRetention := fs.Duration("diagnostic-retention", 30*24*time.Hour, "diagnostic retention target, documented for DB deployments")
 	proxyConfigFile := fs.String("proxy-protocol-config", os.Getenv("PROXY_SENTINEL_PROXY_PROTOCOL_CONFIG"), "trusted proxy evidence registration file")
-	applicationsEnabled := fs.Bool("applications-enabled", false, "enable independent application observations")
-	applicationsDir := fs.String("applications-dir", "", "durable application library and observations directory")
 	fingerprintDir := fs.String("device-fingerprint-dir", "/opt/proxy-sentinel/data/device-fingerprints", "device fingerprint library directory")
 	fingerprintAutoUpdate := fs.Bool("device-fingerprint-auto-update", false, "check device fingerprint sources weekly (disabled for offline deployments)")
 	authFile := fs.String("auth-file", "", "local RBAC user file; empty preserves legacy fixed session")
@@ -1935,8 +1861,6 @@ func runControlPlaneServe(args []string) error {
 	return controlplane.Serve(controlplane.Options{
 		NativeActions:            nativeActions,
 		ProxyProtocolConfig:      *proxyConfigFile,
-		ApplicationsEnabled:      *applicationsEnabled,
-		ApplicationsDir:          *applicationsDir,
 		Addr:                     *addr,
 		ShadowDir:                *shadowDir,
 		SensorID:                 *sensorID,
@@ -1985,7 +1909,7 @@ func runControlPlaneServe(args []string) error {
 }
 
 func usageError() error {
-	return fmt.Errorf("usage: proxy-sentinel version\n       proxy-sentinel migrate [--postgres-dir migrations/postgres] [--clickhouse-dir migrations/clickhouse]\n       proxy-sentinel ingest run --eve /var/log/suricata/eve.json --postgres-dsn <dsn> --clickhouse-dsn <dsn>\n       proxy-sentinel read-model run --lane realtime|coarse|recognition|application|identity|inventory|inventory-backfill --postgres-dsn <dsn> --clickhouse-dsn <dsn>\n       proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel adapter zeek --input dhcp.log --output events.jsonl\n       proxy-sentinel adapter zeek --input software.log --output events.jsonl\n       proxy-sentinel adapter identity --source radius --input radius.jsonl --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]\n       proxy-sentinel evidence --input events.jsonl [--output evidence.json]\n       proxy-sentinel risk batch --input evidence.json --output risk-snapshots.json\n       proxy-sentinel risk list --input risk-snapshots.json [--min-level suspicious]\n       proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3\n       proxy-sentinel shadow run --eve /var/log/suricata/eve.json [--zeek-dhcp /opt/proxy-sentinel/data/zeek/logs/current/dhcp.log] [--zeek-software /opt/proxy-sentinel/data/zeek/logs/current/software.log] --state data/shadow/state.json --out-dir data/shadow\n       proxy-sentinel evaluate routers --manifest examples/router/golden/manifest.json --output report.json\n       proxy-sentinel router sample --interface ens1f1 --duration 5m --work-dir data/router-samples\n       proxy-sentinel backfill identity --postgres-dsn <dsn> --clickhouse-dsn <dsn> [--window 7d]\n" +
+	return fmt.Errorf("usage: proxy-sentinel version\n       proxy-sentinel migrate [--postgres-dir migrations/postgres] [--clickhouse-dir migrations/clickhouse]\n       proxy-sentinel ingest run --eve /var/log/suricata/eve.json --postgres-dsn <dsn> --clickhouse-dsn <dsn>\n       proxy-sentinel read-model run --lane realtime|coarse|recognition|identity|inventory|inventory-backfill --postgres-dsn <dsn> --clickhouse-dsn <dsn>\n       proxy-sentinel adapter suricata --input eve.json --output events.jsonl\n       proxy-sentinel adapter zeek --input dhcp.log --output events.jsonl\n       proxy-sentinel adapter zeek --input software.log --output events.jsonl\n       proxy-sentinel adapter identity --source radius --input radius.jsonl --output events.jsonl\n       proxy-sentinel replay --input events.jsonl [--output summary.json]\n       proxy-sentinel evidence --input events.jsonl [--output evidence.json]\n       proxy-sentinel risk batch --input evidence.json --output risk-snapshots.json\n       proxy-sentinel risk list --input risk-snapshots.json [--min-level suspicious]\n       proxy-sentinel risk inspect --input evidence.json --ip 10.1.2.3\n       proxy-sentinel shadow run --eve /var/log/suricata/eve.json [--zeek-dhcp /opt/proxy-sentinel/data/zeek/logs/current/dhcp.log] [--zeek-software /opt/proxy-sentinel/data/zeek/logs/current/software.log] --state data/shadow/state.json --out-dir data/shadow\n       proxy-sentinel evaluate routers --manifest examples/router/golden/manifest.json --output report.json\n       proxy-sentinel router sample --interface ens1f1 --duration 5m --work-dir data/router-samples\n       proxy-sentinel backfill identity --postgres-dsn <dsn> --clickhouse-dsn <dsn> [--window 7d]\n" +
 		"       proxy-sentinel device-census --postgres-dsn <dsn> --clickhouse-dsn <dsn> [--sensor-id office-30] [--window 24h] [--json]\n       proxy-sentinel control-plane serve --addr :8080 --shadow-dir data/shadow --frontend-dir frontend/dist --read-only\n       proxy-sentinel validate known-devices --input examples/known-devices-template.csv [--events normalized-identity.jsonl] [--strict] --output -")
 }
 

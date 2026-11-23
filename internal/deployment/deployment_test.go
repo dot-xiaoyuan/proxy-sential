@@ -55,7 +55,7 @@ func TestOpenEulerDeploymentScriptsAndPinnedImages(t *testing.T) {
 		t.Fatal(err)
 	}
 	installerText := string(installer)
-	for _, required := range []string{"openEuler", "x86_64", "proxy-sentinelctl\" backup", " migrate ", "--backfill-application-read-model", "PROXY_SENTINEL_MIGRATION_TIMEOUT", "PROXY_SENTINEL_INSTALL_HEALTH_URL", "completed_backfills", "rollback_install", "systemctl stop proxy-sentinel-control-plane.service", "systemctl start proxy-sentinel-risk-materializer.service", "old_target\" == \"$root/current", "device-fingerprint-auto-update=false", "curl -fsS", "docker login", "proxy-sentinel-ingest.service", "ingest run", "--zeek-conn", "--zeek-http", "--zeek-ssl", "--zeek-x509", "start_storage_direct", "OnActiveSec=2min"} {
+	for _, required := range []string{"openEuler", "x86_64", "proxy-sentinelctl\" backup", " migrate ", "--backfill-activity-read-model", "PROXY_SENTINEL_MIGRATION_TIMEOUT", "PROXY_SENTINEL_INSTALL_HEALTH_URL", "completed_backfills", "rollback_install", "systemctl stop proxy-sentinel-control-plane.service", "systemctl start proxy-sentinel-risk-materializer.service", "old_target\" == \"$root/current", "device-fingerprint-auto-update=false", "curl -fsS", "docker login", "proxy-sentinel-ingest.service", "ingest run", "--zeek-conn", "--zeek-http", "--zeek-ssl", "--zeek-x509", "start_storage_direct", "OnActiveSec=2min"} {
 		if !strings.Contains(installerText, required) {
 			t.Fatalf("installer is missing production guard %q", required)
 		}

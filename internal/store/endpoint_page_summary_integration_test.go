@@ -11,8 +11,7 @@ import (
 )
 
 func TestEndpointPageSummaryMatchesDetailInventory(t *testing.T) {
-	d := appIntegrationDB(t)
-	s := d.store.pg
+	s := newActivityIntegrationStore(t).pg
 	ctx := context.Background()
 	stamp := time.Now().UTC().Format(time.RFC3339Nano)
 	id := fmt.Sprintf("page-summary-%d", time.Now().UnixNano())

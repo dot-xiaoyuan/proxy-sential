@@ -5,7 +5,6 @@ import { request } from '../api/client'
 import { awaitOperationTask, subscribeTasks, taskSnapshot, trackOperationTask, type OperationTask } from '../api/operationTasks'
 
 const names: Record<string, string> = {
-  '/application-library/pull': '应用规则拉取', '/application-library/import': '应用离线包导入',
   '/device-fingerprint-library/update': '终端特征库更新', '/device-fingerprint-library/import': '终端离线包导入',
   '/device-fingerprint-library/validate': '终端离线包校验',
 }

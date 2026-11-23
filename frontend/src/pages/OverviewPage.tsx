@@ -39,7 +39,6 @@ const componentNames: Record<string, string> = {
   authentication_oidc: '统一认证',
   identity_ingest: '身份同步',
   statistics_read_model: '统计模型',
-  application_read_model: '应用模型',
 }
 
 const statusNames: Record<string, string> = {

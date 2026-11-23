@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"proxy-sentinel/internal/appdomain"
 	"proxy-sentinel/internal/discovery"
 	"proxy-sentinel/internal/fingerprint"
 	"proxy-sentinel/internal/ingest"
@@ -43,8 +42,6 @@ type Options struct {
 	SharedAccessConfig       string
 	IdentitySourcesConfig    string
 	ProxyProtocolConfig      string
-	ApplicationsEnabled      bool
-	ApplicationsDir          string
 	Addr                     string
 	ShadowDir                string
 	SensorID                 string
@@ -93,7 +90,6 @@ type Server struct {
 	sharedConfig        sharedaccess.Config
 	proxyConfig         proxyprotocol.Config
 	proxyResults        *proxyprotocol.Repository
-	applications        *appdomain.Service
 	shadowDir           string
 	sensorID            string
 	frontendDir         string
@@ -298,8 +294,8 @@ func Serve(opts Options) error {
 	// Read-only mode blocks operator mutations and enforcement. Derived read
 	// models still need their cursors advanced so statistics remain queryable.
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("PROXY_SENTINEL_EMBEDDED_READ_MODELS")), "true") {
-		if models, ok := server.reader.(interface{ RunApplicationReadModels(context.Context) }); ok {
-			go models.RunApplicationReadModels(ctx)
+		if models, ok := server.reader.(interface{ RunStatisticsReadModels(context.Context) }); ok {
+			go models.RunStatisticsReadModels(ctx)
 		}
 	}
 	if !opts.ReadOnly {
@@ -315,9 +311,6 @@ func Serve(opts Options) error {
 		// committed 4K identity host. This only performs read-only northbound
 		// requests and writes a local directory snapshot plus audit record.
 		go server.runManagedSRunGroupScheduler(ctx)
-	}
-	if server.applications != nil && !opts.ReadOnly {
-		go server.applications.Run(ctx)
 	}
 	if server.signalFreshness != nil {
 		go server.signalFreshness.run(ctx)
@@ -502,20 +495,6 @@ func NewServerWithError(opts Options) (*Server, error) {
 		return nil, fmt.Errorf("load proxy protocol config: %w", err)
 	}
 	server.proxyResults = proxyprotocol.OpenRepository(operations.db, filepath.Join(shadowDir, "proxy-protocol"))
-	if _, supported := reader.(appdomain.EventSource); supported {
-		source, ok := reader.(appdomain.EventSource)
-		if !ok {
-			return nil, fmt.Errorf("store does not support application observations")
-		}
-		dir := opts.ApplicationsDir
-		if dir == "" {
-			dir = filepath.Join(shadowDir, "applications")
-		}
-		server.applications, err = appdomain.OpenServiceWithDefault(dir, source, opts.ApplicationsEnabled)
-		if err != nil {
-			return nil, fmt.Errorf("open application observations: %w", err)
-		}
-	}
 	persistContext, cancelPersist := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelPersist()
 	if err := server.persistFingerprintStatus(persistContext, fingerprints.Status()); err != nil {
@@ -821,8 +800,6 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleExports(w, r)
 	case r.Method == http.MethodGet && path == "/overview":
 		s.handleOverview(w, r)
-	case strings.HasPrefix(path, "/application-library") || strings.HasPrefix(path, "/application-activity"):
-		s.handleApplications(w, r, path)
 	case r.Method == http.MethodGet && path == "/activity/overview":
 		s.handleActivityOverview(w, r)
 	case r.Method == http.MethodGet && path == "/activity/reports":
@@ -1317,16 +1294,6 @@ func requiredPermission(method, path string) string {
 	if path == "/policy-decisions" || strings.HasPrefix(path, "/policy-decisions/") || path == "/integrations/4k-directory" || strings.HasPrefix(path, "/integrations/product-policy/") {
 		return "policies:read"
 	}
-	if strings.HasPrefix(path, "/application-library") || strings.HasPrefix(path, "/application-activity") {
-		if method != http.MethodGet && method != http.MethodHead {
-			return "device-fingerprint-library:update"
-		}
-		if strings.HasSuffix(path, "/unknown-domains") {
-			return "exports:read"
-		}
-		return "dpi:read"
-	}
-
 	if strings.HasPrefix(path, "/discovery/") {
 		if method == http.MethodGet {
 			return "identity:read"

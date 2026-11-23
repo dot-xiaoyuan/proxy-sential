@@ -109,3 +109,27 @@ func TestExportCancellationPersistsAndStopsRunningWorker(t *testing.T) {
 		t.Fatalf("terminal export cancel: %v", err)
 	}
 }
+
+func TestExportRestoreSkipsRetiredApplicationJobAndPreservesFiles(t *testing.T) {
+	dir := t.TempDir()
+	metadata := filepath.Join(dir, "export-legacy.job.json")
+	artifact := filepath.Join(dir, "export-legacy.jsonl.tmp")
+	if err := os.WriteFile(metadata, []byte(`{"job":{"export_id":"export-legacy","kind":"unknown-domains","status":"running"},"application_query":{"application_id":"wechat"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifact, []byte("historical partial output"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := newExportManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found := restored.get("export-legacy"); found {
+		t.Fatal("retired job was restored")
+	}
+	for _, path := range []string{metadata, artifact} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

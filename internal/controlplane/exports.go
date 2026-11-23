@@ -8,12 +8,12 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"proxy-sentinel/internal/appdomain"
 	"proxy-sentinel/internal/store"
 )
 
@@ -29,19 +29,18 @@ type exportManager struct {
 }
 
 type ExportJob struct {
-	ExportID         string           `json:"export_id"`
-	Kind             string           `json:"kind"`
-	Status           string           `json:"status"`
-	CreatedBy        string           `json:"created_by"`
-	CreatedAt        string           `json:"created_at"`
-	CompletedAt      string           `json:"completed_at,omitempty"`
-	RowCount         int              `json:"row_count"`
-	Error            string           `json:"error,omitempty"`
-	FilePath         string           `json:"-"`
-	IdempotencyKey   string           `json:"-"`
-	From             string           `json:"from,omitempty"`
-	To               string           `json:"to,omitempty"`
-	ApplicationQuery *appdomain.Query `json:"-"`
+	ExportID       string `json:"export_id"`
+	Kind           string `json:"kind"`
+	Status         string `json:"status"`
+	CreatedBy      string `json:"created_by"`
+	CreatedAt      string `json:"created_at"`
+	CompletedAt    string `json:"completed_at,omitempty"`
+	RowCount       int    `json:"row_count"`
+	Error          string `json:"error,omitempty"`
+	FilePath       string `json:"-"`
+	IdempotencyKey string `json:"-"`
+	From           string `json:"from,omitempty"`
+	To             string `json:"to,omitempty"`
 }
 
 type createExportRequest struct {
@@ -69,7 +68,7 @@ func (s *Server) handleExports(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "bad_export_request", err.Error())
 			return
 		}
-		if !validExportKind(request.Kind) || request.Kind == "unknown-domains" {
+		if !validExportKind(request.Kind) {
 			writeError(w, http.StatusBadRequest, "bad_export_kind", "kind must be risks, evidence, cases, actions or audit")
 			return
 		}
@@ -128,13 +127,8 @@ func (s *Server) handleExports(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "export_not_ready", "export is not completed")
 			return
 		}
-		ext := "csv"
 		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-		if job.Kind == "unknown-domains" {
-			ext = "jsonl"
-			w.Header().Set("Content-Type", "application/x-ndjson")
-		}
-		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-%s.%s"`, job.Kind, job.ExportID, ext))
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-%s.csv"`, job.Kind, job.ExportID))
 		http.ServeFile(w, r, job.FilePath)
 		return
 	}
@@ -159,28 +153,18 @@ func (s *Server) runExport(id string) {
 	s.exports.cancels[id] = cancel
 	s.exports.mu.Unlock()
 	defer func() { s.exports.mu.Lock(); delete(s.exports.cancels, id); s.exports.mu.Unlock() }()
-	path := exportFilePath(s.exports.dir, job)
+	path := filepath.Join(s.exports.dir, job.ExportID+".csv")
 	temporary := path + ".tmp"
 	file, err := os.OpenFile(temporary, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err == nil {
-		if job.Kind == "unknown-domains" {
-			if s.applications == nil || job.ApplicationQuery == nil {
-				err = errors.New("application export parameters unavailable")
-			} else {
-				counter := &exportLineWriter{Writer: file}
-				err = s.applications.Export(ctx, *job.ApplicationQuery, counter)
-				job.RowCount = counter.rows
-			}
-		} else {
-			writer := csv.NewWriter(file)
-			err = writer.Write([]string{"record_type", "id", "subject", "level", "status", "score", "confidence", "occurred_at", "data_json"})
-			if err == nil {
-				job.RowCount, err = s.writeExportRows(ctx, writer, job)
-			}
-			writer.Flush()
-			if err == nil {
-				err = writer.Error()
-			}
+		writer := csv.NewWriter(file)
+		err = writer.Write([]string{"record_type", "id", "subject", "level", "status", "score", "confidence", "occurred_at", "data_json"})
+		if err == nil {
+			job.RowCount, err = s.writeExportRows(ctx, writer, job)
+		}
+		writer.Flush()
+		if err == nil {
+			err = writer.Error()
 		}
 		if err == nil {
 			err = ctx.Err()
@@ -312,7 +296,7 @@ func (s *Server) writeExportRows(ctx context.Context, writer *csv.Writer, job Ex
 
 func validExportKind(kind string) bool {
 	switch kind {
-	case "risks", "evidence", "cases", "actions", "audit", "unknown-domains":
+	case "risks", "evidence", "cases", "actions", "audit":
 		return true
 	}
 	return false

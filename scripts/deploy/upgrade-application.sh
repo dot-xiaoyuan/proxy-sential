@@ -78,7 +78,22 @@ for unit in ('proxy-sentinel-discovery.service','proxy-sentinel-passive-discover
         print(unit,end=' ')
 PY
 )"
-for unit in proxy-sentinel-control-plane proxy-sentinel-control-plane-eventbus proxy-sentinel-ingest proxy-sentinel-ingest-stream-dhcp-binding-b56 proxy-sentinel-ingest-stream-dhcp-message-r1 proxy-sentinel-ingest-stream-packet-b54 proxy-sentinel-ingest-stream-handshake-b54 proxy-sentinel-ingest-stream-packet-b76 proxy-sentinel-ingest-stream-handshake-b76 proxy-sentinel-ingest-stream-dhcp-layered-r8 proxy-sentinel-ingest-stream-packet-layered-r7 proxy-sentinel-ingest-stream-handshake-layered-r7 proxy-sentinel-ingest-stream-flow-syn proxy-sentinel-risk-materializer proxy-sentinel-device-signal proxy-sentinel-handshake-signal proxy-sentinel-flow-syn-signal proxy-sentinel-router-prober proxy-sentinel-read-model-realtime proxy-sentinel-read-model-coarse proxy-sentinel-recognition-materializer proxy-sentinel-inventory proxy-sentinel-inventory-backfill proxy-sentinel-identity-materializer proxy-sentinel-ncu-identity-materializer proxy-sentinel-application-materializer proxy-sentinel-discovery proxy-sentinel-passive-discovery proxy-sentinel-ncu-identity-sync; do
+retired_worker=proxy-sentinel-application-materializer.service
+retired_worker_active=false
+retired_worker_enabled=false
+retired_worker_stopped=false
+if [[ -f "$stage/deploy/systemd/$retired_worker" ]]; then
+  if systemctl is-active --quiet "$retired_worker" ||
+    { systemctl is-failed --quiet "$retired_worker" && systemctl is-enabled --quiet "$retired_worker"; }; then
+    units+=("$retired_worker")
+  fi
+else
+  case "$(systemctl show "$retired_worker" -p ActiveState --value 2>/dev/null || true)" in
+    active|activating|reloading) retired_worker_active=true ;;
+  esac
+  if [[ "$(systemctl is-enabled "$retired_worker" 2>/dev/null || true)" == enabled ]]; then retired_worker_enabled=true; fi
+fi
+for unit in proxy-sentinel-control-plane proxy-sentinel-control-plane-eventbus proxy-sentinel-ingest proxy-sentinel-ingest-stream-dhcp-binding-b56 proxy-sentinel-ingest-stream-dhcp-message-r1 proxy-sentinel-ingest-stream-packet-b54 proxy-sentinel-ingest-stream-handshake-b54 proxy-sentinel-ingest-stream-packet-b76 proxy-sentinel-ingest-stream-handshake-b76 proxy-sentinel-ingest-stream-dhcp-layered-r8 proxy-sentinel-ingest-stream-packet-layered-r7 proxy-sentinel-ingest-stream-handshake-layered-r7 proxy-sentinel-ingest-stream-flow-syn proxy-sentinel-risk-materializer proxy-sentinel-device-signal proxy-sentinel-handshake-signal proxy-sentinel-flow-syn-signal proxy-sentinel-router-prober proxy-sentinel-read-model-realtime proxy-sentinel-read-model-coarse proxy-sentinel-recognition-materializer proxy-sentinel-inventory proxy-sentinel-inventory-backfill proxy-sentinel-identity-materializer proxy-sentinel-ncu-identity-materializer proxy-sentinel-discovery proxy-sentinel-passive-discovery proxy-sentinel-ncu-identity-sync; do
   if [[ "$preserve_inventory" == true && "$unit" == proxy-sentinel-inventory ]]; then continue; fi
   if [[ "$preserve_discovery" == true && "$unit" == proxy-sentinel-discovery ]]; then continue; fi
   if systemctl is-active --quiet "$unit.service" || [[ " $expected_discovery_units " == *" $unit.service "* ]] ||
@@ -195,6 +210,7 @@ rollback() {
   local result=$?
   trap - ERR
   if [[ "$pointer_switched" != true ]]; then
+    restore_retired_worker || echo "failed to restore $retired_worker" >&2
     if [[ -n "$frontend_state" && -s "$frontend_state" ]]; then
       python3 "$(dirname "$0")/manage-frontend-previous.py" restore --root "$root" --state "$frontend_state" || {
         echo "frontend rollback failed; state retained: $frontend_state" >&2
@@ -229,6 +245,7 @@ rollback() {
   fi
   local rollback_failed=false
   restart_workers || rollback_failed=true
+  restore_retired_worker || rollback_failed=true
   ready || rollback_failed=true
   if [[ "$rollback_failed" == true ]]; then
     echo "application upgrade failed; pointer restored to $old_target but rollback runtime verification failed" >&2
@@ -236,6 +253,13 @@ rollback() {
     echo "application upgrade failed; restored $old_target and verified application processes" >&2
   fi
   exit "$result"
+}
+restore_retired_worker() {
+  [[ "$retired_worker_stopped" == true ]] || return 0
+  local failed=0
+  if [[ "$retired_worker_enabled" == true ]]; then systemctl enable "$retired_worker" || failed=1; fi
+  if [[ "$retired_worker_active" == true ]]; then systemctl start "$retired_worker" || failed=1; fi
+  return "$failed"
 }
 trap rollback ERR
 frontend_state="$(mktemp "$root/config/frontend-upgrade-state.XXXXXX")"
@@ -246,6 +270,11 @@ if [[ "$defer_discovery_restart" == true ]]; then
     echo "deferred discovery restarted before pointer switch; retry this upgrade after checking its queue" >&2
     false
   }
+fi
+if [[ "$retired_worker_enabled" == true || "$retired_worker_active" == true ]]; then
+  retired_worker_stopped=true
+  if [[ "$retired_worker_enabled" == true ]]; then systemctl disable "$retired_worker"; fi
+  systemctl stop "$retired_worker"
 fi
 ln -sfn "$release" "$root/current.next"
 mv -Tf "$root/current.next" "$root/current"
@@ -266,6 +295,6 @@ ln -sfn "$old_target" "$root/previous.next"
 mv -Tf "$root/previous.next" "$root/previous"
 trap - ERR
 cat > "$release/deployment-manifest.json" <<JSON
-{"version":"$version","mode":"application_only","previous":"$old_target","preserve_inventory":$preserve_inventory,"preserve_discovery":$preserve_discovery,"installed_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+{"version":"$version","mode":"application_only","previous":"$old_target","preserve_inventory":$preserve_inventory,"preserve_discovery":$preserve_discovery,"retired_application_worker_active":$retired_worker_active,"retired_application_worker_enabled":$retired_worker_enabled,"installed_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
 JSON
 echo "application upgrade completed: $version; previous=$old_target"

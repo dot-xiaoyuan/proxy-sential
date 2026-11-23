@@ -1,5 +1,4 @@
 import { useUrlState } from '../shared/ui/useUrlState'
-import { ApplicationActivity } from "../features/applications/ApplicationActivity";
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Col, Row, Tabs } from "antd";
@@ -27,13 +26,13 @@ export function ActivityPage() {
   const navigate = useNavigate();
   const [params]=useSearchParams();
   const [windowValue,setQuickWindow]=useUrlState('window','1h',['10m','1h','24h','7d','30d']);const quickWindow=windowValue as ReportWindow;
-  const [section]=useUrlState('section','applications',['applications','access','technical']);
-  const allowed=section==='applications'?['visits']:section==='technical'?['matrix','fingerprints']:['applications','ecosystem','domains','network'];
+  const [section]=useUrlState('section','access',['access','technical']);
+  const allowed=section==='technical'?['matrix','fingerprints']:['applications','ecosystem','domains','network'];
   const [tabKey,setTabKey]=useUrlState('tab',allowed[0],allowed);
   const context={window:quickWindow,sensor_id:params.get('sensor_id')||undefined,campus_id:params.get('campus_id')||undefined};
   const [inspectIp, setInspectIp] = useState<string | null>(null);
 
-  const activity = useActivityOverview(context,section!=='applications');
+  const activity = useActivityOverview(context);
   const dpiTrends = useDpiTrends(context,section==='access');
   const fingerprintConflicts = useDpiFingerprintConflicts(
     context,
@@ -78,7 +77,6 @@ export function ActivityPage() {
   const navigateReport = (dimension: string, key: string) =>
     navigate(reportSearchPath(dimension, key, quickWindow, params));
 
-  if(section==='applications')return <main className="page"><AppPageHeader quickWindow={quickWindow} quickWindows={['10m','1h','24h','7d','30d']} onQuickWindowChange={setQuickWindow}/><section className="surface"><ApplicationActivity window={quickWindow}/></section></main>;
   if (activity.isLoading) {
     return <AppLoadingState rows={8} />;
   }
@@ -91,8 +89,6 @@ export function ActivityPage() {
 
   const renderActiveTabContent = () => {
     switch (tabKey) {
-      case "visits":
-        return <ApplicationActivity window={quickWindow} />;
       case "applications":
         return (
           <Row className="activity-tab-panel" gutter={[16, 16]}>

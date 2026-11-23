@@ -27,10 +27,10 @@ export const navigation: NavigationGroup[] = [
     {...item('ip-observations','IP 流量观察','/devices?tab=ip','events:read'), hidden: true, owns: (p,q) => p === '/devices' && deviceCenterTab(q) === 'ip'},
   ] },
   { key: 'network', title: '网络分析', hidden: true, items: [
-    ...(['applications','access','technical'] as const).map((section,index) => ({...item(section,['应用访问','访问分析','技术指纹'][index],`/activity?section=${section}`,'dpi:read'), owns: (p: string,q: URLSearchParams) => p === '/activity' && (['applications','access','technical'].includes(q.get('section')||'')?q.get('section'):'applications') === section})),
+    ...(['access','technical'] as const).map((section,index) => ({...item(section,['访问分析','技术指纹'][index],`/activity?section=${section}`,'dpi:read'), owns: (p: string,q: URLSearchParams) => p === '/activity' && (['access','technical'].includes(q.get('section')||'')?q.get('section'):'access') === section})),
     item('events','事件检索','/events','events:read'),
   ] },
-  { key: 'strategy', title: '策略与验证', items: [item('policies','防代理策略','/policies','policies:read'),item('whitelist','白名单','/policies/whitelist','policies:read'),item('blacklist','黑名单','/policies/blacklist','policies:read'),{...item('destination-targets','内网目标访问','/policies/destination-targets','destination-targets:read'),readAlternatives:[{permission:'destination-targets:manage',to:'/policies/destination-targets'}]},item('exceptions','校园例外','/policies/exceptions','risks:read'),{...item('rules','规则与特征库','/settings/rules','risks:read'),readAlternatives:[{permission:'dpi:read',to:'/settings/rules?tab=application-domains'},{permission:'identity:read',to:'/settings/rules?tab=fingerprints'}]}] },
+  { key: 'strategy', title: '策略与验证', items: [item('policies','防代理策略','/policies','policies:read'),item('whitelist','白名单','/policies/whitelist','policies:read'),item('blacklist','黑名单','/policies/blacklist','policies:read'),{...item('destination-targets','内网目标访问','/policies/destination-targets','destination-targets:read'),readAlternatives:[{permission:'destination-targets:manage',to:'/policies/destination-targets'}]},item('exceptions','校园例外','/policies/exceptions','risks:read'),{...item('rules','规则与特征库','/settings/rules','risks:read'),readAlternatives:[{permission:'identity:read',to:'/settings/rules?tab=fingerprints'}]}] },
   { key: 'system', title: '系统管理', items: [{...item('sources','数据源与采集','/settings/sources','ingest:read'),readAlternatives:[{permission:'identity:read',to:'/settings/sources?tab=sources'}]},item('integrations','认证与处置接入','/settings/actions','actions:read'),item('notifications','通知模板与通道','/settings/notifications','notifications:read'),{...item('behavior-reports','上报通道配置','/settings/behavior-reports','behavior-reports:read'),readAlternatives:[{permission:'behavior-reports:manage',to:'/settings/behavior-reports'}]},item('organization','校区与网络区域','/settings/organization','organization:read'),item('users','用户权限','/settings/security','users:manage'),item('audit','审计日志','/audit','audit:read')] },
 ]
 
@@ -64,7 +64,6 @@ export function routeOwner(path: string, search: string) {
 }
 export function routePermission(path: string, search: string, session?: Session): Permission | undefined {
   const tab=new URLSearchParams(search).get('tab')
-  if(path === '/settings/rules' && tab==='application-domains')return 'dpi:read'
   if(path === '/settings/rules' && tab==='fingerprints')return 'identity:read'
   if(path === '/settings/security' && tab==='exceptions')return 'risks:read'
   if(path === '/settings/actions' && tab==='executions')return 'policies:read'

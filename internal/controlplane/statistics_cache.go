@@ -41,7 +41,7 @@ func newStatisticsCache() *statisticsCache {
 }
 func isStatisticsRoute(path string) bool {
 	switch path {
-	case "/overview", "/activity/overview", "/activity/reports", "/dpi/overview", "/dpi/trends", "/dpi/protocol-flows", "/dpi/fingerprint-conflicts", "/device-fingerprint-conflicts", "/device-recognition/summary", "/application-activity":
+	case "/overview", "/activity/overview", "/activity/reports", "/dpi/overview", "/dpi/trends", "/dpi/protocol-flows", "/dpi/fingerprint-conflicts", "/device-fingerprint-conflicts", "/device-recognition/summary":
 		return true
 	}
 	return false

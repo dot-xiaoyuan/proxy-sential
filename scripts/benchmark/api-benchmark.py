@@ -49,16 +49,13 @@ def normal_result(template,method,payload):
     if checks is None:
         if method=='get' and template=='/overview':checks=[{'field':'throughput.events','op':'gt','value':0}]
         elif method=='get' and template in ('/activity/overview','/dpi/overview'):checks=[{'field':'event_count','op':'gt','value':0}]
-        elif method=='get' and template=='/application-activity':checks=[{'field':'observation_count','op':'gt','value':0},{'field':'items','op':'nonempty'}]
         elif method=='get' and template=='/events':checks=[{'field':'events','op':'nonempty'}]
-        elif method=='get' and template in ('/devices','/device-inventory','/application-activity/observations'):checks=[{'field':'items','op':'nonempty'}]
+        elif method=='get' and template in ('/devices','/device-inventory'):checks=[{'field':'items','op':'nonempty'}]
         elif method=='get' and template=='/device-recognition/summary':checks=[{'field':'total_endpoints','op':'gt','value':0},{'field':'event_count','op':'gt','value':0}]
         else:return 'unverified'
     checks=list(checks)
-    if method=='get' and template in ('/overview','/activity/overview','/dpi/overview','/application-activity'):
+    if method=='get' and template in ('/overview','/activity/overview','/dpi/overview'):
         checks.append({'field':'statistics_as_of','op':'fresh','value':5})
-    if method=='get' and template=='/application-activity/observations':
-        checks.append({'field':'total_as_of','op':'fresh','value':5})
     if method=='get' and template=='/device-recognition/summary':
         checks.append({'field':'as_of','op':'fresh','value':5})
     for check in checks:
@@ -166,7 +163,7 @@ for path,item in spec['paths'].items():
         if args.only and not re.search(args.only,method.upper()+' '+path):continue
         if method!='get' and not args.isolated_writes:
             results.append({**entry,'category':'not_run_live_write','samples':[]});continue
-        if method=='get' and (path=='/application-activity/unknown-domains' or path.endswith('/account-preview')) and not args.isolated_writes:
+        if method=='get' and path.endswith('/account-preview') and not args.isolated_writes:
             results.append({**entry,'category':'not_run_async_task_submission','samples':[]});continue
         if path in ('/auth/login','/auth/logout') and method=='post':
             results.append({**entry,'category':'session_setup_separate','samples':[]});continue

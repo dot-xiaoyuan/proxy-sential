@@ -37,8 +37,7 @@ func (t *coarseFailureTransport) RoundTrip(r *http.Request) (*http.Response, err
 // Coarse optimization failures must not starve the live five-minute projection.
 // Its committed receipt stays acknowledged; explicit coarse repair is idempotent.
 func TestActivityCoarseFailurePreservesLiveCursorAndSupportsRepair(t *testing.T) {
-	d := appIntegrationDB(t)
-	s := d.store
+	s := newActivityIntegrationStore(t)
 	ctx := context.Background()
 	if err := s.DrainActivityChartReadModel(ctx); err != nil {
 		t.Fatal(err)

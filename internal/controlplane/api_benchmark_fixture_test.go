@@ -48,7 +48,7 @@ func TestAPIBenchmarkFixtureServer(t *testing.T) {
 	}
 	// Start read-only to suppress action/case/backfill workers, then enable only
 	// request-driven writes against the explicitly disposable databases.
-	s, err := NewServerWithError(Options{ShadowDir: "/tmp/proxy-sentinel-benchmark-state-20260917", SensorID: "bench-scale-20260917", StorageMode: "db", PostgresDSN: pg, ClickHouseDSN: ch, ReadOnly: true, ApplicationsEnabled: true, ActionMasterKey: "benchmark-isolated-master-key-1234", IdentityIngestKey: "benchmark-isolated-identity-key"})
+	s, err := NewServerWithError(Options{ShadowDir: "/tmp/proxy-sentinel-benchmark-state-20260917", SensorID: "bench-scale-20260917", StorageMode: "db", PostgresDSN: pg, ClickHouseDSN: ch, ReadOnly: true, ActionMasterKey: "benchmark-isolated-master-key-1234", IdentityIngestKey: "benchmark-isolated-identity-key"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,11 +72,10 @@ func TestAPIBenchmarkFixtureServer(t *testing.T) {
 			t.Fatal(err)
 		}
 		models, ok := s.reader.(interface {
-			DrainApplicationConnectionReadModel(context.Context) error
-			RunApplicationReadModels(context.Context)
+			RunStatisticsReadModels(context.Context)
 		})
 		if !ok {
-			t.Fatal("missing application read models")
+			t.Fatal("missing statistics read models")
 		}
 		prepareCtx, prepareCancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		if preparer, ok := s.reader.(interface{ PrepareStatisticsReadModel(context.Context) error }); ok {
@@ -85,17 +84,10 @@ func TestAPIBenchmarkFixtureServer(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		err = models.DrainApplicationConnectionReadModel(prepareCtx)
 		prepareCancel()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err = db.ExecContext(context.Background(), `INSERT INTO application_read_model_backfills(name,cursor_at,until_at,status) VALUES('latest-observations-v1',now(),now(),'completed') ON CONFLICT(name) DO UPDATE SET status='completed'`); err != nil {
-			t.Fatal(err)
-		}
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		t.Cleanup(workerCancel)
-		go models.RunApplicationReadModels(workerCtx)
+		go models.RunStatisticsReadModels(workerCtx)
 	}
 
 	handler := s.Handler()
