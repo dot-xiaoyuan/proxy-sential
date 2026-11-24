@@ -78,6 +78,13 @@ func TestHardwareOverviewPostgresCountsAndFiltersScopedIdentities(t *testing.T) 
 	if _, err := db.Exec(`INSERT INTO passive_census_identifier_5m VALUES($1,$2,'mac',$3,$4,$4,'yesterday')`, yesterday.Truncate(5*time.Minute), scope, o.MAC, yesterday); err != nil {
 		t.Fatal(err)
 	}
+	earlier := yesterday.Add(-6 * time.Minute)
+	otherScope := census.ScopeKey(o.Node, o.Site, o.Domain, "31", o.VRF)
+	if _, err := db.Exec(`INSERT INTO passive_census_identifier_5m VALUES
+ ($1,$2,'mac',$3,$4,$4,'previous-bucket'),($1,$5,'mac',$3,$4,$4,'other-vlan')`,
+		earlier.Truncate(5*time.Minute), scope, o.MAC, earlier, otherScope); err != nil {
+		t.Fatal(err)
+	}
 	repo := Repository{DB: db, HardwareV2: true}
 	query := DeviceQuery{Mode: "passive", Subnet: "10.42.3.0/24", Search: "HP", FirstSeenWithin: 168 * time.Hour,
 		LastSeenFrom: at.Add(-time.Minute), LastSeenTo: at.Add(time.Minute)}
@@ -97,6 +104,47 @@ func TestHardwareOverviewPostgresCountsAndFiltersScopedIdentities(t *testing.T) 
 	if items, ok := page["items"].([]DeviceView); !ok || len(items) != 1 {
 		t.Fatalf("list did not match overview: %+v", page)
 	}
+}
+
+func TestHardwareIndexedPagePreservesScopedACKDisplayLink(t *testing.T) {
+	db := hardwareIntegrationDB(t)
+	ctx := context.Background()
+	at := time.Now().UTC().Add(-time.Minute)
+	o := hardwareTestObservation(at)
+	o.Origin = "dhcp"
+	o.IP = "192.0.2.18"
+	o.ValidUntil = at.Add(time.Hour)
+	raw, err := json.Marshal(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO discovery_observation_latest VALUES($1,$2,$3,$4,$5,false,$6)`,
+		o.ID, o.Key(), o.Origin, o.ObservedAt, o.ValidUntil, raw); err != nil {
+		t.Fatal(err)
+	}
+	lease := `INSERT INTO device_address_leases VALUES($1,'ack',$2,$3,'',$4)`
+	if _, err := db.Exec(lease, o.ID, "other-sensor", o.IP, "mac:"+o.MAC); err != nil {
+		t.Fatal(err)
+	}
+	repo := Repository{DB: db, HardwareV2: true}
+	query := DeviceQuery{Mode: "passive", IdentityScope: "devices"}
+	read := func(wantEndpoint string) {
+		t.Helper()
+		page, err := repo.DevicesIndexed(ctx, query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		items := page["items"].([]DeviceView)
+		if len(items) != 1 || items[0].EndpointID != wantEndpoint ||
+			items[0].indexedIdentityKey != HardwareIdentityKey(o.Node, o.Site, o.Domain, o.VLAN, o.VRF, o.MAC) {
+			t.Fatalf("unexpected lease attribution: %+v", items)
+		}
+	}
+	read("")
+	if _, err := db.Exec(lease, o.ID, o.Node, o.IP, "mac:"+o.MAC); err != nil {
+		t.Fatal(err)
+	}
+	read("mac:" + o.MAC)
 }
 
 func TestHardwareIdentityScopeKeepsAddressCluesSearchable(t *testing.T) {

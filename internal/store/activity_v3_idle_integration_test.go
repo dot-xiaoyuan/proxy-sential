@@ -44,6 +44,69 @@ func activityV3PrivatePostgres(t *testing.T) *DBStore {
 	return &DBStore{pg: &PostgresStore{db: db}}
 }
 
+func TestActivityV3RepeatedReceiptsRespectClaimAndRetryDeadlines(t *testing.T) {
+	s := activityV3PrivatePostgres(t)
+	ctx := context.Background()
+	bucket := time.Now().UTC().Truncate(5 * time.Minute).Add(-time.Hour)
+	closeAt := activityFiveMinuteCloseAt(bucket)
+	enqueue := func(at time.Time) {
+		t.Helper()
+		if err := enqueueActivityV3FiveMinuteJob(ctx, s.pg.db, bucket, at, "sensor", "campus"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assert := func(wantDeadline time.Time, wantGeneration int64, wantStatus string) {
+		t.Helper()
+		var deadline time.Time
+		var generation int64
+		var status string
+		if err := s.pg.db.QueryRow(`SELECT not_before,dirty_generation,status FROM read_model_jobs`).Scan(&deadline, &generation, &status); err != nil {
+			t.Fatal(err)
+		}
+		if !deadline.Equal(wantDeadline) || generation != wantGeneration || status != wantStatus {
+			t.Fatalf("got deadline=%s generation=%d status=%s, want %s/%d/%s", deadline, generation, status, wantDeadline, wantGeneration, wantStatus)
+		}
+	}
+	enqueue(closeAt.Add(-time.Minute))
+	enqueue(closeAt.Add(time.Second))
+	assert(closeAt, 1, "pending")
+	job, ok, err := s.claimReadModelJob(ctx, []string{activityV3FiveMinuteModel}, "worker")
+	if err != nil || !ok {
+		t.Fatalf("bucket missed its first deadline: %+v %t %v", job, ok, err)
+	}
+	enqueue(closeAt.Add(2 * time.Second))
+	enqueue(closeAt.Add(3 * time.Second))
+	assert(closeAt, 3, "running")
+	if err := s.finishReadModelJob(ctx, job, errors.New("retry")); err != nil {
+		t.Fatal(err)
+	}
+	var retryAt time.Time
+	if err := s.pg.db.QueryRow(`SELECT not_before FROM read_model_jobs`).Scan(&retryAt); err != nil {
+		t.Fatal(err)
+	}
+	enqueue(retryAt.UTC().Add(10 * time.Second))
+	assert(retryAt, 3, "pending")
+	if _, err := s.pg.db.Exec(`UPDATE read_model_jobs SET not_before=$1`, closeAt); err != nil {
+		t.Fatal(err)
+	}
+	retry, ok, err := s.claimReadModelJob(ctx, []string{activityV3FiveMinuteModel}, "worker")
+	if err != nil || !ok || retry.DirtyGeneration != 3 {
+		t.Fatalf("retry did not claim the current generation: %+v %t %v", retry, ok, err)
+	}
+	enqueue(retryAt.UTC().Add(11 * time.Second))
+	if err := s.finishReadModelJob(ctx, retry, nil); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	var dirty, processed int64
+	if err := s.pg.db.QueryRow(`SELECT status,dirty_generation,processed_generation FROM read_model_jobs`).Scan(&status, &dirty, &processed); err != nil {
+		t.Fatal(err)
+	}
+	if status != "pending" || dirty != 4 || processed != 3 {
+		t.Fatalf("receipt during retry was lost: %s %d/%d", status, processed, dirty)
+	}
+}
+
 func TestActivityV3VerifiedIdleDoesNotStarveCoarsePostgres(t *testing.T) {
 	s := activityV3PrivatePostgres(t)
 	ctx := context.Background()

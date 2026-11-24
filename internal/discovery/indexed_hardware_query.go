@@ -10,6 +10,8 @@ func hardwareProfileCandidateSQL(role, confidence, conflict, seen string) string
 // Hardware classification already has an incremental authoritative projection.
 // Keep only scalar search/identity fields before pagination; the same statement
 // fetches the selected original rows by their MVCC tuple locator afterward.
+// Decode the source JSON once for each admitted row instead of detoasting it
+// separately for every scope, search and evidence field.
 // Point-lookups keep the historical identity and lease tables out of the
 // candidate scan. The observation index still determines the query window.
 // No ctid is persisted, exported, or used across statements/snapshots.
@@ -17,20 +19,21 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 	searchIP, searchName, searchType, searchManufacturer, searchModel := "''::text", "''::text", "''::text", "''::text", "''::text"
 	dhcpType := "''::text"
 	if query.DeviceType != "" || query.includeCandidateTypes || query.View == "iot" || query.Capability == "dumb" {
-		dhcpType = `CASE WHEN l.origin IN ('dhcp_client','dhcp') AND NOT l.withdrawn AND l.valid_until>now() THEN coalesce(l.data->'evidence'->'payload'->>'dhcp_candidate_type','') ELSE '' END`
+		dhcpType = `CASE WHEN l.origin IN ('dhcp_client','dhcp') AND NOT l.withdrawn AND l.valid_until>now() THEN coalesce(d.evidence->'payload'->>'dhcp_candidate_type','') ELSE '' END`
 	}
 	profileType := "''::text"
 	if query.Search != "" {
-		searchIP = "lower(coalesce(l.data->>'ip',''))"
-		searchName = "lower(coalesce(l.data->>'name',''))"
-		searchType = "lower(coalesce(l.data->>'device_type',''))"
-		searchManufacturer = "lower(coalesce(l.data->>'manufacturer',''))"
-		searchModel = "lower(coalesce(l.data->>'model_name',''))"
+		searchIP = "lower(coalesce(d.ip,''))"
+		searchName = "lower(coalesce(d.name,''))"
+		searchType = "lower(coalesce(d.device_type,''))"
+		searchManufacturer = "lower(coalesce(d.manufacturer,''))"
+		searchModel = "lower(coalesce(d.model_name,''))"
 		profileType = "CASE WHEN coalesce(rec.profile_confidence,0)>=0.8 AND NOT coalesce(rec.profile_conflict,false) THEN coalesce(rec.role,'') ELSE '' END"
 	}
 	caps := "'[]'::jsonb"
 	if query.Capability != "" || query.View == "iot" {
-		caps = indexedObservationCapabilitiesSQL
+		caps = strings.NewReplacer("data->>'name'", "d.name", "data->'evidence'", "d.evidence",
+			"data->'capabilities'", "d.capabilities").Replace(indexedObservationCapabilitiesSQL)
 	}
 	productType := "''::text"
 	if query.DeviceType != "" || query.includeCandidateTypes || query.View == "iot" || query.Capability == "dumb" {
@@ -39,7 +42,7 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 	productEvidence := "false"
 	if query.IdentityScope != "" {
 		productEvidence = `coalesce((` + indexedProductAttributionSQL + `
- AND l.data->'product_clue'->>'product_status' IN ('identified','no_type_match','conflict')),false)`
+ AND d.product_clue->>'product_status' IN ('identified','no_type_match','conflict')),false)`
 	}
 	subnet, subnets := "''::text", "'{}'::text[]"
 	if query.includeOverview || query.Subnet != "" {
@@ -78,6 +81,10 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 		recognitionSource = `SELECT ''::text endpoint_id,''::text role,''::text os_family,
  NULL::timestamptz profile_seen,0::double precision profile_confidence,false profile_conflict WHERE false`
 	}
+	// An ACK for a canonical MAC only adds its display endpoint. Identity,
+	// profile lookup and scope admission already use the observed MAC.
+	// Noncanonical observations keep their original lease lookup before grouping.
+	usableSourceMAC := "(l.search_mac ~ '^[0-9a-f][02468ace](:[0-9a-f]{2}){5}$' AND l.search_mac<>'00:00:00:00:00:00')"
 	statement := `WITH trusted_address AS MATERIALIZED (
  SELECT m.id observation_id,t.mac FROM discovery_observation_latest m
  JOIN LATERAL (
@@ -99,21 +106,27 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
   AND m.data->'evidence'->'payload'->>'claimed_ip'=m.data->>'ip'
 ), source_rows AS MATERIALIZED (
  SELECT l.ctid observation_tid,l.id,l.device_key,l.origin,l.observed_at,l.valid_until,
- coalesce(l.data->>'node','') sensor_id,coalesce(l.data->>'site','') site_id,
- coalesce(l.data->>'domain','') access_domain,coalesce(l.data->>'vlan','') vlan,coalesce(l.data->>'vrf','') vrf,
- coalesce(l.data->>'mac','') raw_mac,coalesce(l.data->>'ip','') raw_ip,
- coalesce(l.data->'evidence'->'observer'->>'capture_scope_issue','')='' capture_scope_valid,
- coalesce(l.data->'evidence'->'subject'->>'campus_id','') source_campus,
- ` + searchIP + ` search_ip,lower(coalesce(l.data->>'mac','')) search_mac,
+ coalesce(d.node,'') sensor_id,coalesce(d.site,'') site_id,
+ coalesce(d.domain,'') access_domain,coalesce(d.vlan,'') vlan,coalesce(d.vrf,'') vrf,
+ coalesce(d.mac,'') raw_mac,coalesce(d.ip,'') raw_ip,
+ coalesce(d.evidence->'observer'->>'capture_scope_issue','')='' capture_scope_valid,
+ coalesce(d.evidence->'subject'->>'campus_id','') source_campus,
+ ` + searchIP + ` search_ip,lower(coalesce(d.mac,'')) search_mac,
  ` + searchName + ` search_name,` + searchType + ` search_device_type,
  ` + searchManufacturer + ` search_manufacturer,` + searchModel + ` search_model,
  ` + caps + ` observation_capabilities,
  ` + productType + ` product_type,` + productEvidence + ` product_evidence,
  ` + dhcpType + ` dhcp_candidate_type,
- (l.valid_until>now() AND l.data->>'confidence' IN ('strong','confirmed') AND coalesce(l.data->'evidence'->'observer'->>'capture_scope_issue','')='') service_clue_valid
- FROM discovery_observation_latest l WHERE ` + strings.Join(baseWhere, " AND ") + `
+ (l.valid_until>now() AND d.confidence IN ('strong','confirmed') AND coalesce(d.evidence->'observer'->>'capture_scope_issue','')='') service_clue_valid
+ FROM discovery_observation_latest l
+ CROSS JOIN LATERAL jsonb_to_record(CASE WHEN jsonb_typeof(l.data)='object' THEN l.data END) AS d(
+  node text,site text,domain text,vlan text,vrf text,mac text,ip text,confidence text,evidence jsonb,
+  name text,device_type text,manufacturer text,model_name text,capabilities jsonb,event_id text,product_clue jsonb)
+ WHERE ` + strings.Join(baseWhere, " AND ") + `
 ), candidate_links AS NOT MATERIALIZED (
- SELECT l.*,coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id) linked_endpoint
+ SELECT l.*,coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id) linked_endpoint,
+  CASE WHEN ` + usableSourceMAC + ` AND i.endpoint_id IS NULL AND ix.endpoint_id IS NULL
+   THEN l.source_campus END lease_campus
  FROM source_rows l
  LEFT JOIN LATERAL (
   SELECT i.endpoint_id FROM discovery_identity_links i
@@ -130,7 +143,7 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
   WHERE dl.event_id=l.id AND dl.action='ack'
    AND dl.sensor_id=l.sensor_id AND host(dl.ip)=l.raw_ip
    AND dl.campus_id=l.source_campus AND dl.endpoint_id='mac:'||lower(l.raw_mac)
-   AND i.endpoint_id IS NULL AND ix.endpoint_id IS NULL
+   AND i.endpoint_id IS NULL AND ix.endpoint_id IS NULL AND NOT ` + usableSourceMAC + `
   LIMIT 1
  ) dl ON true
 ), display_links AS NOT MATERIALIZED (
@@ -143,7 +156,7 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
  (l.capture_scope_valid AND l.sensor_id<>'' AND l.site_id<>'' AND l.access_domain<>''
   AND lower(l.raw_mac) ~ '^[0-9a-f][02468ace](:[0-9a-f]{2}){5}$' AND lower(l.raw_mac)<>'00:00:00:00:00:00'
   AND (coalesce(l.display_endpoint,'')='' OR lower(l.display_endpoint)='mac:'||lower(l.raw_mac))) profile_identity_verified,
- coalesce(l.display_endpoint,'') linked_endpoint,
+ coalesce(l.display_endpoint,'') linked_endpoint,l.lease_campus,
  coalesce(l.display_endpoint,'mac:'||lower(l.raw_mac)) recognition_endpoint
  FROM display_links l` + searchBrandJoin + `
 ), recognition AS MATERIALIZED (
@@ -151,7 +164,7 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 ), candidate_rows AS MATERIALIZED (
  SELECT l.observation_tid,l.id,l.device_key,l.origin,l.observed_at,l.valid_until,l.sensor_id,
  l.search_ip,l.search_mac,l.search_name,l.search_device_type,l.search_manufacturer,l.search_model,
- l.identity_key,l.vlan,l.observation_capabilities,l.raw_ip,l.product_type,l.product_evidence,l.service_clue_valid,l.linked_endpoint,l.recognition_endpoint,l.profile_identity_verified,
+ l.identity_key,l.vlan,l.observation_capabilities,l.raw_ip,l.product_type,l.product_evidence,l.service_clue_valid,l.linked_endpoint,l.lease_campus,l.recognition_endpoint,l.profile_identity_verified,
  ` + subnet + ` subnet,
  coalesce(rec.role,'') profile_role,coalesce(rec.profile_confidence,0) profile_confidence,
  ` + profileOS + ` profile_os,` + profileType + ` profile_type,
@@ -203,8 +216,14 @@ func buildHardwareIndexedPage(selection indexedDeviceSelection, positionWhere, l
  SELECT identity_key,device_key,last_seen,category FROM matched` + positionWhere + `
  ORDER BY last_seen DESC,identity_key COLLATE "C" LIMIT $` + limitParameter + `
 )
-SELECT c.identity_key,c.device_key,page_o.data,l.linked_endpoint,` + profiles + `,c.category
+SELECT c.identity_key,c.device_key,page_o.data,coalesce(dl.endpoint_id,l.linked_endpoint) linked_endpoint,` + profiles + `,c.category
 FROM candidate_rows l JOIN candidates c USING(identity_key)
 JOIN discovery_observation_latest page_o ON page_o.ctid=l.observation_tid
+LEFT JOIN LATERAL (
+ SELECT dl.endpoint_id FROM device_address_leases dl
+ WHERE l.linked_endpoint='' AND dl.sensor_id=l.sensor_id AND dl.campus_id=l.lease_campus
+  AND dl.event_id=l.id AND dl.action='ack' AND host(dl.ip)=l.raw_ip AND dl.endpoint_id='mac:'||l.search_mac
+ LIMIT 1
+) dl ON true
 ` + profileJoin + `ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
 }

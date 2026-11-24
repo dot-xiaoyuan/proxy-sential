@@ -27,12 +27,13 @@ func (s *DBStore) backfillActivityStatistics(ctx context.Context) error {
 
 func (s *DBStore) StatisticsReadModelHealth(ctx context.Context) error {
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("PROXY_SENTINEL_ACTIVITY_READ_MODEL_V3")), "true") {
-		lag, err := s.activityV3RealtimeLag(ctx, time.Now().UTC())
+		now := time.Now().UTC()
+		lag, err := s.activityV3RealtimeLag(ctx, now)
 		if err != nil {
 			return fmt.Errorf("activity v3 read model is not ready: %w", err)
 		}
-		if lag > 300 {
-			return fmt.Errorf("activity v3 statistics event coverage is older than five minutes with unfinished work")
+		if activityV3CoverageDelay(now, lag) > 5*time.Minute {
+			return fmt.Errorf("activity v3 statistics coverage is over five minutes behind the latest closed bucket with unfinished work")
 		}
 
 		return nil
@@ -41,6 +42,11 @@ func (s *DBStore) StatisticsReadModelHealth(ctx context.Context) error {
 		return err
 	}
 	return s.pg.recognitionCatalogHealth(ctx)
+}
+
+func activityV3CoverageDelay(now time.Time, lagSeconds float64) time.Duration {
+	dueThrough := now.Add(-activityBucketFinalizeDelay).Truncate(5 * time.Minute)
+	return max(0, time.Duration(lagSeconds*float64(time.Second))-now.Sub(dueThrough))
 }
 
 func (s *DBStore) activityStatisticsReadModelHealth(ctx context.Context) error {

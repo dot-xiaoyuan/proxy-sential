@@ -249,3 +249,19 @@ func TestActivityCoarseEffectiveLagSubtractsStructuralWindow(t *testing.T) {
 		t.Fatal("real backlog beyond the limit must pause the rollups")
 	}
 }
+
+func TestActivityCoverageDelayMeasuresFromLatestClosedBucket(t *testing.T) {
+	bucketEnd := time.Date(2026, 11, 24, 3, 40, 0, 0, time.UTC)
+	now := bucketEnd.Add(6 * time.Minute)
+	lag := now.Sub(bucketEnd)
+	if delay := activityV3CoverageDelay(now, lag.Seconds()); delay != 0 {
+		t.Fatalf("closed bucket is current despite wall-clock lag: %s", delay)
+	}
+	now = bucketEnd.Add(6*time.Minute + 30*time.Second)
+	if delay := activityV3CoverageDelay(now, now.Sub(bucketEnd).Seconds()); delay != 5*time.Minute {
+		t.Fatalf("one bucket missed at its close gate: %s", delay)
+	}
+	if delay := activityV3CoverageDelay(now, now.Sub(bucketEnd.Add(-5*time.Minute)).Seconds()); delay != 10*time.Minute {
+		t.Fatalf("two missed buckets: %s", delay)
+	}
+}

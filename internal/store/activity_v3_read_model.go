@@ -169,22 +169,7 @@ func (s *DBStore) dispatchActivityV3Jobs(ctx context.Context) (int, error) {
 			// taken from the last row of this result set and must still advance past it.
 			continue
 		}
-		now := time.Now().UTC()
-		// An open bucket is written once, at its close gate. Rebuilding it while it is
-		// still receiving receipts appended a full copy of every dimension value under a
-		// new revision that the next rebuild immediately superseded, and readers only
-		// ever use the newest published revision. After close, late receipts are
-		// debounced until they have been quiet for the finalize delay.
-		notBefore := activityFiveMinuteSchedule(bucket, now)
-		closed := !activityFiveMinuteOpen(bucket, now)
-		if _, err = tx.ExecContext(ctx, `INSERT INTO read_model_jobs(model,bucket_start,sensor_id,campus_id,not_before)
-VALUES($1,$2,$3,$4,$5) ON CONFLICT(model,bucket_start,sensor_id,campus_id) DO UPDATE SET
-dirty_generation=CASE
- WHEN read_model_jobs.status='running' THEN GREATEST(read_model_jobs.dirty_generation,read_model_jobs.processed_generation+2)
- WHEN read_model_jobs.processed_generation<read_model_jobs.dirty_generation THEN read_model_jobs.dirty_generation
- ELSE read_model_jobs.dirty_generation+1 END,
-not_before=CASE WHEN $6 THEN GREATEST(read_model_jobs.not_before,EXCLUDED.not_before) ELSE EXCLUDED.not_before END,
-status=CASE WHEN read_model_jobs.status='running' THEN 'running' ELSE 'pending' END,updated_at=now()`, activityV3FiveMinuteModel, bucket, row.SensorID, row.CampusID, notBefore, closed); err != nil {
+		if err = enqueueActivityV3FiveMinuteJob(ctx, tx, bucket, time.Now().UTC(), row.SensorID, row.CampusID); err != nil {
 			return 0, err
 		}
 	}
@@ -193,6 +178,26 @@ status=CASE WHEN read_model_jobs.status='running' THEN 'running' ELSE 'pending' 
 		return 0, err
 	}
 	return len(seen), tx.Commit()
+}
+
+type activityJobWriter interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func enqueueActivityV3FiveMinuteJob(ctx context.Context, db activityJobWriter, bucket, now time.Time, sensor, campus string) error {
+	// Start one settle window per dirty job. Repeated late receipts fold into
+	// that job without postponing its claim or overriding a retry backoff.
+	// A receipt during a leased build leaves a further generation to publish.
+	_, err := db.ExecContext(ctx, `INSERT INTO read_model_jobs(model,bucket_start,sensor_id,campus_id,not_before)
+VALUES($1,$2,$3,$4,$5) ON CONFLICT(model,bucket_start,sensor_id,campus_id) DO UPDATE SET
+dirty_generation=read_model_jobs.dirty_generation+1,
+not_before=CASE WHEN read_model_jobs.status='running' THEN read_model_jobs.not_before
+ ELSE GREATEST(read_model_jobs.not_before,EXCLUDED.not_before) END,
+status=CASE WHEN read_model_jobs.status='running' THEN 'running' ELSE 'pending' END,updated_at=now()
+WHERE read_model_jobs.processed_generation=read_model_jobs.dirty_generation
+   OR read_model_jobs.status='running'`,
+		activityV3FiveMinuteModel, bucket, sensor, campus, activityFiveMinuteSchedule(bucket, now))
+	return err
 }
 
 // claimReadModelJob takes the most recent five-minute bucket first, and the most
@@ -278,8 +283,8 @@ func activityFiveMinuteOpen(bucket, now time.Time) bool {
 	return now.Before(activityFiveMinuteCloseAt(bucket))
 }
 
-// activityFiveMinuteSchedule returns when the bucket should next be built: the
-// close gate while it is still open, a quiet-window debounce once it is closed.
+// activityFiveMinuteSchedule schedules the first claim at the close gate, or
+// gives a newly dirtied closed bucket time to collect more late receipts.
 func activityFiveMinuteSchedule(bucket, now time.Time) time.Time {
 	closeAt := activityFiveMinuteCloseAt(bucket)
 	if now.Before(closeAt) {

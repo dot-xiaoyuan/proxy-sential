@@ -200,19 +200,20 @@ func (r Repository) devicesIndexedMetadata(ctx context.Context, db indexedQuerye
 var indexedOverviewCountsSQL = `
  UNION ALL SELECT 'overview','active',count(*),now() FROM matched WHERE last_seen>=now()-interval '15 minutes'
  UNION ALL SELECT 'overview','dumb',count(*),now() FROM matched WHERE ` + hardwareIoTAdmissionSQL() + `
- UNION ALL SELECT 'overview','previous_active',count(*) FILTER (WHERE EXISTS (
-  SELECT 1 FROM passive_census_identifier_5m b WHERE b.scope_key=h.scope_key AND b.kind='mac' AND b.value=h.mac
+ UNION ALL SELECT 'overview','previous_active',count(b.scope_key),now()
+ FROM matched m LEFT JOIN passive_hardware_current h USING(identity_key)
+ LEFT JOIN (
+  SELECT DISTINCT b.scope_key,b.value
+  FROM passive_census_identifier_5m b WHERE b.kind='mac'
    AND b.bucket_at>=date_bin(interval '5 minutes',now()-interval '24 hours 15 minutes','2000-01-01'::timestamptz)
    AND b.bucket_at<now()-interval '24 hours'
    AND ((b.first_seen>=now()-interval '24 hours 15 minutes' AND b.first_seen<now()-interval '24 hours')
      OR (b.last_seen>=now()-interval '24 hours 15 minutes' AND b.last_seen<now()-interval '24 hours'))
- )),now()
- FROM matched m LEFT JOIN passive_hardware_current h USING(identity_key)
- HAVING count(*)>0 AND count(h.identity_key)=count(*) AND bool_and(EXISTS (
-  SELECT 1 FROM passive_census_runtime r WHERE r.sensor_id=h.sensor_id AND r.last_error=''
+ ) b ON b.scope_key=h.scope_key AND b.value=h.mac
+ LEFT JOIN passive_census_runtime r ON r.sensor_id=h.sensor_id AND r.last_error=''
    AND r.available_from<=now()-interval '24 hours 15 minutes' AND r.last_source_at>=now()-interval '24 hours'
    AND (r.oldest_pending_at IS NULL OR r.oldest_pending_at>=now()-interval '24 hours')
- ))
+ HAVING count(*)>0 AND count(h.identity_key)=count(*) AND count(r.sensor_id)=count(*)
  UNION ALL SELECT 'overview_day',to_char(d.at,'YYYY-MM-DD'),count(m.identity_key),now()
  FROM generate_series(date_trunc('day',now() AT TIME ZONE 'Asia/Shanghai')-interval '6 days',
    date_trunc('day',now() AT TIME ZONE 'Asia/Shanghai'),interval '24 hours') d(at)
