@@ -5728,6 +5728,8 @@ export interface components {
             role_evidence_id?: string;
             role_rule?: string;
             role_event_id?: string;
+            role_value_excerpt?: string;
+            role_rule_version?: string;
             role_source?: string;
             role_input?: string;
             assessment_id?: string;
@@ -7396,6 +7398,8 @@ export interface components {
             role_evidence_id?: string;
             role_rule?: string;
             role_event_id?: string;
+            role_value_excerpt?: string;
+            role_rule_version?: string;
             role_source?: string;
             role_input?: string;
             decision_id?: string;

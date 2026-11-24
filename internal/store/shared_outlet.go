@@ -132,9 +132,9 @@ func (s *DBStore) outletRouter(ctx context.Context, w sharedaccess.Window, l out
 		at = w.Activity.At
 	}
 	err := s.pg.db.QueryRowContext(ctx, `SELECT r.assessment_id,r.role,r.status,r.confidence,r.brand,r.model,
- CASE WHEN f.explicit_role OR (r.status='confirmed' AND f.independent_families>=2) THEN f.evidence_id ELSE '' END,f.rule_id,f.source_family,f.input,f.event_id
+ CASE WHEN f.explicit_role OR (r.status='confirmed' AND f.independent_families>=2) THEN f.evidence_id ELSE '' END,f.rule_id,f.source_family,f.input,f.event_id,f.value_excerpt,f.rule_version
  FROM router_assessments r JOIN LATERAL (
- SELECT f.evidence_id,f.rule_id,f.source_family,coalesce(f.data->>'model','') AS model,coalesce(f.data->>'input','') AS input,coalesce(f.data->'event_ids'->>0,'') AS event_id,
+ SELECT f.evidence_id,f.rule_id,f.rule_version,left(coalesce(f.data->>'raw_value',''),512) AS value_excerpt,f.source_family,coalesce(f.data->>'model','') AS model,coalesce(f.data->>'input','') AS input,coalesce(f.data->'event_ids'->>0,'') AS event_id,
  dense_rank() OVER (ORDER BY f.source_family) + dense_rank() OVER (ORDER BY f.source_family DESC) - 1 AS independent_families,
  (f.rule_id IN ('ssdp-advertised-internet-gateway','first-hop-redundancy-router-role') OR
  (f.data->>'strength'='strong' AND coalesce(f.data->>'model','')<>'' AND
@@ -149,7 +149,7 @@ func (s *DBStore) outletRouter(ctx context.Context, w sharedaccess.Window, l out
  AND NOT r.ambiguous AND NOT r.brand_reference_only AND NOT r.infrastructure AND r.expires_at>$2 AND r.first_seen<=$2
  AND NOT EXISTS (SELECT 1 FROM router_evidence_facts x WHERE x.assessment_id=r.assessment_id AND (x.conflict OR x.exclusion)
  AND coalesce(x.data->>'conflict_code','')<>'ordinary_endpoint' AND x.first_seen<=$2 AND x.expires_at>$2)
- ORDER BY (r.status='confirmed' OR f.explicit_role) DESC,r.status_rank DESC,r.confidence DESC,r.assessment_id LIMIT 1`, l.mac, at, w.SensorID, l.vlan, strconv.Itoa(int(w.ClientVLAN))).Scan(&r.AssessmentID, &r.Role, &r.Status, &r.Confidence, &r.Brand, &r.Model, &r.RoleEvidenceID, &r.RoleRule, &r.RoleSource, &r.RoleInput, &r.RoleEventID)
+ ORDER BY (r.status='confirmed' OR f.explicit_role) DESC,r.status_rank DESC,r.confidence DESC,r.assessment_id LIMIT 1`, l.mac, at, w.SensorID, l.vlan, strconv.Itoa(int(w.ClientVLAN))).Scan(&r.AssessmentID, &r.Role, &r.Status, &r.Confidence, &r.Brand, &r.Model, &r.RoleEvidenceID, &r.RoleRule, &r.RoleSource, &r.RoleInput, &r.RoleEventID, &r.RoleValueExcerpt, &r.RoleRuleVersion)
 	if err == sql.ErrNoRows {
 		return r, nil
 	}

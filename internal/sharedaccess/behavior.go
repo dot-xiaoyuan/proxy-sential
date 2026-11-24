@@ -11,17 +11,19 @@ import (
 const BehaviorRuleVersion = "shared-behavior/v15"
 
 type BehaviorRouterContext struct {
-	RoleSource     string `json:"role_source,omitempty"`
-	RoleInput      string `json:"role_input,omitempty"`
-	RoleEventID    string `json:"role_event_id,omitempty"`
-	RoleEvidenceID string `json:"role_evidence_id,omitempty"`
-	RoleRule       string `json:"role_rule,omitempty"`
-	AssessmentID   string `json:"assessment_id,omitempty"`
-	Brand          string `json:"brand,omitempty"`
-	Model          string `json:"model,omitempty"`
-	Role           string `json:"role,omitempty"`
-	Status         string `json:"status,omitempty"`
-	Confidence     int    `json:"confidence,omitempty"`
+	RoleValueExcerpt string `json:"role_value_excerpt,omitempty"`
+	RoleRuleVersion  string `json:"role_rule_version,omitempty"`
+	RoleSource       string `json:"role_source,omitempty"`
+	RoleInput        string `json:"role_input,omitempty"`
+	RoleEventID      string `json:"role_event_id,omitempty"`
+	RoleEvidenceID   string `json:"role_evidence_id,omitempty"`
+	RoleRule         string `json:"role_rule,omitempty"`
+	AssessmentID     string `json:"assessment_id,omitempty"`
+	Brand            string `json:"brand,omitempty"`
+	Model            string `json:"model,omitempty"`
+	Role             string `json:"role,omitempty"`
+	Status           string `json:"status,omitempty"`
+	Confidence       int    `json:"confidence,omitempty"`
 	// BrandAttribution is a vendor-specific control-plane identity. It may
 	// corroborate diverse client stacks but never proves a gateway by itself.
 	BrandAttribution bool `json:"brand_attribution,omitempty"`

@@ -5996,6 +5996,8 @@ components:
         role_evidence_id: { type: string }
         role_rule: { type: string }
         role_event_id: { type: string }
+        role_value_excerpt: { type: string, maxLength: 512 }
+        role_rule_version: { type: string }
         role_source: { type: string }
         role_input: { type: string }
         assessment_id: { type: string }
@@ -7704,6 +7706,8 @@ components:
         role_evidence_id: { type: string }
         role_rule: { type: string }
         role_event_id: { type: string }
+        role_value_excerpt: { type: string, maxLength: 512 }
+        role_rule_version: { type: string }
         role_source: { type: string }
         role_input: { type: string }
         decision_id: { type: string }

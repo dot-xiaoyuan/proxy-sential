@@ -112,7 +112,14 @@ func (s *DBStore) ReadStreamSharedCaseRefs(ctx context.Context, observationID, g
 			if !wanted[key] {
 				return nil, streamlog.ErrContentConflict
 			}
-			if row.Body.Class != "evidence" || row.Body.Epoch != w.SourceEpochs[source] || row.Body.Validate() != nil {
+			// The archive writes its epoch into the scoped key. Earlier and current
+			// search rows can omit the redundant epoch field in the body reference.
+			epoch := w.SourceEpochs[source]
+			if row.Body.Key != epoch+":"+key.EventID || row.Body.Epoch != "" && row.Body.Epoch != epoch {
+				return nil, streamlog.ErrContentConflict
+			}
+			row.Body.Epoch = epoch
+			if row.Body.Class != "evidence" || row.Body.Validate() != nil {
 				return nil, streamlog.ErrContentConflict
 			}
 			if prior, exists := seen[key]; exists && prior != row.Body {

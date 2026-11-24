@@ -110,7 +110,7 @@ func runSharedObservationReplay(t *testing.T, basis string) {
 		exec(`INSERT INTO router_assessments(assessment_id,mac,role,status,confidence,rule_version,first_seen,last_seen,expires_at,assessment) VALUES($1,$2,'router','likely',60,'test',$3,$3,$4,'{}')`, sensor, gatewayMAC, now.Add(-time.Minute), now.Add(time.Hour))
 		defer db.ExecContext(context.Background(), `DELETE FROM router_assessments WHERE assessment_id=$1`, sensor)
 		exec(`INSERT INTO router_evidence_facts(evidence_id,assessment_id,mac,source,source_family,kind,rule_id,rule_version,score,first_seen,last_seen,expires_at,data)
-		 VALUES($1,$1,$2,'packet-sidecar','ssdp','router_signal','ssdp-advertised-internet-gateway','test',60,$3,$3,$4,jsonb_build_object('sensor_id',$1::text,'role','router','association_quality','mac','event_ids',jsonb_build_array($1::text||'-igd')))`, sensor, gatewayMAC, now.Add(-time.Minute), now.Add(time.Hour))
+		 VALUES($1,$1,$2,'packet-sidecar','ssdp','router_signal','ssdp-advertised-internet-gateway','test',60,$3,$3,$4,jsonb_build_object('sensor_id',$1::text,'role','router','association_quality','mac','raw_value','InternetGatewayDevice:1','event_ids',jsonb_build_array($1::text||'-igd')))`, sensor, gatewayMAC, now.Add(-time.Minute), now.Add(time.Hour))
 		defer db.ExecContext(context.Background(), `DELETE FROM router_evidence_facts WHERE assessment_id=$1`, sensor)
 	} else {
 		exec(`INSERT INTO device_address_leases(sensor_id,campus_id,event_id,ip,endpoint_id,observed_at,valid_until,action)
@@ -181,6 +181,29 @@ func runSharedObservationReplay(t *testing.T, basis string) {
 	var storedBasis string
 	if err = db.QueryRowContext(ctx, `SELECT basis FROM shared_access_findings WHERE account_id=$1 AND outcome='confirmed'`, sensor).Scan(&storedBasis); err != nil || storedBasis != basis {
 		t.Fatalf("confirmed finding: got %q, want %q: %v", storedBasis, basis, err)
+	}
+	s.exceptions = newExceptionManager(db)
+	s.operations.streamSharedEvidenceLoader = backend.ReadStreamSharedCaseEvidence
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := s.syncAutomaticCasesContext(ctx, sensor, "10m"); err != nil {
+			t.Fatalf("synchronize sharing case: %v", err)
+		}
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(DISTINCT c.case_id) FROM shared_access_findings f
+	 JOIN risk_cases c ON c.case_id=f.case_id JOIN enforcement_actions a ON a.action_id=f.action_id AND a.case_id=c.case_id
+	 WHERE f.account_id=$1 AND f.outcome='confirmed' AND NOT f.case_pending AND a.mode='record_only'`, sensor).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("durable case linked to the recorded action: %d %v", n, err)
+	}
+	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM stream_shared_case_evidence e
+	 JOIN shared_access_findings f ON e.case_id=f.case_id WHERE f.account_id=$1 AND e.epoch=$2`, sensor, epoch).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("protected mirror original: %d %v", n, err)
+	}
+	if basis == sharedaccess.AuthenticatedRouter {
+		var raw, roleEvent string
+		if err = db.QueryRowContext(ctx, `SELECT s.evidence->'shared_access'->>'role_value_excerpt',s.evidence->'shared_access'->>'role_event_id'
+		 FROM risk_case_evidence_snapshots s JOIN shared_access_findings f USING(case_id) WHERE f.account_id=$1 LIMIT 1`, sensor).Scan(&raw, &roleEvent); err != nil || raw != "InternetGatewayDevice:1" || roleEvent != sensor+"-igd" {
+			t.Fatalf("immutable router role evidence: %q %q %v", raw, roleEvent, err)
+		}
 	}
 	progress, err := s.readSharedStreamProgress(ctx, time.Now())
 	if err != nil || len(progress) != 2 {

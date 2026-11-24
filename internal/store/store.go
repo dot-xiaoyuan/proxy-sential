@@ -494,6 +494,8 @@ type ProxyReviewCase struct {
 // shared-access case. Generic traffic counters are deliberately kept out of
 // this decision basis.
 type SharedAccessCaseEvidence struct {
+	RoleValueExcerpt        string   `json:"role_value_excerpt,omitempty"`
+	RoleRuleVersion         string   `json:"role_rule_version,omitempty"`
 	RoleSource              string   `json:"role_source,omitempty"`
 	RoleInput               string   `json:"role_input,omitempty"`
 	RoleEventID             string   `json:"role_event_id,omitempty"`
