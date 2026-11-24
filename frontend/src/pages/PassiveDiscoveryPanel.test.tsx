@@ -31,7 +31,7 @@ function mockReads(observedPortResult: unknown = {
       connection_outcome: 'syn_ack_observed', last_seen: '2026-11-01T12:00:00Z', evidence_id: 'flow-443',
     }],
   },
-}, deviceRow: typeof device & {hardware_type?:string;hardware_type_status?:string;hardware_model?:string;hardware_model_status?:string;type_evidence_at?:string;type_rule_version?:string;activity_status?:string;type_sources?:Array<{source:string;rule_id:string;rule_version:string;evidence_id:string;observed_at:string}>;mac?:string;name?:string;device_type?:string;last_product_type?:string;last_product_at?:string;endpoint_id?:string;review_reason?:string;review_observed_at?:string;recognition?:{device_type?:string;confidence?:number;os_family?:string;os_family_confidence?:number;rule_version?:string;source?:string;evidence?:string[];brand?:string;model?:string;brand_inference_status?:string;brand_inference_brand?:string;brand_inference_confidence?:number}} = device, coverage = { enabled: true, items: [] as Array<{protocol:string;enabled:boolean;message_source_epoch?:string}> }, includeListTotal = true) {
+}, deviceRow: typeof device & {candidate_device_type?:string;hardware_type?:string;hardware_type_status?:string;hardware_model?:string;hardware_model_status?:string;type_evidence_at?:string;type_rule_version?:string;activity_status?:string;type_sources?:Array<{source:string;rule_id:string;rule_version:string;evidence_id:string;observed_at:string}>;mac?:string;name?:string;device_type?:string;last_product_type?:string;last_product_at?:string;endpoint_id?:string;review_reason?:string;review_observed_at?:string;recognition?:{device_type?:string;confidence?:number;os_family?:string;os_family_confidence?:number;rule_version?:string;source?:string;evidence?:string[];brand?:string;model?:string;brand_inference_status?:string;brand_inference_brand?:string;brand_inference_confidence?:number}} = device, coverage = { enabled: true, items: [] as Array<{protocol:string;enabled:boolean;message_source_epoch?:string}> }, includeListTotal = true) {
   request.mockImplementation((path: string) => {
     if (path.startsWith('/discovery/observed-ports?')) {
       return observedPortResult instanceof Error ? Promise.reject(observedPortResult) : Promise.resolve(observedPortResult)
@@ -369,7 +369,7 @@ it('keeps V8 profile type clues visible without counting them as hardware confir
   })
   renderPanel()
   const overview = await screen.findByLabelText('发现设备总览')
-  expect(await screen.findByText('手机 · 画像线索')).toBeVisible()
+  expect(await screen.findByText('疑似手机')).toBeVisible()
   expect(overview).toHaveTextContent('共 1 条发现记录')
   expect(overview).toHaveTextContent('已确认硬件类型（合计 0）')
   fireEvent.click(within(overview).getByRole('button', { name: '统计与类型线索' }))
@@ -848,8 +848,33 @@ it('groups device details into labelled sections', async () => {
   await waitFor(() => expect(document.querySelector('.discovery-detail-section')).toBeTruthy())
   const modal = document.querySelector('.discovery-evidence-modal') as HTMLElement
   expect(within(modal).getByRole('heading', { name: '网络与时效' })).toBeInTheDocument()
-  expect(within(modal).getByRole('heading', { name: '类型结论' })).toBeInTheDocument()
+  expect(within(modal).getByRole('heading', { name: '设备类型' })).toBeInTheDocument()
   expect(within(modal).getByText('MAC', { selector: 'dt' }).closest('.discovery-detail-section')).toHaveTextContent('网络与时效')
   expect(within(modal).getByText('识别规则', { selector: 'dt' }).closest('.discovery-detail-section')).toHaveTextContent('识别规则')
   expect(modal.querySelector('.discovery-detail-diagnostics')).toBeNull()
+})
+
+
+it('distinguishes personal computer profile clues from confirmed hardware in the picker and detail', async () => {
+  mockReads({items:{}}, {...device, mac:'00:11:22:33:44:55', hardware_type_status:'candidate',
+    candidate_device_type:'desktop', recognition:{evidence:['Client UA: Mac 浏览器']}})
+  const base = request.getMockImplementation()!
+  request.mockImplementation((path: string) => path.startsWith('/discovery/devices/metadata?')
+    ? Promise.resolve({ classification_version:'passive-hardware/v2', total:1318, identified:1, candidate:1317,
+      types:[{device_type:'desktop',count:1}], candidate_types:[{device_type:'desktop',count:1317}] })
+    : base(path))
+  renderPanel(['/?discovery_type=desktop'])
+  expect(await screen.findByText('疑似个人电脑')).toBeVisible()
+  expect(await screen.findByText(/待核实 1317（含画像推测 1,317）/)).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', {name:'查看详情'}))
+  const dialog = within(await screen.findByRole('dialog'))
+  expect(dialog.getByText('硬件类型待确认')).toBeInTheDocument()
+  expect(dialog.getByText(/台式机和笔记本/)).toBeInTheDocument()
+  expect(dialog.getByText('同 MAC 画像中的浏览器线索 · Mac 浏览器')).toBeInTheDocument()
+  expect(dialog.queryByText('类型结论')).toBeNull()
+  fireEvent.click(dialog.getByRole('button', {name:'Close'}))
+  fireEvent.mouseDown(screen.getByRole('combobox', {name:'设备类型'}))
+  const option = await screen.findByRole('option', {name:/个人电脑/})
+  expect(option).toHaveTextContent('已确认 1')
+  expect(option).toHaveTextContent('画像推测 1,317')
 })

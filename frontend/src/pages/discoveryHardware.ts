@@ -17,7 +17,7 @@ export type HardwareView = {
 export const hardwareStates: Record<string, string> = {
   identified: '已知硬件类型', candidate: '缺少硬件类型证据', conflict: '硬件类型冲突', revoked: '硬件结论已撤销',
 }
-export const activityStates: Record<string, string> = {active: '近期有有效观测', stale: '最近活动线索已过期'}
+export const activityStates: Record<string, string> = {active: '近期有观测记录', stale: '最近活动线索已过期'}
 
 export function confirmedDeviceType(item: HardwareView & {classification_status?: string; device_type?: string}): string {
   if (item.hardware_type_status) return item.hardware_type_status === 'identified' ? item.hardware_type ?? '' : ''

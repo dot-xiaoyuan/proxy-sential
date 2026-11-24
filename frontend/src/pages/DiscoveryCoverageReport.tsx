@@ -168,7 +168,7 @@ export function DiscoveryCoverageReport({ report }: { report: CoverageReport }) 
             ] : []),
             { label: '归属待核实', value: unlinked, color: 'slate' },
           ]} /> : <p className="coverage-empty">选定范围内暂无设备侧 IPv4 观测。</p>}
-          <p className="coverage-footnote">按所选窗口内的 IPv4 地址去重，包含历史绑定。{review && <>有 <strong>{count(review.confirmed_inactive)} 个</strong>地址的设备活动线索已到期，仍计入已确认。</>}</p>
+          <p className="coverage-footnote">按所选窗口内的 IPv4 地址去重，包含历史绑定。仅有画像推测的地址归入待确认。{review && <>有 <strong>{count(review.confirmed_inactive)} 个</strong>地址的设备活动线索已到期，仍计入已确认。</>}</p>
         </section>
         <section className="coverage-panel" aria-labelledby="coverage-gap-heading">
           <header className="coverage-panel-heading"><div><h4 id="coverage-gap-heading">类型待确认的证据</h4>
