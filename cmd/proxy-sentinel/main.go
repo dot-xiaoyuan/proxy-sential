@@ -620,7 +620,18 @@ func runDeviceSignal(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return devicesignal.Run(ctx, devicesignal.Options{CaptureScope: captureScope, CollectorInstanceID: *instanceID, Interface: *interfaceName, Output: *output, SensorID: *sensorID, Bucket: *bucket, StateLiveness: *stateLiveness, RouterProtocolsOnly: *routerProtocolsOnly, SharedSignalsOnly: *sharedSignalsOnly, HandshakeOnly: *handshakeOnly, FlowSYNOnly: *flowSYNOnly})
+	opts := devicesignal.Options{CaptureScope: captureScope, CollectorInstanceID: *instanceID, Interface: *interfaceName, Output: *output, SensorID: *sensorID, Bucket: *bucket, StateLiveness: *stateLiveness, RouterProtocolsOnly: *routerProtocolsOnly, SharedSignalsOnly: *sharedSignalsOnly, HandshakeOnly: *handshakeOnly, FlowSYNOnly: *flowSYNOnly}
+	if opts.HandshakeOnly && os.Getenv("PROXY_SENTINEL_HANDSHAKE_CAPTURE_V2") == "true" && captureScope != nil && captureScope.SensorID == *sensorID {
+		if dsn := os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"); dsn != "" {
+			pg, err := store.NewPostgresStore(store.PostgresOptions{DSN: dsn})
+			if err != nil {
+				return err
+			}
+			defer pg.Close()
+			opts.AuthenticatedRouters = handshakeRouterPriority(ctx, captureScope, pg.AuthenticatedRouterSamplingKeys)
+		}
+	}
+	return devicesignal.Run(ctx, opts)
 }
 
 func runRouterProber(args []string) error {

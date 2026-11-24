@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"os"
 	"proxy-sentinel/internal/evidence"
@@ -197,6 +198,21 @@ func runSharedObservationReplay(t *testing.T, basis string) {
 	defer db.ExecContext(context.Background(), `DELETE FROM account_identity_projection_sources WHERE source=$1`, sensor)
 	defer db.ExecContext(context.Background(), `DELETE FROM identity_snapshot_log WHERE source=$1`, sensor)
 	defer db.ExecContext(context.Background(), `DELETE FROM identity_full_snapshots WHERE source=$1`, sensor)
+	sampling, err := store.NewPostgresStore(store.PostgresOptions{DSN: pgDSN})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sampling.Close()
+	assertPriority := func(domain string, want bool) {
+		t.Helper()
+		keys, e := sampling.AuthenticatedRouterSamplingKeys(ctx, sensor, "lab", domain)
+		_, ok := keys[sharedaccess.OutletKey{IP: netip.MustParseAddr(ip), MAC: [6]byte{2, 0, 0, 0, 0, 1}}]
+		if e != nil || ok != want {
+			t.Fatalf("capture priority scope=%s included=%t want=%t err=%v", domain, ok, want, e)
+		}
+	}
+	assertPriority("mirror", basis == sharedaccess.AuthenticatedRouter)
+	assertPriority("other", false)
 	tables := []string{"notification_outbox", "notification_delivery_attempts", "control_plane_tasks"}
 	before := map[string]int{}
 	for _, table := range tables {
@@ -221,6 +237,7 @@ func runSharedObservationReplay(t *testing.T, basis string) {
 			exec(`INSERT INTO endpoint_entities(endpoint_id,primary_mac,registration_status,ownership_class)
  VALUES($1,$2,'registered','infrastructure')`, sensor, gatewayMAC)
 			defer db.ExecContext(context.Background(), `DELETE FROM endpoint_entities WHERE endpoint_id=$1`, sensor)
+			assertPriority("mirror", false)
 			window, _, e := backend.ReadSharedObservation(ctx, store.SharedObservationScope{SensorID: sensor, CampusID: "lab", AccessDomain: "mirror", IP: ip}, cfg, now)
 			if e != nil || !slices.Contains(window.Conflicts, "infrastructure_ownership") || window.HasRouterProof() {
 				t.Fatalf("registered infrastructure was eligible: router=%t conflicts=%v err=%v", window.HasRouterProof(), window.Conflicts, e)

@@ -280,10 +280,7 @@ type handshakeSummary struct {
 	snis, alpns, hosts, userAgents map[string]bool
 }
 
-type handshakeKey struct {
-	IP  netip.Addr
-	MAC [6]byte
-}
+type handshakeKey = sharedaccess.OutletKey
 
 func newHandshakeSummary() *handshakeSummary {
 	return &handshakeSummary{snis: map[string]bool{}, alpns: map[string]bool{}, hosts: map[string]bool{}, userAgents: map[string]bool{}}

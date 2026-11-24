@@ -20,12 +20,13 @@ import (
 )
 
 type Options struct {
-	CollectorInstanceID string
-	CaptureScope        *normalized.CaptureScope
-	Interface           string
-	Output              string
-	SensorID            string
-	Bucket              time.Duration
+	AuthenticatedRouters func() map[sharedaccess.OutletKey]struct{}
+	CollectorInstanceID  string
+	CaptureScope         *normalized.CaptureScope
+	Interface            string
+	Output               string
+	SensorID             string
+	Bucket               time.Duration
 	// StateLiveness bounds how often an unchanged device state is rewritten. Zero keeps the
 	// historical behaviour of writing every key every bucket.
 	StateLiveness       time.Duration
@@ -169,6 +170,9 @@ func Run(ctx context.Context, opts Options) error {
 			received, drops, known := packetCaptureStats(fd)
 			coverage := sharedaccess.CoverageV2{SchemaVersion: "capture-coverage/v2", From: coverageFrom, To: end, KernelStatsKnown: known, Received: uint64(received), Dropped: uint64(drops), KeyDrops: state.droppedPacketKeys, ParseUnknown: state.handshakeParseFailures, Stopped: ctx.Err() != nil}
 			coverage.ExcludedFrames = state.handshakeExcludedFrames
+			if opts.AuthenticatedRouters != nil {
+				state.authenticatedRouters = opts.AuthenticatedRouters()
+			}
 			keys := state.selectHandshakes(handshakeBucketLimit(), at, priorityCIDRs)
 			for _, summary := range state.handshakes {
 				summary.coverage = coverage
@@ -188,6 +192,15 @@ func Run(ctx context.Context, opts Options) error {
 			}
 			if err := writeHandshakeCoverage(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, coverage); err != nil {
 				return err
+			}
+			if len(state.authenticatedRouters) > 0 {
+				retained := 0
+				for _, key := range keys {
+					if _, ok := state.authenticatedRouters[key]; ok && state.handshakes[key].activity != nil {
+						retained++
+					}
+				}
+				log.Printf("handshake_sampling authenticated_router_keys=%d retained_router_activity=%d summaries=%d omitted=%d", len(state.authenticatedRouters), retained, len(keys), coverage.Omitted)
 			}
 			coverageFrom = end
 		}

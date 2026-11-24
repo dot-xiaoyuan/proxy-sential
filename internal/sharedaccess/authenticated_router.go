@@ -2,6 +2,7 @@ package sharedaccess
 
 import (
 	"net"
+	"net/netip"
 	"slices"
 	"strings"
 	"time"
@@ -10,6 +11,13 @@ import (
 )
 
 const AuthenticatedRouter = "authenticated_router"
+
+// OutletKey identifies an observed IP and Ethernet source together. Sampling
+// priority for this key does not establish identity or sharing.
+type OutletKey struct {
+	IP  netip.Addr
+	MAC [6]byte
+}
 
 // OutletActivity identifies one observed source, even if the capture window
 // was incomplete for the separate purpose of counting downstream clients.

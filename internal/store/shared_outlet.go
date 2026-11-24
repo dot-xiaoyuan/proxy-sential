@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net"
+	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
@@ -278,4 +279,47 @@ func outletVLANMatches(source, auth string, outer, inner uint16) bool {
 		return outer != 0 && value/10000 == int(outer) && value%10000 == int(inner)
 	}
 	return value == int(inner)
+}
+
+// AuthenticatedRouterSamplingKeys reads only active session coordinates.
+// These hints affect output selection. Evidence and attribution are rechecked
+// against event time by the shared-observation worker.
+func (s *PostgresStore) AuthenticatedRouterSamplingKeys(ctx context.Context, sensor, campus, domain string) (map[sharedaccess.OutletKey]struct{}, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT p.ip,r.mac
+FROM shared_observation_mappings m
+JOIN router_assessments r ON r.role='router' AND r.mac<>'' AND r.expires_at>now()
+ AND NOT r.infrastructure AND NOT r.ambiguous AND NOT r.brand_reference_only
+JOIN account_identity_session_projection p ON p.source=m.identity_source AND p.sensor_id=m.identity_sensor_id
+ AND p.campus_id=m.identity_campus_id AND p.access_domain=m.identity_access_domain
+ AND regexp_replace(lower(coalesce(p.document->>'mac','')),'[^0-9a-f]','','g')=replace(lower(r.mac),':','')
+ AND coalesce(p.document->>'ended_at','')='' AND coalesce(p.document->>'mac','')<>'' AND p.ip<>''
+WHERE m.active AND m.valid_from<=now() AND m.valid_until>now() AND m.sensor_id=$1 AND m.campus_id=$2 AND m.access_domain=$3
+ AND NOT EXISTS (SELECT 1 FROM endpoint_entities e WHERE (e.endpoint_id='mac:'||lower(r.mac) OR e.primary_mac IN (lower(r.mac),upper(r.mac)))
+   AND e.merge_status='active' AND e.registration_status='registered' AND e.ownership_class='infrastructure')
+ AND EXISTS (SELECT 1 FROM router_evidence_facts f WHERE f.assessment_id=r.assessment_id AND f.expires_at>now()
+   AND f.data->>'sensor_id'=m.sensor_id AND NOT f.conflict AND NOT f.exclusion AND f.score>0
+   AND f.data->>'role'='router' AND f.source_family NOT IN ('client_fingerprint','weak_stack','shared_gateway_behavior')
+   AND coalesce(f.data->>'brand_reference_only','false')<>'true')
+ORDER BY p.ip,r.mac LIMIT 2048`, sensor, campus, domain)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	keys := make(map[sharedaccess.OutletKey]struct{})
+	for rows.Next() {
+		var ip, mac string
+		if err := rows.Scan(&ip, &mac); err != nil {
+			return nil, err
+		}
+		addr, err := netip.ParseAddr(ip)
+		if err != nil || !addr.Is4() || addr.IsUnspecified() || addr.IsMulticast() {
+			continue
+		}
+		hw, err := net.ParseMAC(mac)
+		if err != nil || len(hw) != 6 || !validUnicastMAC(mac) {
+			continue
+		}
+		keys[sharedaccess.OutletKey{IP: addr, MAC: [6]byte(hw)}] = struct{}{}
+	}
+	return keys, rows.Err()
 }

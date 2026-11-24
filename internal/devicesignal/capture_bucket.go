@@ -11,9 +11,10 @@ import (
 // captureBucket groups replayable frame observations without deriving device
 // ownership from transit traffic. Control and IP packet eligibility are separate.
 type captureBucket struct {
-	packets           map[packetBucketKey]int
-	controls          map[string]controlSignal
-	droppedPacketKeys int
+	authenticatedRouters map[handshakeKey]struct{}
+	packets              map[packetBucketKey]int
+	controls             map[string]controlSignal
+	droppedPacketKeys    int
 	// handshakes holds one summary per device for the current bucket. Only populated when
 	// the handshake filter is attached.
 	handshakes              map[handshakeKey]*handshakeSummary
@@ -196,7 +197,7 @@ func (b *captureBucket) recordHandshake(observation handshakeObservation) {
 }
 
 func (b *captureBucket) selectHandshakes(limit int, bucket time.Time, priorityCIDRs []netip.Prefix) []handshakeKey {
-	keys := selectHandshakeKeys(b.handshakes, limit, bucket, priorityCIDRs)
+	keys := b.selectHandshakeOutlets(limit, bucket, priorityCIDRs)
 	if len(b.handshakeCandidates) == 0 {
 		return keys
 	}
@@ -211,6 +212,33 @@ func (b *captureBucket) selectHandshakes(limit int, bucket time.Time, priorityCI
 		}
 	}
 	return keys
+}
+
+// Reserve at most a quarter of an oversubscribed bucket for observed activity
+// at authenticated router outlets. Other devices keep their existing weighted
+// and rotating slots. An address or MAC on its own never receives priority.
+func (b *captureBucket) selectHandshakeOutlets(limit int, at time.Time, cidrs []netip.Prefix) []handshakeKey {
+	if limit < 4 || len(b.handshakes) <= limit || len(b.authenticatedRouters) == 0 {
+		return selectHandshakeKeys(b.handshakes, limit, at, cidrs)
+	}
+	var routers []handshakeKey
+	for key := range b.authenticatedRouters {
+		if summary := b.handshakes[key]; summary != nil && summary.activity != nil {
+			routers = append(routers, key)
+		}
+	}
+	if len(routers) == 0 {
+		return selectHandshakeKeys(b.handshakes, limit, at, cidrs)
+	}
+	selected := selectHandshakePool(routers, b.handshakes, limit/4, at)
+	remaining := make(map[handshakeKey]*handshakeSummary, len(b.handshakes))
+	for key, summary := range b.handshakes {
+		remaining[key] = summary
+	}
+	for _, key := range selected {
+		delete(remaining, key)
+	}
+	return append(selected, selectHandshakeKeys(remaining, limit-len(selected), at, cidrs)...)
 }
 
 func (b *captureBucket) resetHandshakes() {

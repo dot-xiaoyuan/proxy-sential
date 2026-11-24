@@ -215,3 +215,42 @@ func TestHandshakeBucketLimitFallsBackOnInvalidValue(t *testing.T) {
 		}
 	}
 }
+
+func TestAuthenticatedRouterGetsActivitySlotUnderPressure(t *testing.T) {
+	bucket := newCaptureBucket()
+	at := time.Unix(9120, 0)
+	for i := 1; i <= 24; i++ {
+		key := handshakeKey{IP: netip.AddrFrom4([4]byte{192, 0, 2, byte(i)}), MAC: [6]byte{2, 0, 0, 0, 0, byte(i)}}
+		bucket.recordHandshake(handshakeObservation{IP: key.IP, MAC: key.MAC, ObservedAt: at})
+		bucket.handshakes[key].count = 100
+	}
+	router := handshakeKey{IP: netip.MustParseAddr("198.51.100.23"), MAC: [6]byte{2, 0, 0, 0, 0, 99}}
+	bucket.recordHandshake(handshakeObservation{IP: router.IP, MAC: router.MAC, ObservedAt: at})
+	impostor := router
+	impostor.MAC[5]++
+	bucket.recordHandshake(handshakeObservation{IP: impostor.IP, MAC: impostor.MAC, ObservedAt: at})
+	for i := 1; i <= 24; i++ {
+		key := handshakeKey{IP: netip.AddrFrom4([4]byte{203, 0, 113, byte(i)}), MAC: [6]byte{2, 0, 0, 0, 1, byte(i)}}
+		bucket.recordHandshake(handshakeObservation{IP: key.IP, MAC: key.MAC, ObservedAt: at})
+		bucket.handshakes[key].count = 100
+	}
+	bucket.authenticatedRouters = map[handshakeKey]struct{}{router: {}}
+	keys := bucket.selectHandshakes(8, at, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")})
+	seen := map[handshakeKey]bool{}
+	general := 0
+	for _, k := range keys {
+		if seen[k] {
+			t.Fatal("duplicate outlet")
+		}
+		seen[k] = true
+		if k.IP != router.IP {
+			general++
+		}
+	}
+	if !seen[router] || len(keys) != 8 || general < 6 {
+		t.Fatalf("retained %d total, %d general, router=%t", len(keys), general, seen[router])
+	}
+	if bucket.handshakes[router].featureQueued || len(bucket.handshakes[router].samples) != 0 {
+		t.Fatal("ordinary activity acquired invented fingerprints")
+	}
+}
