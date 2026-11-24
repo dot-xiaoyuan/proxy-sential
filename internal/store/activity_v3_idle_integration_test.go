@@ -283,3 +283,33 @@ func TestActivityV3QuietWorkerPublishesAndRemainsHealthy(t *testing.T) {
 		t.Fatal("stopped real worker bypassed freshness guard")
 	}
 }
+
+func TestActivityCoarsePendingParentKeepsFirstDeadline(t *testing.T) {
+	s := activityV3PrivatePostgres(t)
+	ctx := context.Background()
+	hour := time.Now().UTC().Truncate(time.Hour).Add(-2 * time.Hour)
+	at := hour.Add(3 * time.Hour).Truncate(time.Second)
+	job := readModelJob{SensorID: "parent", CampusID: "campus"}
+	for _, when := range []time.Time{at, at.Add(5 * time.Minute)} {
+		if err := s.enqueueActivityV3HourParent(ctx, hour, job, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var before time.Time
+	if e := s.pg.db.QueryRow("SELECT not_before FROM read_model_jobs").Scan(&before); e != nil {
+		t.Fatal(e)
+	}
+	if !before.Equal(at.Add(90 * time.Second)) {
+		t.Fatalf("pending parent moved to %s", before)
+	}
+	if _, e := s.pg.db.Exec("UPDATE read_model_jobs SET status='running',dirty_generation=3,processed_generation=1"); e != nil {
+		t.Fatal(e)
+	}
+	if e := s.enqueueActivityV3HourParent(ctx, hour, job, at.Add(6*time.Minute)); e != nil {
+		t.Fatal(e)
+	}
+	var generation int
+	if e := s.pg.db.QueryRow("SELECT dirty_generation FROM read_model_jobs").Scan(&generation); e != nil || generation <= 3 {
+		t.Fatal("running child receipt lost", generation, e)
+	}
+}

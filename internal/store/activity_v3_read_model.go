@@ -185,6 +185,10 @@ type activityJobWriter interface {
 }
 
 func enqueueActivityV3FiveMinuteJob(ctx context.Context, db activityJobWriter, bucket, now time.Time, sensor, campus string) error {
+	return enqueueActivityJob(ctx, db, activityV3FiveMinuteModel, bucket, sensor, campus, activityFiveMinuteSchedule(bucket, now))
+}
+
+func enqueueActivityJob(ctx context.Context, db activityJobWriter, model string, bucket time.Time, sensor, campus string, notBefore time.Time) error {
 	// Start one settle window per dirty job. Repeated late receipts fold into
 	// that job without postponing its claim or overriding a retry backoff.
 	// A receipt during a leased build leaves a further generation to publish.
@@ -196,7 +200,7 @@ not_before=CASE WHEN read_model_jobs.status='running' THEN read_model_jobs.not_b
 status=CASE WHEN read_model_jobs.status='running' THEN 'running' ELSE 'pending' END,updated_at=now()
 WHERE read_model_jobs.processed_generation=read_model_jobs.dirty_generation
    OR read_model_jobs.status='running'`,
-		activityV3FiveMinuteModel, bucket, sensor, campus, activityFiveMinuteSchedule(bucket, now))
+		model, bucket, sensor, campus, notBefore)
 	return err
 }
 
@@ -556,20 +560,8 @@ func (s *DBStore) repairActivityV3Finalization(ctx context.Context) (int, error)
 
 func (s *DBStore) enqueueActivityV3HourParent(ctx context.Context, from time.Time, job readModelJob, now time.Time) error {
 	hour := from.Truncate(time.Hour)
-	// Late and replayed receipts can finalize several child buckets for the
-	// same hour in quick succession. Push the parent job out after every
-	// child publication so the hour is rebuilt once after the stream is
-	// quiet, rather than once per child generation.
 	notBefore := activityParentNotBefore(hour.Add(time.Hour+5*time.Minute), now, 90*time.Second)
-	_, err := s.pg.db.ExecContext(ctx, `INSERT INTO read_model_jobs(model,bucket_start,sensor_id,campus_id,not_before)
-VALUES($1,$2,$3,$4,$5) ON CONFLICT(model,bucket_start,sensor_id,campus_id) DO UPDATE SET
-dirty_generation=CASE
- WHEN read_model_jobs.status='running' THEN GREATEST(read_model_jobs.dirty_generation,read_model_jobs.processed_generation+2)
- WHEN read_model_jobs.processed_generation<read_model_jobs.dirty_generation THEN read_model_jobs.dirty_generation
- ELSE read_model_jobs.dirty_generation+1 END,
-status=CASE WHEN read_model_jobs.status='running' THEN 'running' ELSE 'pending' END,
-not_before=GREATEST(read_model_jobs.not_before,EXCLUDED.not_before),updated_at=now()`, activityV3HourModel, hour, job.SensorID, job.CampusID, notBefore)
-	return err
+	return enqueueActivityJob(ctx, s.pg.db, activityV3HourModel, hour, job.SensorID, job.CampusID, notBefore)
 }
 
 func (s *DBStore) materializeActivityV3Coarse(ctx context.Context, job readModelJob) error {
@@ -591,14 +583,7 @@ func (s *DBStore) materializeActivityV3Coarse(ctx context.Context, job readModel
 	if granularity == "hour" {
 		day := from.Truncate(24 * time.Hour)
 		notBefore := activityParentNotBefore(day.Add(24*time.Hour+30*time.Minute), time.Now().UTC(), 5*time.Minute)
-		_, err = s.pg.db.ExecContext(ctx, `INSERT INTO read_model_jobs(model,bucket_start,sensor_id,campus_id,not_before)
-VALUES($1,$2,$3,$4,$5) ON CONFLICT(model,bucket_start,sensor_id,campus_id) DO UPDATE SET
-dirty_generation=CASE
- WHEN read_model_jobs.status='running' THEN GREATEST(read_model_jobs.dirty_generation,read_model_jobs.processed_generation+2)
- WHEN read_model_jobs.processed_generation<read_model_jobs.dirty_generation THEN read_model_jobs.dirty_generation
- ELSE read_model_jobs.dirty_generation+1 END,
-status=CASE WHEN read_model_jobs.status='running' THEN 'running' ELSE 'pending' END,
-not_before=GREATEST(read_model_jobs.not_before,EXCLUDED.not_before),updated_at=now()`, activityV3DayModel, day, job.SensorID, job.CampusID, notBefore)
+		err = enqueueActivityJob(ctx, s.pg.db, activityV3DayModel, day, job.SensorID, job.CampusID, notBefore)
 		if err != nil {
 			return err
 		}
