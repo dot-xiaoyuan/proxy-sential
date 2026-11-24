@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -220,4 +221,51 @@ func runSharedObservationReplay(t *testing.T, basis string) {
 			t.Fatalf("side effect in %s: before=%d after=%d err=%v", table, before[table], n, err)
 		}
 	}
+	t.Run("historical evidence after expiry", func(t *testing.T) {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback()
+		var original []byte
+		if err := tx.QueryRowContext(ctx, `SELECT o.observation FROM shared_access_findings f JOIN shared_behavior_observations o USING(observation_id) WHERE f.account_id=$1 AND f.outcome='confirmed'`, sensor).Scan(&original); err != nil {
+			t.Fatal(err)
+		}
+		var live sharedaccess.BehaviorAssessment
+		if err := json.Unmarshal(original, &live); err != nil {
+			t.Fatal(err)
+		}
+		expired := live
+		expired.Current, expired.Status, expired.AccountID = false, "candidate", ""
+		expired.Router, expired.OutletEvidence = sharedaccess.BehaviorRouterContext{}, nil
+		persist := func(item sharedaccess.BehaviorAssessment, wantChange bool) {
+			t.Helper()
+			changed, err := store.PersistSharedObservationTx(ctx, tx, item)
+			if err != nil || changed != wantChange {
+				t.Fatalf("persist current=%t changed=%t want=%t err=%v", item.Current, changed, wantChange, err)
+			}
+		}
+		persist(expired, true)
+		var preserved bool
+		if err := tx.QueryRowContext(ctx, `SELECT NOT current AND status='confirmed' AND observation=jsonb_set($2::jsonb,'{current}','false') FROM shared_behavior_observations WHERE observation_id=$1`, live.ObservationID, string(original)).Scan(&preserved); err != nil || !preserved {
+			t.Fatalf("expiry lost the historical verdict or evidence: preserved=%t err=%v", preserved, err)
+		}
+		live.ObservationID += "-new"
+		persist(live, true)
+		persist(expired, false)
+		if err := tx.QueryRowContext(ctx, `SELECT current FROM shared_behavior_observations WHERE observation_id=$1`, live.ObservationID).Scan(&preserved); err != nil || !preserved {
+			t.Fatalf("a late expiry retired the newer observation: current=%t err=%v", preserved, err)
+		}
+	})
+	t.Run("older expired detail retains its audited account", func(t *testing.T) {
+		// Earlier releases could replace the detail on expiry while the finding
+		// kept the original account. Exercise the period report's actual drilldown.
+		exec(`UPDATE shared_behavior_observations o SET current=false,observation=o.observation-'account_id'-'authenticated_outlet'
+ FROM shared_access_findings f WHERE f.observation_id=o.observation_id AND f.account_id=$1`, sensor)
+		page, err := backend.ListSharedBehavior(ctx, store.SharedBehaviorQuery{View: "period", Outcome: "accounts", Keyword: sensor,
+			SearchAccount: true, From: now.Add(-10 * time.Minute), To: now.Add(time.Minute)})
+		if err != nil || len(page.Items) != 1 || page.Items[0].Current || page.Items[0].AccountID != sensor || len(page.Items[0].OutletEvidence) != 0 {
+			t.Fatalf("period lookup of an expired account: count=%d err=%v", len(page.Items), err)
+		}
+	})
 }

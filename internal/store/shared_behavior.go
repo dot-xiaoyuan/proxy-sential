@@ -144,6 +144,9 @@ func sharedBehaviorWhere(query SharedBehaviorQuery) (string, []any, error) {
 		keyword := `observation_id ILIKE '%'||` + placeholder + `||'%' OR host(ip) ILIKE '%'||` + placeholder + `||'%' OR endpoint_id ILIKE '%'||` + placeholder + `||'%' OR observation->'router'->>'brand' ILIKE '%'||` + placeholder + `||'%' OR observation->'router'->>'model' ILIKE '%'||` + placeholder + `||'%'`
 		if (query.View == "traffic" || query.View == "period") && query.SearchAccount {
 			keyword += " OR observation->>'account_id'=" + placeholder
+			if query.View == "period" {
+				keyword += " OR (NOT current AND coalesce(observation->>'account_id','')='' AND EXISTS(SELECT 1 FROM shared_access_findings f WHERE f.observation_id=shared_behavior_observations.observation_id AND f.account_id=" + placeholder + "))"
+			}
 		}
 		clauses = append(clauses, "("+keyword+")")
 	}

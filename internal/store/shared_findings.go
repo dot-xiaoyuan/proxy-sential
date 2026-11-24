@@ -9,7 +9,9 @@ import (
 
 // Scalar primary-key lookups run only for the returned page. Links to a
 // case appear when its normal synchronization transaction has committed.
-const sharedFindingDocument = `observation || coalesce((SELECT jsonb_strip_nulls(jsonb_build_object('case_id',c.case_id,'action_id',a.action_id)) FROM shared_access_findings f
+const sharedFindingDocument = `observation || coalesce((SELECT jsonb_strip_nulls(jsonb_build_object('case_id',c.case_id,'action_id',a.action_id,
+ 'account_id',CASE WHEN NOT current AND coalesce(observation->>'account_id','')='' THEN nullif(f.account_id,'') END,
+ 'review_reason',CASE WHEN NOT current AND coalesce(observation->>'review_reason','')='' THEN nullif(f.reason,'') END)) FROM shared_access_findings f
  LEFT JOIN risk_cases c ON c.case_id=f.case_id LEFT JOIN enforcement_actions a ON a.action_id=f.action_id
  WHERE f.observation_id=shared_behavior_observations.observation_id),'{}'::jsonb)`
 

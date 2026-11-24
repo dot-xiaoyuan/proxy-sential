@@ -444,19 +444,27 @@ func PersistSharedObservationTx(ctx context.Context, tx *sql.Tx, item sharedacce
 	if err != nil {
 		return false, err
 	}
-	retired, err := tx.ExecContext(ctx, `UPDATE shared_behavior_observations SET current=false WHERE sensor_id=$1 AND campus_id=$2 AND access_domain=$3 AND ip=$4::inet AND current AND observation_id<>$5`, item.SensorID, item.CampusID, item.AccessDomain, item.IP, item.ObservationID)
-	if err != nil {
-		return false, err
+	// An expiry establishes only that this observation is no longer current.
+	// Its sparse reread cannot replace the original verdict or retire a newer outlet observation.
+	conflict := ` ON CONFLICT(observation_id) DO UPDATE SET current=false,
+ observation=jsonb_set(shared_behavior_observations.observation,'{current}','false'),updated_at=now()
+ WHERE shared_behavior_observations.current`
+	var retiredRows int64
+	if item.Current {
+		retired, err := tx.ExecContext(ctx, `UPDATE shared_behavior_observations SET current=false WHERE sensor_id=$1 AND campus_id=$2 AND access_domain=$3 AND ip=$4::inet AND current AND observation_id<>$5`, item.SensorID, item.CampusID, item.AccessDomain, item.IP, item.ObservationID)
+		if err != nil {
+			return false, err
+		}
+		retiredRows, err = retired.RowsAffected()
+		if err != nil {
+			return false, err
+		}
+		conflict = ` ON CONFLICT(observation_id) DO UPDATE SET signal_groups=EXCLUDED.signal_groups,observation=EXCLUDED.observation,current=EXCLUDED.current,status=EXCLUDED.status,confidence=EXCLUDED.confidence,generation_id=EXCLUDED.generation_id,coverage_state=EXCLUDED.coverage_state,updated_at=now()
+ WHERE (shared_behavior_observations.observation,shared_behavior_observations.current,shared_behavior_observations.status,shared_behavior_observations.confidence,shared_behavior_observations.generation_id,shared_behavior_observations.coverage_state)
+ IS DISTINCT FROM (EXCLUDED.observation,EXCLUDED.current,EXCLUDED.status,EXCLUDED.confidence,EXCLUDED.generation_id,EXCLUDED.coverage_state)`
 	}
 	upserted, err := tx.ExecContext(ctx, `INSERT INTO shared_behavior_observations(observation_id,sensor_id,campus_id,access_domain,ip,status,confidence,signal_groups,rule_version,coverage_state,first_seen,last_seen,window_start,window_end,expires_at,observation,current,generation_id)
- VALUES($1,$2,$3,$4,$5::inet,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
- ON CONFLICT(observation_id) DO UPDATE SET signal_groups=EXCLUDED.signal_groups,observation=EXCLUDED.observation,current=EXCLUDED.current,status=EXCLUDED.status,confidence=EXCLUDED.confidence,generation_id=EXCLUDED.generation_id,coverage_state=EXCLUDED.coverage_state,updated_at=now()
- WHERE (shared_behavior_observations.observation,shared_behavior_observations.current,shared_behavior_observations.status,shared_behavior_observations.confidence,shared_behavior_observations.generation_id,shared_behavior_observations.coverage_state)
- IS DISTINCT FROM (EXCLUDED.observation,EXCLUDED.current,EXCLUDED.status,EXCLUDED.confidence,EXCLUDED.generation_id,EXCLUDED.coverage_state)`, item.ObservationID, item.SensorID, item.CampusID, item.AccessDomain, item.IP, item.Status, item.Confidence, item.SignalGroups, item.RuleVersion, item.CoverageState, item.FirstSeen, item.LastSeen, item.WindowStart, item.WindowEnd, item.ExpiresAt, raw, item.Current, item.GenerationID)
-	if err != nil {
-		return false, err
-	}
-	retiredRows, err := retired.RowsAffected()
+ VALUES($1,$2,$3,$4,$5::inet,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`+conflict, item.ObservationID, item.SensorID, item.CampusID, item.AccessDomain, item.IP, item.Status, item.Confidence, item.SignalGroups, item.RuleVersion, item.CoverageState, item.FirstSeen, item.LastSeen, item.WindowStart, item.WindowEnd, item.ExpiresAt, raw, item.Current, item.GenerationID)
 	if err != nil {
 		return false, err
 	}
