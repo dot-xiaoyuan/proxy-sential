@@ -233,6 +233,32 @@ func runSharedObservationReplay(t *testing.T, basis string) {
 		if did, e := backend.ResolveSharedGateway(ctx, cfg, now); e != nil || did != (basis == "ieee1905_association" && attempt == 0) {
 			t.Fatalf("gateway resolution: attempt=%d worked=%t error=%v", attempt, did, e)
 		}
+		if attempt == 0 && basis == sharedaccess.AuthenticatedRouter {
+			bridge := sensor + "-health"
+			exec(`INSERT INTO identity_bridge_configs(bridge_id,desired_host) VALUES($1,'localhost')`, bridge)
+			defer db.ExecContext(ctx, `DELETE FROM identity_bridge_configs WHERE bridge_id=$1`, bridge)
+			defer db.ExecContext(ctx, `DELETE FROM shared_identity_health_intervals WHERE bridge_id=$1`, bridge)
+			exec(`INSERT INTO identity_bridge_runtime(bridge_id,state,online_channel_state,event_channel_state,snapshot_state,heartbeat_at,queue_sample_error)
+ VALUES($1,'healthy','healthy','healthy','healthy',$2,false)`, bridge, now)
+			checked := cfg
+			auth := mapping
+			auth.HealthBridgeID = bridge
+			checked.IdentityMappings = []sharedaccess.IdentityMapping{auth}
+			for _, packetHealthy := range []bool{true, false} {
+				pending := 0
+				if packetHealthy {
+					pending = 1
+				}
+				exec(`UPDATE identity_bridge_runtime SET source_queue=$2 WHERE bridge_id=$1`, bridge, pending)
+				exec(`DELETE FROM shared_identity_health_intervals WHERE bridge_id=$1`, bridge)
+				exec(`INSERT INTO shared_identity_health_intervals(bridge_id,valid_from,valid_to,healthy)
+ VALUES($1,$2,$3,$4),($1,$3,NULL,NOT $4)`, bridge, now.Add(-time.Minute), now.Add(-10*time.Second), packetHealthy)
+				w, a, e := backend.ReadSharedObservation(ctx, store.SharedObservationScope{SensorID: sensor, CampusID: "lab", AccessDomain: "mirror", IP: ip}, checked, now)
+				if e != nil || w.HasRouterProof() != packetHealthy || (a.AccountID == sensor) != packetHealthy {
+					t.Errorf("packet health=%t current queue=%d: proof=%t attributed=%t error=%v", packetHealthy, pending, w.HasRouterProof(), a.AccountID == sensor, e)
+				}
+			}
+		}
 		if attempt == 0 {
 			exec(`INSERT INTO endpoint_entities(endpoint_id,primary_mac,registration_status,ownership_class)
  VALUES($1,$2,'registered','infrastructure')`, sensor, gatewayMAC)

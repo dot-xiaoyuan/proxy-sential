@@ -116,3 +116,17 @@ func TestOutletVLANUsesBothNCUTags(t *testing.T) {
 		}
 	}
 }
+
+func TestRouterRoleReviewDistinguishesDHCPInput(t *testing.T) {
+	for _, test := range []struct{ source, input, model, want string }{
+		{"dhcp", "hostname", "RD03", "型号仅来自 DHCP 主机名，缺少独立路由器角色证据"},
+		{"dhcp", "", "RD03", "DHCP 型号记录缺少匹配字段，无法确认路由器角色"},
+		{"dhcp", "vendor_class", "RD03", "路由器角色证据不足"},
+		{"ssdp", "", "RD03", "路由器角色证据不足"},
+	} {
+		role := sharedaccess.BehaviorRouterContext{RoleSource: test.source, RoleInput: test.input, Model: test.model}
+		if got := routerRoleReviewReason(role); got != test.want {
+			t.Errorf("%s/%s: got %q want %q", test.source, test.input, got, test.want)
+		}
+	}
+}

@@ -99,31 +99,39 @@ func (s *DBStore) locateOutlet(ctx context.Context, m sharedaccess.IdentityMappi
 	return found, true, nil
 }
 
-func (s *DBStore) verifyOutlet(ctx context.Context, cfg sharedaccess.Config, w sharedaccess.Window, m sharedaccess.IdentityMapping, l outletLocator) (*outletBinding, error) {
+func (s *DBStore) verifyOutlet(ctx context.Context, cfg sharedaccess.Config, w sharedaccess.Window, m sharedaccess.IdentityMapping, l outletLocator) (*outletBinding, string, error) {
 	if l.ip == "" {
-		return nil, nil
+		return nil, "", nil
 	}
-	// Attribution describes an authenticated address. For this read the live
-	// session and event channels matter; historical quarantined messages also
-	// degrade the overall bridge used by the separate policy decision.
-	if m.HealthBridgeID != "" {
-		var live bool
-		err := s.pg.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM identity_bridge_runtime WHERE bridge_id=$1 AND heartbeat_at>=now()-interval '60 seconds' AND online_channel_state='healthy' AND event_channel_state='healthy' AND snapshot_state='healthy' AND event_consecutive_failures=0 AND snapshot_consecutive_failures=0 AND NOT queue_sample_error AND processing_queue=0 AND source_queue=0)`, m.HealthBridgeID).Scan(&live)
-		if err != nil || !live {
-			return nil, err
-		}
-		m.HealthBridgeID = ""
-	}
+	// The same authority timeline gates attribution and policy. A later queue
+	// change cannot invalidate a covered packet or fill a gap in its history.
 	w.IP = l.ip
 	sessions, err := s.SharedIdentitySessions(ctx, m, w.IP, w.From, w.To, l.period)
 	if err != nil {
-		return nil, err
+		return nil, "", err
+	}
+	for _, session := range sessions {
+		if session.IdentityIssue != "" {
+			return nil, session.IdentityIssue, nil
+		}
 	}
 	binding := uniqueOutletSession(w, cfg, sessions)
 	if binding != nil && binding.MAC == l.mac && binding.VLAN == l.vlan {
-		return binding, nil
+		return binding, "", nil
 	}
-	return nil, nil
+	return nil, "", nil
+}
+
+func routerRoleReviewReason(r sharedaccess.BehaviorRouterContext) string {
+	if r.RoleSource == "dhcp" && r.Model != "" {
+		switch r.RoleInput {
+		case "hostname":
+			return "型号仅来自 DHCP 主机名，缺少独立路由器角色证据"
+		case "":
+			return "DHCP 型号记录缺少匹配字段，无法确认路由器角色"
+		}
+	}
+	return "路由器角色证据不足"
 }
 
 func (s *DBStore) outletRouter(ctx context.Context, w sharedaccess.Window, l outletLocator) (sharedaccess.BehaviorRouterContext, error) {
@@ -205,17 +213,32 @@ func (s *DBStore) assessOutlet(ctx context.Context, cfg sharedaccess.Config, win
 	if r.AssessmentID != "" && w.Activity != nil {
 		identityWindow.From, identityWindow.To, identityWindow.LastObservedAt = w.Activity.At, w.Activity.At, w.Activity.At
 	}
-	b, err := s.verifyOutlet(ctx, cfg, identityWindow, m, l)
+	b, issue, err := s.verifyOutlet(ctx, cfg, identityWindow, m, l)
 	if err != nil || b == nil {
 		item.ReviewReason = "认证会话未覆盖证据时窗或身份源有缺口"
+		switch issue {
+		case "identity_source_interrupted", "identity_window_uncovered":
+			item.ReviewReason = "认证源记录未覆盖镜像证据时段"
+		case "identity_processing_pending", "identity_snapshot_index_pending":
+			item.ReviewReason = "证据时段内的认证变更待处理"
+		}
 		return item, err
 	}
 	item.AccountID = b.Account
 	item.EndpointID = "mac:" + b.MAC
 	item.OutletEvidence, _ = json.Marshal(b)
 	if r.AssessmentID != "" {
-		item.ReviewReason = "路由器角色证据不足"
-		if r.RoleEvidenceID != "" && r.RoleEventID != "" && w.Activity != nil && (l.vlan == "" || w.Activity.VLAN != 0) {
+		switch {
+		case r.RoleEvidenceID == "":
+			item.ReviewReason = routerRoleReviewReason(r)
+		case r.RoleEventID == "":
+			item.ReviewReason = "路由器角色证据缺少原始事件引用"
+		case w.Activity == nil:
+			item.ReviewReason = "缺少认证出口的镜像活动"
+		case l.vlan != "" && w.Activity.VLAN == 0:
+			item.ReviewReason = "镜像活动缺少认证出口的 VLAN 标签"
+		default:
+			item.ReviewReason = "镜像活动与路由器证据待核验"
 			window.RouterProof = &sharedaccess.RouterProof{AssessmentID: r.AssessmentID, RoleEvidenceID: r.RoleEvidenceID, RuleID: r.RoleRule, Account: b.Account, Session: b.Session, MAC: b.MAC}
 			window.ID = policy.StableID(w.ID, r.AssessmentID, r.RoleEvidenceID, b.Account, b.Session, w.Activity.EventID)
 			item.ObservationID = window.ID
@@ -234,7 +257,7 @@ func (s *DBStore) lookupGatewayBinding(ctx context.Context, cfg sharedaccess.Con
 	if err != nil || !exists || l.ip == "" {
 		return nil, exists, err
 	}
-	binding, err := s.verifyOutlet(ctx, cfg, w, m, l)
+	binding, _, err := s.verifyOutlet(ctx, cfg, w, m, l)
 	return binding, true, err
 }
 
