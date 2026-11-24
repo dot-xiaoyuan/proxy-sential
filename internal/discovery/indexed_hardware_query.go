@@ -85,6 +85,37 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 	// profile lookup and scope admission already use the observed MAC.
 	// Noncanonical observations keep their original lease lookup before grouping.
 	usableSourceMAC := "(l.search_mac ~ '^[0-9a-f][02468ace](:[0-9a-f]{2}){5}$' AND l.search_mac<>'00:00:00:00:00:00')"
+	sourceRows := ` SELECT l.ctid observation_tid,l.id,l.device_key,l.origin,l.observed_at,l.valid_until,
+ coalesce(d.node,'') sensor_id,coalesce(d.site,'') site_id,
+ coalesce(d.domain,'') access_domain,coalesce(d.vlan,'') vlan,coalesce(d.vrf,'') vrf,
+ coalesce(d.mac,'') raw_mac,coalesce(d.ip,'') raw_ip,
+ coalesce(d.evidence->'observer'->>'capture_scope_issue','')='' capture_scope_valid,
+ coalesce(d.evidence->'subject'->>'campus_id','') source_campus,
+ ` + searchIP + ` search_ip,lower(coalesce(d.mac,'')) search_mac,
+ ` + searchName + ` search_name,` + searchType + ` search_device_type,
+ ` + searchManufacturer + ` search_manufacturer,` + searchModel + ` search_model,
+ ` + caps + ` observation_capabilities,
+ ` + productType + ` product_type,` + productEvidence + ` product_evidence,
+ ` + dhcpType + ` dhcp_candidate_type,
+ (l.valid_until>now() AND d.confidence IN ('strong','confirmed') AND coalesce(d.evidence->'observer'->>'capture_scope_issue','')='') service_clue_valid
+ FROM discovery_observation_latest l
+ CROSS JOIN LATERAL jsonb_to_record(CASE WHEN jsonb_typeof(l.data)='object' THEN l.data END) AS d(
+  node text,site text,domain text,vlan text,vrf text,mac text,ip text,confidence text,evidence jsonb,
+  name text,device_type text,manufacturer text,model_name text,capabilities jsonb,event_id text,product_clue jsonb)
+ WHERE ` + strings.Join(baseWhere, " AND ") + ``
+	extraCTE, groupedUnion := "", ""
+	if query.structured {
+		if hours := cachedGroupWindow(query); hours > 0 {
+			extraCTE = cachedGroupCTE(hours)
+			groupedUnion = cachedGroupedSQL(query, pageProfiles)
+			baseWhere = append(baseWhere, "NOT EXISTS(SELECT 1 FROM cache_groups cg WHERE cg.identity_key=l.base_identity)")
+		}
+		if query.groupPageRows {
+			baseWhere = append(baseWhere, "l.base_identity IN (SELECT c.identity_key FROM candidates c JOIN cache_groups g USING(identity_key))")
+		}
+		sourceRows = structuredSourceSQL(query, baseWhere)
+		identitySQL = "CASE WHEN coalesce(l.display_endpoint,'')='' THEN l.base_identity ELSE " + identitySQL + " END"
+	}
 	statement := `WITH trusted_address AS MATERIALIZED (
  SELECT m.id observation_id,t.mac FROM discovery_observation_latest m
  JOIN LATERAL (
@@ -104,25 +135,8 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
   AND coalesce(m.data->>'node','')<>'' AND coalesce(m.data->>'site','')<>'' AND coalesce(m.data->>'domain','')<>''
   AND coalesce(m.data->>'mac','')='' AND m.data->'evidence'->'payload'->>'identity_status'='l2_mismatch'
   AND m.data->'evidence'->'payload'->>'claimed_ip'=m.data->>'ip'
-), source_rows AS MATERIALIZED (
- SELECT l.ctid observation_tid,l.id,l.device_key,l.origin,l.observed_at,l.valid_until,
- coalesce(d.node,'') sensor_id,coalesce(d.site,'') site_id,
- coalesce(d.domain,'') access_domain,coalesce(d.vlan,'') vlan,coalesce(d.vrf,'') vrf,
- coalesce(d.mac,'') raw_mac,coalesce(d.ip,'') raw_ip,
- coalesce(d.evidence->'observer'->>'capture_scope_issue','')='' capture_scope_valid,
- coalesce(d.evidence->'subject'->>'campus_id','') source_campus,
- ` + searchIP + ` search_ip,lower(coalesce(d.mac,'')) search_mac,
- ` + searchName + ` search_name,` + searchType + ` search_device_type,
- ` + searchManufacturer + ` search_manufacturer,` + searchModel + ` search_model,
- ` + caps + ` observation_capabilities,
- ` + productType + ` product_type,` + productEvidence + ` product_evidence,
- ` + dhcpType + ` dhcp_candidate_type,
- (l.valid_until>now() AND d.confidence IN ('strong','confirmed') AND coalesce(d.evidence->'observer'->>'capture_scope_issue','')='') service_clue_valid
- FROM discovery_observation_latest l
- CROSS JOIN LATERAL jsonb_to_record(CASE WHEN jsonb_typeof(l.data)='object' THEN l.data END) AS d(
-  node text,site text,domain text,vlan text,vrf text,mac text,ip text,confidence text,evidence jsonb,
-  name text,device_type text,manufacturer text,model_name text,capabilities jsonb,event_id text,product_clue jsonb)
- WHERE ` + strings.Join(baseWhere, " AND ") + `
+)` + extraCTE + `, source_rows AS MATERIALIZED (
+ ` + sourceRows + `
 ), candidate_links AS NOT MATERIALIZED (
  SELECT l.*,coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id) linked_endpoint,
   CASE WHEN ` + usableSourceMAC + ` AND i.endpoint_id IS NULL AND ix.endpoint_id IS NULL
@@ -186,7 +200,7 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
  bool_or(observation_capabilities ?| ARRAY['casting','media_rendering']) has_media,
  CASE WHEN count(DISTINCT profile_candidate_role) FILTER (WHERE valid_until>now() AND profile_candidate_role<>'')=1
  THEN min(profile_candidate_role) FILTER (WHERE valid_until>now() AND profile_candidate_role<>'') ELSE '' END candidate_role
- FROM candidate_rows GROUP BY identity_key COLLATE "C"` + candidateHaving + `
+ FROM candidate_rows GROUP BY identity_key COLLATE "C"` + candidateHaving + groupedUnion + `
 ), candidate_types AS (
  ` + indexedTypesProjection(true) + `
 ), candidate_classified AS (
@@ -203,7 +217,7 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 // solely in this statement's MVCC snapshot. Common MAC links were already
 // coalesced in seed_rows: the legacy page_link CASE fallback was unreachable,
 // so probing the historical link table here would only add random disk reads.
-func buildHardwareIndexedPage(selection indexedDeviceSelection, positionWhere, limitParameter string) string {
+func buildHardwareIndexedPage(selection indexedDeviceSelection, positionWhere, limitParameter string) (string, error) {
 	profiles := "l.profile_role,l.profile_confidence,l.profile_conflict,l.profile_candidate_role"
 	profileJoin := ""
 	if selection.PageProfiles {
@@ -212,18 +226,42 @@ func buildHardwareIndexedPage(selection indexedDeviceSelection, positionWhere, l
 			hardwareProfileCandidateSQL("page_rec.role", confidence, "("+conflict+")", "page_rec.last_seen")
 		profileJoin = "LEFT JOIN endpoint_recognition_summary page_rec ON page_rec.endpoint_id=l.recognition_endpoint\n"
 	}
-	return selection.CTE + `, candidates AS (
+	pageSource := "JOIN discovery_observation_latest page_o ON page_o.ctid=l.observation_tid"
+	if selection.Query.structured {
+		pageSource = `JOIN discovery_list_observation f ON f.ctid=l.observation_tid
+JOIN discovery_observation_latest page_o ON (page_o.device_key,page_o.source_id,page_o.origin,page_o.service_type,page_o.port)=(f.device_key,f.source_id,f.origin,f.service_type,f.port)`
+	}
+	statement := selection.CTE
+	pageRows := "candidate_rows"
+	cachedRows := ""
+	if cachedGroupWindow(selection.Query) > 0 {
+		// The cached groups are disjoint and already admitted for the default
+		// device scope. Bound this ordered branch before combining with live rows.
+		statement = strings.Replace(statement, "candidate_role FROM cache_groups g", "candidate_role FROM (SELECT * FROM cache_groups"+positionWhere+" ORDER BY last_seen DESC,identity_key LIMIT $"+limitParameter+") g", 1)
+		q := selection.Query
+		q.groupPageRows = true
+		detail, err := buildIndexedDeviceSelection(q)
+		if err != nil {
+			return "", err
+		}
+		cachedRows = `, page_members AS (
+ SELECT l.* FROM candidate_rows l JOIN candidates c USING(identity_key)
+ UNION ALL SELECT * FROM (` + detail.CTE + ` SELECT * FROM candidate_rows) cached_page
+)`
+		pageRows = "page_members"
+	}
+	return statement + `, candidates AS (
  SELECT identity_key,device_key,last_seen,category FROM matched` + positionWhere + `
  ORDER BY last_seen DESC,identity_key COLLATE "C" LIMIT $` + limitParameter + `
-)
+)` + cachedRows + `
 SELECT c.identity_key,c.device_key,page_o.data,coalesce(dl.endpoint_id,l.linked_endpoint) linked_endpoint,` + profiles + `,c.category
-FROM candidate_rows l JOIN candidates c USING(identity_key)
-JOIN discovery_observation_latest page_o ON page_o.ctid=l.observation_tid
+FROM ` + pageRows + ` l JOIN candidates c USING(identity_key)
+` + pageSource + `
 LEFT JOIN LATERAL (
  SELECT dl.endpoint_id FROM device_address_leases dl
  WHERE l.linked_endpoint='' AND dl.sensor_id=l.sensor_id AND dl.campus_id=l.lease_campus
   AND dl.event_id=l.id AND dl.action='ack' AND host(dl.ip)=l.raw_ip AND dl.endpoint_id='mac:'||l.search_mac
  LIMIT 1
 ) dl ON true
-` + profileJoin + `ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
+` + profileJoin + `ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`, nil
 }

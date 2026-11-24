@@ -83,6 +83,11 @@ func (r Repository) DiscoveryCoverageReport(ctx context.Context, sensor string, 
 		return CoverageReport{}, fmt.Errorf("coverage report requires passive hardware reader, sensor and bounded window")
 	}
 	at := time.Now().UTC()
+	if structuredReadEnabled("coverage") {
+		if err := checkStructuredRead(ctx, r.DB); err != nil {
+			return CoverageReport{}, err
+		}
+	}
 	out := CoverageReport{AsOf: at}
 	group, readCtx := errgroup.WithContext(ctx)
 	group.Go(func() error {
@@ -169,6 +174,14 @@ FROM per_ip`
 func coveragePerIPSQL(sensor, from, until, profileJoin, hasProfile string) string {
 	// PostgreSQL underestimates the JSON IPv4 filter. Partitioning by device key
 	// avoids scanning all in-window hardware keys for every matching observation.
+	observations := fmt.Sprintf(` SELECT l.device_key,l.data->>'ip',l.origin,l.observed_at,false,false,false,false,false,false,false
+ FROM discovery_observation_latest l
+ WHERE l.data->>'node'=%[1]s AND l.observed_at>=%[2]s AND l.observed_at<%[3]s
+  AND NOT l.withdrawn
+  AND l.data->>'ip' ~ '^[0-9]{1,3}([.][0-9]{1,3}){3}$'`, sensor, from, until)
+	if structuredReadEnabled("coverage") {
+		observations = structuredCoverageObservations(sensor, from, until)
+	}
 	return fmt.Sprintf(`by_device AS (
  SELECT h.device_key,NULL::text ip,NULL::text origin,NULL::timestamptz observed_at,
   true hardware,hardware_type_status='identified' typed,hardware_type_status='revoked' revoked_type,
@@ -179,11 +192,7 @@ func coveragePerIPSQL(sensor, from, until, profileJoin, hasProfile string) strin
  FROM passive_hardware_current h %[4]s
  WHERE h.sensor_id=%[1]s AND h.last_seen>=%[2]s AND h.last_seen<%[3]s
  UNION ALL
- SELECT l.device_key,l.data->>'ip',l.origin,l.observed_at,false,false,false,false,false,false,false
- FROM discovery_observation_latest l
- WHERE l.data->>'node'=%[1]s AND l.observed_at>=%[2]s AND l.observed_at<%[3]s
-  AND NOT l.withdrawn
-  AND l.data->>'ip' ~ '^[0-9]{1,3}([.][0-9]{1,3}){3}$'
+%[6]s
 ), classified AS (
  SELECT ip,origin,observed_at,bool_or(hardware) OVER device has_identity,
   bool_or(typed) OVER device typed,bool_or(revoked_type) OVER device revoked_type,
@@ -201,7 +210,7 @@ func coveragePerIPSQL(sensor, from, until, profileJoin, hasProfile string) strin
   max(observed_at) latest
  FROM classified WHERE ip IS NOT NULL GROUP BY ip
 )
-`, sensor, from, until, profileJoin, hasProfile)
+`, sensor, from, until, profileJoin, hasProfile, observations)
 }
 
 func coverageAddressCounts(ctx context.Context, db *sql.DB, sensor string, from, until time.Time, out *CoverageReport) error {

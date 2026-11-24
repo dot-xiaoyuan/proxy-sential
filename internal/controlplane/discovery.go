@@ -575,6 +575,12 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 			return
 		}
 		readStarted := time.Now()
+		if repo.HardwareV2 && os.Getenv("PROXY_SENTINEL_DISCOVERY_QUERY_TIMINGS") == "true" &&
+			(path == "/discovery/devices" || path == "/discovery/devices/metadata" || path == "/discovery/devices/coverage-report") {
+			timing := &discoveryTimingWriter{ResponseWriter: w}
+			w = timing
+			defer timing.finish(readStarted, path, window)
+		}
 		if path == "/discovery/devices/coverage-report" {
 			if repo.ActiveStreamOnly || repo.PipelineV2 || !repo.HardwareV2 || window <= 0 {
 				writeError(w, 409, "coverage_read_path", "当前发现读取路径不支持覆盖报表")

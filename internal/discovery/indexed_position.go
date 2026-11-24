@@ -12,6 +12,12 @@ import (
 // keys from the same current index and filters as the list and metadata.
 func (r Repository) DevicesIndexedPosition(ctx context.Context, q DeviceQuery, page int) (pagination.Position, error) {
 	q.HardwareV2 = r.HardwareV2
+	q.structured = r.HardwareV2 && structuredReadEnabled("list")
+	if q.structured {
+		if err := checkStructuredRead(ctx, r.DB); err != nil {
+			return pagination.Position{}, err
+		}
+	}
 	q.Cursor, q.Offset = "", 0
 	selection, err := buildIndexedDeviceSelection(q)
 	if err != nil {

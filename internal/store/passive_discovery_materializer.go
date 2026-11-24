@@ -2050,6 +2050,11 @@ func (s *DBStore) RunPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 	if os.Getenv("PROXY_SENTINEL_PASSIVE_DISCOVERY_DISABLED") == "true" {
 		return
 	}
+	if os.Getenv("PROXY_SENTINEL_DISCOVERY_LIST_WORKER") == "true" {
+		done := make(chan struct{})
+		go func() { defer close(done); s.runDiscoveryListGroups(ctx) }()
+		defer func() { <-done }()
+	}
 	liveDone := make(chan struct{})
 	censusDone := make(chan struct{})
 	go func() { defer close(censusDone); s.runPassiveCensusProjection(ctx) }()

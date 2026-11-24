@@ -80,6 +80,12 @@ func (r Repository) DevicesIndexedMetadataSnapshot(ctx context.Context, tx *sql.
 
 func (r Repository) devicesIndexedMetadata(ctx context.Context, db indexedQueryer, q DeviceQuery, includeFreshness bool) (IndexedDeviceMetadata, error) {
 	q.HardwareV2 = r.HardwareV2
+	q.structured = r.HardwareV2 && structuredReadEnabled("statistics")
+	if q.structured {
+		if err := checkStructuredRead(ctx, db); err != nil {
+			return IndexedDeviceMetadata{}, err
+		}
+	}
 	q.includeOverview = r.HardwareV2 && includeFreshness && !q.SkipOverview
 	q.includeCandidateTypes = r.HardwareV2
 	q.Cursor = ""

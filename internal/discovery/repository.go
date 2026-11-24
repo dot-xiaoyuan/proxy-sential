@@ -234,6 +234,8 @@ func (r Repository) Finish(ctx context.Context, t Task, s Snapshot, runErr error
 
 type DeviceQuery struct {
 	HardwareV2                    bool
+	groupPageRows                 bool
+	structured                    bool
 	includeCandidateTypes         bool
 	Protocol, State, Domain, VLAN string
 	ReviewReason                  string

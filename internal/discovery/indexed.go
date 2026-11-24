@@ -88,6 +88,12 @@ type indexedQueryer interface {
 
 func (r Repository) devicesIndexed(ctx context.Context, db indexedQueryer, query DeviceQuery, includeFreshness bool) (map[string]any, error) {
 	query.HardwareV2 = r.HardwareV2
+	query.structured = r.HardwareV2 && structuredReadEnabled("list")
+	if query.structured {
+		if err := checkStructuredRead(ctx, db); err != nil {
+			return nil, err
+		}
+	}
 	selection, err := buildIndexedDeviceSelection(query)
 	if err != nil {
 		return nil, err
@@ -120,7 +126,10 @@ FROM candidate_rows l JOIN candidates c USING(identity_key)
 LEFT JOIN discovery_identity_links page_link ON page_link.observation_id=l.id AND coalesce(l.data->>'mac','')<>''
 ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
 	if r.HardwareV2 {
-		statement = buildHardwareIndexedPage(selection, positionWhere, fmt.Sprint(len(args)))
+		statement, err = buildHardwareIndexedPage(selection, positionWhere, fmt.Sprint(len(args)))
+		if err != nil {
+			return nil, err
+		}
 	}
 	rows, err := db.QueryContext(ctx, statement, args...)
 	if err != nil {

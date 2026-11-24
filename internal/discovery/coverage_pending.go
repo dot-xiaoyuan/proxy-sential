@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
 func coverageIdentityPendingStatement(sensor string, window time.Duration, at time.Time) (string, []any, error) {
-	query := DeviceQuery{Mode: "passive", Window: window, SnapshotAt: at, HardwareV2: true, includeCandidateTypes: true}
+	query := DeviceQuery{Mode: "passive", Window: window, SnapshotAt: at, HardwareV2: true, structured: structuredReadEnabled("coverage"), includeCandidateTypes: true}
 	selection, err := buildIndexedDeviceSelection(query)
 	if err != nil {
 		return "", nil, err
@@ -23,9 +24,19 @@ func coverageIdentityPendingStatement(sensor string, window time.Duration, at ti
 	args := append(selection.Args, sensor, at, dumbTypes)
 	// A join on materialized CTEs underestimates the number of profile matches
 	// and can repeatedly scan the observation set in long report windows.
+	cachedMembers := ""
+	if cachedGroupWindow(selection.Query) > 0 {
+		origins := make([]string, 0, len(selection.Args)-1)
+		for i := 1; i < len(selection.Args); i++ {
+			origins = append(origins, fmt.Sprintf("$%d", i+1))
+		}
+		cachedMembers = fmt.Sprintf(` UNION ALL SELECT DISTINCT g.identity_key,f.device_key,false FROM cache_groups g
+		 JOIN discovery_list_observation f ON f.base_identity=g.identity_key
+		 WHERE f.sensor_id=%s AND f.observed_at BETWEEN $1 AND now() AND f.origin IN (%s)`, sensorArg, strings.Join(origins, ","))
+	}
 	statement := selection.CTE + fmt.Sprintf(`, profile_inputs AS (
  SELECT DISTINCT identity_key COLLATE "C" identity_key,device_key,false has_profile
- FROM candidate_rows WHERE sensor_id=%s
+ FROM candidate_rows WHERE sensor_id=%s %s
  UNION ALL
  SELECT identity_key,NULL::text device_key,true
  FROM matched WHERE classification_status='candidate' AND cardinality(effective_types)=0 AND candidate_role<>''
@@ -34,7 +45,7 @@ func coverageIdentityPendingStatement(sensor string, window time.Duration, at ti
   SELECT device_key,bool_or(has_profile) OVER (PARTITION BY identity_key) has_profile
   FROM profile_inputs
  ) p WHERE device_key IS NOT NULL AND has_profile
-), `, sensorArg) + coveragePerIPSQL(sensorArg, "$1", untilArg,
+), `, sensorArg, cachedMembers) + coveragePerIPSQL(sensorArg, "$1", untilArg,
 		"LEFT JOIN profile_keys p ON p.device_key=h.device_key", "p.device_key IS NOT NULL") + coveragePendingRowsSQL + fmt.Sprintf(`
 SELECT identities.*,evidence.* FROM (
  SELECT now(),count(*),

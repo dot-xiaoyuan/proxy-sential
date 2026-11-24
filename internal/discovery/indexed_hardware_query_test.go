@@ -133,7 +133,10 @@ func TestHardwarePageReadsOnlySelectedPayloadsAndSkipsDeadHistoryLink(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	page := buildHardwareIndexedPage(s, " WHERE last_seen<$20", "21")
+	page, err := buildHardwareIndexedPage(s, " WHERE last_seen<$20", "21")
+	if err != nil {
+		t.Fatal(err)
+	}
 	suffix := page[len(s.CTE):]
 	if !strings.Contains(suffix, "page_o.ctid=l.observation_tid") || strings.Contains(suffix, "discovery_identity_links") {
 		t.Fatal("page does not stay on selected current rows")
