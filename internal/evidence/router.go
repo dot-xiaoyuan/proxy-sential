@@ -332,7 +332,9 @@ func routerAssociationFor(event normalized.Event, at time.Time, window time.Dura
 		key = "ip:" + routerScope(event) + ":" + ip + ":" + vlan + ":" + bucket
 	}
 	role := strings.ToLower(routerString(event.Subject["entity_role"]))
-	infrastructure := role == "infrastructure" || role == "network_device" || routerBool(event.Payload["infrastructure"])
+	// Control protocols describe a device's role. Ownership comes from an
+	// explicit designation and is independent of a gateway advertisement.
+	infrastructure := role == "infrastructure" || routerBool(event.Payload["infrastructure"])
 	return routerEventAssociation{id: stableRouterID("assessment", key), endpoint: endpoint, ip: ip, mac: mac, vlan: vlan, quality: quality, reason: reason, ambiguous: ambiguous, infrastructure: infrastructure}
 }
 
@@ -457,6 +459,11 @@ func appendRouterEvidence(dedup map[string]*RouterEvidence, associations map[str
 	item.Expired = !asOf.Before(at.Add(ttl))
 	item.EventIDs = []string{event.EventID}
 	key := association.id + "|" + item.SourceFamily + "|" + item.RuleID + "|" + strings.ToLower(strings.TrimSpace(item.RawValue))
+	if association.infrastructure {
+		// A later passive observation of the same value must not replace the
+		// independent designation or extend its lifetime.
+		key += "|infrastructure"
+	}
 	item.EvidenceID = stableRouterID("router-evidence", key)
 	associations[association.id] = mergeRouterAssociation(associations[association.id], association)
 	if current := dedup[item.EvidenceID]; current != nil {

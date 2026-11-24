@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"proxy-sentinel/internal/evidence"
 	"proxy-sentinel/internal/normalized"
 	"proxy-sentinel/internal/sharedaccess"
 	"proxy-sentinel/internal/store"
 	"proxy-sentinel/internal/streamlog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -99,6 +101,12 @@ func runSharedObservationReplay(t *testing.T, basis string) {
 			"capture_coverage": sharedaccess.CoverageV2{SchemaVersion: "capture-coverage/v2", From: now.Add(-40 * time.Second), To: now, KernelStatsKnown: true}}}
 	segment := streamlog.Segment{Epoch: packetEpoch, Source: "device-signals", SourcePath: packetPath, FileID: packetPath + ":1:2", EndOffset: 1,
 		ParserVersion: "device-v1", AcceptedAt: now, ArchiveMonth: now.Format("200601"), RawIsStandardEvents: true, Events: []normalized.Event{event}}
+	archive, err := store.NewClickHouseStore(store.ClickHouseOptions{DSN: chDSN, RequestTimeout: 8 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roleRef store.StreamBodyRef
+	var roleAssessment string
 	path, epoch := packetPath, packetEpoch
 	if basis == sharedaccess.AuthenticatedRouter {
 		path, epoch = handshakePath, handshakeEpoch
@@ -108,20 +116,42 @@ func runSharedObservationReplay(t *testing.T, basis string) {
 			"capture_coverage": sharedaccess.CoverageV2{SchemaVersion: "capture-coverage/v2", From: now.Add(-40 * time.Second), To: now},
 			"outlet_activity":  sharedaccess.OutletActivity{MAC: gatewayMAC, EventID: "device-before-stream-rekey", At: now.Add(-30 * time.Second)}}
 		segment.Epoch, segment.SourcePath, segment.FileID, segment.Events = epoch, path, path+":1:2", []normalized.Event{event}
-		exec(`INSERT INTO router_assessments(assessment_id,mac,role,status,confidence,rule_version,first_seen,last_seen,expires_at,assessment) VALUES($1,$2,'router','likely',60,'test',$3,$3,$4,'{}')`, sensor, gatewayMAC, now.Add(-time.Minute), now.Add(time.Hour))
-		defer db.ExecContext(context.Background(), `DELETE FROM router_assessments WHERE assessment_id=$1`, sensor)
-		exec(`INSERT INTO router_evidence_facts(evidence_id,assessment_id,mac,source,source_family,kind,rule_id,rule_version,score,first_seen,last_seen,expires_at,data)
-		 VALUES($1,$1,$2,'packet-sidecar','ssdp','router_signal','ssdp-advertised-internet-gateway','test',60,$3,$3,$4,jsonb_build_object('sensor_id',$1::text,'role','router','association_quality','mac','raw_value','InternetGatewayDevice:1','event_ids',jsonb_build_array($1::text||'-igd')))`, sensor, gatewayMAC, now.Add(-time.Minute), now.Add(time.Hour))
-		defer db.ExecContext(context.Background(), `DELETE FROM router_evidence_facts WHERE assessment_id=$1`, sensor)
+		target := "urn:schemas-upnp-org:device:InternetGatewayDevice:1"
+		advert := normalized.Event{SchemaVersion: "v1", Type: "device", Source: "packet-sidecar", SourceEventType: "ssdp", EventID: sensor + "-igd",
+			Timestamp: now.Add(-time.Minute).Format(time.RFC3339Nano), Observer: event.Observer,
+			Subject: map[string]any{"entity_role": "network_device", "mac": gatewayMAC, "ip": ip, "campus_id": "lab"},
+			Payload: map[string]any{"ssdp_advertisement": "alive", "nt": target, "usn": "uuid:" + sensor + "::" + target}}
+		roles, err := evidence.AnalyzeRouters([]normalized.Event{advert}, evidence.RouterOptions{AsOf: now})
+		if err != nil || len(roles.Assessments) != 1 {
+			t.Fatalf("analyze passive gateway: %v assessments=%d", err, len(roles.Assessments))
+		}
+		roleSegment := segment
+		roleSegment.Epoch, roleSegment.SourcePath, roleSegment.FileID, roleSegment.Events = packetEpoch, packetPath, packetPath+":1:3", []normalized.Event{advert}
+		roleSegmentID := streamlog.SourceSegmentID(roleSegment)
+		if err := archive.WriteStreamBody(ctx, roleSegmentID, roleSegment); err != nil {
+			t.Fatal(err)
+		}
+		if err := archive.WriteStreamSearch(ctx, roleSegmentID, roleSegment); err != nil {
+			t.Fatal(err)
+		}
+		indexed, err := archive.ListStreamRouterSignalRefs(ctx, sensor, now.Add(-time.Minute), "", 10)
+		if err != nil || len(indexed) != 1 {
+			t.Fatalf("archive router original: found=%d err=%v", len(indexed), err)
+		}
+		roleRef, roleAssessment = indexed[0].Body, roles.Assessments[0].AssessmentID
+		// Simulate the pre-fix durable interpretation of this exact original.
+		for i := range roles.Evidence {
+			roles.Evidence[i].Infrastructure = true
+		}
+		defer db.ExecContext(context.Background(), `DELETE FROM router_assessments WHERE assessment_id=$1`, roles.Assessments[0].AssessmentID)
+		if err := backend.WriteRouterObservations(ctx, roles); err != nil {
+			t.Fatal(err)
+		}
 	} else {
 		exec(`INSERT INTO device_address_leases(sensor_id,campus_id,event_id,ip,endpoint_id,observed_at,valid_until,action)
  VALUES($1,'lab',$1,$2,'mac:'||$3,$4,$5,'ack')`, sensor, ip, gatewayMAC, now.Add(-time.Minute), now.Add(time.Hour))
 	}
 	segmentID := streamlog.SourceSegmentID(segment)
-	archive, err := store.NewClickHouseStore(store.ClickHouseOptions{DSN: chDSN, RequestTimeout: 8 * time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
 	if err := archive.WriteStreamBody(ctx, segmentID, segment); err != nil {
 		t.Fatal(err)
 	}
@@ -136,6 +166,25 @@ func runSharedObservationReplay(t *testing.T, basis string) {
 	// Shared observation reads membership from the snapshot projection, which is applied asynchronously.
 	if err = backend.ProjectPendingIdentitySnapshots(ctx, 10); err != nil {
 		t.Fatal(err)
+	}
+	if basis == sharedaccess.AuthenticatedRouter {
+		exec(`INSERT INTO shared_observation_mappings(config_version,sensor_id,campus_id,access_domain,identity_source,identity_sensor_id,identity_campus_id,identity_access_domain,valid_from,valid_until)
+ VALUES($1,$2,'lab','mirror',$2,$3,'lab','auth',$4,$5)`, cfg.Version, sensor, sensor+"-auth", mapping.ValidFrom, mapping.ValidUntil)
+		defer db.ExecContext(context.Background(), `DELETE FROM shared_observation_mappings WHERE sensor_id=$1`, sensor)
+		var before int64
+		for i, apply := range []bool{false, true, true} {
+			matched, err := backend.RefreshPassiveRouterOwnership(ctx, sensor, roleAssessment, roleRef, apply)
+			if err != nil || (i == 0 && matched < 1) || (i == 1 && matched != before) || (i == 2 && matched != 0) {
+				t.Fatalf("refresh ownership pass %d: facts=%d previously=%d err=%v", i, matched, before, err)
+			}
+			if i == 0 {
+				before = matched
+				var infra bool
+				if err := db.QueryRowContext(ctx, `SELECT infrastructure FROM router_assessments WHERE assessment_id=$1`, roleAssessment).Scan(&infra); err != nil || !infra {
+					t.Fatalf("preview changed the original classification: infra=%t err=%v", infra, err)
+				}
+			}
+		}
 	}
 	defer db.ExecContext(context.Background(), `DELETE FROM account_identity_session_projection WHERE source=$1`, sensor)
 	defer db.ExecContext(context.Background(), `DELETE FROM account_identity_projection_sources WHERE source=$1`, sensor)
@@ -160,6 +209,16 @@ func runSharedObservationReplay(t *testing.T, basis string) {
 		}
 		if did, e := backend.ResolveSharedGateway(ctx, cfg, now); e != nil || did != (basis == "ieee1905_association" && attempt == 0) {
 			t.Fatalf("gateway resolution: attempt=%d worked=%t error=%v", attempt, did, e)
+		}
+		if attempt == 0 {
+			exec(`INSERT INTO endpoint_entities(endpoint_id,primary_mac,registration_status,ownership_class)
+ VALUES($1,$2,'registered','infrastructure')`, sensor, gatewayMAC)
+			defer db.ExecContext(context.Background(), `DELETE FROM endpoint_entities WHERE endpoint_id=$1`, sensor)
+			window, _, e := backend.ReadSharedObservation(ctx, store.SharedObservationScope{SensorID: sensor, CampusID: "lab", AccessDomain: "mirror", IP: ip}, cfg, now)
+			if e != nil || !slices.Contains(window.Conflicts, "infrastructure_ownership") || window.HasRouterProof() {
+				t.Fatalf("registered infrastructure was eligible: router=%t conflicts=%v err=%v", window.HasRouterProof(), window.Conflicts, e)
+			}
+			exec(`DELETE FROM endpoint_entities WHERE endpoint_id=$1`, sensor)
 		}
 		did, e := s.processSharedObservation(ctx, now)
 		if e != nil || did != (attempt == 0) {
@@ -202,7 +261,7 @@ func runSharedObservationReplay(t *testing.T, basis string) {
 	if basis == sharedaccess.AuthenticatedRouter {
 		var raw, roleEvent string
 		if err = db.QueryRowContext(ctx, `SELECT s.evidence->'shared_access'->>'role_value_excerpt',s.evidence->'shared_access'->>'role_event_id'
-		 FROM risk_case_evidence_snapshots s JOIN shared_access_findings f USING(case_id) WHERE f.account_id=$1 LIMIT 1`, sensor).Scan(&raw, &roleEvent); err != nil || raw != "InternetGatewayDevice:1" || roleEvent != sensor+"-igd" {
+		 FROM risk_case_evidence_snapshots s JOIN shared_access_findings f USING(case_id) WHERE f.account_id=$1 LIMIT 1`, sensor).Scan(&raw, &roleEvent); err != nil || raw != "uuid:"+sensor+"::urn:schemas-upnp-org:device:InternetGatewayDevice:1" || roleEvent != sensor+"-igd" {
 			t.Fatalf("immutable router role evidence: %q %q %v", raw, roleEvent, err)
 		}
 	}

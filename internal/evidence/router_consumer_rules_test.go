@@ -96,3 +96,42 @@ func TestTPLinkSwitchAndAPModelsAreExcludedFromRouterRole(t *testing.T) {
 		t.Fatalf("phone hostname produced router evidence: %+v", got)
 	}
 }
+
+func TestPassiveGatewayRoleAndInfrastructureOwnership(t *testing.T) {
+	at := time.Date(2026, 11, 24, 8, 0, 0, 0, time.UTC)
+	target := "urn:schemas-upnp-org:device:InternetGatewayDevice:1"
+	makeEvent := func(role string, declared bool, offset time.Duration) normalized.Event {
+		e := consumerRouterEvent("ssdp", at.Add(offset).Format(time.RFC3339Nano), "AA:BB:CC:00:00:08",
+			map[string]any{"ssdp_advertisement": "alive", "nt": target, "usn": "uuid:gateway::" + target})
+		e.Source = "packet-sidecar"
+		e.Subject["entity_role"] = role
+		if declared {
+			e.Payload["infrastructure"] = true
+		}
+		return e
+	}
+	passive := makeEvent("network_device", false, 0)
+	declared := makeEvent("infrastructure", false, time.Second)
+	for _, tc := range []struct {
+		name   string
+		events []normalized.Event
+		infra  bool
+	}{
+		{"passive gateway", []normalized.Event{passive}, false},
+		{"declared ownership", []normalized.Event{declared}, true},
+		{"declared in payload", []normalized.Event{makeEvent("network_device", true, 0)}, true},
+		{"same advertisement with independent ownership", []normalized.Event{passive, declared}, true},
+		{"reversed order", []normalized.Event{declared, passive}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := AnalyzeRouters(tc.events, RouterOptions{AsOf: at.Add(time.Minute)})
+			if err != nil || len(result.Assessments) != 1 {
+				t.Fatalf("assessments=%d err=%v", len(result.Assessments), err)
+			}
+			assessment, ok := AggregateRouterEvidence(result.Evidence, nil, at.Add(time.Minute))
+			if !ok || assessment.Role != "router" || assessment.Infrastructure != tc.infra || result.Assessments[0].Infrastructure != tc.infra {
+				t.Fatalf("role=%q durable infra=%t live infra=%t want=%t", assessment.Role, assessment.Infrastructure, result.Assessments[0].Infrastructure, tc.infra)
+			}
+		})
+	}
+}

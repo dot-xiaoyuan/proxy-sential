@@ -172,6 +172,9 @@ func (s *DBStore) ReadSharedObservation(ctx context.Context, scope SharedObserva
 	}
 	if s.pg != nil {
 		item, err = s.assessOutlet(ctx, cfg, &w, item)
+		if err == nil && item.Current && (w.HasRouterProof() || w.StrongAnchor == "ieee1905_association") {
+			err = s.excludeInfrastructureOutlet(ctx, &w, &item)
+		}
 	}
 	return w, item, err
 }

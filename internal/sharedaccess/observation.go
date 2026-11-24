@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"proxy-sentinel/internal/policy"
+	"slices"
 	"time"
 )
 
@@ -56,6 +57,9 @@ func EvaluateObservation(w Window, cfg Config, sessions []policy.Session, now ti
 	m, err := cfg.Mapping(w)
 	if err != nil {
 		return fail(err.Error())
+	}
+	if slices.Contains(w.Conflicts, "infrastructure_ownership") {
+		return fail("infrastructure_ownership")
 	}
 	if w.HasRouterProof() {
 		return Evaluate(w, cfg, mappedObservationSessions(w, m, sessions), now, 10*time.Minute)

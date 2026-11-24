@@ -270,6 +270,9 @@ func runReadModel(args []string) error {
 }
 
 func runRouter(args []string) error {
+	if len(args) > 0 && args[0] == "refresh-ownership" {
+		return runRouterOwnershipRefresh(args[1:])
+	}
 	if len(args) > 0 && args[0] == "fresh-cutover" {
 		return runRouterFreshCutover(args[1:])
 	}
@@ -280,7 +283,7 @@ func runRouter(args []string) error {
 		return runRouterNetworkBackfill(args[1:])
 	}
 	if len(args) < 1 || args[0] != "sample" {
-		return fmt.Errorf("usage: proxy-sentinel router sample|fresh-cutover|reset-recovery|network-backfill")
+		return fmt.Errorf("usage: proxy-sentinel router sample|fresh-cutover|reset-recovery|network-backfill|refresh-ownership")
 	}
 	fs := flag.NewFlagSet("router sample", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)

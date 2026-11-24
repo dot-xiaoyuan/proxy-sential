@@ -237,6 +237,33 @@ func (s *DBStore) lookupGatewayBinding(ctx context.Context, cfg sharedaccess.Con
 	return binding, true, err
 }
 
+// An authenticated school gateway can also advertise IGD or have mesh clients.
+// Consult the registered MAC and the active role evidence before either verdict.
+func (s *DBStore) excludeInfrastructureOutlet(ctx context.Context, w *sharedaccess.Window, item *sharedaccess.BehaviorAssessment) error {
+	mac, at := w.GatewayMAC, w.To
+	if w.RouterProof != nil && w.Activity != nil {
+		mac, at = w.RouterProof.MAC, w.Activity.At
+	}
+	if mac == "" {
+		return nil
+	}
+	var owned bool
+	err := s.pg.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM endpoint_entities
+ WHERE (endpoint_id='mac:'||$1 OR primary_mac IN ($1,upper($1))) AND merge_status='active'
+ AND registration_status='registered' AND ownership_class='infrastructure')
+ OR EXISTS(SELECT 1 FROM router_assessments r JOIN router_evidence_facts f USING(assessment_id)
+ WHERE r.device_key='mac:'||$1 AND r.infrastructure AND f.data->>'infrastructure'='true'
+ AND f.data->>'sensor_id'=$2 AND f.first_seen<=$3 AND f.expires_at>$3)`, strings.ToLower(mac), w.SensorID, at).Scan(&owned)
+	if err != nil || !owned {
+		return err
+	}
+	w.Conflicts = append(w.Conflicts, "infrastructure_ownership")
+	w.RouterProof = nil
+	item.Conflicts = w.Conflicts
+	item.Status, item.ConfirmationBasis, item.ReviewReason = "candidate", "", "出口具有基础设施归属证据"
+	return nil
+}
+
 // NCU encodes a QinQ pair as outer*10000+inner. A single visible tag
 // cannot establish the missing outer domain of a double-tagged binding.
 func outletVLANMatches(source, auth string, outer, inner uint16) bool {
