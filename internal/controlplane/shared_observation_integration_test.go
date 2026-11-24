@@ -105,7 +105,7 @@ func runSharedObservationReplay(t *testing.T, basis string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var roleRef store.StreamBodyRef
+	var roleRefs []store.StreamBodyRef
 	var roleAssessment string
 	path, epoch := packetPath, packetEpoch
 	if basis == sharedaccess.AuthenticatedRouter {
@@ -121,12 +121,16 @@ func runSharedObservationReplay(t *testing.T, basis string) {
 			Timestamp: now.Add(-time.Minute).Format(time.RFC3339Nano), Observer: event.Observer,
 			Subject: map[string]any{"entity_role": "network_device", "mac": gatewayMAC, "ip": ip, "campus_id": "lab"},
 			Payload: map[string]any{"ssdp_advertisement": "alive", "nt": target, "usn": "uuid:" + sensor + "::" + target}}
-		roles, err := evidence.AnalyzeRouters([]normalized.Event{advert}, evidence.RouterOptions{AsOf: now})
+		repeat := advert
+		repeat.EventID += "-repeat"
+		repeat.Timestamp = now.Add(-59 * time.Second).Format(time.RFC3339Nano)
+		adverts := []normalized.Event{advert, repeat}
+		roles, err := evidence.AnalyzeRouters(adverts, evidence.RouterOptions{AsOf: now})
 		if err != nil || len(roles.Assessments) != 1 {
 			t.Fatalf("analyze passive gateway: %v assessments=%d", err, len(roles.Assessments))
 		}
 		roleSegment := segment
-		roleSegment.Epoch, roleSegment.SourcePath, roleSegment.FileID, roleSegment.Events = packetEpoch, packetPath, packetPath+":1:3", []normalized.Event{advert}
+		roleSegment.Epoch, roleSegment.SourcePath, roleSegment.FileID, roleSegment.Events = packetEpoch, packetPath, packetPath+":1:3", adverts
 		roleSegmentID := streamlog.SourceSegmentID(roleSegment)
 		if err := archive.WriteStreamBody(ctx, roleSegmentID, roleSegment); err != nil {
 			t.Fatal(err)
@@ -135,10 +139,10 @@ func runSharedObservationReplay(t *testing.T, basis string) {
 			t.Fatal(err)
 		}
 		indexed, err := archive.ListStreamRouterSignalRefs(ctx, sensor, now.Add(-time.Minute), "", 10)
-		if err != nil || len(indexed) != 1 {
+		if err != nil || len(indexed) != 2 {
 			t.Fatalf("archive router original: found=%d err=%v", len(indexed), err)
 		}
-		roleRef, roleAssessment = indexed[0].Body, roles.Assessments[0].AssessmentID
+		roleRefs, roleAssessment = []store.StreamBodyRef{indexed[0].Body, indexed[1].Body}, roles.Assessments[0].AssessmentID
 		// Simulate the pre-fix durable interpretation of this exact original.
 		for i := range roles.Evidence {
 			roles.Evidence[i].Infrastructure = true
@@ -171,9 +175,12 @@ func runSharedObservationReplay(t *testing.T, basis string) {
 		exec(`INSERT INTO shared_observation_mappings(config_version,sensor_id,campus_id,access_domain,identity_source,identity_sensor_id,identity_campus_id,identity_access_domain,valid_from,valid_until)
  VALUES($1,$2,'lab','mirror',$2,$3,'lab','auth',$4,$5)`, cfg.Version, sensor, sensor+"-auth", mapping.ValidFrom, mapping.ValidUntil)
 		defer db.ExecContext(context.Background(), `DELETE FROM shared_observation_mappings WHERE sensor_id=$1`, sensor)
+		if n, err := backend.RefreshPassiveRouterOwnership(ctx, sensor, roleAssessment, roleRefs[:1], true); err != nil || n != 0 {
+			t.Fatalf("partial proof changed facts=%d err=%v", n, err)
+		}
 		var before int64
 		for i, apply := range []bool{false, true, true} {
-			matched, err := backend.RefreshPassiveRouterOwnership(ctx, sensor, roleAssessment, roleRef, apply)
+			matched, err := backend.RefreshPassiveRouterOwnership(ctx, sensor, roleAssessment, roleRefs, apply)
 			if err != nil || (i == 0 && matched < 1) || (i == 1 && matched != before) || (i == 2 && matched != 0) {
 				t.Fatalf("refresh ownership pass %d: facts=%d previously=%d err=%v", i, matched, before, err)
 			}

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"io"
@@ -20,18 +22,37 @@ func runRouterOwnershipRefresh(args []string) error {
 		return err
 	}
 	if fs.NArg() != 0 || *sensor == "" || *assessment == "" {
-		return errors.New("sensor-id and assessment-id are required; supply one archive reference on stdin")
+		return errors.New("sensor-id and assessment-id are required; supply archive references on stdin")
 	}
-	raw, err := io.ReadAll(io.LimitReader(os.Stdin, 4097))
+	const maxBytes = 20 * 4096
+	raw, err := io.ReadAll(io.LimitReader(os.Stdin, maxBytes+1))
 	if err != nil {
 		return err
 	}
-	if len(raw) > 4096 {
-		return errors.New("archive reference exceeds 4096 bytes")
+	if len(raw) > maxBytes {
+		return errors.New("archive references exceed size limit")
 	}
-	ref, err := store.ParseStreamBodyRef(string(raw))
-	if err != nil {
-		return err
+	var refs []store.StreamBodyRef
+	var hashes []string
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	for {
+		var ref store.StreamBodyRef
+		if err := decoder.Decode(&ref); err == io.EOF {
+			break
+		} else if err != nil {
+			return err
+		}
+		if err := ref.Validate(); err != nil {
+			return err
+		}
+		refs = append(refs, ref)
+		hashes = append(hashes, ref.SHA256)
+		if len(refs) > 20 {
+			return errors.New("at most twenty archived events per outlet")
+		}
+	}
+	if len(refs) == 0 {
+		return errors.New("archive references required")
 	}
 	backend, err := store.NewDBStore(store.Options{Mode: store.ModeDB, SensorID: *sensor, PostgresDSN: os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), ClickHouseDSN: os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), RequestTimeout: 10 * time.Second})
 	if err != nil {
@@ -40,9 +61,13 @@ func runRouterOwnershipRefresh(args []string) error {
 	defer backend.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	count, err := backend.RefreshPassiveRouterOwnership(ctx, *sensor, *assessment, ref, *apply)
+	count, err := backend.RefreshPassiveRouterOwnership(ctx, *sensor, *assessment, refs, *apply)
 	if err != nil {
 		return err
 	}
-	return writeJSON(os.Stdout, map[string]any{"apply": *apply, "facts": count, "assessment_id": *assessment, "source_sha256": ref.SHA256})
+	result := map[string]any{"apply": *apply, "facts": count, "assessment_id": *assessment, "source_hashes": hashes}
+	if len(hashes) == 1 {
+		result["source_sha256"] = hashes[0]
+	}
+	return writeJSON(os.Stdout, result)
 }

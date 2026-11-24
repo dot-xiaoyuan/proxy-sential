@@ -331,11 +331,14 @@ func routerAssociationFor(event normalized.Event, at time.Time, window time.Dura
 		bucket := at.Truncate(window).UTC().Format(time.RFC3339)
 		key = "ip:" + routerScope(event) + ":" + ip + ":" + vlan + ":" + bucket
 	}
-	role := strings.ToLower(routerString(event.Subject["entity_role"]))
 	// Control protocols describe a device's role. Ownership comes from an
 	// explicit designation and is independent of a gateway advertisement.
-	infrastructure := role == "infrastructure" || routerBool(event.Payload["infrastructure"])
+	infrastructure := RouterInfrastructureDeclared(event)
 	return routerEventAssociation{id: stableRouterID("assessment", key), endpoint: endpoint, ip: ip, mac: mac, vlan: vlan, quality: quality, reason: reason, ambiguous: ambiguous, infrastructure: infrastructure}
+}
+
+func RouterInfrastructureDeclared(event normalized.Event) bool {
+	return strings.EqualFold(routerString(event.Subject["entity_role"]), "infrastructure") || routerBool(event.Payload["infrastructure"])
 }
 
 // routerLibraryEvidence turns open-source catalog matches into router observations. A
