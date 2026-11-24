@@ -102,3 +102,17 @@ func TestGatewayResolvesFromMappedAuthenticationWithoutDHCP(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestOutletVLANUsesBothNCUTags(t *testing.T) {
+	for _, tt := range []struct {
+		auth         string
+		outer, inner uint16
+		ok           bool
+	}{
+		{"28090004", 2809, 4, true}, {"28090004", 2810, 4, false}, {"28090004", 2809, 5, false}, {"28090004", 0, 4, false}, {"4", 0, 4, true}, {"4", 0, 5, false},
+	} {
+		if got := outletVLANMatches("ncu-srun4k", tt.auth, tt.outer, tt.inner); got != tt.ok {
+			t.Fatalf("auth=%s tags=%d/%d got=%v", tt.auth, tt.outer, tt.inner, got)
+		}
+	}
+}

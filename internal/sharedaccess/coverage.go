@@ -29,6 +29,7 @@ func (c CoverageV2) Complete() bool {
 }
 
 type HandshakeSample struct {
+	ClientOuterVLAN uint16    `json:"client_outer_vlan,omitempty"`
 	ClientVLAN      uint16    `json:"client_vlan,omitempty"`
 	ClientTTL       uint8     `json:"client_ttl,omitempty"`
 	Bucket          int64     `json:"five_second_bucket"`

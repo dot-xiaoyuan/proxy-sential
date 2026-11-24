@@ -263,9 +263,10 @@ func buildHandshakeObservation(scope SharedObservationScope, cfg sharedaccess.Co
 			features := sharedaccess.HandshakeFeatures(sample.Family, sample.Value)
 			if _, ok := features["tls_stack"]; ok && sample.DestinationPort == 443 {
 				if sample.ClientVLAN != 0 {
-					if w.ClientVLAN != 0 && w.ClientVLAN != sample.ClientVLAN {
+					if w.ClientVLAN != 0 && (w.ClientVLAN != sample.ClientVLAN || w.ClientOuterVLAN != sample.ClientOuterVLAN) {
 						w.MixedClientVLAN = true
 					} else {
+						w.ClientOuterVLAN = sample.ClientOuterVLAN
 						w.ClientVLAN = sample.ClientVLAN
 					}
 				}

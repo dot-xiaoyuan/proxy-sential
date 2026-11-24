@@ -4,8 +4,10 @@ package devicesignal
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"golang.org/x/sys/unix"
 	"log"
 	"net"
 	"net/netip"
@@ -117,6 +119,11 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	log.Printf("device signal receive buffer: requested=%d effective=%d router_protocols_only=%t", requestedBuffer, effectiveBuffer, opts.RouterProtocolsOnly)
 	handshakeCaptureV2 := opts.HandshakeOnly && os.Getenv("PROXY_SENTINEL_HANDSHAKE_CAPTURE_V2") == "true"
+	if handshakeCaptureV2 {
+		if err := unix.SetsockoptInt(fd, unix.SOL_PACKET, unix.PACKET_AUXDATA, 1); err != nil {
+			return fmt.Errorf("enable VLAN capture metadata: %w", err)
+		}
+	}
 	if opts.HandshakeOnly {
 		if err := attachHandshakeFilter(fd, handshakeCaptureV2); err != nil {
 			return fmt.Errorf("attach handshake BPF: %w", err)
@@ -223,14 +230,25 @@ func Run(ctx context.Context, opts Options) error {
 	bucket := time.Now().UTC().Truncate(opts.Bucket)
 	ticker := time.NewTicker(opts.Bucket)
 	defer ticker.Stop()
-	buffer := make([]byte, 65536)
+	buffer := make([]byte, 65536+4)
+	control := make([]byte, syscall.CmsgSpace(20))
 	for {
 		processed := 0
 		// A saturated mirror interface may always have another frame ready.
 		// Bound each receive burst so the bucket ticker cannot be starved and
 		// observations do not grow in memory indefinitely.
 		for processed < 4096 {
-			n, _, recvErr := syscall.Recvfrom(fd, buffer, 0)
+			var frame []byte
+			var recvErr error
+			if handshakeCaptureV2 {
+				frame, recvErr = receiveTaggedHandshake(fd, buffer, control)
+			} else {
+				var n int
+				n, _, recvErr = syscall.Recvfrom(fd, buffer[4:], 0)
+				if recvErr == nil {
+					frame = buffer[4 : 4+n]
+				}
+			}
 			if recvErr == syscall.EAGAIN || recvErr == syscall.EWOULDBLOCK {
 				break
 			}
@@ -238,7 +256,7 @@ func Run(ctx context.Context, opts Options) error {
 				return recvErr
 			}
 			processed++
-			state.addFrame(buffer[:n], opts.CaptureScope)
+			state.addFrame(frame, opts.CaptureScope)
 		}
 		select {
 		case <-ctx.Done():
@@ -330,4 +348,42 @@ func packetCaptureStats(fd int) (uint32, uint32, bool) {
 	length := uint32(unsafe.Sizeof(stats))
 	_, _, errno := syscall.Syscall6(syscall.SYS_GETSOCKOPT, uintptr(fd), syscall.SOL_PACKET, syscall.PACKET_STATISTICS, uintptr(unsafe.Pointer(&stats)), uintptr(unsafe.Pointer(&length)), 0)
 	return stats.Packets, stats.Drops, errno == 0 && length >= 8
+}
+
+// The NIC may strip the outer 802.1Q/802.1ad header before AF_PACKET sees
+// the frame. Restore that header in the four reserved bytes, retaining the
+// original capture prefix without moving the payload.
+func receiveTaggedHandshake(fd int, buf, control []byte) ([]byte, error) {
+	n, oob, flags, _, err := syscall.Recvmsg(fd, buf[4:], control, 0)
+	if err != nil {
+		return nil, err
+	}
+	if flags&syscall.MSG_CTRUNC != 0 {
+		return nil, nil
+	}
+	return restoreHandshakeVLAN(buf, n, control[:oob])
+}
+
+func restoreHandshakeVLAN(buf []byte, n int, control []byte) ([]byte, error) {
+	messages, err := syscall.ParseSocketControlMessage(control)
+	if err != nil {
+		return nil, err
+	}
+	for _, message := range messages {
+		if message.Header.Level == unix.SOL_PACKET && message.Header.Type == unix.PACKET_AUXDATA && len(message.Data) >= 20 {
+			data := message.Data
+			status := binary.NativeEndian.Uint32(data)
+			if status&unix.TP_STATUS_VLAN_VALID != 0 && n >= 14 {
+				tpid := uint16(0x8100)
+				if status&unix.TP_STATUS_VLAN_TPID_VALID != 0 {
+					tpid = binary.NativeEndian.Uint16(data[18:20])
+				}
+				copy(buf[:12], buf[4:16])
+				binary.BigEndian.PutUint16(buf[12:14], tpid)
+				binary.BigEndian.PutUint16(buf[14:16], binary.NativeEndian.Uint16(data[16:18]))
+				return buf[:n+4], nil
+			}
+		}
+	}
+	return buf[4 : 4+n], nil
 }

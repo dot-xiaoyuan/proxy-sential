@@ -35,6 +35,7 @@ func (s controlSignal) key() string {
 }
 
 type ethernetFrame struct {
+	outerVLAN           uint16
 	innerVLAN           uint16
 	source, destination [6]byte
 	etherType           uint16
@@ -54,6 +55,9 @@ func parseEthernetFrame(frame []byte) (ethernetFrame, bool) {
 	for result.etherType == 0x8100 || result.etherType == 0x88a8 {
 		if len(frame) < offset+4 {
 			return ethernetFrame{}, false
+		}
+		if result.innerVLAN != 0 {
+			result.outerVLAN = uint16(result.vlan)
 		}
 		result.innerVLAN = binary.BigEndian.Uint16(frame[offset:offset+2]) & 0x0fff
 		if result.vlan == 0 {

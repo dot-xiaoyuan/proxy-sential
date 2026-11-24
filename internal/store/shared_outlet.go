@@ -148,7 +148,7 @@ func (s *DBStore) assessOutlet(ctx context.Context, cfg sharedaccess.Config, w s
 	if err != nil || l.ip == "" {
 		return item, err
 	}
-	if w.MixedClientVLAN || w.ClientVLAN != 0 && l.vlan != "" && strconv.Itoa(int(w.ClientVLAN)) != l.vlan || w.GatewayMAC != "" && w.GatewayMAC != l.mac {
+	if w.MixedClientVLAN || !outletVLANMatches(m.Source, l.vlan, w.ClientOuterVLAN, w.ClientVLAN) || w.GatewayMAC != "" && w.GatewayMAC != l.mac {
 		return item, nil
 	}
 	r, err := s.outletRouter(ctx, w, l)
@@ -185,4 +185,20 @@ func (s *DBStore) lookupGatewayBinding(ctx context.Context, cfg sharedaccess.Con
 	}
 	binding, err := s.verifyOutlet(ctx, cfg, w, m, l)
 	return binding, true, err
+}
+
+// NCU encodes a QinQ pair as outer*10000+inner. A single visible tag
+// cannot establish the missing outer domain of a double-tagged binding.
+func outletVLANMatches(source, auth string, outer, inner uint16) bool {
+	if auth == "" || inner == 0 {
+		return true
+	}
+	value, err := strconv.Atoi(auth)
+	if err != nil || value <= 0 {
+		return false
+	}
+	if source == "ncu-srun4k" && value >= 10000 {
+		return outer != 0 && value/10000 == int(outer) && value%10000 == int(inner)
+	}
+	return value == int(inner)
 }
