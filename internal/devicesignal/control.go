@@ -607,7 +607,7 @@ func parseSSDP(ethernet ethernetFrame, source, destination string, payload []byt
 		}
 		key, value := strings.ToLower(strings.TrimSpace(parts[0])), strings.TrimSpace(parts[1])
 		switch key {
-		case "st", "nt", "usn", "server", "location":
+		case "st", "nt", "nts", "usn", "server", "location":
 			if value != "" {
 				signal.Payload[key] = value
 			}
@@ -615,6 +615,12 @@ func parseSSDP(ethernet ethernetFrame, source, destination string, payload []byt
 	}
 	if len(signal.Payload) == 1 {
 		return controlSignal{}, false
+	}
+	switch {
+	case start == "NOTIFY * HTTP/1.1" && strings.EqualFold(fmt.Sprint(signal.Payload["nts"]), "ssdp:alive"):
+		signal.Payload["ssdp_advertisement"] = "alive"
+	case strings.HasPrefix(start, "HTTP/1.1 200 "):
+		signal.Payload["ssdp_advertisement"] = "response"
 	}
 	if signal.VLAN > 0 {
 		signal.Payload["vlan"] = signal.VLAN

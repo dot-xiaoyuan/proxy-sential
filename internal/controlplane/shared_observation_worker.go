@@ -57,6 +57,12 @@ func (s *Server) startSharedObservationWorker() error {
 	if len(s.sharedConfig.Sources) == 0 || len(s.sharedConfig.IdentityMappings) == 0 {
 		return fmt.Errorf("shared observation requires capture sources and identity mappings")
 	}
+	if _, err := s.operations.db.ExecContext(context.Background(), `INSERT INTO control_plane_settings(setting_key,setting_value) VALUES($1,to_jsonb(clock_timestamp())) ON CONFLICT DO NOTHING`, "shared_observation_start:"+sharedaccess.BehaviorRuleVersion); err != nil {
+		return err
+	}
+	if err := s.operations.db.QueryRowContext(context.Background(), `SELECT (setting_value#>>'{}')::timestamptz FROM control_plane_settings WHERE setting_key=$1`, "shared_observation_start:"+sharedaccess.BehaviorRuleVersion).Scan(&s.sharedObservationStart); err != nil {
+		return err
+	}
 	if err := s.persistSharedObservationMappings(context.Background()); err != nil {
 		return err
 	}
@@ -376,9 +382,17 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 			}
 		}
 	}
-	if s.sharedConfig.SkipCaptureVerification && item.Current {
-		w.CoverageVerified = true
-		w.Complete = true
+	if !s.sharedObservationStart.IsZero() {
+		if w.LastObservedAt.Before(s.sharedObservationStart) {
+			item.Current = false
+		}
+		if w.From.Before(s.sharedObservationStart) {
+			w.StrongAnchor = ""
+			w.DeviceLowerBound = 0
+		}
+		if w.Activity != nil && w.Activity.At.Before(s.sharedObservationStart) {
+			w.RouterProof = nil
+		}
 	}
 	var identityEvidence []policy.Session
 	result := sharedaccess.EvaluateObservation(w, s.sharedConfig, nil, now)
@@ -388,9 +402,7 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 		result.Reasons = []string{"shared_evidence_expired"}
 	}
 	anchorSatisfied := w.StrongAnchor != "" && w.DeviceLowerBound >= s.sharedConfig.DeviceBound()
-	diversitySatisfied := s.sharedConfig.SkipCaptureVerification && len(item.SignalGroups) >= 2
-	captureBypass := s.sharedConfig.SkipCaptureVerification
-	policyEligible := item.Current && (anchorSatisfied || diversitySatisfied || captureBypass) && w.Complete && w.CoverageVerified
+	policyEligible := item.Current && (w.HasRouterProof() || anchorSatisfied && w.Complete && w.CoverageVerified)
 	if policyEligible {
 		identityStarted := time.Now()
 		mapping, mapErr := s.sharedConfig.Mapping(w)
@@ -400,14 +412,13 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 				return failure(e)
 			}
 			if authority.registered {
-				sessions, e := reader.SharedIdentitySessions(ctx, mapping, w.IP, w.From, now, authority.interval)
+				from, to := w.From, now
+				if w.HasRouterProof() {
+					from, to = w.Activity.At, w.Activity.At
+				}
+				sessions, e := reader.SharedIdentitySessions(ctx, mapping, w.IP, from, to, authority.interval)
 				if e != nil {
 					return failure(e)
-				}
-				if s.sharedConfig.SkipCaptureVerification {
-					for i := range sessions {
-						sessions[i].IdentityIssue = ""
-					}
 				}
 				identityEvidence = sessions
 			} else {
@@ -419,19 +430,15 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 	evaluatedAt := now.Add(time.Since(started))
 	if item.Current && identityEvidence != nil {
 		result = sharedaccess.EvaluateObservation(w, s.sharedConfig, identityEvidence, evaluatedAt)
-		if !s.sharedConfig.SkipCaptureVerification {
-			for _, session := range identityEvidence {
-				if session.IdentityIssue != "" {
-					result.Reasons = append(result.Reasons, session.IdentityIssue)
-					break
-				}
+		for _, session := range identityEvidence {
+			if session.IdentityIssue != "" {
+				result.Reasons = append(result.Reasons, session.IdentityIssue)
+				break
 			}
 		}
 	}
 	decision := sharedaccess.NewObservationDecision(w, result, s.sharedConfig, evaluatedAt)
-	if decision.Result == "matched" {
-		item.AccountID = decision.AccountID
-	}
+
 	if decision.Result == "expired" {
 		item.Current = false
 	}
@@ -439,6 +446,51 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 	// that won the job lease. A later source cutover cannot relabel this proof.
 	item.GenerationID = generation
 	decision.IdentityEvidence = identityEvidence
+	persistStarted := time.Now()
+	tx, err := s.operations.db.BeginTx(ctx, nil)
+	if err != nil {
+		return failure(err)
+	}
+	defer tx.Rollback()
+	// Result, evidence, audit and ACK remain one synchronously durable commit.
+	if _, err = tx.ExecContext(ctx, `SET LOCAL synchronous_commit = on`); err != nil {
+		_ = tx.Rollback()
+		return failure(err)
+	}
+	if decision.Result == "matched" {
+		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))`, "policy-whitelist-write"); err != nil {
+			_ = tx.Rollback()
+			return failure(err)
+		}
+		manager := s.whitelist
+		if manager == nil {
+			manager = newWhitelistManager(s.operations.db, "")
+		}
+		list, e := manager.read(ctx, tx)
+		if e != nil {
+			_ = tx.Rollback()
+			return failure(fmt.Errorf("shared_whitelist_read_failed: %w", e))
+		}
+		applySharedOutcome(&decision, &item, list.Entries, identityEvidence)
+		if e := decision.Exemption; e != nil {
+			// Keep separately auditable outcomes when a whitelist revision changes
+			// while the same packet evidence remains current.
+			original := w.ID
+			w.ID = policy.StableID(original, e.ID, strconv.Itoa(e.Revision))
+			item.ObservationID, decision.ObservationID, result.ID = w.ID, w.ID, w.ID
+			for i, id := range result.EvidenceIDs {
+				if id == original {
+					result.EvidenceIDs[i] = w.ID
+				}
+			}
+			decision.Evidence, decision.Attribution = w, result
+		}
+	} else if item.Current && w.HasRouterProof() && len(result.Reasons) > 0 {
+		item.ReviewReason = strings.Join(result.Reasons, ", ")
+	}
+	if item.Status == "confirmed" && decision.Result != "matched" {
+		item.Status = "candidate"
+	}
 	var previousDoc sharedObservationDocument
 	if len(previous) > 0 {
 		_ = json.Unmarshal(previous, &previousDoc)
@@ -449,23 +501,12 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 	if decision.Result == "matched" {
 		doc.EpisodeScopeKey = sharedObservationEpisodeScope(decision)
 		doc.EpisodeSessions = sharedObservationEpisodeSessions(identityEvidence, w.To)
-	} else if decision.Result == "expired" || closeEpisode {
+	} else if decision.Result == "expired" || decision.Result == "whitelist_suppressed" || closeEpisode {
 		doc.EpisodeScopeKey = ""
 		doc.EpisodeSessions = nil
 	}
 	raw, err := json.Marshal(doc)
 	if err != nil {
-		return failure(err)
-	}
-	persistStarted := time.Now()
-	tx, err := s.operations.db.BeginTx(ctx, nil)
-	if err != nil {
-		return failure(err)
-	}
-	defer tx.Rollback()
-	// Result, evidence, audit and ACK remain one synchronously durable commit.
-	if _, err = tx.ExecContext(ctx, `SET LOCAL synchronous_commit = on`); err != nil {
-		_ = tx.Rollback()
 		return failure(err)
 	}
 	if store.SharedStreamRequired() && !sharedObservationExpiryLane(lane) {
@@ -487,13 +528,17 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 			return failure(err)
 		}
 	}
-	if closeEpisode || (decision.Result == "expired" && previousDoc.EpisodeScopeKey != "") {
+	if closeEpisode || ((decision.Result == "expired" || decision.Result == "whitelist_suppressed") && previousDoc.EpisodeScopeKey != "") {
 		if err = closeSharedObservationEpisode(ctx, tx, previousDoc.EpisodeScopeKey, evaluatedAt); err != nil {
 			_ = tx.Rollback()
 			return failure(err)
 		}
 	}
-	if err = persistSharedObservationDecision(ctx, tx, decision); err != nil {
+	if err = persistSharedObservationDecision(ctx, tx, &decision); err != nil {
+		_ = tx.Rollback()
+		return failure(err)
+	}
+	if err = recordSharedFinding(ctx, tx, item, decision); err != nil {
 		_ = tx.Rollback()
 		return failure(err)
 	}
@@ -615,8 +660,8 @@ func sharedObservationNewDependency(lane string, marked bool) bool {
 	return !sharedObservationExpiryLane(lane) && marked
 }
 
-func persistSharedObservationDecision(ctx context.Context, tx *sql.Tx, d sharedaccess.ObservationDecision) error {
-	newEpisode, err := ensureSharedObservationEpisode(ctx, tx, &d)
+func persistSharedObservationDecision(ctx context.Context, tx *sql.Tx, d *sharedaccess.ObservationDecision) error {
+	newEpisode, err := ensureSharedObservationEpisode(ctx, tx, d)
 	if err != nil {
 		return err
 	}
@@ -655,4 +700,45 @@ func persistSharedObservationDecision(ctx context.Context, tx *sql.Tx, d shareda
 		'recorded' FROM behavior_report_channels WHERE enabled=true
 		ON CONFLICT(idempotency_key) DO NOTHING`, d.DecisionID, d.AccountID, d.IP, d.EvaluatedAt, d.PolicyID, d.PolicyRevision, d.ObservationID, d.EvidenceVersion, d.CampusID, d.AccessDomain, d.ExecutionID)
 	return err
+}
+
+func applySharedOutcome(decision *sharedaccess.ObservationDecision, item *sharedaccess.BehaviorAssessment, entries []policy.WhitelistEntry, sessions []policy.Session) {
+	at := decision.Evidence.To
+	basis := decision.Attribution.ConfirmationBasis
+	if basis == sharedaccess.AuthenticatedRouter {
+		at = decision.Evidence.Activity.At
+	} else {
+		basis = "ieee1905_association"
+	}
+	item.AccountID = decision.AccountID
+	item.SessionGeneration = decision.SessionGeneration
+	var match *policy.WhitelistEntry
+	for _, t := range []time.Time{at, decision.EvaluatedAt} {
+		match = policy.MatchAccountWhitelist(entries, decision.AccountID, sessions, t)
+		if match != nil {
+			break
+		}
+	}
+	if match != nil {
+		decision.Result = "whitelist_suppressed"
+		decision.ExecutionID = ""
+		decision.Known, decision.Violated = true, false
+		decision.Exemption = match
+		decision.Reasons = []string{"whitelist_suppressed"}
+		decision.DecisionID = policy.StableID(decision.DecisionID, match.ID, strconv.Itoa(match.Revision))
+		item.Status = "candidate"
+		item.Exemption = match
+		item.ReviewReason = "白名单豁免"
+	} else {
+		item.Status = "confirmed"
+		item.Confidence = int(decision.Attribution.Confidence * 100)
+		item.StrongAnchor = basis
+		item.ReviewReason = ""
+		item.Reasons = []string{"认证出口关联多个不同终端"}
+		if basis == sharedaccess.AuthenticatedRouter {
+			item.Reasons = []string{"认证出口的镜像活动与明确路由器角色证据一致"}
+		}
+	}
+	item.ConfirmationBasis = basis
+	item.DecisionID = decision.DecisionID
 }

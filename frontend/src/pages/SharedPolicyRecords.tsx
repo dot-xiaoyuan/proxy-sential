@@ -16,11 +16,12 @@ export type SharedPolicyDecision = {
  decision_id: string; observation_id: string; policy_id?: string; policy_revision: number; evidence_version: string;
  account_id: string; ip: string; campus_id: string; access_domain: string; evaluated_at: string;
  evidence_expires_at: string; mode: 'manual' | 'observe'; planned_action: string; delivery_status: 'record_only' | 'not_sent';
- result: 'matched' | 'insufficient' | 'expired'; reasons: string[];
+ result: 'matched' | 'insufficient' | 'expired' | 'whitelist_suppressed'; reasons: string[];
  evidence_review_status?: 'rule_verified'|'pending_review'|'insufficient_evidence'|'unverified'; evidence_review_reason?: string;
- evidence?: { rule_version?: string; from?: string; to?: string; device_lower_bound?: number; records?: { event_id: string; source: string; collector_instance_id?: string }[] };
+ evidence?: {authenticated_router?:{assessment_id:string}; rule_version?: string; from?: string; to?: string; device_lower_bound?: number; records?: { event_id: string; source: string; collector_instance_id?: string }[] };
 }
 const reasons: Record<string, string> = {
+ authenticated_router_access:'认证出口的设备承担路由器角色', whitelist_suppressed:'命中有效白名单',
  feature_value_limit: '特征数量达到采集上限',
  kernel_drops: '内核采集丢包',
  parse_truncated: '报文解析截断',
@@ -78,6 +79,8 @@ function windowDuration(from: string, to: string) {
  return minutes < 60 ? `${minutes} 分钟` : `${Math.round(minutes / 6) / 10} 小时`
 }
 function behaviorTitle(item: SharedPolicyDecision) {
+ if(item.result==='whitelist_suppressed') return '白名单豁免'
+ if(item.result==='matched' && item.evidence?.authenticated_router) return '认证账号接入路由器，已确认共享'
  if (item.evidence_review_status === 'insufficient_evidence') return '旧规则记录：共享证据不足'
  if (item.result === 'matched' && ['pending_review','unverified'].includes(item.evidence_review_status ?? '')) return '历史共享结论待核验'
  if (item.result === 'expired') return '共享证据已过期'
@@ -95,6 +98,7 @@ function behaviorNote(item: SharedPolicyDecision) {
  return [duration && `观察 ${duration}`, devices ? `设备下界 ${devices} 台` : ''].filter(Boolean).join(' · ')
 }
 function outcomeLabel(item: SharedPolicyDecision) {
+ if(item.result==='whitelist_suppressed') return '白名单豁免'
  if (item.result === 'matched' && item.evidence_review_status === 'insufficient_evidence') return '旧规则证据不足'
  if (item.result === 'matched' && item.evidence_review_status === 'unverified') return '证据缺失待核验'
  if (item.result === 'matched' && item.evidence_review_status === 'pending_review') return '历史命中待核验'

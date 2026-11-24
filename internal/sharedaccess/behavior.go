@@ -2,20 +2,26 @@ package sharedaccess
 
 import (
 	"encoding/json"
+	"proxy-sentinel/internal/policy"
 	"slices"
 	"sort"
 	"time"
 )
 
-const BehaviorRuleVersion = "shared-behavior/v14"
+const BehaviorRuleVersion = "shared-behavior/v15"
 
 type BehaviorRouterContext struct {
-	AssessmentID string `json:"assessment_id,omitempty"`
-	Brand        string `json:"brand,omitempty"`
-	Model        string `json:"model,omitempty"`
-	Role         string `json:"role,omitempty"`
-	Status       string `json:"status,omitempty"`
-	Confidence   int    `json:"confidence,omitempty"`
+	RoleSource     string `json:"role_source,omitempty"`
+	RoleInput      string `json:"role_input,omitempty"`
+	RoleEventID    string `json:"role_event_id,omitempty"`
+	RoleEvidenceID string `json:"role_evidence_id,omitempty"`
+	RoleRule       string `json:"role_rule,omitempty"`
+	AssessmentID   string `json:"assessment_id,omitempty"`
+	Brand          string `json:"brand,omitempty"`
+	Model          string `json:"model,omitempty"`
+	Role           string `json:"role,omitempty"`
+	Status         string `json:"status,omitempty"`
+	Confidence     int    `json:"confidence,omitempty"`
 	// BrandAttribution is a vendor-specific control-plane identity. It may
 	// corroborate diverse client stacks but never proves a gateway by itself.
 	BrandAttribution bool `json:"brand_attribution,omitempty"`
@@ -43,6 +49,14 @@ type KnownDevice struct {
 }
 
 type BehaviorAssessment struct {
+	CaseID            string                 `json:"case_id,omitempty"`
+	ActionID          string                 `json:"action_id,omitempty"`
+	ConfirmationBasis string                 `json:"confirmation_basis,omitempty"`
+	SessionGeneration string                 `json:"session_generation,omitempty"`
+	ReviewReason      string                 `json:"review_reason,omitempty"`
+	Exemption         *policy.WhitelistEntry `json:"whitelist_match,omitempty"`
+	DecisionID        string                 `json:"decision_id,omitempty"`
+
 	OutletEvidence          json.RawMessage                     `json:"authenticated_outlet,omitempty"`
 	Current                 bool                                `json:"current"`
 	ObservationID           string                              `json:"observation_id"`
@@ -126,7 +140,7 @@ func AssessBehavior(id, endpointID string, w Window, router BehaviorRouterContex
 		result.Status = "candidate"
 		result.StrongAnchor = "ieee1905_association"
 		result.DeviceLowerBound = diversity(w.AssociatedClients)
-		result.Reasons = append(result.Reasons, "多终端接入关系可见，但尚未验证路由 / NAT 转发，不确认路由器共享")
+		result.Reasons = append(result.Reasons, "同一接入设备关联多个终端，等待核对认证出口")
 		return result, true
 	}
 	// Application-declared models and stack variants cannot prove physical clients.

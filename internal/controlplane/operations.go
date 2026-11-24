@@ -379,14 +379,31 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 	}
 	items := []store.ProxyReviewCase{}
 	closableKinds := map[string]bool{}
-	sharedQuery := store.SharedBehaviorQuery{Status: "confirmed", CoverageState: "verified", Limit: 100}
+	pending := map[string]string{}
+	if reader, ok := s.reader.(interface {
+		PendingSharedFindings(context.Context) ([]sharedaccess.BehaviorAssessment, error)
+	}); ok {
+		rows, err := reader.PendingSharedFindings(ctx)
+		if err != nil {
+			return err
+		}
+		for _, a := range rows {
+			pending[a.ObservationID] = a.CaseID
+			items = append(items, proxyReviewCaseForSharedAssessment(a))
+		}
+	}
+	sharedQuery := store.SharedBehaviorQuery{Status: "confirmed", Limit: 100}
 	for {
 		page, err := sharedReader.ListSharedBehavior(ctx, sharedQuery)
 		if err != nil {
 			return err
 		}
 		for _, assessment := range page.Items {
-			if assessment.Status != "confirmed" || assessment.CoverageState != "verified" || assessment.StrongAnchor == "" || assessment.DeviceLowerBound < s.sharedConfig.DeviceBound() || len(assessment.Conflicts) > 0 {
+			if _, queued := pending[assessment.ObservationID]; queued || assessment.SessionGeneration != "" && assessment.CaseID == "" {
+				continue
+			}
+			router := assessment.ConfirmationBasis == sharedaccess.AuthenticatedRouter && assessment.Router.RoleEvidenceID != "" && assessment.AccountID != "" && assessment.DecisionID != ""
+			if assessment.Status != "confirmed" || assessment.Exemption != nil || (!router && (assessment.CoverageState != "verified" || assessment.StrongAnchor == "" || assessment.DeviceLowerBound < s.sharedConfig.DeviceBound() || len(assessment.Conflicts) > 0)) {
 				continue
 			}
 			items = append(items, proxyReviewCaseForSharedAssessment(assessment))
@@ -452,7 +469,7 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 				}
 			}
 		}
-		if matchedException != nil {
+		if matchedException != nil && !(item.SharedAccess != nil && item.SharedAccess.DecisionID != "") {
 			continue
 		}
 		dedupeKey := strings.ReplaceAll(kind, "_", "-") + ":" + item.CaseID
@@ -512,6 +529,9 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 		// this phase. Stale account-session blockers from the retired generic
 		// proxy synchronizer must not be presented as a condition of this case.
 		clearCaseIdentity(&existing)
+		if kind == "shared_access" {
+			existing.AccountID = item.AccountID
+		}
 		existing.EndpointID = item.EndpointID
 		snapshot := newCaseEvidenceSnapshot(existing.CaseID, existing.RulesetVersion, item, now)
 		snapshotExists := caseEvidenceSnapshotExists(existing.EvidenceHistory, snapshot.SnapshotID)
@@ -569,6 +589,15 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 		existing.Timeline = append(existing.Timeline, CaseTimeline{EventID: "timeline-" + shortToken(8), ActorID: "system", Type: "case.auto_closed_current_set", Before: map[string]any{"status": before}, After: map[string]any{"status": "closed"}, CreatedAt: now.Format(time.RFC3339Nano)})
 		s.operations.doc.Cases[caseID] = existing
 	}
+	if s.operations.tx != nil {
+		for obs, id := range pending {
+			if activeCaseIDs[id] {
+				if _, err := s.operations.tx.ExecContext(ctx, `UPDATE shared_access_findings SET case_pending=false WHERE observation_id=$1 AND case_id=$2`, obs, id); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	return s.operations.saveLocked()
 }
 
@@ -617,6 +646,9 @@ func (s *Server) syncAutomaticCasesContext(ctx context.Context, sensorID, window
 func activeCaseMatches(candidate RiskCase, item store.ProxyReviewCase, dedupeKey string) bool {
 	if candidate.Status == "closed" || candidate.Status == "resolved" {
 		return false
+	}
+	if item.SharedAccess != nil && item.SharedAccess.SessionGeneration != "" {
+		return candidate.DedupeKey == dedupeKey
 	}
 	if candidate.DedupeKey == dedupeKey {
 		return true
@@ -751,17 +783,24 @@ func riskKindForRuleset(rulesetVersion string) string {
 
 func proxyReviewCaseForSharedAssessment(assessment sharedaccess.BehaviorAssessment) store.ProxyReviewCase {
 	scope := strings.Join([]string{assessment.SensorID, assessment.CampusID, assessment.AccessDomain, assessment.IP}, "\x00")
+	if assessment.SessionGeneration != "" {
+		scope += "\x00" + assessment.AccountID + "\x00" + assessment.SessionGeneration
+	}
 	sum := sha256.Sum256([]byte("shared-access-case\x00" + scope))
+	caseID := assessment.CaseID
+	if caseID == "" {
+		caseID = "shared-" + hex.EncodeToString(sum[:])[:20]
+	}
 	anchorIdentities := make([]string, 0)
 	for value := range assessment.FeatureSamples[assessment.StrongAnchor] {
 		anchorIdentities = append(anchorIdentities, value)
 	}
 	sort.Strings(anchorIdentities)
 	return store.ProxyReviewCase{
-		CaseID: "shared-" + hex.EncodeToString(sum[:])[:20], IP: assessment.IP, EndpointID: assessment.EndpointID,
+		AccountID: assessment.AccountID, CaseID: caseID, IP: assessment.IP, EndpointID: assessment.EndpointID,
 		AccessIDs: []string{}, Destinations: []store.ActivityCount{}, DestinationIPs: []store.ActivityCount{}, DestinationDomains: []store.ActivityCount{}, TLSFingerprints: []store.ActivityCount{}, Protocols: []store.ActivityCount{}, RuleMatches: []store.ProxyRuleMatch{},
 		EventCount: len(assessment.EventIDs), ConfidenceLevel: "high", FirstSeen: assessment.FirstSeen.UTC().Format(time.RFC3339Nano), LastSeen: assessment.LastSeen.UTC().Format(time.RFC3339Nano), DurationSeconds: int64(assessment.WindowEnd.Sub(assessment.WindowStart).Seconds()), EvidenceIDs: []string{assessment.ObservationID}, RiskScore: assessment.Confidence, RiskLevel: "confirmed", ReviewStatus: "unreviewed",
-		SharedAccess: &store.SharedAccessCaseEvidence{ObservationID: assessment.ObservationID, GenerationID: assessment.GenerationID, Status: assessment.Status, Confidence: assessment.Confidence, StrongAnchor: assessment.StrongAnchor, DeviceLowerBound: assessment.DeviceLowerBound, CoverageState: assessment.CoverageState, WindowStart: assessment.WindowStart.UTC().Format(time.RFC3339Nano), WindowEnd: assessment.WindowEnd.UTC().Format(time.RFC3339Nano), SignalGroups: append([]string{}, assessment.SignalGroups...), Reasons: append([]string{}, assessment.Reasons...), SourceEventIDs: append([]string{}, assessment.EventIDs...), AnchorIdentities: anchorIdentities, ReferenceDeviceCount24h: assessment.ReferenceDeviceCount24h, RouterBrand: assessment.Router.Brand, RouterModel: assessment.Router.Model, RouterConfidence: assessment.Router.Confidence},
+		SharedAccess: &store.SharedAccessCaseEvidence{SessionGeneration: assessment.SessionGeneration, DecisionID: assessment.DecisionID, RoleEvidenceID: assessment.Router.RoleEvidenceID, RoleSource: assessment.Router.RoleSource, RoleInput: assessment.Router.RoleInput, RoleEventID: assessment.Router.RoleEventID, RoleRule: assessment.Router.RoleRule, ConfirmationBasis: assessment.ConfirmationBasis, ObservationID: assessment.ObservationID, GenerationID: assessment.GenerationID, Status: assessment.Status, Confidence: assessment.Confidence, StrongAnchor: assessment.StrongAnchor, DeviceLowerBound: assessment.DeviceLowerBound, CoverageState: assessment.CoverageState, WindowStart: assessment.WindowStart.UTC().Format(time.RFC3339Nano), WindowEnd: assessment.WindowEnd.UTC().Format(time.RFC3339Nano), SignalGroups: append([]string{}, assessment.SignalGroups...), Reasons: append([]string{}, assessment.Reasons...), SourceEventIDs: append([]string{}, assessment.EventIDs...), AnchorIdentities: anchorIdentities, ReferenceDeviceCount24h: assessment.ReferenceDeviceCount24h, RouterBrand: assessment.Router.Brand, RouterModel: assessment.Router.Model, RouterConfidence: assessment.Router.Confidence},
 	}
 }
 

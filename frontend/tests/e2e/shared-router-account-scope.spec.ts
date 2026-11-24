@@ -41,7 +41,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
       if (tab === 'associations') {
         await expect(page.getByText('路由器身份依据', { exact: true }).first()).toBeVisible()
         await expect(page.getByText('共享行为待核验', { exact: true })).toBeVisible()
-        await expect(page.getByText(/优先核对认证出口上的路由器/)).toBeVisible()
+        await expect(page.getByText(/认证出口接入可明确识别的路由器即可确认共享/)).toBeVisible()
       } else {
         await expect(page.getByText('TP-Link TL-WDR5620', { exact: true })).toBeVisible()
         await expect(page.getByText('已确认当前共享', { exact: true })).toHaveCount(0)

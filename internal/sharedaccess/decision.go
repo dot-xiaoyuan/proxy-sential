@@ -8,31 +8,32 @@ import (
 )
 
 type ObservationDecision struct {
-	IdentityEvidence  []policy.Session `json:"identity_evidence,omitempty"`
-	DecisionID        string           `json:"decision_id"`
-	ExecutionID       string           `json:"execution_id"`
-	PolicyID          string           `json:"policy_id"`
-	PolicyRevision    int              `json:"policy_revision"`
-	Trigger           string           `json:"trigger"`
-	ObservationID     string           `json:"observation_id"`
-	EvidenceVersion   string           `json:"evidence_version"`
-	AccountID         string           `json:"account_id"`
-	IP                string           `json:"ip"`
-	CampusID          string           `json:"campus_id"`
-	AccessDomain      string           `json:"access_domain"`
-	SessionGeneration string           `json:"session_generation"`
-	Mode              string           `json:"mode"`
-	PlannedAction     string           `json:"planned_action"`
-	DeliveryStatus    string           `json:"delivery_status"`
-	Result            string           `json:"result"`
-	Known             bool             `json:"known"`
-	Violated          bool             `json:"violated"`
-	EvaluatedAt       time.Time        `json:"evaluated_at"`
-	EvidenceExpiresAt time.Time        `json:"evidence_expires_at"`
-	CooldownSeconds   int              `json:"cooldown_seconds"`
-	Reasons           []string         `json:"reasons"`
-	Evidence          Window           `json:"evidence"`
-	Attribution       Result           `json:"attribution"`
+	Exemption         *policy.WhitelistEntry `json:"whitelist_match,omitempty"`
+	IdentityEvidence  []policy.Session       `json:"identity_evidence,omitempty"`
+	DecisionID        string                 `json:"decision_id"`
+	ExecutionID       string                 `json:"execution_id"`
+	PolicyID          string                 `json:"policy_id"`
+	PolicyRevision    int                    `json:"policy_revision"`
+	Trigger           string                 `json:"trigger"`
+	ObservationID     string                 `json:"observation_id"`
+	EvidenceVersion   string                 `json:"evidence_version"`
+	AccountID         string                 `json:"account_id"`
+	IP                string                 `json:"ip"`
+	CampusID          string                 `json:"campus_id"`
+	AccessDomain      string                 `json:"access_domain"`
+	SessionGeneration string                 `json:"session_generation"`
+	Mode              string                 `json:"mode"`
+	PlannedAction     string                 `json:"planned_action"`
+	DeliveryStatus    string                 `json:"delivery_status"`
+	Result            string                 `json:"result"`
+	Known             bool                   `json:"known"`
+	Violated          bool                   `json:"violated"`
+	EvaluatedAt       time.Time              `json:"evaluated_at"`
+	EvidenceExpiresAt time.Time              `json:"evidence_expires_at"`
+	CooldownSeconds   int                    `json:"cooldown_seconds"`
+	Reasons           []string               `json:"reasons"`
+	Evidence          Window                 `json:"evidence"`
+	Attribution       Result                 `json:"attribution"`
 }
 
 func NewObservationDecision(w Window, r Result, cfg Config, now time.Time) ObservationDecision {
@@ -41,14 +42,18 @@ func NewObservationDecision(w Window, r Result, cfg Config, now time.Time) Obser
 	// Keep the persisted policy decision safe even if an old caller passes a
 	// bypassed evaluation result. A record-only action is still a violation
 	// record and therefore needs independently verified sharing evidence.
-	if r.State == "basis_present" && r.AccountID != "" && w.Complete && w.CoverageVerified &&
-		w.StrongAnchor != "" && w.DeviceLowerBound >= max(2, cfg.DeviceBound()) && len(w.Conflicts) == 0 {
+	router := r.ConfirmationBasis == AuthenticatedRouter && w.HasRouterProof() && r.AccountID == w.RouterProof.Account && r.SessionGeneration != ""
+	multiple := w.StrongAnchor == "ieee1905_association" && w.Complete && w.CoverageVerified && w.DeviceLowerBound >= max(2, cfg.DeviceBound()) && len(w.Conflicts) == 0
+	if r.State == "basis_present" && r.AccountID != "" && (router || multiple) {
 		state = "matched"
 	} else if r.State == "basis_present" {
 		r.State = "insufficient"
 		r.Reasons = append(r.Reasons, "confirmed_shared_observation_required")
 	}
 	expires := w.LastObservedAt.Add(cfg.Freshness())
+	if router {
+		expires = w.Activity.At.Add(cfg.Freshness())
+	}
 	if w.LastObservedAt.IsZero() || !now.Before(expires) {
 		state = "expired"
 		r.Reasons = []string{"shared_evidence_expired"}

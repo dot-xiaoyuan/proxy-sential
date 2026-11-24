@@ -76,6 +76,7 @@ type Options struct {
 
 type Server struct {
 	sharedObservationEnabled bool
+	sharedObservationStart   time.Time
 	managedIdentityFailures  *managedIdentityFailureCache
 	sharedReviews            *sharedReviewRuntime
 	deviceInventory          *deviceInventoryPageCache

@@ -38,7 +38,9 @@ func whitelistIP(raw string) (netip.Addr, error) {
 
 func NormalizeWhitelist(e *WhitelistEntry) error {
 	e.Type = strings.TrimSpace(e.Type)
-	e.Value = strings.TrimSpace(e.Value)
+	if e.Type != "username_contains" {
+		e.Value = strings.TrimSpace(e.Value)
+	}
 	e.Reason = strings.TrimSpace(e.Reason)
 	e.CampusID = strings.TrimSpace(e.CampusID)
 	e.AccessDomain = strings.TrimSpace(e.AccessDomain)
@@ -92,7 +94,7 @@ func NormalizeWhitelist(e *WhitelistEntry) error {
 			}
 			e.Value = a.String()
 		}
-	case "account", "group":
+	case "account", "group", "username_contains":
 		if strings.ContainsAny(e.Value, "\r\n\x00") {
 			return fmt.Errorf("账号或用户组标识格式不正确")
 		}
@@ -110,13 +112,15 @@ func (e WhitelistEntry) Active(now time.Time) bool {
 }
 
 func MatchWhitelist(entries []WhitelistEntry, subject WhitelistSubject, now time.Time) *WhitelistEntry {
-	for _, kind := range []string{"ip", "account", "mac", "network", "group"} {
+	for _, kind := range []string{"ip", "account", "mac", "network", "group", "username_contains"} {
 		for _, e := range entries {
 			if e.Type != kind || !e.Active(now) || e.CampusID != "" && e.CampusID != subject.CampusID || e.AccessDomain != "" && e.AccessDomain != subject.AccessDomain {
 				continue
 			}
 			matched := false
 			switch kind {
+			case "username_contains":
+				matched = e.Value != "" && strings.Contains(subject.AccountID, e.Value)
 			case "account":
 				matched = subject.AccountID != "" && e.Value == subject.AccountID
 			case "group":

@@ -52,6 +52,8 @@ type RecordRef struct {
 }
 
 type Window struct {
+	Activity          *OutletActivity   `json:"outlet_activity,omitempty"`
+	RouterProof       *RouterProof      `json:"authenticated_router,omitempty"`
 	ClientOuterVLAN   uint16            `json:"client_outer_vlan,omitempty"`
 	ClientVLAN        uint16            `json:"client_vlan,omitempty"`
 	MixedClientVLAN   bool              `json:"mixed_client_vlan,omitempty"`
@@ -87,6 +89,7 @@ type Window struct {
 	Conflicts        []string                            `json:"conflicts"`
 }
 type Result struct {
+	ConfirmationBasis string      `json:"confirmation_basis,omitempty"`
 	SessionGeneration string      `json:"session_generation,omitempty"`
 	Records           []RecordRef `json:"records,omitempty"`
 	ID                string      `json:"id"`
@@ -126,7 +129,8 @@ func Evaluate(w Window, cfg Config, ss []policy.Session, now time.Time, lookback
 	if now.Sub(w.LastObservedAt) > freshness {
 		return fail("stale_or_invalid_shared_window")
 	}
-	if !cfg.SkipCaptureVerification && len(w.Conflicts) > 0 {
+	router := w.HasRouterProof()
+	if !router && !cfg.SkipCaptureVerification && len(w.Conflicts) > 0 {
 		r.Reasons = append(r.Reasons, w.Conflicts...)
 		return fail("shared_observation_conflict")
 	}
@@ -164,15 +168,35 @@ func Evaluate(w Window, cfg Config, ss []policy.Session, now time.Time, lookback
 	}
 	identityWindow := w
 	identityWindow.CampusID, identityWindow.AccessDomain = r.CampusID, r.AccessDomain
+	if router {
+		identityWindow.From, identityWindow.To, identityWindow.LastObservedAt = w.Activity.At, w.Activity.At, w.Activity.At
+	}
 	account, generation, identityIssue := attributeObservationWindow(identityWindow, ss)
 	if identityIssue != "" {
 		return fail(identityIssue)
 	}
 	r.AccountID, r.SessionGeneration = account, generation
+	if router {
+		if account != w.RouterProof.Account || !routerSessionMatches(identityWindow, ss) || !now.Before(w.Activity.At.Add(cfg.Freshness())) {
+			return fail("router_outlet_session_changed_or_expired")
+		}
+		r.State, r.ConfirmationBasis, r.Confidence = "basis_present", AuthenticatedRouter, 0.95
+		r.Reasons = []string{"authenticated_router_access"}
+		r.SignalGroups = []string{"router_identity"}
+		r.EvidenceIDs = append(r.EvidenceIDs, w.RouterProof.RoleEvidenceID, w.Activity.EventID)
+		return r
+	}
 	// A login count describes authentication, not devices behind an exit.
 	// Re-evaluate the immutable physical evidence rather than trusting a count
 	// supplied by a producer or borrowing the account's session quota.
 	if w.StrongAnchor != "" {
+		if w.GatewayMAC != "" {
+			for _, s := range ss {
+				if s.State(w.To) == "active" && !strings.EqualFold(s.MAC, w.GatewayMAC) {
+					return fail("gateway_authentication_mac_mismatch")
+				}
+			}
+		}
 		assessment, present := AssessBehavior(w.ID, "", w, BehaviorRouterContext{}, cfg.DeviceBound())
 		if !present || assessment.CoverageState != "verified" || assessment.StrongAnchor != w.StrongAnchor || assessment.DeviceLowerBound != w.DeviceLowerBound {
 			return fail("shared_anchor_not_verified")

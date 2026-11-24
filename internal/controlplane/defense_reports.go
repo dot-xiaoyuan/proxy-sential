@@ -40,7 +40,35 @@ func (s *Server) handleSharedBehaviorReport(w http.ResponseWriter, r *http.Reque
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
-	report, err := reader.GetSharedBehaviorReport(ctx)
+	var report store.SharedBehaviorReport
+	var err error
+	if raw := r.URL.Query().Get("window"); raw != "" {
+		now := time.Now().UTC()
+		var from time.Time
+		switch raw {
+		case "15m":
+			from = now.Add(-15 * time.Minute)
+		case "1h":
+			from = now.Add(-time.Hour)
+		case "today":
+			loc := time.FixedZone("CST", 8*3600)
+			t := now.In(loc)
+			from = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc).UTC()
+		default:
+			writeError(w, 400, "invalid_window", "请选择有效时段")
+			return
+		}
+		scoped, ok := s.reader.(interface {
+			SharedFindingReport(context.Context, time.Time, time.Time) (store.SharedBehaviorReport, error)
+		})
+		if !ok {
+			writeError(w, 503, "shared_report_unavailable", "共享时段统计不可用")
+			return
+		}
+		report, err = scoped.SharedFindingReport(ctx, from, now)
+	} else {
+		report, err = reader.GetSharedBehaviorReport(ctx)
+	}
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "shared_behavior_report_unavailable", "共享观测统计读取失败")
 		return

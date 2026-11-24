@@ -165,6 +165,7 @@ func (s *DBStore) SharedIdentitySessions(ctx context.Context, m sharedaccess.Ide
 			return nil, err
 		}
 		end := from
+		coversPoint := false
 		n := 0
 		for health.Next() {
 			var a, b time.Time
@@ -173,6 +174,9 @@ func (s *DBStore) SharedIdentitySessions(ctx context.Context, m sharedaccess.Ide
 				return nil, err
 			}
 			n++
+			if !a.After(from) && b.After(from) {
+				coversPoint = true
+			}
 			if !a.After(end) && b.After(end) {
 				end = b
 			}
@@ -182,7 +186,7 @@ func (s *DBStore) SharedIdentitySessions(ctx context.Context, m sharedaccess.Ide
 		if err != nil {
 			return nil, err
 		}
-		if end.Before(to) || n > 1000 {
+		if end.Before(to) || from.Equal(to) && !coversPoint || n > 1000 {
 			issue = "identity_source_interrupted"
 		}
 	}

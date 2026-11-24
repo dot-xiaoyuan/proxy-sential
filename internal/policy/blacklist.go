@@ -1,6 +1,10 @@
 package policy
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
 // The blacklist is the admission counterpart of the whitelist: a matching
 // subject is eligible for immediate enforcement. It deliberately reuses the
@@ -9,6 +13,9 @@ import "time"
 type BlacklistEntry = WhitelistEntry
 
 func NormalizeBlacklist(entry *BlacklistEntry) error {
+	if strings.TrimSpace(entry.Type) == "username_contains" {
+		return fmt.Errorf("用户名包含规则仅适用于白名单")
+	}
 	return NormalizeWhitelist(entry)
 }
 

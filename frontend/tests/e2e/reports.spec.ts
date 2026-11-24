@@ -50,8 +50,8 @@ for (const [width, height] of [[390, 844], [1280, 800], [1440, 900]]) {
     await expect(trend.getByText('每 1 分钟的判定记录数', { exact: false })).toBeVisible()
     await expect(trend.getByRole('link', { name: '查看策略判定明细' })).toHaveAttribute('href', /decision_from=.+decision_to=/)
     const shared = page.getByRole('region', { name: '当前镜像共享行为' })
-    await expect(shared.locator('.report-total strong')).toHaveText('8')
-    await expect(shared.getByText('已确认共享')).toBeVisible()
+    await expect(shared.locator('.report-total strong')).toHaveText('2')
+    await expect(shared.getByRole('link',{name:'确认共享账号'})).toBeVisible()
     const coverage = page.getByRole('region', { name: '共享识别卡点' })
     await expect(coverage.getByText('握手采集')).toBeVisible()
     await expect(coverage.getByText('覆盖不足', { exact: true }).first()).toBeVisible()
@@ -63,7 +63,7 @@ for (const [width, height] of [[390, 844], [1280, 800], [1440, 900]]) {
       'GET /api/v1/session',
       'GET /api/v1/router-observations/summary',
       'GET /api/v1/shared-access/status',
-      'GET /api/v1/shared-access/observations/summary',
+      'GET /api/v1/shared-access/observations/summary?window=15m',
       'GET /api/v1/policy-decisions/shared-trend?window=1h',
       'GET /api/v1/policy-decisions/shared-trend?window=15m',
     ]))

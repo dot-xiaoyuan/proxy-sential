@@ -30,7 +30,7 @@ func (s *DBStore) ReadStreamSharedCaseRefs(ctx context.Context, observationID, g
 	var raw []byte
 	err := s.pg.db.QueryRowContext(ctx, `SELECT d.document FROM policy_decision_records d
  JOIN shared_behavior_observations o ON o.observation_id=d.observation_id
- WHERE d.observation_id=$1 AND o.generation_id=$2 AND o.current
+ WHERE d.observation_id=$1 AND o.generation_id=$2 AND d.result='matched'
  ORDER BY d.first_received_at DESC,d.decision_id DESC LIMIT 1`, observationID, generationID).Scan(&raw)
 	if err != nil {
 		return nil, err
@@ -43,7 +43,7 @@ func (s *DBStore) ReadStreamSharedCaseRefs(ctx context.Context, observationID, g
 	}
 	w := decision.Evidence
 	if w.ID != observationID || w.SensorID == "" || w.CampusID == "" || w.AccessDomain == "" || w.IP == "" ||
-		w.From.IsZero() || !w.To.After(w.From) || w.To.Sub(w.From) > 10*time.Minute {
+		w.From.IsZero() || w.To.Before(w.From) || w.To.Sub(w.From) > 10*time.Minute {
 		return nil, streamlog.ErrContentConflict
 	}
 	wanted := make(map[sharedCaseEventKey]bool)
@@ -62,11 +62,17 @@ func (s *DBStore) ReadStreamSharedCaseRefs(ctx context.Context, observationID, g
 		return nil
 	}
 	for _, record := range w.Records {
+		if w.HasRouterProof() && record.EventID != w.Activity.EventID {
+			continue
+		}
 		if err := add(record.Source, record.InstanceID, record.EventID); err != nil {
 			return nil, err
 		}
 	}
 	for _, fact := range w.CoverageFacts {
+		if w.HasRouterProof() {
+			break
+		}
 		if err := add(fact.Source, fact.Instance, fact.EventID); err != nil {
 			return nil, err
 		}

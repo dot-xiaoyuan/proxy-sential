@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -521,6 +522,13 @@ func (s *operationsState) savePostgres(tx *sql.Tx) error {
 		}
 		if affected == 0 {
 			return fmt.Errorf("case %s changed concurrently; retry the operation", item.CaseID)
+		}
+
+		if strings.HasPrefix(item.CaseID, "shared-shared-observe-") {
+			actionID := "shared-record:" + strings.TrimPrefix(item.CaseID, "shared-")
+			if _, err := tx.ExecContext(ctx, `UPDATE enforcement_actions SET case_id=$2 WHERE action_id=$1 AND case_id IS NULL AND mode='record_only' AND status='recorded'`, actionID, item.CaseID); err != nil {
+				return fmt.Errorf("link record-only action to case %s: %w", item.CaseID, err)
+			}
 		}
 
 		for _, comment := range item.Comments {

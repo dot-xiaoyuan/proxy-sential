@@ -45,6 +45,9 @@ func classifyHistoricalSharedDecision(raw []byte) (classification, reason string
 	if d.Evidence.ID == "" || len(d.Evidence.EventIDs) == 0 {
 		return "unverified", "saved_evidence_unavailable"
 	}
+	if d.Evidence.HasRouterProof() && d.AccountID == d.Evidence.RouterProof.Account && d.SessionGeneration != "" && d.Attribution.ConfirmationBasis == sharedaccess.AuthenticatedRouter {
+		return "", ""
+	}
 	if d.Evidence.StrongAnchor == "" {
 		return "insufficient_evidence", "strong_anchor_missing"
 	}

@@ -213,3 +213,28 @@ func TestHandshakeEvidenceProgramKeepsCompleteLargeSingleFrameHello(t *testing.T
 		}
 	}
 }
+
+func TestOutletReceiptForTCPWithoutTLS(t *testing.T) {
+	for _, tagged := range []bool{false, true} {
+		frame := flowSYNFrame(tagged, 2)
+		copy(frame[6:12], []byte{2, 0, 0, 0, 0, 1})
+		if size := runClassicBPF(outletHandshakeProgram, frame); size != 104 {
+			t.Fatalf("SYN capture length %d", size)
+		}
+		b := newCaptureBucket()
+		b.handshakeEnabled = true
+		b.handshakeCaptureV2 = true
+		b.addFrame(frame, nil)
+		if len(b.handshakes) != 1 {
+			t.Fatalf("missing outlet receipt: %+v", b)
+		}
+		for _, s := range b.handshakes {
+			if s.activity == nil || s.activity.MAC != "02:00:00:00:00:01" || len(s.samples) > 0 || s.truncated != 0 {
+				t.Fatalf("bad TCP activity %+v", s)
+			}
+		}
+		if size := runClassicBPF(outletHandshakeProgram, flowSYNFrame(tagged, 0x12)); size != 0 {
+			t.Fatal("reply accepted", size)
+		}
+	}
+}

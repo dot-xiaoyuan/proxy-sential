@@ -60,3 +60,19 @@ func TestWhitelistSuppressesPolicyWithoutDiscardingEvidence(t *testing.T) {
 		t.Fatal("whitelist extended cooldown repeatedly")
 	}
 }
+
+func TestWhitelistUsernameLiteralAndBlacklistIsolation(t *testing.T) {
+	now := time.Now().UTC()
+	entry := WhitelistEntry{Type: "username_contains", Value: ".*教", Reason: "学校豁免", CampusID: "ncu", Enabled: true, ValidFrom: now}
+	if err := NormalizeWhitelist(&entry); err != nil {
+		t.Fatal(err)
+	}
+	if NormalizeBlacklist(&entry) == nil {
+		t.Fatal("username pattern became an admission rule")
+	}
+	for login, want := range map[string]bool{"a.*教b": true, "aX教b": false, ".*教": true, "": false} {
+		if got := MatchWhitelist([]WhitelistEntry{entry}, WhitelistSubject{AccountID: login, CampusID: "ncu"}, now); (got != nil) != want {
+			t.Fatalf("login %q match %v", login, got)
+		}
+	}
+}

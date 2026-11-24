@@ -276,17 +276,19 @@ ORDER BY d.observed_at DESC,d.id DESC LIMIT 1`, job.EndpointID, mac, job.IP).Sca
 	}
 
 	raw = nil
-	err = s.pg.db.QueryRowContext(ctx, `SELECT observation,first_seen,last_seen,expires_at FROM shared_behavior_observations
-WHERE status='confirmed' AND coverage_state='verified'
+	var currentShared bool
+	err = s.pg.db.QueryRowContext(ctx, `SELECT observation,first_seen,last_seen,expires_at,current FROM shared_behavior_observations
+WHERE status='confirmed' AND (observation->>'confirmation_basis'='authenticated_router' OR (coverage_state='verified'
  AND coalesce(observation->>'strong_anchor','') IN('ieee1905_association','coexisting_device_models')
- AND coalesce((observation->>'device_lower_bound')::int,0)>=2
+ AND coalesce((observation->>'device_lower_bound')::int,0)>=2))
  AND (($1<>'' AND endpoint_id=$1) OR ($1='' AND $2<>'' AND ip=$2::inet))
-ORDER BY last_seen DESC,observation_id DESC LIMIT 1`, job.EndpointID, job.IP).Scan(&raw, &first, &last, &expires)
+ORDER BY last_seen DESC,observation_id DESC LIMIT 1`, job.EndpointID, job.IP).Scan(&raw, &first, &last, &expires, &currentShared)
 	if err == nil {
 		var item sharedaccess.BehaviorAssessment
 		if err = json.Unmarshal(raw, &item); err != nil {
 			return source, err
 		}
+		item.Current = currentShared
 		item.FirstSeen, item.LastSeen, item.ExpiresAt = first, last, expires
 		if existing || !last.Before(cutover) {
 			source.Shared = &item
@@ -586,7 +588,7 @@ func applySharedProfileSources(profile SharedDeviceProfile, sources sharedProfil
 	if shared := sources.Shared; shared != nil {
 		firstSeen, lastObserved = earliestProfileTime(firstSeen, shared.FirstSeen), latestProfileTime(lastObserved, shared.LastSeen)
 		profile.LastSharedAt, profile.LastSharedObservationID = &shared.LastSeen, shared.ObservationID
-		profile.CurrentShared = shared.ExpiresAt.After(now) && shared.WindowEnd.After(now.Add(-20*time.Minute))
+		profile.CurrentShared = (shared.ConfirmationBasis == "" || shared.Current) && shared.ExpiresAt.After(now) && shared.WindowEnd.After(now.Add(-20*time.Minute))
 		profile.SharedConfidence = shared.Confidence
 		if profile.Role == "" {
 			profile.Role, profile.RoleSource = "shared_gateway", "inferred_shared_gateway"

@@ -33,7 +33,7 @@ func TestMatchedSharedPolicyRecordsActionAndReportWithoutDelivery(t *testing.T) 
 		t.Fatal(err)
 	}
 	d := sharedaccess.ObservationDecision{DecisionID: "decision-1", ExecutionID: "execution-1", PolicyID: "shared-observe", PolicyRevision: 1, AccountID: "student-1", IP: "192.0.2.8", SessionGeneration: "session-1", ObservationID: "observation-1", EvidenceVersion: "evidence-1", Result: "matched", EvaluatedAt: time.Now(), EvidenceExpiresAt: time.Now().Add(time.Hour)}
-	if err := persistSharedObservationDecision(context.Background(), tx, d); err != nil {
+	if err := persistSharedObservationDecision(context.Background(), tx, &d); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -60,7 +60,7 @@ func TestInsufficientSharedPolicyDoesNotRecordActionOrReport(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := sharedaccess.ObservationDecision{DecisionID: "decision-2", PolicyID: "shared-observe", AccountID: "student-1", Result: "insufficient", EvaluatedAt: time.Now()}
-	if err := persistSharedObservationDecision(context.Background(), tx, d); err != nil {
+	if err := persistSharedObservationDecision(context.Background(), tx, &d); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {

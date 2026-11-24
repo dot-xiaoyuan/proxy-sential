@@ -12,7 +12,7 @@ import { statusColor } from '../shared/ui/status'
 
 type Entry=components['schemas']['WhitelistEntry']
 type Result=components['schemas']['WhitelistPage']
-const types={ip:'IP 地址',account:'认证账号',mac:'MAC 地址',network:'网段 / 范围',group:'用户组'}
+const types={ip:'IP 地址',account:'认证账号',mac:'MAC 地址',network:'网段 / 范围',group:'用户组',username_contains:'认证用户名包含'}
 const stateNames={active:'生效中',disabled:'已停用',expired:'已过期',scheduled:'待生效'}
 const state=(e:Entry,now:number):keyof typeof stateNames=>!e.enabled?'disabled':e.expires_at && Date.parse(e.expires_at)<=now?'expired':Date.parse(e.valid_from)>now?'scheduled':'active'
 const local=(value?:string)=>value?new Date(Date.parse(value)-new Date(value).getTimezoneOffset()*60000).toISOString().slice(0,16):''
@@ -25,6 +25,7 @@ export function WhitelistPage(){
  const [stateFilter,setStateFilter]=useUrlState('state','',Object.keys(stateNames),['whitelist_page'])
  const [searchInput,setSearchInput]=useState(keyword)
  const [open,setOpen]=useState(false),[editing,setEditing]=useState<Entry>(),[form]=Form.useForm<Entry>()
+ const selectedType=Form.useWatch('type',form)
  const query=new URLSearchParams({limit:String(pagination.pageSize),cursor:pagination.cursor,keyword,type:kind,state:stateFilter})
  const entries=useQuery({queryKey:['whitelist',query.toString()],queryFn:()=>request<Result>(`/whitelist?${query}`),refetchInterval:30000})
  const mutation=useMutation({mutationFn:({entry,id,op}:{entry:Partial<Entry>;id?:string;op?:string})=>request<Entry>(`/whitelist${id?`/${encodeURIComponent(id)}`:''}${op?`/${op}`:''}`,{method:'POST',body:JSON.stringify(entry)}),onSuccess:()=>{void cache.invalidateQueries({queryKey:['whitelist']})},onError:(e:Error)=>message.error(e.message)})
@@ -53,6 +54,6 @@ export function WhitelistPage(){
    </AppListSection>
    <AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={entries.data?.page.total} onChange={pagination.update}/>
   </section>
-  <AppFormModal okText="保存白名单" cancelText="取消" title={editing?'编辑白名单':'新增白名单'} open={open} confirmLoading={mutation.isPending&&!mutation.variables?.op} onCancel={()=>setOpen(false)} onOk={()=>void save()}><Form form={form} layout="vertical"><Form.Item name="type" label="白名单类型" rules={[{required:true}]}><Select options={Object.entries(types).map(([value,label])=>({value,label}))}/></Form.Item><Form.Item name="value" label="匹配值" rules={[{required:true,max:256}]}><Input placeholder="完整账号、MAC、用户组标识、IP、CIDR 或起始 IP-结束 IP"/></Form.Item><Form.Item name="reason" label="豁免原因" rules={[{required:true,min:2,max:1000}]}><Input.TextArea rows={2}/></Form.Item><Form.Item name="campus_id" label="限定校区"><Input placeholder="留空表示全部校区"/></Form.Item><Form.Item name="access_domain" label="限定接入域"><Input placeholder="填写时需同时指定校区"/></Form.Item><Form.Item name="valid_from" label="生效时间"><Input type="datetime-local"/></Form.Item><Form.Item name="expires_at" label="失效时间"><Input type="datetime-local"/></Form.Item><p className="whitelist-muted">生效时间留空表示立即生效，失效时间留空表示长期。</p><Form.Item name="enabled" label="启用" valuePropName="checked"><Switch/></Form.Item></Form></AppFormModal>
+  <AppFormModal okText="保存白名单" cancelText="取消" title={editing?'编辑白名单':'新增白名单'} open={open} confirmLoading={mutation.isPending&&!mutation.variables?.op} onCancel={()=>setOpen(false)} onOk={()=>void save()}><Form form={form} layout="vertical"><Form.Item name="type" label="白名单类型" rules={[{required:true}]}><Select options={Object.entries(types).map(([value,label])=>({value,label}))}/></Form.Item><Form.Item name="value" label="匹配值" rules={[{required:true,max:256}]}><Input placeholder={selectedType==='username_contains'?'按登录名原文匹配，区分大小写，支持特殊字符':'完整账号、MAC、用户组标识、IP、CIDR 或起始 IP-结束 IP'}/></Form.Item><Form.Item name="reason" label="豁免原因" rules={[{required:true,min:2,max:1000}]}><Input.TextArea rows={2}/></Form.Item><Form.Item name="campus_id" label="限定校区"><Input placeholder="留空表示全部校区"/></Form.Item><Form.Item name="access_domain" label="限定接入域"><Input placeholder="填写时需同时指定校区"/></Form.Item><Form.Item name="valid_from" label="生效时间"><Input type="datetime-local"/></Form.Item><Form.Item name="expires_at" label="失效时间"><Input type="datetime-local"/></Form.Item><p className="whitelist-muted">生效时间留空表示立即生效，失效时间留空表示长期。</p><Form.Item name="enabled" label="启用" valuePropName="checked"><Switch/></Form.Item></Form></AppFormModal>
  </main>
 }

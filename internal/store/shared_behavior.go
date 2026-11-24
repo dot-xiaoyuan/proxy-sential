@@ -15,6 +15,9 @@ import (
 )
 
 type SharedBehaviorQuery struct {
+	From          time.Time `json:",omitempty"`
+	To            time.Time `json:",omitempty"`
+	Outcome       string    `json:",omitempty"`
 	View          string
 	HistoryBasis  string
 	Keyword       string
@@ -90,17 +93,21 @@ type SharedBehaviorReader interface {
 
 func sharedBehaviorWhere(query SharedBehaviorQuery) (string, []any, error) {
 	clauses := []string{"current=true", "rule_version='" + sharedaccess.BehaviorRuleVersion + "'", "expires_at>now()", "window_end>now()-interval '20 minutes'", "window_end<=now()", "COALESCE(observation->'signal_groups','[]'::jsonb) ? 'ieee1905_association'", "generation_id=COALESCE((SELECT min(cancel_id) FROM stream_shared_source_cutovers c WHERE c.sensor_id=shared_behavior_observations.sensor_id AND c.state='active'),'')"}
-	if query.View != "" && query.View != "current" && query.View != "traffic" && query.View != "history" {
+	if query.View != "" && query.View != "current" && query.View != "traffic" && query.View != "history" && query.View != "period" {
 		return "", nil, fmt.Errorf("invalid shared behavior view")
 	}
 	if query.View == "traffic" {
-		clauses[5] = "(" + clauses[5] + " OR (signal_groups @> ARRAY['router_identity']::text[] AND observation ? 'authenticated_outlet') OR signal_groups @> ARRAY['ttl_path','tls_stack']::text[])"
+		clauses[5] = "(" + clauses[5] + " OR (signal_groups @> ARRAY['router_identity']::text[] AND (observation ? 'authenticated_outlet' OR observation->'router'->>'assessment_id' <> '')) OR signal_groups @> ARRAY['ttl_path','tls_stack']::text[])"
+	}
+	if query.View == "" || query.View == "current" {
+		clauses[5] = "(" + clauses[5] + " OR observation->>'confirmation_basis'='authenticated_router')"
 	}
 	if query.View == "history" {
 		clauses = []string{"NOT (current AND rule_version='" + sharedaccess.BehaviorRuleVersion + "' AND expires_at>now() AND window_end>now()-interval '20 minutes' AND window_end<=now() AND COALESCE(observation->'signal_groups','[]'::jsonb) ? 'ieee1905_association')"}
 		// Old scores and router projections do not prove downstream devices.
 		// Filter by evidence before choosing the newest historical episode.
 		strong := `(status IN ('confirmed','candidate') AND coverage_state='verified' AND COALESCE(observation->>'strong_anchor','') ='ieee1905_association' AND CASE WHEN observation->>'device_lower_bound' ~ '^[0-9]{1,9}$' THEN (observation->>'device_lower_bound')::int ELSE 0 END>=2 AND COALESCE(NULLIF(observation->'conflicts','null'::jsonb),'[]'::jsonb)='[]'::jsonb)`
+		strong = "(" + strong + " OR (status='confirmed' AND observation->>'confirmation_basis'='authenticated_router'))"
 		switch query.HistoryBasis {
 		case "", "shared":
 			clauses = append(clauses, strong)
@@ -117,11 +124,25 @@ func sharedBehaviorWhere(query SharedBehaviorQuery) (string, []any, error) {
 		args = append(args, value)
 		clauses = append(clauses, fmt.Sprintf(clause, len(args)))
 	}
+	if query.View == "period" {
+		if query.From.IsZero() || !query.To.After(query.From) || query.To.Sub(query.From) > 24*time.Hour {
+			return "", nil, fmt.Errorf("invalid observation time range")
+		}
+		clauses = []string{"observation_id IN (SELECT f.observation_id FROM shared_access_findings f WHERE f.observed_at >= $1 AND f.observed_at < $2"}
+		args = []any{query.From, query.To}
+		pred, ok := findingFilter(query.Outcome)
+		if !ok {
+			return "", nil, fmt.Errorf("invalid finding outcome")
+		}
+		clauses[0] += " AND " + pred + ")"
+		add("last_seen >= $%d", query.From)
+		add("last_seen < $%d", query.To)
+	}
 	if value := strings.TrimSpace(query.Keyword); value != "" {
 		args = append(args, value)
 		placeholder := fmt.Sprintf("$%d", len(args))
 		keyword := `observation_id ILIKE '%'||` + placeholder + `||'%' OR host(ip) ILIKE '%'||` + placeholder + `||'%' OR endpoint_id ILIKE '%'||` + placeholder + `||'%' OR observation->'router'->>'brand' ILIKE '%'||` + placeholder + `||'%' OR observation->'router'->>'model' ILIKE '%'||` + placeholder + `||'%'`
-		if query.View == "traffic" && query.SearchAccount {
+		if (query.View == "traffic" || query.View == "period") && query.SearchAccount {
 			keyword += " OR observation->>'account_id'=" + placeholder
 		}
 		clauses = append(clauses, "("+keyword+")")
@@ -156,6 +177,17 @@ func sharedBehaviorWhere(query SharedBehaviorQuery) (string, []any, error) {
 }
 
 type SharedBehaviorReport struct {
+	From          time.Time `json:"from"`
+	Outlets       int64     `json:"outlets"`
+	Accounts      int64     `json:"accounts"`
+	Unattributed  int64     `json:"unattributed"`
+	RouterPending int64     `json:"router_pending"`
+	Exempt        int64     `json:"exempt"`
+	Router        int64     `json:"router"`
+	Multiple      int64     `json:"multiple"`
+	Cases         int64     `json:"cases"`
+	Actions       int64     `json:"actions"`
+
 	AsOf          time.Time `json:"as_of"`
 	PendingReview int64     `json:"pending_review"`
 	Confirmed     int64     `json:"confirmed"`
@@ -169,17 +201,8 @@ func (s *DBStore) GetSharedBehaviorReport(ctx context.Context) (SharedBehaviorRe
 }
 
 func (s *PostgresStore) GetSharedBehaviorReport(ctx context.Context) (SharedBehaviorReport, error) {
-	where, args, err := sharedBehaviorWhere(SharedBehaviorQuery{View: "traffic"})
-	if err != nil {
-		return SharedBehaviorReport{}, err
-	}
-	var report SharedBehaviorReport
-	var total int64
-	err = s.db.QueryRowContext(ctx, `SELECT now(),count(*),count(*) FILTER(
- WHERE status='confirmed' AND coverage_state='verified' AND COALESCE(observation->>'strong_anchor','')<>'')
- FROM shared_behavior_observations `+where, args...).Scan(&report.AsOf, &total, &report.Confirmed)
-	report.PendingReview = total - report.Confirmed
-	return report, err
+	now := time.Now().UTC()
+	return s.sharedFindingReport(ctx, now.Add(-20*time.Minute), now)
 }
 
 func (s *PostgresStore) ListSharedBehavior(ctx context.Context, query SharedBehaviorQuery) (SharedBehaviorPage, error) {
@@ -204,7 +227,11 @@ func (s *PostgresStore) ListSharedBehavior(ctx context.Context, query SharedBeha
 	args = append(args, query.Limit+1)
 	// current is maintained as one row per gateway. Historical observations
 	// retain their immutable windows; both views read a bounded index page.
-	rows, err := s.db.QueryContext(ctx, `SELECT observation,last_seen,observation_id FROM shared_behavior_observations `+where+fmt.Sprintf(` ORDER BY last_seen DESC,observation_id DESC LIMIT $%d`, len(args)), args...)
+	selectList := "observation,last_seen,observation_id"
+	if query.View == "traffic" || query.Status == "confirmed" || query.View == "period" {
+		selectList = sharedFindingDocument + ",last_seen,observation_id"
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+selectList+` FROM shared_behavior_observations `+where+fmt.Sprintf(` ORDER BY last_seen DESC,observation_id DESC LIMIT $%d`, len(args)), args...)
 	if err != nil {
 		return SharedBehaviorPage{}, err
 	}
@@ -227,7 +254,11 @@ func (s *PostgresStore) ListSharedBehavior(ctx context.Context, query SharedBeha
 		if err = json.Unmarshal(raw, &item); err != nil {
 			return page, err
 		}
-		item.Current = query.View != "history"
+		if query.View != "period" {
+			item.Current = query.View != "history"
+		} else {
+			item.Current = false
+		}
 		page.Items = append(page.Items, item)
 		lastAt, lastID = at, id
 	}
@@ -247,9 +278,9 @@ func (s *PostgresStore) GetSharedBehavior(ctx context.Context, id string) (Share
 	var sensorID, campusID, accessDomain, ip string
 	var current bool
 	var windowStart, windowEnd, expires time.Time
-	if err := s.db.QueryRowContext(ctx, `SELECT observation,sensor_id,campus_id,access_domain,host(ip),
- current AND generation_id=COALESCE((SELECT min(cancel_id) FROM stream_shared_source_cutovers c WHERE c.sensor_id=o.sensor_id AND c.state='active'),''),
- window_start,window_end,expires_at FROM shared_behavior_observations o WHERE observation_id=$1`, id).Scan(&raw, &sensorID, &campusID, &accessDomain, &ip, &current, &windowStart, &windowEnd, &expires); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT `+sharedFindingDocument+`,sensor_id,campus_id,access_domain,host(ip),
+ current AND generation_id=COALESCE((SELECT min(cancel_id) FROM stream_shared_source_cutovers c WHERE c.sensor_id=shared_behavior_observations.sensor_id AND c.state='active'),''),
+ window_start,window_end,expires_at FROM shared_behavior_observations WHERE observation_id=$1`, id).Scan(&raw, &sensorID, &campusID, &accessDomain, &ip, &current, &windowStart, &windowEnd, &expires); err != nil {
 		if err == sql.ErrNoRows {
 			return SharedBehaviorDetail{}, false, nil
 		}
@@ -261,7 +292,7 @@ func (s *PostgresStore) GetSharedBehavior(ctx context.Context, id string) (Share
 	}
 	result.WindowStart, result.WindowEnd, result.ExpiresAt = windowStart.UTC(), windowEnd.UTC(), expires.UTC()
 	now := time.Now().UTC()
-	trafficEvidence := slices.Contains(result.SignalGroups, "ua_os") && slices.Contains(result.SignalGroups, "tls_stack")
+	trafficEvidence := slices.Contains(result.SignalGroups, "router_identity") && (len(result.OutletEvidence) > 0 || result.Router.AssessmentID != "") || slices.Contains(result.SignalGroups, "ttl_path") && slices.Contains(result.SignalGroups, "tls_stack")
 	result.Current = (slices.Contains(result.SignalGroups, "ieee1905_association") || trafficEvidence) && current && result.RuleVersion == sharedaccess.BehaviorRuleVersion && expires.After(now) && windowEnd.After(now.Add(-20*time.Minute)) && !windowEnd.After(now)
 	rows, err := s.db.QueryContext(ctx, `SELECT h.status,h.confidence,array_to_json(h.signal_groups),h.coverage_state,h.rule_version,h.observed_at,h.created_at
 FROM shared_behavior_observation_history h

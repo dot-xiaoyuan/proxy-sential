@@ -140,27 +140,23 @@ function CoverageTag({ state, aggregate = false }: { state?: string; aggregate?:
 }
 
 export function SharedBehaviorReport() {
-  const query = useReportQuery('shared-observation-summary', (signal) =>
-    request<components['schemas']['SharedBehaviorReport']>('/shared-access/observations/summary', { signal }))
-  return (
-    <ReportPanel title="当前镜像共享行为" query={query}>
-      {({ as_of, pending_review, confirmed }) => {
-        const total = pending_review + confirmed
-        return <>
-          <div className="report-total"><strong>{total.toLocaleString('zh-CN')}</strong><span>项有效观测</span></div>
-          <MeterChart label="镜像共享证据状态" max={total} items={[
-            { label: '待核验线索', value: pending_review, tone: 'amber' },
-            { label: '已确认共享', value: confirmed },
-          ]} />
-          <p className="report-meta">最近 20 分钟内仍有效的镜像观测。确认要求完整覆盖和强证据。</p>
-          <footer className="report-panel-footer">
-            <time className="report-meta" dateTime={as_of}>{formatDateTime(as_of)}</time>
-            <Link className="report-link" to="/shared-access?tab=associations">查看共享行为明细</Link>
-          </footer>
-        </>
-      }}
-    </ReportPanel>
-  )
+  const [window, setWindow] = useUrlState('sharing_window', '15m', ['15m','1h','today'])
+  const query = useReportQuery('shared-observation-summary-'+window, signal =>
+    request<components['schemas']['SharedBehaviorReport']>('/shared-access/observations/summary?window='+window, { signal }))
+  return <ReportPanel title="当前镜像共享行为" query={query} extra={<Select aria-label="共享统计时段" value={window} onChange={setWindow} options={[...windowOptions,{value:'today',label:'今日'}]} />}>
+    {report => {
+      const rows = [
+        ['outlets','候选出口',report.outlets],['accounts','已归属账号',report.accounts],['unattributed','缺少归属的出口',report.unattributed],
+        ['router_pending','路由器待核验账号',report.router_pending],['exempt','白名单豁免账号',report.exempt],
+        ['confirmed','确认共享账号',report.confirmed],['router','路由器共享账号',report.router],['multiple','多终端共享账号',report.multiple],
+        ['cases','共享案件',report.cases],['actions','仅记录处置',report.actions],
+      ] as const
+      const link=(outcome:string)=>'/shared-access?'+new URLSearchParams({tab:'associations',from:report.from??'',to:report.as_of,outcome})
+      return <><div className="report-total"><strong>{report.confirmed}</strong><span>个账号确认共享</span></div>
+        <dl className="sharing-report-counts">{rows.map(([key,label,count])=><div key={key}><dt><Link to={link(key)}>{label}</Link></dt><dd>{count?.toLocaleString('zh-CN')}</dd></div>)}</dl>
+        <footer className="report-panel-footer"><span className="report-meta">{formatDateTime(report.from)} 至 {formatDateTime(report.as_of)}</span><Link to={link('outlets')}>查看共享行为明细</Link></footer></>
+    }}
+  </ReportPanel>
 }
 
 export function SharingCoverageReport() {

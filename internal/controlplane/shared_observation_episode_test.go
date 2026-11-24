@@ -71,7 +71,7 @@ func TestMatchedSharedEpisodeContinuationOnlyAppendsDecision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := persistSharedObservationDecision(context.Background(), tx, d); err != nil {
+	if err := persistSharedObservationDecision(context.Background(), tx, &d); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -105,7 +105,7 @@ func TestMatchedSharedEpisodeFirstDecisionCreatesOneAction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := persistSharedObservationDecision(context.Background(), tx, d); err != nil {
+	if err := persistSharedObservationDecision(context.Background(), tx, &d); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {

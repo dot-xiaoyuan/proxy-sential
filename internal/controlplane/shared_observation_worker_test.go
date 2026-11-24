@@ -128,6 +128,7 @@ func TestSharedObservationPersistsAttributedMirrorTrafficWithoutRecordingAction(
 	mock.ExpectExec("INSERT INTO shared_behavior_observations").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO shared_device_profile_jobs").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO policy_decision_records").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO shared_access_findings").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("(?s)SELECT j.revision,j.lease_token.*FOR UPDATE OF j").WillReturnRows(sqlmock.NewRows([]string{"revision", "lease_token", "generation", "canceled", "mode"}).AddRow(1, "traffic-lease", "", "", "async"))
 	mock.ExpectExec("UPDATE shared_observation_jobs SET completed_revision").
 		WithArgs("job", 1, sqlmock.AnyArg(), false, attributedTrafficDocument("alice"), "insufficient", "partial", "resolved", now, true).
@@ -174,6 +175,8 @@ func TestSharedObservationCommitsOnlyRecordsAndRetriesFailedTransaction(t *testi
 		mock.ExpectCommit()
 		mock.ExpectBegin()
 		mock.ExpectExec("SET LOCAL synchronous_commit = on").WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec("pg_advisory_xact_lock_shared").WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectQuery("SELECT setting_value FROM control_plane_settings").WillReturnError(sql.ErrNoRows)
 		mock.ExpectExec("UPDATE shared_behavior_observations").WillReturnResult(sqlmock.NewResult(0, retiredRows))
 		mock.ExpectExec("(?s)INSERT INTO shared_behavior_observations.*IS DISTINCT FROM").WillReturnResult(sqlmock.NewResult(0, upsertedRows))
 		if retiredRows+upsertedRows > 0 {
@@ -193,6 +196,7 @@ func TestSharedObservationCommitsOnlyRecordsAndRetriesFailedTransaction(t *testi
 			expectation.WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectExec("INSERT INTO enforcement_actions").WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectExec("INSERT INTO behavior_report_outbox").WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectExec("INSERT INTO shared_access_findings").WillReturnResult(sqlmock.NewResult(0, 1))
 
 			mock.ExpectQuery("(?s)SELECT j.revision,j.lease_token.*FOR UPDATE OF j").WillReturnRows(sqlmock.NewRows([]string{"revision", "lease_token", "generation_id", "canceled_epoch", "mode"}).AddRow(1, "test-lease", "", "", "async"))
 			mock.ExpectExec("UPDATE shared_observation_jobs SET completed_revision").WillReturnResult(sqlmock.NewResult(0, 1))
@@ -569,5 +573,17 @@ func TestSharedObservationClaimMustCommitBeforeReadingEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 		db.Close()
+	}
+}
+
+func TestSharedWhitelistSuppressesBothPaths(t *testing.T) {
+	now := time.Now().UTC()
+	for _, basis := range []string{sharedaccess.AuthenticatedRouter, "ieee1905_association"} {
+		d := sharedaccess.ObservationDecision{DecisionID: "decision", ExecutionID: "exec", AccountID: "a.*x", Result: "matched", Violated: true, EvaluatedAt: now, Evidence: sharedaccess.Window{To: now, Activity: &sharedaccess.OutletActivity{At: now}}, Attribution: sharedaccess.Result{ConfirmationBasis: basis}}
+		item := sharedaccess.BehaviorAssessment{Status: "candidate"}
+		applySharedOutcome(&d, &item, []policy.WhitelistEntry{{ID: "school", Revision: 3, Type: "username_contains", Value: ".*", Enabled: true, ValidFrom: now.Add(-time.Hour)}}, nil)
+		if d.Result != "whitelist_suppressed" || d.ExecutionID != "" || d.Violated || item.Status == "confirmed" || item.Exemption.ID != "school" {
+			t.Fatal(d, item)
+		}
 	}
 }

@@ -193,7 +193,7 @@ export function CaseDetailsPage() {
                 <>
                   <Typography.Paragraph>
                     {sharedEvidence
-                      ? `当前完整窗口确认至少 ${sharedEvidence.device_lower_bound} 个终端共用出口；强锚点：${strongAnchorName(sharedEvidence.strong_anchor)}；覆盖状态：完整。`
+                      ? sharedEvidence.strong_anchor==='authenticated_router' ? '认证出口的镜像活动与路由器身份证据一致，已确认共享。' : `当前完整窗口确认至少 ${sharedEvidence.device_lower_bound} 个终端共用出口；强锚点：${strongAnchorName(sharedEvidence.strong_anchor)}；覆盖状态：完整。`
                       : routerEvidence
                         ? `${routerEvidence.brand || ""}${routerEvidence.model ? ` ${routerEvidence.model}` : ""}，设备角色为路由器，识别置信度 ${routerEvidence.confidence}%。`
                         : data.evidence_snapshot?.event_count

@@ -16,7 +16,7 @@ func handshakeSocketFilter(program []bpfInsn) []syscall.SockFilter {
 func attachHandshakeFilter(fd int, captureV2 bool) error {
 	program := handshakeProgram
 	if captureV2 {
-		program = handshakeEvidenceProgram
+		program = outletHandshakeProgram
 	}
 	return syscall.AttachLsf(fd, handshakeSocketFilter(program))
 }

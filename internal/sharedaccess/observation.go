@@ -29,7 +29,7 @@ func stableObservationID(value string) string {
 }
 
 func ObservationPolicy() policy.Definition {
-	return policy.Definition{ID: ObservationPolicyID, Name: "共享确认记录", Enabled: true, Mode: "manual", RecordOnly: true, Trigger: "shared_access", WindowSeconds: 600, Revision: 3, Stages: []policy.Stage{{Action: "disconnect"}}}
+	return policy.Definition{ID: ObservationPolicyID, Name: "共享确认记录", Enabled: true, Mode: "manual", RecordOnly: true, Trigger: "shared_access", WindowSeconds: 600, Revision: 4, Stages: []policy.Stage{{Action: "disconnect"}}}
 }
 
 func (c Config) Mapping(w Window) (IdentityMapping, error) {
@@ -56,6 +56,9 @@ func EvaluateObservation(w Window, cfg Config, sessions []policy.Session, now ti
 	m, err := cfg.Mapping(w)
 	if err != nil {
 		return fail(err.Error())
+	}
+	if w.HasRouterProof() {
+		return Evaluate(w, cfg, mappedObservationSessions(w, m, sessions), now, 10*time.Minute)
 	}
 	if !cfg.SkipCaptureVerification && len(w.Conflicts) > 0 {
 		result := fail("shared_observation_conflict")

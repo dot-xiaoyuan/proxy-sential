@@ -30,6 +30,7 @@ type RouterOptions struct {
 }
 
 type RouterEvidence struct {
+	Input               string `json:"input,omitempty"`
 	EvidenceID          string `json:"evidence_id"`
 	AssessmentID        string `json:"assessment_id"`
 	Kind                string `json:"kind"`
@@ -199,11 +200,14 @@ func AnalyzeRouters(events []normalized.Event, opts RouterOptions) (RouterResult
 			appendRouterEvidence(dedup, associations, association, event, at, ttl, asOf, RouterEvidence{
 				Kind: "router_signal", Brand: match.Brand, Series: match.Series, Model: match.Model, Role: match.Rule.Role,
 				SourceFamily: family, RawValue: match.RawValue, Strength: match.Rule.Strength, Score: score,
-				RuleID: match.Rule.ID, RuleVersion: match.Rule.Version, Explanation: match.Rule.Explanation,
+				Input: match.Input, RuleID: match.Rule.ID, RuleVersion: match.Rule.Version, Explanation: match.Rule.Explanation,
 				Conflict: match.Rule.Exclude, ConflictCode: match.Rule.ConflictCode, Exclusion: match.Rule.Exclude,
 				BrandReferenceOnly: match.BrandOnly,
 				BrandAttribution:   match.BrandAttribution,
 			})
+		}
+		if family == "ssdp" && advertisedGateway(event) {
+			appendRouterEvidence(dedup, associations, association, event, at, ttl, asOf, RouterEvidence{Kind: "router_signal", Role: "router", SourceFamily: family, RawValue: routerString(event.Payload["usn"]), Strength: "strong", Score: 60, RuleID: "ssdp-advertised-internet-gateway", RuleVersion: rules.Version, Explanation: "设备从自身 MAC 发布 InternetGatewayDevice 服务"})
 		}
 		if family == "ssdp" && routerContainsAny(inputs, "ssdp_type", "InternetGatewayDevice", "WANDevice") {
 			appendRouterEvidence(dedup, associations, association, event, at, ttl, asOf, RouterEvidence{Kind: "router_signal", Role: "router", SourceFamily: family, RawValue: firstRouterInput(inputs, "ssdp_type"), Strength: "medium", Score: 20, RuleID: "ssdp-internet-gateway", RuleVersion: rules.Version, Explanation: "SSDP InternetGatewayDevice 角色线索，不能单独确认路由器"})
@@ -376,6 +380,25 @@ func routerLibraryEvidence(catalog *fingerprint.Catalog, inputs map[string][]str
 		out = append(out, item)
 	}
 	return out
+}
+
+func advertisedGateway(e normalized.Event) bool {
+	var target string
+	switch routerString(e.Payload["ssdp_advertisement"]) {
+	case "alive":
+		target = routerString(e.Payload["nt"])
+	case "response":
+		target = routerString(e.Payload["st"])
+	default:
+		return false
+	}
+	target = strings.ToLower(strings.TrimSpace(target))
+	const prefix = "urn:schemas-upnp-org:device:internetgatewaydevice:"
+	if target != prefix+"1" && target != prefix+"2" {
+		return false
+	}
+	id, role, ok := strings.Cut(strings.ToLower(routerString(e.Payload["usn"])), "::")
+	return ok && strings.HasPrefix(id, "uuid:") && len(id) > 5 && role == target && routerString(e.Subject["mac"]) != ""
 }
 
 func routerInputs(event normalized.Event) map[string][]string {

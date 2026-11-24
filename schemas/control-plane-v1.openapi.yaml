@@ -811,7 +811,10 @@ paths:
       operationId: listSharedBehaviorObservations
       description: Passive shared-gateway behavior observations; requires cases:read. Results are shadow-only and never authorize enforcement.
       parameters:
-        - { name: view, in: query, description: The traffic view includes current mirror observations with repeated protocol evidence., schema: { type: string, enum: [current, traffic, history], default: current } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: outcome, in: query, schema: { type: string, enum: [outlets, accounts, unattributed, router_pending, exempt, confirmed, router, multiple, cases, actions] } }
+        - { name: view, in: query, description: The traffic view includes current mirror observations with repeated protocol evidence., schema: { type: string, enum: [current, traffic, history, period], default: current } }
         - { name: history_basis, in: query, description: 'History only. Defaults to verified multi-device evidence; clues explicitly opens weaker legacy records.', schema: { type: string, enum: [shared, clues] } }
         - { name: keyword, in: query, schema: { type: string } }
         - { name: ip, in: query, schema: { type: string } }
@@ -831,6 +834,8 @@ paths:
     get:
       operationId: getSharedBehaviorReport
       description: Current mirror observations within the existing unexpired traffic view. Requires cases:read.
+      parameters:
+        - { name: window, in: query, schema: { type: string, enum: [15m, 1h, today] } }
       responses:
         '200':
           description: Current observations split by presence of verified confirmation.
@@ -1207,7 +1212,7 @@ paths:
       description: Action exemptions only; requires policies:read. Detection evidence remains available.
       parameters:
         - { name: keyword, in: query, schema: { type: string } }
-        - { name: type, in: query, schema: { type: string, enum: [ip, account, mac, network, group] } }
+        - { name: type, in: query, schema: { type: string, enum: [ip, account, mac, network, group, username_contains] } }
         - { name: state, in: query, schema: { type: string, enum: [active, disabled, expired, scheduled] } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
         - { name: cursor, in: query, schema: { type: integer, minimum: 0 } }
@@ -1305,7 +1310,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/WhitelistMutation' }
+            schema: { $ref: '#/components/schemas/BlacklistMutation' }
       responses:
         '201':
           description: Blacklist entry created
@@ -1325,7 +1330,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/WhitelistMutation' }
+            schema: { $ref: '#/components/schemas/BlacklistMutation' }
       responses:
         '200':
           description: Blacklist entry updated
@@ -1347,7 +1352,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/WhitelistMutation' }
+            schema: { $ref: '#/components/schemas/BlacklistMutation' }
       responses:
         '200':
           description: Blacklist entry updated
@@ -5984,6 +5989,11 @@ components:
     SharedBehaviorRouterContext:
       type: object
       properties:
+        role_evidence_id: { type: string }
+        role_rule: { type: string }
+        role_event_id: { type: string }
+        role_source: { type: string }
+        role_input: { type: string }
         assessment_id: { type: string }
         brand: { type: string }
         model: { type: string }
@@ -6085,6 +6095,13 @@ components:
       type: object
       required: [observation_id, sensor_id, ip, status, confidence, signal_groups, reasons, conflicts, coverage_state, rule_version, first_seen, last_seen, window_start, window_end, expires_at, router, score_components, feature_samples, event_ids, known_device_count, known_devices]
       properties:
+        confirmation_basis: { type: string, enum: [authenticated_router, ieee1905_association] }
+        decision_id: { type: string }
+        case_id: { type: string }
+        action_id: { type: string }
+        review_reason: { type: string }
+        session_generation: { type: string }
+        whitelist_match: { $ref: '#/components/schemas/WhitelistEntry' }
         current: { type: boolean, description: Whether this observation remains in the current complete discovery window. }
         strong_anchor: { type: string, description: Current-window multi-client evidence supporting confirmation. }
         device_lower_bound: { type: integer, minimum: 0 }
@@ -6609,11 +6626,17 @@ components:
         role: { type: string, enum: [viewer, reviewer, operator, admin] }
         password: { type: string, minLength: 12 }
         disabled: { type: boolean }
+    BlacklistMutation:
+      allOf:
+        - { $ref: '#/components/schemas/WhitelistMutation' }
+        - type: object
+          properties:
+            type: { type: string, enum: [ip, account, mac, network, group] }
     WhitelistMutation:
       type: object
       required: [type, value, reason, enabled, revision]
       properties:
-        type: { type: string, enum: [ip, account, mac, network, group] }
+        type: { type: string, enum: [ip, account, mac, network, group, username_contains] }
         value: { type: string, maxLength: 256 }
         reason: { type: string, minLength: 2, maxLength: 1000 }
         campus_id: { type: string }
@@ -7674,13 +7697,21 @@ components:
       type: object
       required: [observation_id, generation_id, status, confidence, strong_anchor, device_lower_bound, coverage_state, window_start, window_end, signal_groups, reasons, source_event_ids, anchor_identities]
       properties:
+        role_evidence_id: { type: string }
+        role_rule: { type: string }
+        role_event_id: { type: string }
+        role_source: { type: string }
+        role_input: { type: string }
+        decision_id: { type: string }
+        session_generation: { type: string }
+        confirmation_basis: { type: string, enum: [authenticated_router, ieee1905_association] }
         observation_id: { type: string }
         generation_id: { type: string }
         status: { type: string, enum: [confirmed] }
         confidence: { type: integer, minimum: 0, maximum: 100 }
-        strong_anchor: { type: string, enum: [ieee1905_association, coexisting_device_models] }
-        device_lower_bound: { type: integer, minimum: 2 }
-        coverage_state: { type: string, enum: [verified] }
+        strong_anchor: { type: string, enum: [ieee1905_association, coexisting_device_models, authenticated_router] }
+        device_lower_bound: { type: integer, minimum: 0 }
+        coverage_state: { type: string, enum: [verified, partial] }
         window_start: { type: string, format: date-time }
         window_end: { type: string, format: date-time }
         signal_groups: { type: array, items: { type: string } }
@@ -8332,6 +8363,16 @@ components:
       required: [as_of, pending_review, confirmed]
       properties:
         as_of: { type: string, format: date-time }
+        from: { type: string, format: date-time }
+        outlets: { type: integer, minimum: 0 }
+        accounts: { type: integer, minimum: 0 }
+        unattributed: { type: integer, minimum: 0 }
+        router_pending: { type: integer, minimum: 0 }
+        exempt: { type: integer, minimum: 0 }
+        router: { type: integer, minimum: 0 }
+        multiple: { type: integer, minimum: 0 }
+        cases: { type: integer, minimum: 0 }
+        actions: { type: integer, minimum: 0 }
         pending_review: { type: integer, minimum: 0 }
         confirmed: { type: integer, minimum: 0 }
     SharedDecisionTrend:

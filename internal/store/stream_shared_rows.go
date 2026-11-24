@@ -77,7 +77,7 @@ func (s *DBStore) readStreamSharedRowsWithRefs(ctx context.Context, scope Shared
 				if err != nil {
 					return nil, nil, nil, err
 				}
-				base := sharedObservationEvent{PayloadVersions: 1, Timestamp: observed.UTC().Format(time.RFC3339Nano), EventID: event.EventID, Source: item.Source, Instance: item.CollectorInstanceID, IP: item.SubjectIP, Payload: string(payload)}
+				base := sharedObservationEvent{PayloadVersions: 1, Timestamp: observed.UTC().Format(time.RFC3339Nano), EventID: event.EventID, Source: item.Source, Instance: item.CollectorInstanceID, SubjectMAC: item.SubjectMAC, IP: item.SubjectIP, Payload: string(payload)}
 				if source == "handshake-sidecar" {
 					handshakes = append(handshakes, base)
 				} else {

@@ -79,6 +79,15 @@ func newCaptureBucket() *captureBucket {
 
 func (b *captureBucket) addFrame(frame []byte, scope *normalized.CaptureScope) {
 	if b.handshakeEnabled {
+		if b.handshakeCaptureV2 {
+			if syn, ok := parseFlowSYNFrame(frame); ok && !syn.Response && syn.SourceIP.Is4() {
+				ethernet, valid := parseEthernetFrame(frame)
+				if valid && ethernet.source != [6]byte{} && ethernet.source[0]&1 == 0 {
+					b.recordHandshake(handshakeObservation{IP: syn.SourceIP, MAC: ethernet.source, ClientVLAN: ethernet.innerVLAN, ClientOuterVLAN: ethernet.outerVLAN, ObservedAt: time.Now().UTC(), DestinationPort: syn.DestinationPort})
+				}
+				return
+			}
+		}
 		b.addHandshake(frame)
 	}
 	if value, ok := parsePacketFrame(frame); ok && value.TTL > 0 {

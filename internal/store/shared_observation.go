@@ -94,6 +94,7 @@ func (s *DBStore) enqueueSharedObservations(ctx context.Context, events []normal
 }
 
 type sharedObservationEvent struct {
+	SubjectMAC      string `json:"subject_mac,omitempty"`
 	PayloadVersions int    `json:"payload_versions"`
 	Timestamp       string `json:"timestamp"`
 	EventID         string `json:"event_id"`
@@ -170,7 +171,7 @@ func (s *DBStore) ReadSharedObservation(ctx context.Context, scope SharedObserva
 		}
 	}
 	if s.pg != nil {
-		item, err = s.assessOutlet(ctx, cfg, w, item)
+		item, err = s.assessOutlet(ctx, cfg, &w, item)
 	}
 	return w, item, err
 }
@@ -212,6 +213,9 @@ func buildHandshakeObservation(scope SharedObservationScope, cfg sharedaccess.Co
 		}
 		seenRows[rowKey] = value
 		var payload struct {
+			Activity *sharedaccess.OutletActivity   `json:"outlet_activity"`
+			MAC      string                         `json:"mac"`
+			Mixed    bool                           `json:"activity_mixed_vlan"`
 			Schema   string                         `json:"handshake_schema"`
 			Samples  []sharedaccess.HandshakeSample `json:"feature_samples"`
 			Coverage sharedaccess.CoverageV2        `json:"capture_coverage"`
@@ -233,6 +237,33 @@ func buildHandshakeObservation(scope SharedObservationScope, cfg sharedaccess.Co
 			continue
 		}
 		contributed := false
+		if payload.Mixed {
+			w.MixedClientVLAN = true
+		}
+		observeActivity := func(a sharedaccess.OutletActivity) {
+			if row.Instance == "" || row.EventID == "" || row.SubjectMAC != "" && !strings.EqualFold(row.SubjectMAC, a.MAC) || !validUnicastMAC(a.MAC) || a.MAC != payload.MAC || a.At.Before(now.Add(-10*time.Minute)) || a.At.After(now) || a.At.Before(payload.Coverage.From) || !a.At.Before(payload.Coverage.To) {
+				return
+			}
+			// Stream capture assigns an archive key after the collector has encoded
+			// the packet. Always cite the enclosing verified record's durable ID.
+			a.EventID = row.EventID
+			if w.Activity != nil && (w.Activity.MAC != a.MAC || w.Activity.VLAN != a.VLAN || w.Activity.OuterVLAN != a.OuterVLAN) {
+				w.MixedClientVLAN = true
+			}
+			if w.Activity == nil || a.At.After(w.Activity.At) {
+				w.Activity = &a
+			}
+			if w.From.IsZero() || a.At.Before(w.From) {
+				w.From = a.At
+			}
+			if a.At.After(w.To) {
+				w.To = a.At
+			}
+			contributed = true
+		}
+		if payload.Activity != nil {
+			observeActivity(*payload.Activity)
+		}
 		if payload.Schema != "handshake-samples/v1" {
 			legacy = true
 			at, e := time.Parse(time.RFC3339Nano, row.Timestamp)
@@ -262,6 +293,9 @@ func buildHandshakeObservation(scope SharedObservationScope, cfg sharedaccess.Co
 			}
 			features := sharedaccess.HandshakeFeatures(sample.Family, sample.Value)
 			if _, ok := features["tls_stack"]; ok && sample.DestinationPort == 443 {
+				if payload.Activity == nil {
+					observeActivity(sharedaccess.OutletActivity{MAC: payload.MAC, At: sample.ObservedAt, EventID: row.EventID, VLAN: sample.ClientVLAN, OuterVLAN: sample.ClientOuterVLAN})
+				}
 				if sample.ClientVLAN != 0 {
 					if w.ClientVLAN != 0 && (w.ClientVLAN != sample.ClientVLAN || w.ClientOuterVLAN != sample.ClientOuterVLAN) {
 						w.MixedClientVLAN = true
@@ -332,6 +366,9 @@ func buildHandshakeObservation(scope SharedObservationScope, cfg sharedaccess.Co
 	}
 	sort.Strings(w.Sources)
 	sort.Strings(w.EventIDs)
+	if w.Activity != nil {
+		w.ClientVLAN, w.ClientOuterVLAN = w.Activity.VLAN, w.Activity.OuterVLAN
+	}
 	w.LastObservedAt = w.To
 	w.UAOS = featureValues(w.Samples["ua_os"])
 	w.TTLPaths = featureValues(w.Samples["ttl_path"])

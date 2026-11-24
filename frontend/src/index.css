@@ -6181,3 +6181,7 @@ pre.wrap-code {
   white-space: nowrap;
   flex-shrink: 0;
 }
+
+.sharing-report-counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px 20px; }
+.sharing-report-counts > div { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; border-bottom: 1px solid #e2e8f0; padding: 4px 0; }
+.sharing-report-counts dd { margin: 0; font-variant-numeric: tabular-nums; }

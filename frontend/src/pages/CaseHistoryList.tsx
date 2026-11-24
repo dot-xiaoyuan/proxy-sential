@@ -22,7 +22,7 @@ export function CaseHistoryList({ caseId, kind, total }: { caseId: string; kind:
           {'snapshot_id' in row ? <>
             {row.evidence.shared_access ? <>
               <Typography.Paragraph>
-                已确认共享 · {row.evidence.shared_access.confidence}% · 当前设备下界 {row.evidence.shared_access.device_lower_bound} 台
+                已确认共享 · {row.evidence.shared_access.confidence}% · {row.evidence.shared_access.strong_anchor === 'authenticated_router' ? '认证路由器接入' : '至少 '+row.evidence.shared_access.device_lower_bound+' 台终端'}
               </Typography.Paragraph>
               <Typography.Paragraph type="secondary">
                 {formatDateTime(row.evidence.shared_access.window_start)} 至 {formatDateTime(row.evidence.shared_access.window_end)} · {row.ruleset_version || ''}

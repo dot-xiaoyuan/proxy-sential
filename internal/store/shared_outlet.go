@@ -127,48 +127,98 @@ func (s *DBStore) verifyOutlet(ctx context.Context, cfg sharedaccess.Config, w s
 
 func (s *DBStore) outletRouter(ctx context.Context, w sharedaccess.Window, l outletLocator) (sharedaccess.BehaviorRouterContext, error) {
 	var r sharedaccess.BehaviorRouterContext
-	err := s.pg.db.QueryRowContext(ctx, `SELECT r.assessment_id,r.role,r.status,r.confidence,r.brand,r.model FROM router_assessments r
- WHERE regexp_replace(lower(r.mac),'[^0-9a-f]','','g')=$1 AND r.mac<>'' AND r.role='router' AND r.status IN ('likely','confirmed')
+	at := w.To
+	if w.Activity != nil {
+		at = w.Activity.At
+	}
+	err := s.pg.db.QueryRowContext(ctx, `SELECT r.assessment_id,r.role,r.status,r.confidence,r.brand,r.model,
+ CASE WHEN f.explicit_role OR (r.status='confirmed' AND f.independent_families>=2) THEN f.evidence_id ELSE '' END,f.rule_id,f.source_family,f.input,f.event_id
+ FROM router_assessments r JOIN LATERAL (
+ SELECT f.evidence_id,f.rule_id,f.source_family,coalesce(f.data->>'input','') AS input,coalesce(f.data->'event_ids'->>0,'') AS event_id,
+ dense_rank() OVER (ORDER BY f.source_family) + dense_rank() OVER (ORDER BY f.source_family DESC) - 1 AS independent_families,
+ (f.rule_id IN ('ssdp-advertised-internet-gateway','first-hop-redundancy-router-role') OR
+ (f.data->>'strength'='strong' AND coalesce(f.data->>'model','')<>'' AND
+ (f.source_family='dhcp' AND f.data->>'input'='vendor_class' OR f.source_family IN ('lldp','cdp','snmp_management','ssdp') AND f.data->>'input' IN ('lldp_system_description','cdp_platform','cdp_software','http_server','software')))) IS TRUE AS explicit_role
+ FROM router_evidence_facts f WHERE f.assessment_id=r.assessment_id AND f.data->>'sensor_id'=$3 AND f.data->>'role'='router'
+ AND lower(f.mac)=lower(r.mac) AND f.data->>'association_quality' IN ('mac','endpoint')
+ AND (f.vlan='' OR f.vlan=$4 OR f.vlan=$5) AND f.first_seen<=$2 AND f.expires_at>$2 AND NOT f.conflict AND NOT f.exclusion AND f.score>0
+ AND f.source_family NOT IN ('shared_gateway_behavior','client_fingerprint','weak_stack') AND coalesce(f.data->>'brand_reference_only','false')<>'true'
+ ORDER BY explicit_role DESC,f.score DESC,f.last_seen DESC,f.evidence_id LIMIT 1) f ON true
+ WHERE r.device_key='mac:'||$1 AND r.mac<>'' AND r.role='router'
+ AND (r.status IN ('likely','confirmed') OR f.explicit_role)
  AND NOT r.ambiguous AND NOT r.brand_reference_only AND NOT r.infrastructure AND r.expires_at>$2 AND r.first_seen<=$2
- AND EXISTS(SELECT 1 FROM router_evidence_facts f WHERE f.assessment_id=r.assessment_id AND f.data->>'sensor_id'=$3 AND f.data->>'role'='router' AND (f.vlan='' OR f.vlan=$4) AND f.first_seen<=$2 AND f.expires_at>$2 AND NOT f.conflict AND NOT f.exclusion AND f.score>0 AND f.source_family<>'shared_gateway_behavior' AND coalesce(f.data->>'brand_reference_only','false')<>'true')
- ORDER BY r.status_rank DESC,r.confidence DESC,r.last_seen DESC,r.assessment_id LIMIT 1`, strings.ReplaceAll(l.mac, ":", ""), w.To, w.SensorID, l.vlan).Scan(&r.AssessmentID, &r.Role, &r.Status, &r.Confidence, &r.Brand, &r.Model)
+ AND NOT EXISTS (SELECT 1 FROM router_evidence_facts x WHERE x.assessment_id=r.assessment_id AND (x.conflict OR x.exclusion)
+ AND coalesce(x.data->>'conflict_code','')<>'ordinary_endpoint' AND x.first_seen<=$2 AND x.expires_at>$2)
+ ORDER BY (r.status='confirmed' OR f.explicit_role) DESC,r.status_rank DESC,r.confidence DESC,r.assessment_id LIMIT 1`, l.mac, at, w.SensorID, l.vlan, strconv.Itoa(int(w.ClientVLAN))).Scan(&r.AssessmentID, &r.Role, &r.Status, &r.Confidence, &r.Brand, &r.Model, &r.RoleEvidenceID, &r.RoleRule, &r.RoleSource, &r.RoleInput, &r.RoleEventID)
 	if err == sql.ErrNoRows {
 		return r, nil
 	}
 	return r, err
 }
 
-func (s *DBStore) assessOutlet(ctx context.Context, cfg sharedaccess.Config, w sharedaccess.Window, item sharedaccess.BehaviorAssessment) (sharedaccess.BehaviorAssessment, error) {
+func (s *DBStore) assessOutlet(ctx context.Context, cfg sharedaccess.Config, window *sharedaccess.Window, item sharedaccess.BehaviorAssessment) (sharedaccess.BehaviorAssessment, error) {
+	w := *window
 	m, err := cfg.Mapping(w)
-	if err != nil || !item.Current || len(w.EventIDs) == 0 || (len(w.TLSStacks) == 0 && w.GatewayMAC == "") {
+	if err != nil || !item.Current || len(w.EventIDs) == 0 || (w.Activity == nil && len(w.TLSStacks) == 0 && w.GatewayMAC == "") {
 		return item, nil
 	}
 	secondary := w.HasRepeatedFeature("ttl_path") && w.HasRepeatedFeature("tls_stack")
-	l, _, err := s.locateOutlet(ctx, m, w.IP, "")
-	if err != nil || l.ip == "" {
+	l, exists, err := s.locateOutlet(ctx, m, w.IP, "")
+	if err != nil {
 		return item, err
 	}
-	if w.MixedClientVLAN || !outletVLANMatches(m.Source, l.vlan, w.ClientOuterVLAN, w.ClientVLAN) || w.GatewayMAC != "" && w.GatewayMAC != l.mac {
+	observed := l
+	if w.Activity != nil {
+		observed.mac = w.Activity.MAC
+	}
+	var r sharedaccess.BehaviorRouterContext
+	if observed.mac != "" {
+		r, err = s.outletRouter(ctx, w, observed)
+		if err != nil {
+			return item, err
+		}
+	}
+	if r.AssessmentID != "" {
+		item.Router = r
+		item.EndpointID = "mac:" + observed.mac
+		item.Confidence = max(item.Confidence, min(59, r.Confidence))
+		if !slices.Contains(item.SignalGroups, "router_identity") {
+			item.SignalGroups = append(item.SignalGroups, "router_identity")
+		}
+		item.ScoreComponents = append(item.ScoreComponents, sharedaccess.BehaviorScoreComponent{Signal: "router_identity", Score: min(59, r.Confidence), Explanation: "镜像源 MAC 对应路由器画像"})
+	} else if !secondary && w.StrongAnchor == "" {
 		return item, nil
 	}
-	r, err := s.outletRouter(ctx, w, l)
-	if err != nil || (r.AssessmentID == "" && !secondary && w.StrongAnchor == "") {
-		return item, err
+	if l.ip == "" {
+		item.ReviewReason = "缺少同窗认证绑定"
+		if exists {
+			item.ReviewReason = "认证绑定冲突或无效"
+		}
+		return item, nil
 	}
-	b, err := s.verifyOutlet(ctx, cfg, w, m, l)
+	if w.MixedClientVLAN || !outletVLANMatches(m.Source, l.vlan, w.ClientOuterVLAN, w.ClientVLAN) || w.GatewayMAC != "" && w.GatewayMAC != l.mac || w.Activity != nil && w.Activity.MAC != l.mac {
+		item.ReviewReason = "镜像 MAC 或 VLAN 与认证出口不符"
+		return item, nil
+	}
+	identityWindow := w
+	if r.AssessmentID != "" && w.Activity != nil {
+		identityWindow.From, identityWindow.To, identityWindow.LastObservedAt = w.Activity.At, w.Activity.At, w.Activity.At
+	}
+	b, err := s.verifyOutlet(ctx, cfg, identityWindow, m, l)
 	if err != nil || b == nil {
+		item.ReviewReason = "认证会话未覆盖证据时窗或身份源有缺口"
 		return item, err
 	}
 	item.AccountID = b.Account
 	item.EndpointID = "mac:" + b.MAC
 	item.OutletEvidence, _ = json.Marshal(b)
 	if r.AssessmentID != "" {
-		item.Router = r
-		item.Confidence = max(item.Confidence, min(59, r.Confidence))
-		if !slices.Contains(item.SignalGroups, "router_identity") {
-			item.SignalGroups = append(item.SignalGroups, "router_identity")
+		item.ReviewReason = "路由器角色证据不足"
+		if r.RoleEvidenceID != "" && r.RoleEventID != "" && w.Activity != nil && (l.vlan == "" || w.Activity.VLAN != 0) {
+			window.RouterProof = &sharedaccess.RouterProof{AssessmentID: r.AssessmentID, RoleEvidenceID: r.RoleEvidenceID, RuleID: r.RoleRule, Account: b.Account, Session: b.Session, MAC: b.MAC}
+			window.ID = policy.StableID(w.ID, r.AssessmentID, r.RoleEvidenceID, b.Account, b.Session, w.Activity.EventID)
+			item.ObservationID = window.ID
 		}
-		item.ScoreComponents = append(item.ScoreComponents, sharedaccess.BehaviorScoreComponent{Signal: "router_identity", Score: min(59, r.Confidence), Explanation: "认证会话的 MAC 命中独立路由器角色证据"})
 		item.Reasons = append([]string{"认证出口有镜像活动，认证 MAC 对应路由器画像"}, item.Reasons...)
 	}
 	return item, nil

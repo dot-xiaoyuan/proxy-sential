@@ -5725,6 +5725,11 @@ export interface components {
             explanation: string;
         };
         SharedBehaviorRouterContext: {
+            role_evidence_id?: string;
+            role_rule?: string;
+            role_event_id?: string;
+            role_source?: string;
+            role_input?: string;
             assessment_id?: string;
             brand?: string;
             model?: string;
@@ -5838,6 +5843,14 @@ export interface components {
             history: components["schemas"]["SharedDeviceProfileHistory"][];
         };
         SharedBehaviorAssessment: {
+            /** @enum {string} */
+            confirmation_basis?: "authenticated_router" | "ieee1905_association";
+            decision_id?: string;
+            case_id?: string;
+            action_id?: string;
+            review_reason?: string;
+            session_generation?: string;
+            whitelist_match?: components["schemas"]["WhitelistEntry"];
             /** @description Whether this observation remains in the current complete discovery window. */
             current?: boolean;
             /** @description Current-window multi-client evidence supporting confirmation. */
@@ -6490,9 +6503,13 @@ export interface components {
             password?: string;
             disabled?: boolean;
         };
+        BlacklistMutation: components["schemas"]["WhitelistMutation"] & {
+            /** @enum {string} */
+            type?: "ip" | "account" | "mac" | "network" | "group";
+        };
         WhitelistMutation: {
             /** @enum {string} */
-            type: "ip" | "account" | "mac" | "network" | "group";
+            type: "ip" | "account" | "mac" | "network" | "group" | "username_contains";
             value: string;
             reason: string;
             campus_id?: string;
@@ -7376,16 +7393,25 @@ export interface components {
             independent_signal_groups?: ("protocol_rule" | "ttl_path" | "tls_client_stack" | "ua_os" | "dhcp_device_family" | "identity_mac" | "identity_access")[];
         };
         SharedAccessCaseEvidence: {
+            role_evidence_id?: string;
+            role_rule?: string;
+            role_event_id?: string;
+            role_source?: string;
+            role_input?: string;
+            decision_id?: string;
+            session_generation?: string;
+            /** @enum {string} */
+            confirmation_basis?: "authenticated_router" | "ieee1905_association";
             observation_id: string;
             generation_id: string;
             /** @enum {string} */
             status: "confirmed";
             confidence: number;
             /** @enum {string} */
-            strong_anchor: "ieee1905_association" | "coexisting_device_models";
+            strong_anchor: "ieee1905_association" | "coexisting_device_models" | "authenticated_router";
             device_lower_bound: number;
             /** @enum {string} */
-            coverage_state: "verified";
+            coverage_state: "verified" | "partial";
             /** Format: date-time */
             window_start: string;
             /** Format: date-time */
@@ -7882,6 +7908,17 @@ export interface components {
         SharedBehaviorReport: {
             /** Format: date-time */
             as_of: string;
+            /** Format: date-time */
+            from?: string;
+            outlets?: number;
+            accounts?: number;
+            unattributed?: number;
+            router_pending?: number;
+            exempt?: number;
+            router?: number;
+            multiple?: number;
+            cases?: number;
+            actions?: number;
             pending_review: number;
             confirmed: number;
         };
@@ -10918,8 +10955,11 @@ export interface operations {
     listSharedBehaviorObservations: {
         parameters: {
             query?: {
+                from?: string;
+                to?: string;
+                outcome?: "outlets" | "accounts" | "unattributed" | "router_pending" | "exempt" | "confirmed" | "router" | "multiple" | "cases" | "actions";
                 /** @description The traffic view includes current mirror observations with repeated protocol evidence. */
-                view?: "current" | "traffic" | "history";
+                view?: "current" | "traffic" | "history" | "period";
                 /** @description History only. Defaults to verified multi-device evidence; clues explicitly opens weaker legacy records. */
                 history_basis?: "shared" | "clues";
                 keyword?: string;
@@ -10957,7 +10997,9 @@ export interface operations {
     };
     getSharedBehaviorReport: {
         parameters: {
-            query?: never;
+            query?: {
+                window?: "15m" | "1h" | "today";
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -11683,7 +11725,7 @@ export interface operations {
         parameters: {
             query?: {
                 keyword?: string;
-                type?: "ip" | "account" | "mac" | "network" | "group";
+                type?: "ip" | "account" | "mac" | "network" | "group" | "username_contains";
                 state?: "active" | "disabled" | "expired" | "scheduled";
                 limit?: number;
                 cursor?: number;
@@ -11903,7 +11945,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["WhitelistMutation"];
+                "application/json": components["schemas"]["BlacklistMutation"];
             };
         };
         responses: {
@@ -11950,7 +11992,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["WhitelistMutation"];
+                "application/json": components["schemas"]["BlacklistMutation"];
             };
         };
         responses: {
@@ -12005,7 +12047,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["WhitelistMutation"];
+                "application/json": components["schemas"]["BlacklistMutation"];
             };
         };
         responses: {

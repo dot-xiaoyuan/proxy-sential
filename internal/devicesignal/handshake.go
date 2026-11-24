@@ -268,6 +268,8 @@ func parseHTTPRequestHeaders(payload []byte) (host, userAgent string, ok bool) {
 // bucket. Emitting one summary per device keeps the event volume at the same order as the
 // TTL events, which already pass through the same identity path.
 type handshakeSummary struct {
+	activity                       *sharedaccess.OutletActivity
+	activityMixedVLAN              bool
 	samples                        map[string]sharedaccess.HandshakeSample
 	sampleCounts                   map[string]int
 	overflow, truncated            int
@@ -355,6 +357,17 @@ func (s *handshakeSummary) addFeature(o handshakeFeatureObservation, sampleBudge
 
 func (s *handshakeSummary) addMetadata(o handshakeObservation) {
 	s.count++
+	if !o.ObservedAt.IsZero() && !s.activityMixedVLAN {
+		if s.activity != nil && (s.activity.VLAN != o.ClientVLAN || s.activity.OuterVLAN != o.ClientOuterVLAN) {
+			s.activityMixedVLAN = true
+			s.activity = nil
+		} else {
+			if s.activity == nil {
+				s.activity = &sharedaccess.OutletActivity{MAC: net.HardwareAddr(o.MAC[:]).String(), VLAN: o.ClientVLAN, OuterVLAN: o.ClientOuterVLAN}
+			}
+			s.activity.At = o.ObservedAt
+		}
+	}
 	if o.Truncated {
 		s.truncated++
 	}
@@ -438,6 +451,14 @@ func writeHandshakeBucket(path, sensorID, interfaceName, instance string, scope 
 				"hosts": sortedHandshakeValues(summary.hosts), "user_agents": sortedHandshakeValues(summary.userAgents),
 			},
 			Confidence: 0.8,
+		}
+		if summary.activity != nil {
+			activity := *summary.activity
+			activity.EventID = event.EventID
+			event.Payload["outlet_activity"] = activity
+		}
+		if summary.activityMixedVLAN {
+			event.Payload["activity_mixed_vlan"] = true
 		}
 		event = scope.Apply(event)
 		if err := encoder.Encode(event); err != nil {

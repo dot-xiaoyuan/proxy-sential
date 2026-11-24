@@ -189,3 +189,34 @@ func TestRecordOnlyDecisionRejectsEachWeakProof(t *testing.T) {
 		})
 	}
 }
+
+func TestAuthenticatedRouterWithoutDownstreamClients(t *testing.T) {
+	now := time.Now().UTC()
+	const mac = "02:00:00:00:00:04"
+	w := Window{ID: "obs", RuleVersion: RuleVersion, SensorID: "mirror", CampusID: "ncu", AccessDomain: "capture", IP: "192.0.2.4", From: now.Add(-time.Minute), To: now, LastObservedAt: now,
+		Sources: []string{"handshake-sidecar"}, Records: []RecordRef{{EventID: "syn", Source: "handshake-sidecar", InstanceID: "one"}}, EventIDs: []string{"syn"}, Conflicts: []string{"capture_interval_incomplete:handshake-sidecar"},
+		Activity: &OutletActivity{MAC: mac, EventID: "syn", At: now}, RouterProof: &RouterProof{AssessmentID: "router", RoleEvidenceID: "role", RuleID: "ssdp-advertised-internet-gateway", Account: "student", Session: "login", MAC: mac}}
+	cfg := Config{Version: "test", Sources: []Source{{"mirror", "handshake-sidecar", "ncu", "capture"}}, IdentityMappings: []IdentityMapping{{SensorID: "mirror", CampusID: "ncu", AccessDomain: "capture", Source: "auth", IdentitySensorID: "auth", IdentityCampusID: "ncu", IdentityAccessDomain: "access", ValidFrom: now.Add(-time.Hour), ValidUntil: now.Add(time.Hour)}}}
+	sessions := []policy.Session{{ID: "login", AccountID: "student", Source: "auth", SensorID: "auth", CampusID: "ncu", AccessDomain: "access", IP: w.IP, MAC: mac, StartedAt: now.Add(-time.Hour), ConfirmedAt: now, HeartbeatSeconds: 60}}
+	for _, test := range []struct {
+		name   string
+		change func(*Window)
+		match  bool
+	}{
+		{"single", func(*Window) {}, true}, {"identity_changed", func(w *Window) { w.RouterProof.Session = "another" }, false}, {"wrong_mac", func(w *Window) { w.Activity.MAC = "02:00:00:00:00:05" }, false},
+		{"conflict", func(w *Window) { w.Conflicts = []string{"duplicate_event_changed"} }, false}, {"no_role", func(w *Window) { w.RouterProof.RoleEvidenceID = "" }, false}, {"no_activity", func(w *Window) { w.Activity = nil }, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			v := w
+			p, a := *w.RouterProof, *w.Activity
+			v.RouterProof = &p
+			v.Activity = &a
+			test.change(&v)
+			r := EvaluateObservation(v, cfg, sessions, now)
+			d := NewObservationDecision(v, r, cfg, now)
+			if (d.Result == "matched") != test.match || r.QuantityKnown || r.DeviceLowerBound != 0 {
+				t.Fatalf("result=%+v decision=%s", r, d.Result)
+			}
+		})
+	}
+}

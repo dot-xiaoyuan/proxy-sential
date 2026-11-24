@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"proxy-sentinel/internal/store"
 )
@@ -30,6 +31,9 @@ func (s *Server) handleSharedBehavior(w http.ResponseWriter, r *http.Request, pa
 		}
 		if !canReadAccount {
 			item.AccountID = ""
+			item.OutletEvidence = nil
+			item.SessionGeneration = ""
+			item.Exemption = nil
 		}
 		writeJSON(w, http.StatusOK, item)
 		return
@@ -42,7 +46,12 @@ func (s *Server) handleSharedBehavior(w http.ResponseWriter, r *http.Request, pa
 		Keyword: r.URL.Query().Get("keyword"), IP: r.URL.Query().Get("ip"), Status: r.URL.Query().Get("status"),
 		CoverageState: r.URL.Query().Get("coverage_state"), View: r.URL.Query().Get("view"), HistoryBasis: r.URL.Query().Get("history_basis"), Limit: 20,
 	}
-	query.SearchAccount = query.View == "traffic" && canReadAccount
+	if query.View == "period" {
+		query.From, _ = time.Parse(time.RFC3339Nano, r.URL.Query().Get("from"))
+		query.To, _ = time.Parse(time.RFC3339Nano, r.URL.Query().Get("to"))
+		query.Outcome = r.URL.Query().Get("outcome")
+	}
+	query.SearchAccount = (query.View == "traffic" || query.View == "period") && canReadAccount
 	if value := r.URL.Query().Get("limit"); value != "" {
 		parsed, err := strconv.Atoi(value)
 		if err != nil {
@@ -70,6 +79,9 @@ func (s *Server) handleSharedBehavior(w http.ResponseWriter, r *http.Request, pa
 	if !canReadAccount {
 		for i := range page.Items {
 			page.Items[i].AccountID = ""
+			page.Items[i].OutletEvidence = nil
+			page.Items[i].SessionGeneration = ""
+			page.Items[i].Exemption = nil
 		}
 	}
 	writeJSON(w, http.StatusOK, page)
