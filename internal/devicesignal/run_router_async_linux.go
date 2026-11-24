@@ -27,8 +27,8 @@ func runRouterCaptureLoop(ctx context.Context, opts Options, fd int, boundAt tim
 	state := newCaptureBucket()
 	tracker := newStateChangeTracker[packetBucketKey](opts.StateLiveness)
 	controlTracker := newStateChangeTracker[string](opts.StateLiveness)
-	writeCoverage := func(coverage sharedaccess.CoverageV2) error {
-		if err := writeCaptureCoverage(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, "packet-sidecar", opts.CaptureScope, coverage); err != nil {
+	writeCoverage := func(coverage sharedaccess.CoverageV2, stats *ieee1905CaptureStats) error {
+		if err := writeCaptureCoverageDocument(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, "packet-sidecar", opts.CaptureScope, coverage, stats); err != nil {
 			return err
 		}
 		return saveCaptureCoverageCheckpoint(opts.Output, opts.SensorID, opts.CollectorInstanceID, coverage)
@@ -46,7 +46,7 @@ func runRouterCaptureLoop(ctx context.Context, opts Options, fd int, boundAt tim
 	}
 	// The socket is already bound. Persist setup counters in a stopped interval
 	// whether or not the previous durable coverage could be located.
-	if err := writeCoverage(startup); err != nil {
+	if err := writeCoverage(startup, nil); err != nil {
 		return fmt.Errorf("persist capture restart gap: %w", err)
 	}
 	bucket := coverageFrom.Truncate(opts.Bucket)
@@ -77,7 +77,7 @@ func runRouterCaptureLoop(ctx context.Context, opts Options, fd int, boundAt tim
 		if err := writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, item.bucket, selectedControls); err != nil {
 			return err
 		}
-		if err := writeCoverage(item.coverage); err != nil {
+		if err := writeCoverage(item.coverage, &item.state.ieee1905); err != nil {
 			return err
 		}
 		lastWrittenBucket = item.bucket
@@ -100,7 +100,7 @@ func runRouterCaptureLoop(ctx context.Context, opts Options, fd int, boundAt tim
 		return writeCoverage(sharedaccess.CoverageV2{
 			SchemaVersion: "capture-coverage/v2", From: coverageFrom, To: end,
 			KernelStatsKnown: known, Received: uint64(received), Dropped: uint64(dropped), Stopped: true,
-		})
+		}, nil)
 	}
 	writer := newBoundedCaptureWriter(routerCaptureQueuedBuckets, write, finish)
 	defer func() {

@@ -111,7 +111,11 @@ func Batch(r io.Reader) (BatchResult, error) {
 	if err != nil {
 		return BatchResult{}, err
 	}
+	return ScoreEvidence(allEvidence), nil
+}
 
+// ScoreEvidence scores already decoded evidence through the same rules as Batch.
+func ScoreEvidence(allEvidence []evidence.Evidence) BatchResult {
 	evidenceBySubject := map[string][]evidence.Evidence{}
 	for _, item := range allEvidence {
 		if item.Type == "shared_access_window" {
@@ -134,7 +138,7 @@ func Batch(r io.Reader) (BatchResult, error) {
 	for _, key := range keys {
 		result.Snapshots = append(result.Snapshots, snapshotFor(subjectIDFromKey(key), evidenceBySubject[key]))
 	}
-	return result, nil
+	return result
 }
 
 func ListFile(inputPath, outputPath string, opts ListOptions) (ListResult, error) {

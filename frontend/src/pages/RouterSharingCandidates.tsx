@@ -22,14 +22,14 @@ export function RouterSharingCandidates() {
  const [accountGroup,setAccountGroup]=useUrlState('router_accounts','all',['all','linked','empty'],['router_sharing_page','router_sharing_cursors'])
  const [routerStatus,setRouterStatus]=useUrlState('router_status','',['','candidate','likely','confirmed'],['router_sharing_page','router_sharing_cursors'])
  const [searchInput,setSearchInput]=useState(keyword)
- const applySearch = useEffectEvent((value: string) => {
-  const search = value.trim()
-  if (search !== keyword) setKeyword(search)
+ const applySearch=useEffectEvent((value:string)=>{
+  const next=value.trim()
+  if(next!==keyword)setKeyword(next)
  })
- useEffect(() => {
-  const timer = globalThis.setTimeout(() => applySearch(searchInput), 300)
-  return () => globalThis.clearTimeout(timer)
- }, [searchInput])
+ useEffect(()=>{
+  const timer=globalThis.setTimeout(()=>applySearch(searchInput),300)
+  return()=>globalThis.clearTimeout(timer)
+ },[searchInput])
  const query=new URLSearchParams({role:'router',router_status:routerStatus,identity_state:'supported',keyword,limit:String(pagination.pageSize),cursor:pagination.cursor})
  if(accountGroup!=='all')query.set('has_account',String(accountGroup==='linked'))
  const profiles=useQuery({queryKey:['router-sharing-candidates',query.toString()],queryFn:()=>request<Profiles>(`/shared-access/devices?${query}`),refetchInterval:30000})

@@ -82,27 +82,43 @@ func (r *flowRing) readReady(onFrame func([]byte)) (bool, error) {
 		atomic.StoreUint32(&header.Block_status, unix.TP_STATUS_KERNEL)
 		r.block = (r.block + 1) % flowRingBlocks
 	}()
-	if desc.Version != unix.TPACKET_V3 || header.Num_pkts > flowRingBlockSize/flowRingFrameSize || header.Offset_to_first_pkt >= flowRingBlockSize {
-		return true, fmt.Errorf("invalid flow SYN ring block header")
+	if desc.Version != unix.TPACKET_V3 {
+		return true, fmt.Errorf("invalid flow SYN ring block version: %d", desc.Version)
+	}
+	if header.Blk_len < uint32(unsafe.Sizeof(*desc)) || header.Blk_len > uint32(len(block)) {
+		return true, fmt.Errorf("invalid flow SYN ring block length: %d", header.Blk_len)
+	}
+	if header.Num_pkts == 0 {
+		return true, nil
+	}
+	// TPACKET_V3 packs RX records at variable lengths. The configured frame
+	// size is not the stride between packets inside a block.
+	if header.Offset_to_first_pkt < uint32(unsafe.Sizeof(*desc)) || header.Offset_to_first_pkt >= header.Blk_len {
+		return true, fmt.Errorf("invalid flow SYN ring first packet offset: offset=%d block_length=%d", header.Offset_to_first_pkt, header.Blk_len)
+	}
+	block = block[:header.Blk_len]
+	if header.Num_pkts > (header.Blk_len-header.Offset_to_first_pkt)/unix.SizeofTpacket3Hdr {
+		return true, fmt.Errorf("invalid flow SYN ring packet count: count=%d first_offset=%d block_length=%d", header.Num_pkts, header.Offset_to_first_pkt, header.Blk_len)
 	}
 	offset := int(header.Offset_to_first_pkt)
 	for i := uint32(0); i < header.Num_pkts; i++ {
-		if offset < 0 || offset+unix.SizeofTpacket3Hdr > len(block) {
+		if offset+unix.SizeofTpacket3Hdr > len(block) {
 			return true, fmt.Errorf("flow SYN ring packet header outside block")
 		}
 		packet := (*unix.Tpacket3Hdr)(unsafe.Pointer(&block[offset]))
-		start := offset + int(packet.Mac)
-		end := start + int(packet.Snaplen)
-		if start < offset+unix.SizeofTpacket3Hdr || end < start || end > len(block) || packet.Snaplen > 128 {
-			return true, fmt.Errorf("flow SYN ring packet outside bounded frame: offset=%d mac=%d snaplen=%d end=%d block=%d", offset, packet.Mac, packet.Snaplen, end, len(block))
-		}
-		onFrame(block[start:end])
+		recordEnd := len(block)
 		if i+1 < header.Num_pkts {
-			if packet.Next_offset == 0 {
-				return true, fmt.Errorf("flow SYN ring packet has no next offset")
+			if packet.Next_offset < unix.SizeofTpacket3Hdr || packet.Next_offset > uint32(len(block)-offset-unix.SizeofTpacket3Hdr) {
+				return true, fmt.Errorf("invalid flow SYN ring next packet offset: offset=%d next=%d block_length=%d", offset, packet.Next_offset, len(block))
 			}
-			offset += int(packet.Next_offset)
+			recordEnd = offset + int(packet.Next_offset)
 		}
+		start := offset + int(packet.Mac)
+		if start < offset+unix.SizeofTpacket3Hdr || start > recordEnd || packet.Snaplen > 128 || packet.Snaplen > uint32(recordEnd-start) {
+			return true, fmt.Errorf("flow SYN ring packet outside bounded frame: offset=%d mac=%d snaplen=%d record_end=%d", offset, packet.Mac, packet.Snaplen, recordEnd)
+		}
+		onFrame(block[start : start+int(packet.Snaplen)])
+		offset = recordEnd
 	}
 	return true, nil
 }

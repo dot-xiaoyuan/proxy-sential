@@ -1,6 +1,7 @@
 package devicesignal
 
 import (
+	"net/netip"
 	"os"
 	"time"
 
@@ -21,8 +22,11 @@ type captureBucket struct {
 	handshakeExcludedFrames int
 	handshakeParseFailures  int
 	handshakeFeatureSamples int
+	handshakeCandidates     []handshakeCandidate
+	handshakeCandidateBytes int
 	controlParseFailures    int
 	controlKeyDrops         int
+	ieee1905                ieee1905CaptureStats
 }
 
 // At roughly 0.5-1 KiB per normalized JSON record, this hard ceiling keeps the
@@ -30,6 +34,44 @@ type captureBucket struct {
 // if an adversarial or asymmetric mirror produces maximal key diversity.
 const maxPacketBucketKeys = 50000
 const maxHandshakeFeatureSamples = 32768
+const maxHandshakeCandidates = 131072
+const maxHandshakeCandidateBytes = 24 << 20
+
+type handshakeCandidate struct {
+	summary *handshakeSummary
+	feature handshakeFeatureObservation
+}
+
+// Frame counts describe the mirror input before output deduplication.
+type ieee1905CaptureStats struct {
+	Frames                int `json:"frames"`
+	TopologyQueries       int `json:"topology_queries"`
+	TopologyResponses     int `json:"topology_responses"`
+	WithMemberSnapshot    int `json:"with_member_snapshot"`
+	WithoutMemberSnapshot int `json:"without_member_snapshot"`
+	FragmentedResponses   int `json:"fragmented_responses"`
+	MalformedResponses    int `json:"malformed_responses"`
+}
+
+func (s *ieee1905CaptureStats) observe(frame ieee1905FrameObservation) {
+	s.Frames++
+	switch frame.messageType {
+	case 0x0002:
+		s.TopologyQueries++
+	case 0x0003:
+		s.TopologyResponses++
+		switch {
+		case frame.fragmented:
+			s.FragmentedResponses++
+		case !frame.complete:
+			s.MalformedResponses++
+		case frame.snapshot:
+			s.WithMemberSnapshot++
+		default:
+			s.WithoutMemberSnapshot++
+		}
+	}
+}
 
 func newCaptureBucket() *captureBucket {
 	return &captureBucket{packets: map[packetBucketKey]int{}, controls: map[string]controlSignal{}, handshakes: map[handshakeKey]*handshakeSummary{}}
@@ -50,9 +92,12 @@ func (b *captureBucket) addFrame(frame []byte, scope *normalized.CaptureScope) {
 			}
 		}
 	}
-	controls, incompleteIEEE1905 := parseControlFramesWithCoverage(frame)
-	if incompleteIEEE1905 {
-		b.controlParseFailures++
+	controls, ieee1905 := parseControlFramesWithCoverage(frame)
+	if ieee1905.observed {
+		b.ieee1905.observe(ieee1905)
+		if !ieee1905.complete {
+			b.controlParseFailures++
+		}
 	}
 	for _, signal := range controls {
 		// ARP only serves dumb-terminal discovery and the device-center address history; router
@@ -103,6 +148,10 @@ func (b *captureBucket) addHandshake(frame []byte) {
 			return
 		}
 	}
+	b.recordHandshake(observation)
+}
+
+func (b *captureBucket) recordHandshake(observation handshakeObservation) {
 	key := handshakeKey{IP: observation.IP, MAC: observation.MAC}
 	summary := b.handshakes[key]
 	if summary == nil {
@@ -110,10 +159,56 @@ func (b *captureBucket) addHandshake(frame []byte) {
 			b.droppedPacketKeys++
 			return
 		}
-		summary = &handshakeSummary{snis: map[string]bool{}, alpns: map[string]bool{}, hosts: map[string]bool{}, userAgents: map[string]bool{}}
+		summary = newHandshakeSummary()
 		b.handshakes[key] = summary
 	}
-	before := len(summary.samples)
-	summary.add(observation, maxHandshakeFeatureSamples-b.handshakeFeatureSamples)
-	b.handshakeFeatureSamples += len(summary.samples) - before
+	if !b.handshakeCaptureV2 {
+		before := len(summary.samples)
+		summary.add(observation, maxHandshakeFeatureSamples-b.handshakeFeatureSamples)
+		b.handshakeFeatureSamples += len(summary.samples) - before
+		return
+	}
+
+	summary.addMetadata(observation)
+	feature, ok := observation.feature()
+	if !ok {
+		return
+	}
+	// Keep only parsed feature fields until the bucket's output devices are
+	// known. A dropped candidate may contain multiple fingerprint families.
+	size := len(feature.eventID) + len(feature.userAgent) + len(feature.ja3) + len(feature.ja4)
+	if len(b.handshakeCandidates) >= maxHandshakeCandidates || b.handshakeCandidateBytes+size > maxHandshakeCandidateBytes {
+		summary.overflow++
+		return
+	}
+	b.handshakeCandidates = append(b.handshakeCandidates, handshakeCandidate{summary: summary, feature: feature})
+	b.handshakeCandidateBytes += size
+}
+
+func (b *captureBucket) selectHandshakes(limit int, bucket time.Time, priorityCIDRs []netip.Prefix) []handshakeKey {
+	keys := selectHandshakeKeys(b.handshakes, limit, bucket, priorityCIDRs)
+	if len(b.handshakeCandidates) == 0 {
+		return keys
+	}
+	selected := make(map[*handshakeSummary]bool, len(keys))
+	for _, key := range keys {
+		selected[b.handshakes[key]] = true
+	}
+	budget := maxHandshakeFeatureSamples
+	for _, candidate := range b.handshakeCandidates {
+		if selected[candidate.summary] {
+			budget -= candidate.summary.addFeature(candidate.feature, budget)
+		}
+	}
+	return keys
+}
+
+func (b *captureBucket) resetHandshakes() {
+	b.handshakes = make(map[handshakeKey]*handshakeSummary)
+	b.handshakeParseFailures = 0
+	b.handshakeExcludedFrames = 0
+	b.handshakeFeatureSamples = 0
+	clear(b.handshakeCandidates)
+	b.handshakeCandidates = b.handshakeCandidates[:0]
+	b.handshakeCandidateBytes = 0
 }

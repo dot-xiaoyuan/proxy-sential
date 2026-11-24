@@ -4,10 +4,62 @@ import (
 	"crypto/md5"
 	"encoding/binary"
 	"encoding/hex"
+	"net/netip"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestHandshakeV2ReservesFeatureBudgetForOutputDevices(t *testing.T) {
+	state := newCaptureBucket()
+	state.handshakeCaptureV2 = true
+	at := time.Unix(1800, 0)
+	for device := 0; device < 130; device++ {
+		ip := netip.AddrFrom4([4]byte{192, 0, 2, byte(device + 1)})
+		for sample := 0; sample < 288; sample++ {
+			id := strconv.Itoa(sample)
+			state.recordHandshake(handshakeObservation{IP: ip, JA3: id, EventID: id, ObservedAt: at})
+		}
+	}
+	ip := netip.MustParseAddr("192.0.2.200")
+	for i := 0; i < 300; i++ {
+		state.recordHandshake(handshakeObservation{IP: ip, JA3: "selected", EventID: "retransmitted", ObservedAt: at})
+	}
+	keys := state.selectHandshakes(1, at, nil)
+	if len(keys) != 1 || keys[0].IP != ip {
+		t.Fatalf("selected keys = %v, want the most active device %s", keys, ip)
+	}
+	selected := state.handshakes[keys[0]]
+	if len(selected.samples) != 1 || selected.overflow != 0 {
+		t.Fatalf("selected device samples=%d overflow=%d", len(selected.samples), selected.overflow)
+	}
+	for key, summary := range state.handshakes {
+		if key.IP != ip && len(summary.samples) != 0 {
+			t.Fatalf("omitted device consumed samples: %s", key.IP)
+		}
+	}
+}
+
+func TestHandshakeV2CandidateLimitReportsCoverageGap(t *testing.T) {
+	state := newCaptureBucket()
+	state.handshakeCaptureV2 = true
+	state.handshakeCandidateBytes = maxHandshakeCandidateBytes
+	at := time.Unix(1800, 0)
+	ip := netip.MustParseAddr("192.0.2.200")
+	state.recordHandshake(handshakeObservation{IP: ip, JA3: "feature", EventID: "event", ObservedAt: at})
+	keys := state.selectHandshakes(1, at, nil)
+	summary := state.handshakes[keys[0]]
+	if summary.overflow != 1 || len(summary.samples) != 0 {
+		t.Fatalf("rejected candidate samples=%d overflow=%d", len(summary.samples), summary.overflow)
+	}
+	state.resetHandshakes()
+	state.recordHandshake(handshakeObservation{IP: ip, JA3: "feature", EventID: "next-bucket", ObservedAt: at.Add(30 * time.Second)})
+	keys = state.selectHandshakes(1, at.Add(30*time.Second), nil)
+	if summary = state.handshakes[keys[0]]; summary.overflow != 0 || len(summary.samples) != 1 {
+		t.Fatalf("next bucket samples=%d overflow=%d", len(summary.samples), summary.overflow)
+	}
+}
 
 func TestHandshakeJA3RequiresCompleteClientHello(t *testing.T) {
 	raw := clientHello("test.example", "h2")

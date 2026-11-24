@@ -1195,6 +1195,22 @@ func (s *ClickHouseStore) query(ctx context.Context, sql string) ([]byte, error)
 }
 
 func (s *ClickHouseStore) queryWithSettings(ctx context.Context, sql string, settings map[string]string) ([]byte, error) {
+	resp, err := s.openQueryResponse(ctx, sql, settings)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("clickhouse query failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	return data, nil
+}
+
+func (s *ClickHouseStore) openQueryResponse(ctx context.Context, sql string, settings map[string]string) (*http.Response, error) {
 	requestURL := s.dsn
 	trace := queryTraceID(ctx)
 	if trace != "" || len(settings) > 0 {
@@ -1235,15 +1251,7 @@ func (s *ClickHouseStore) queryWithSettings(ctx context.Context, sql string, set
 		}
 		return nil, err
 	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("clickhouse query failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(data)))
-	}
-	return data, nil
+	return resp, nil
 }
 
 func (s *ClickHouseStore) eventCount(ctx context.Context, where string) (int, error) {

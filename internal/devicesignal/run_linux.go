@@ -162,6 +162,7 @@ func Run(ctx context.Context, opts Options) error {
 			received, drops, known := packetCaptureStats(fd)
 			coverage := sharedaccess.CoverageV2{SchemaVersion: "capture-coverage/v2", From: coverageFrom, To: end, KernelStatsKnown: known, Received: uint64(received), Dropped: uint64(drops), KeyDrops: state.droppedPacketKeys, ParseUnknown: state.handshakeParseFailures, Stopped: ctx.Err() != nil}
 			coverage.ExcludedFrames = state.handshakeExcludedFrames
+			keys := state.selectHandshakes(handshakeBucketLimit(), at, priorityCIDRs)
 			for _, summary := range state.handshakes {
 				summary.coverage = coverage
 				coverage.Truncated += summary.truncated
@@ -174,8 +175,8 @@ func Run(ctx context.Context, opts Options) error {
 				summary.coverage.Overflow = 0
 				summary.coverage.MetadataOmitted = 0
 			}
-			coverage.Omitted = max(0, len(state.handshakes)-handshakeBucketLimit())
-			if err := writeHandshakeBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, priorityCIDRs, at, state.handshakes); err != nil {
+			coverage.Omitted = len(state.handshakes) - len(keys)
+			if err := writeHandshakeBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, at, state.handshakes, keys); err != nil {
 				return err
 			}
 			if err := writeHandshakeCoverage(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, coverage); err != nil {
@@ -203,7 +204,7 @@ func Run(ctx context.Context, opts Options) error {
 			if err := writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, at, selected); err != nil {
 				return err
 			}
-			if err := writeCaptureCoverage(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, "packet-sidecar", opts.CaptureScope, coverage); err != nil {
+			if err := writeCaptureCoverageDocument(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, "packet-sidecar", opts.CaptureScope, coverage, &state.ieee1905); err != nil {
 				return err
 			}
 			coverageFrom = end
@@ -263,13 +264,11 @@ func Run(ctx context.Context, opts Options) error {
 			}
 			state.packets = map[packetBucketKey]int{}
 			state.controls = map[string]controlSignal{}
-			state.handshakes = map[handshakeKey]*handshakeSummary{}
 			state.droppedPacketKeys = 0
-			state.handshakeParseFailures = 0
-			state.handshakeExcludedFrames = 0
-			state.handshakeFeatureSamples = 0
+			state.resetHandshakes()
 			state.controlParseFailures = 0
 			state.controlKeyDrops = 0
+			state.ieee1905 = ieee1905CaptureStats{}
 			bucket = now.UTC().Truncate(opts.Bucket)
 		default:
 			if processed == 0 {
@@ -297,13 +296,11 @@ func Run(ctx context.Context, opts Options) error {
 					}
 					state.packets = map[packetBucketKey]int{}
 					state.controls = map[string]controlSignal{}
-					state.handshakes = map[handshakeKey]*handshakeSummary{}
 					state.droppedPacketKeys = 0
-					state.handshakeParseFailures = 0
-					state.handshakeExcludedFrames = 0
-					state.handshakeFeatureSamples = 0
+					state.resetHandshakes()
 					state.controlParseFailures = 0
 					state.controlKeyDrops = 0
+					state.ieee1905 = ieee1905CaptureStats{}
 					bucket = now.UTC().Truncate(opts.Bucket)
 				case <-time.After(20 * time.Millisecond):
 				}

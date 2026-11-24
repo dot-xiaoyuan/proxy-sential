@@ -45,6 +45,7 @@ func TestFlowRingTraversesOnlyBoundedFrameAndReturnsBlock(t *testing.T) {
 	header.Block_status = unix.TP_STATUS_USER
 	header.Num_pkts = 1
 	header.Offset_to_first_pkt = 48
+	header.Blk_len = 256
 	packet := (*unix.Tpacket3Hdr)(unsafe.Pointer(&data[48]))
 	packet.Mac = 82
 	frame := flowSYNFrame(false, 0x02)
@@ -65,5 +66,34 @@ func TestFlowRingTraversesOnlyBoundedFrameAndReturnsBlock(t *testing.T) {
 	ring.block = 0
 	if _, err := ring.readReady(func([]byte) { t.Fatal("oversized frame reached parser") }); err == nil {
 		t.Fatal("oversized frame was accepted")
+	}
+}
+
+func TestFlowRingAcceptsDenseVariableLengthBlock(t *testing.T) {
+	data := make([]byte, flowRingBlockSize)
+	ring := &flowRing{data: data}
+	desc := (*unix.TpacketBlockDesc)(unsafe.Pointer(&data[0]))
+	desc.Version = unix.TPACKET_V3
+	header := (*unix.TpacketHdrV1)(unsafe.Pointer(&desc.Hdr[0]))
+	header.Block_status = unix.TP_STATUS_USER
+	header.Offset_to_first_pkt = 48
+	header.Num_pkts = flowRingBlockSize/flowRingFrameSize + 1
+	const recordSize = 144
+	header.Blk_len = header.Offset_to_first_pkt + header.Num_pkts*recordSize
+	frame := flowSYNFrame(false, 0x02)
+	for i := uint32(0); i < header.Num_pkts; i++ {
+		offset := header.Offset_to_first_pkt + i*recordSize
+		packet := (*unix.Tpacket3Hdr)(unsafe.Pointer(&data[offset]))
+		packet.Mac = 82
+		packet.Snaplen = uint32(len(frame))
+		if i+1 < header.Num_pkts {
+			packet.Next_offset = recordSize
+		}
+		copy(data[offset+uint32(packet.Mac):], frame)
+	}
+	count := 0
+	ready, err := ring.readReady(func([]byte) { count++ })
+	if err != nil || !ready || count != int(header.Num_pkts) || header.Block_status != unix.TP_STATUS_KERNEL {
+		t.Fatalf("dense block read: ready=%t err=%v count=%d status=%d", ready, err, count, header.Block_status)
 	}
 }

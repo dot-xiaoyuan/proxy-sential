@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -8,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"time"
@@ -142,14 +144,13 @@ ORDER BY observed_at,event_key LIMIT %d SETTINGS max_threads=1,max_execution_tim
 	return result, nil
 }
 
-// StreamRiskFeatureEvents reads a fixed accepted-time snapshot through bounded
-// keyset pages. Identical physical rows at a page boundary have the same full
-// ordering tuple and may be skipped; any different row has a later tuple and
-// is checked against the same logical event key across all pages.
-func (s *ClickHouseStore) StreamRiskFeatureEvents(ctx context.Context, sensor string, subjects []RiskSubjectClaim, from, to, acceptedAfter time.Time, pageSize int, emit func(normalized.Event) error) (int, error) {
+// StreamRiskFeatureEvents reads a fixed accepted-time snapshot once per
+// selection and decodes it as it arrives. The physical bounds apply across
+// both selections and every version of the same logical event is verified.
+func (s *ClickHouseStore) StreamRiskFeatureEvents(ctx context.Context, sensor string, subjects []RiskSubjectClaim, from, to, acceptedAfter time.Time, blockSize int, emit func(normalized.Event) error) (int, error) {
 	if s == nil || sensor == "" || len(subjects) == 0 || len(subjects) > maxRiskSubjectClaim ||
 		from.IsZero() || !from.Before(to) || acceptedAfter.IsZero() || acceptedAfter.After(to) ||
-		pageSize < 1 || pageSize > 5000 || emit == nil {
+		blockSize < 1 || blockSize > 5000 || emit == nil {
 		return 0, errors.New("invalid streaming risk feature query")
 	}
 	ipSet, accountSet := map[string]bool{}, map[string]bool{}
@@ -193,107 +194,136 @@ func (s *ClickHouseStore) StreamRiskFeatureEvents(ctx context.Context, sensor st
 		Account     string `json:"account_id"`
 		ObservedAt  string `json:"observed_at"`
 	}
-	// Sorting by the actual JSON would copy an entire feature into every
-	// cursor SQL statement (and query log). Its computed digest distinguishes
-	// malformed duplicates even when their declared hash is unchanged.
-	const order = "observed_at,event_key,scope_id,toString(content_sha256),toString(feature_sha256),lower(hex(SHA256(feature_json))),subject_ip,account_id"
 	seen := map[string]string{}
 	count := 0
-	physicalRows, physicalBytes, distinctBytes := 0, 0, 0
+	physicalRows, distinctBytes := 0, 0
+	var physicalBytes int64
 	for _, selection := range selections {
-		var cursor *featureRow
-		for {
-			if err := ctx.Err(); err != nil {
-				return count, err
+		// The extra row distinguishes a complete result at the limit from one
+		// with more work. Nothing is committed until both streams have succeeded.
+		rowLimit := maxRiskFeaturePhysicalRows - physicalRows + 1
+		byteLimit := maxRiskFeaturePhysicalBytes - physicalBytes
+		query := fmt.Sprintf(`SELECT scope_id,event_key,content_sha256,feature_sha256,feature_version,feature_json,sensor_id,subject_ip,account_id,observed_at
+FROM stream_risk_features_v1 WHERE sensor_id=%s AND observed_at>=%s AND observed_at<=%s AND accepted_at>=%s AND accepted_at<=%s AND feature_version=%s AND %s
+ORDER BY observed_at,event_key,scope_id,content_sha256,feature_sha256,subject_ip,account_id LIMIT %d
+SETTINGS max_threads=1,max_execution_time=3,max_block_size=%d,max_result_rows=%d,max_result_bytes=%d,result_overflow_mode='throw',http_write_exception_in_output_format=0 FORMAT JSONEachRow`,
+			chQuote(sensor), chQuote(from.UTC().Format("2006-01-02 15:04:05.000000")),
+			chQuote(to.UTC().Format("2006-01-02 15:04:05.000000")), chQuote(acceptedAfter.UTC().Format("2006-01-02 15:04:05.000000")),
+			chQuote(to.UTC().Format("2006-01-02 15:04:05.000000")), chQuote(evidence.FeatureEventVersion), selection,
+			rowLimit, blockSize, rowLimit, max(1, byteLimit))
+		used, err := s.scanRiskFeatureRows(ctx, query, byteLimit, func(line []byte) error {
+			physicalRows++
+			if physicalRows > maxRiskFeaturePhysicalRows {
+				return ErrRiskFeatureStreamBound
 			}
-			continuation := ""
-			if cursor != nil {
-				cursorJSONHash := sha256.Sum256([]byte(cursor.FeatureJSON))
-				continuation = fmt.Sprintf(" AND tuple(%s)>tuple(toDateTime64(%s,6,'UTC'),%s,%s,%s,%s,%s,%s,%s)", order,
-					chQuote(cursor.ObservedAt), chQuote(cursor.Key), chQuote(cursor.Scope), chQuote(cursor.ContentHash),
-					chQuote(cursor.FeatureHash), chQuote(hex.EncodeToString(cursorJSONHash[:])), chQuote(cursor.IP), chQuote(cursor.Account))
+			var row featureRow
+			if err := json.Unmarshal(line, &row); err != nil {
+				return err
 			}
-			query := fmt.Sprintf(`SELECT scope_id,event_key,content_sha256,feature_sha256,feature_version,feature_json,sensor_id,subject_ip,account_id,observed_at
-FROM stream_risk_features_v1 WHERE sensor_id=%s AND observed_at>=%s AND observed_at<=%s AND accepted_at>=%s AND accepted_at<=%s AND feature_version=%s AND %s%s
-ORDER BY %s LIMIT %d SETTINGS max_threads=1,max_execution_time=3,max_result_rows=%d,max_result_bytes=33554432,result_overflow_mode='throw' FORMAT JSONEachRow`,
-				chQuote(sensor), chQuote(from.UTC().Format("2006-01-02 15:04:05.000000")),
-				chQuote(to.UTC().Format("2006-01-02 15:04:05.000000")), chQuote(acceptedAfter.UTC().Format("2006-01-02 15:04:05.000000")),
-				chQuote(to.UTC().Format("2006-01-02 15:04:05.000000")), chQuote(evidence.FeatureEventVersion), selection, continuation,
-				order, pageSize, pageSize)
-			data, err := s.query(ctx, query)
-			if err != nil {
-				return count, err
+			observedAt, err := streamSearchObservedAt(row.ObservedAt)
+			if err != nil || !isCanonicalClickHouseMicrosecond(row.ObservedAt, observedAt) {
+				return streamlog.ErrContentConflict
 			}
-			rows := 0
-			var last featureRow
-			for _, line := range bytes.Split(bytes.TrimSpace(data), []byte{'\n'}) {
-				if len(line) == 0 {
-					continue
-				}
-				rows++
-				physicalRows++
-				physicalBytes += len(line)
-				if physicalRows > maxRiskFeaturePhysicalRows || physicalBytes > maxRiskFeaturePhysicalBytes {
-					return count, ErrRiskFeatureStreamBound
-				}
-				if rows > pageSize {
-					return count, fmt.Errorf("risk feature page exceeded bounded row limit %d", pageSize)
-				}
-				var row featureRow
-				if err := json.Unmarshal(line, &row); err != nil {
-					return count, err
-				}
-				observedAt, err := streamSearchObservedAt(row.ObservedAt)
-				if err != nil || !isCanonicalClickHouseMicrosecond(row.ObservedAt, observedAt) {
-					return count, streamlog.ErrContentConflict
-				}
-				// toDateTime64 does not accept the ISO suffix that ClickHouse's
-				// HTTP output uses. Store the exact UTC microsecond for the next page.
-				row.ObservedAt = observedAt.UTC().Format("2006-01-02 15:04:05.000000")
-				last = row
-				hash := sha256.Sum256([]byte(row.FeatureJSON))
-				if row.Scope == "" || row.Key == "" || row.Sensor != sensor || row.Version != evidence.FeatureEventVersion ||
-					row.ContentHash == "" || row.FeatureHash != hex.EncodeToString(hash[:]) {
-					return count, streamlog.ErrContentConflict
-				}
-				identity := row.Scope + "\x00" + row.Key
-				content := row.ContentHash + "\x00" + row.FeatureHash
-				if previous, exists := seen[identity]; exists {
-					if previous != content {
-						return count, streamlog.ErrContentConflict
-					}
-					continue
-				}
-				seen[identity] = content
-				distinctBytes += len(row.FeatureJSON)
-				if count+1 > maxRiskFeatureDistinctRows || distinctBytes > maxRiskFeatureDistinctBytes {
-					return count, ErrRiskFeatureStreamBound
-				}
-				var event normalized.Event
-				if err := json.Unmarshal([]byte(row.FeatureJSON), &event); err != nil {
-					return count, err
-				}
-				if event.EventID == "" || event.Timestamp == "" || stringFromMap(event.Subject, "ip") != row.IP ||
-					stringFromMap(event.Subject, "account_id") != row.Account {
-					return count, streamlog.ErrContentConflict
-				}
-				if event.Observer == nil {
-					event.Observer = map[string]any{}
-				}
-				event.Observer["sensor_id"] = sensor
-				if err := emit(event); err != nil {
-					return count, err
-				}
-				count++
+			hash := sha256.Sum256([]byte(row.FeatureJSON))
+			if row.Scope == "" || row.Key == "" || row.Sensor != sensor || row.Version != evidence.FeatureEventVersion ||
+				row.ContentHash == "" || row.FeatureHash != hex.EncodeToString(hash[:]) {
+				return streamlog.ErrContentConflict
 			}
-			if rows < pageSize {
-				break
+			identity := row.Scope + "\x00" + row.Key
+			content := row.ContentHash + "\x00" + row.FeatureHash
+			if previous, exists := seen[identity]; exists {
+				if previous != content {
+					return streamlog.ErrContentConflict
+				}
+				return nil
 			}
-			if cursor != nil && *cursor == last {
-				return count, errors.New("risk feature keyset did not advance")
+			seen[identity] = content
+			distinctBytes += len(row.FeatureJSON)
+			if count+1 > maxRiskFeatureDistinctRows || distinctBytes > maxRiskFeatureDistinctBytes {
+				return ErrRiskFeatureStreamBound
 			}
-			cursor = &last
+			var event normalized.Event
+			if err := json.Unmarshal([]byte(row.FeatureJSON), &event); err != nil {
+				return err
+			}
+			if event.EventID == "" || event.Timestamp == "" || stringFromMap(event.Subject, "ip") != row.IP ||
+				stringFromMap(event.Subject, "account_id") != row.Account {
+				return streamlog.ErrContentConflict
+			}
+			if event.Observer == nil {
+				event.Observer = map[string]any{}
+			}
+			event.Observer["sensor_id"] = sensor
+			if err := emit(event); err != nil {
+				return err
+			}
+			count++
+			return nil
+		})
+		if err != nil {
+			return count, err
 		}
+		physicalBytes += used
 	}
 	return count, nil
+}
+
+func (s *ClickHouseStore) scanRiskFeatureRows(ctx context.Context, query string, byteLimit int64, emit func([]byte) error) (int64, error) {
+	resp, err := s.openQueryResponse(ctx, query, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	const exceptionHeader = "X-ClickHouse-Exception-Code"
+	if err := riskFeatureHTTPException(resp.Header.Get(exceptionHeader)); err != nil {
+		return 0, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		detail, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if err != nil {
+			return 0, err
+		}
+		if bytes.HasPrefix(bytes.TrimSpace(detail), []byte("Code: 396.")) {
+			return 0, ErrRiskFeatureStreamBound
+		}
+		return 0, fmt.Errorf("clickhouse risk feature query failed: status=%d body=%s", resp.StatusCode, bytes.TrimSpace(detail))
+	}
+	reader := &io.LimitedReader{R: resp.Body, N: byteLimit + 1}
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 16<<10), int(byteLimit)+1)
+	for scanner.Scan() {
+		if reader.N == 0 {
+			return 0, ErrRiskFeatureStreamBound
+		}
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		// ClickHouse may append an exception after sending an HTTP 200 and
+		// one or more rows. Never treat those partial results as complete.
+		if bytes.HasPrefix(line, []byte("Code: 396.")) {
+			return 0, ErrRiskFeatureStreamBound
+		}
+		if err := emit(line); err != nil {
+			return 0, err
+		}
+	}
+	if reader.N == 0 {
+		return 0, ErrRiskFeatureStreamBound
+	}
+	if err := scanner.Err(); err != nil {
+		return 0, err
+	}
+	return byteLimit + 1 - reader.N, riskFeatureHTTPException(resp.Trailer.Get(exceptionHeader))
+}
+
+func riskFeatureHTTPException(code string) error {
+	switch code {
+	case "", "0":
+		return nil
+	case "396": // TOO_MANY_ROWS_OR_BYTES
+		return ErrRiskFeatureStreamBound
+	default:
+		return fmt.Errorf("clickhouse risk feature query failed: exception code %s", code)
+	}
 }

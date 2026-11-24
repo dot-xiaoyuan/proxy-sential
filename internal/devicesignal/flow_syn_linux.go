@@ -7,8 +7,9 @@ import (
 	"fmt"
 	"log"
 	"net/netip"
-	"proxy-sentinel/internal/sharedaccess"
 	"time"
+
+	"proxy-sentinel/internal/sharedaccess"
 )
 
 const maxFlowSYNBucketKeys = 10000
@@ -31,7 +32,8 @@ func runFlowSYN(ctx context.Context, opts Options) error {
 	responses := make(map[flowSYNKey]int)
 	coverageFrom := time.Now().UTC()
 	bucket := coverageFrom
-	var keyDrops, parseUnknown int
+	var attemptDrops, responseDrops, parseUnknown, ringBlockErrors int
+	var firstRingBlockError error
 	flush := func(stopped bool) error {
 		at := time.Now().UTC()
 		if !at.Before(opts.CaptureScope.ValidUntil) {
@@ -47,20 +49,22 @@ func runFlowSYN(ctx context.Context, opts Options) error {
 		received, dropped, freezes, known := ring.stats()
 		coverage := sharedaccess.CoverageV2{
 			SchemaVersion: "capture-coverage/v2", From: coverageFrom, To: at,
-			KernelStatsKnown: known, Received: uint64(received), Dropped: uint64(dropped), QueueFreezes: uint64(freezes), KeyDrops: keyDrops + tracker.dropped + responseTracker.dropped + matcher.dropped,
+			KernelStatsKnown: known, Received: uint64(received), Dropped: uint64(dropped), QueueFreezes: uint64(freezes), KeyDrops: attemptDrops + responseDrops + tracker.dropped + responseTracker.dropped + matcher.dropped,
 			ParseUnknown: parseUnknown, Stopped: stopped,
 		}
 		if err := writeCaptureCoverage(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, "flow-syn-sidecar", opts.CaptureScope, coverage); err != nil {
 			return err
 		}
-		if coverage.KeyDrops > 0 || coverage.Dropped > 0 || coverage.QueueFreezes > 0 {
-			log.Printf("flow SYN capture incomplete: source=%s received=%d key_drops=%d kernel_drops=%d queue_freezes=%d", opts.Output, coverage.Received, coverage.KeyDrops, coverage.Dropped, coverage.QueueFreezes)
+		if coverage.KeyDrops > 0 || coverage.Dropped > 0 || coverage.QueueFreezes > 0 || ringBlockErrors > 0 {
+			log.Printf("flow SYN capture incomplete: source=%s received=%d key_drops=%d kernel_drops=%d queue_freezes=%d attempt_bucket_drops=%d response_bucket_drops=%d attempt_tracker_drops=%d response_tracker_drops=%d matcher_drops=%d invalid_ring_blocks=%d first_ring_error=%v", opts.Output, coverage.Received, coverage.KeyDrops, coverage.Dropped, coverage.QueueFreezes, attemptDrops, responseDrops, tracker.dropped, responseTracker.dropped, matcher.dropped, ringBlockErrors, firstRingBlockError)
 		}
 		values = make(map[flowSYNKey]int)
 		responses = make(map[flowSYNKey]int)
 		coverageFrom = at
 		bucket = at
-		keyDrops, parseUnknown, tracker.dropped, responseTracker.dropped, matcher.dropped = 0, 0, 0, 0, 0
+		attemptDrops, responseDrops, parseUnknown, ringBlockErrors = 0, 0, 0, 0
+		tracker.dropped, responseTracker.dropped, matcher.dropped = 0, 0, 0
+		firstRingBlockError = nil
 		return nil
 	}
 	ticker := time.NewTicker(opts.Bucket)
@@ -78,7 +82,7 @@ func runFlowSYN(ctx context.Context, opts Options) error {
 				return
 			}
 			if _, found := responses[key]; !found && len(responses) >= maxFlowSYNBucketKeys {
-				keyDrops++
+				responseDrops++
 				return
 			}
 			responses[key]++
@@ -89,7 +93,7 @@ func runFlowSYN(ctx context.Context, opts Options) error {
 		}
 		key := flowSYNKey{SourceIP: observation.SourceIP, DestinationPort: observation.DestinationPort}
 		if _, found := values[key]; !found && len(values) >= maxFlowSYNBucketKeys {
-			keyDrops++
+			attemptDrops++
 			return
 		}
 		if !matcher.recordInitial(observation, at) {
@@ -103,7 +107,13 @@ func runFlowSYN(ctx context.Context, opts Options) error {
 		for processed < 8 {
 			ready, readErr := ring.readReady(consume)
 			if readErr != nil {
-				return readErr
+				// readReady returns every inspected block to the kernel.
+				// Record a coverage gap and keep processing later blocks.
+				parseUnknown++
+				ringBlockErrors++
+				if firstRingBlockError == nil {
+					firstRingBlockError = readErr
+				}
 			}
 			if !ready {
 				break

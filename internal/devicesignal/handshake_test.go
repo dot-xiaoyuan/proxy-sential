@@ -106,7 +106,8 @@ func TestWriteHandshakeBucketEmitsIngestableDeviceEvent(t *testing.T) {
 	mac := [6]byte{0x02, 0, 0, 0, 0, 0x34}
 	state.addHandshake(buildTCPFrame(mac, [4]byte{10, 0, 0, 34}, 443, clientHello("api.example.net", "h2")))
 	state.addHandshake(buildTCPFrame(mac, [4]byte{10, 0, 0, 34}, 80, []byte("GET / HTTP/1.1\r\nHost: r.local\r\nUser-Agent: ua-one\r\n\r\n")))
-	if err := writeHandshakeBucket(path, "ncu-184-router-pilot", "bond0", "instance-1", nil, nil, time.Date(2026, 10, 15, 1, 0, 0, 0, time.UTC), state.handshakes); err != nil {
+	bucketAt := time.Date(2026, 10, 15, 1, 0, 0, 0, time.UTC)
+	if err := writeHandshakeBucket(path, "ncu-184-router-pilot", "bond0", "instance-1", nil, bucketAt, state.handshakes, state.selectHandshakes(handshakeBucketLimit(), bucketAt, nil)); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(path)
