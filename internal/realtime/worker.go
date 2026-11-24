@@ -29,12 +29,13 @@ import (
 )
 
 type Source struct {
-	CaptureScope        *normalized.CaptureScope
-	ControlledInterface string
-	ProxyProducer       *proxyprotocol.Producer
-	Kind                string
-	Path                string
-	CollectorInstanceID string
+	ArchivePacketRecords bool
+	CaptureScope         *normalized.CaptureScope
+	ControlledInterface  string
+	ProxyProducer        *proxyprotocol.Producer
+	Kind                 string
+	Path                 string
+	CollectorInstanceID  string
 	// Optional sources may legitimately have no log file yet (for example a
 	// protocol that only appears intermittently). A missing file is not a
 	// source failure; the source starts as soon as the file appears.
@@ -207,7 +208,7 @@ func processOnce(ctx context.Context, backend Backend, opts Options, source Sour
 	batch := ingest.Batch{BatchID: batchID, SensorID: opts.SensorID, SourceKind: source.Kind, SourcePath: source.Path, FileID: fileID, StartOffset: start, EndOffset: end, Checksum: checksum, Status: "started", StartedAt: now.Format(time.RFC3339Nano)}
 	if strings.HasPrefix(source.Kind, "zeek-") || source.Kind == "device-signals" {
 		for i := range events {
-			if source.Kind == "device-signals" && !packetSSDPRecord(events[i]) {
+			if source.Kind == "device-signals" && !source.referencesPacketRecord(events[i]) {
 				continue
 			}
 			if events[i].Type == "proxy_transaction" {
@@ -355,7 +356,7 @@ func normalize(source Source, chunk []byte, absoluteOffset int64, sensorID strin
 			return nil, stats, err
 		}
 	case "device-signals", "shared-device-signals":
-		return normalizeDeviceSignals(input, sensorID, source.Kind == "device-signals")
+		return normalizeDeviceSignals(input, sensorID, source)
 	default:
 		return nil, stats, fmt.Errorf("unsupported ingest source kind %q", source.Kind)
 	}
@@ -374,11 +375,11 @@ func normalize(source Source, chunk []byte, absoluteOffset int64, sensorID strin
 	return events, stats, nil
 }
 
-func packetSSDPRecord(e normalized.Event) bool {
-	return e.Type == "device" && e.Source == "packet-sidecar" && e.SourceEventType == "ssdp"
+func (source Source) referencesPacketRecord(e normalized.Event) bool {
+	return source.Kind == "device-signals" && e.Type == "device" && e.Source == "packet-sidecar" && (e.SourceEventType == "ssdp" || source.ArchivePacketRecords)
 }
 
-func normalizeDeviceSignals(input []byte, sensorID string, referenceSSDP bool) ([]normalized.Event, normalizedStats, error) {
+func normalizeDeviceSignals(input []byte, sensorID string, source Source) ([]normalized.Event, normalizedStats, error) {
 	stats := normalizedStats{ByType: map[string]int{}}
 	events := []normalized.Event{}
 	scanner := bufio.NewScanner(bytes.NewReader(input))
@@ -402,7 +403,7 @@ func normalizeDeviceSignals(input []byte, sensorID string, referenceSSDP bool) (
 			event.Observer = map[string]any{}
 		}
 		event.Observer["sensor_id"] = sensorID
-		if referenceSSDP && packetSSDPRecord(event) {
+		if source.referencesPacketRecord(event) {
 			if event.RawRef == nil {
 				event.RawRef = map[string]any{}
 			}

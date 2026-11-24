@@ -65,3 +65,34 @@ func TestSSDPSourceFileReference(t *testing.T) {
 		}
 	}
 }
+
+func TestPacketDiscoveryReferenceIsOptInAndVerifiable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "signals.jsonl")
+	raw := `{"schema_version":"v1","event_id":"control-one","type":"device","timestamp":"2026-11-22T12:00:00Z","source":"packet-sidecar","source_event_type":"sadp","subject":{"ip":"192.0.2.1"},"raw_ref":{"payload_sha256":"payload-digest"}}`
+	if err := os.WriteFile(path, []byte(raw+"\r\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		kind          string
+		enabled, want bool
+	}{{"device-signals", false, false}, {"device-signals", true, true}, {"shared-device-signals", true, false}} {
+		backend := &fakeBackend{}
+		opts := Options{SensorID: "campus", MaxBatchBytes: 1 << 20, StoreTimeout: time.Second}
+		if err := ProcessOnce(context.Background(), backend, opts, Source{Kind: tc.kind, Path: path, ArchivePacketRecords: tc.enabled}); err != nil {
+			t.Fatal(err)
+		}
+		event := backend.events[0]
+		ref, present := event.RawRef["ingest_source_ref"].(map[string]any)
+		if event.RawRef["payload_sha256"] != "payload-digest" || present != tc.want {
+			t.Fatalf("kind %s enabled %t: %+v", tc.kind, tc.enabled, event.RawRef)
+		}
+		if tc.want {
+			sum := sha256.Sum256([]byte(raw))
+			if event.RawRef["content_sha256"] != hex.EncodeToString(sum[:]) || ref["batch_id"] != backend.batches[0].BatchID {
+				t.Fatalf("record or batch does not match input: %+v", event.RawRef)
+			}
+		} else if event.RawRef["content_sha256"] != nil {
+			t.Fatal("record digest unexpectedly introduced")
+		}
+	}
+}

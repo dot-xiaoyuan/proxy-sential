@@ -176,7 +176,7 @@ SELECT sensor_id, report, hours, bucket_start, as_of, published_at
 FROM discovery_report_publications ORDER BY sensor_id, hours, report;
 ```
 
-原文归档使用迁移 255 的 `passive_archive_capture` 触发器和被动发现服务的 `PROXY_SENTINEL_PASSIVE_RAW_ARCHIVE=true`。每个原文引用都有对应的观测、事件和语义摘要。按源批次的首次成功提交时间计保留期。工作进程校验文件代次、批次摘要和行摘要，重新从 ClickHouse 的 `passive_discovery_raw_archive` 计算归档正文摘要后才登记成功。存量从主键游标恢复，单独开启 `PROXY_SENTINEL_PASSIVE_ARCHIVE_ADOPT=true`；观察队列增长时可独立暂停。原文已轮转或首次提交凭据缺失的引用进入缺口。查询下列账本可区分等待、重试、达到八次重试上限、无原文引用以及已核验。找到对应原文并校验文件身份后，按具体 batch_id、row_hash 重置 attempts 和 next_attempt 即可重试，保留原始入库时间。
+原文归档使用迁移 255 的 `passive_archive_capture` 触发器和被动发现服务的 `PROXY_SENTINEL_PASSIVE_RAW_ARCHIVE=true`。204 的文件入库服务也启用同一个开关，给主设备信号文件中的 packet-sidecar 设备记录保存原始行摘要与提交批次，覆盖 TTL、ARP、NDP 和设备公告。已留存的旧观测能否恢复取决于原有批次、行摘要和源文件。每个原文引用都有对应的观测、事件和语义摘要。按源批次的首次成功提交时间计保留期。工作进程校验文件代次、批次摘要和行摘要，重新从 ClickHouse 的 `passive_discovery_raw_archive` 计算归档正文摘要后才登记成功。存量从主键游标恢复，单独开启 `PROXY_SENTINEL_PASSIVE_ARCHIVE_ADOPT=true`；观察队列增长时可独立暂停。原文已轮转或首次提交凭据缺失的引用进入缺口。查询下列账本可区分等待、重试、达到八次重试上限、无原文引用以及已核验。找到对应原文并校验文件身份后，按具体 batch_id、row_hash 重置 attempts 和 next_attempt 即可重试，保留原始入库时间。
 
 ```sql
 SELECT count(*) FILTER(WHERE verified_at IS NOT NULL) AS verified,

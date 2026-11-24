@@ -458,7 +458,7 @@ func runIngest(args []string) error {
 		{Kind: "zeek-sip", Path: *zeekSIP},
 		{Kind: "zeek-sip-server", Path: *zeekSIPServer},
 		{Kind: "zeek-rtsp-device", Path: *zeekRTSPDevice, Optional: true},
-		{Kind: "device-signals", Path: *deviceSignals},
+		{Kind: "device-signals", Path: *deviceSignals, ArchivePacketRecords: os.Getenv("PROXY_SENTINEL_PASSIVE_RAW_ARCHIVE") == "true"},
 		{Kind: "device-signals", Path: *handshakeSignals},
 		{Kind: "device-signals", Path: *routerProbeSignals},
 		{Kind: "shared-device-signals", Path: *sharedDeviceSignals},
