@@ -586,8 +586,12 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 				writeError(w, 409, "coverage_read_path", "当前发现读取路径不支持覆盖报表")
 				return
 			}
-			report, err := repo.DiscoveryCoverageReport(ctx, s.sensorID, window)
+			report, err := repo.ReadCoverageReport(ctx, s.sensorID, window)
 			if err != nil {
+				if errors.Is(err, discovery.ErrReportPreparing) {
+					writeError(w, 503, "discovery_report_preparing", "正在生成首份统计报表")
+					return
+				}
 				log.Printf("discovery coverage report failed after %s: %v", time.Since(readStarted), err)
 				if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 					writeError(w, http.StatusGatewayTimeout, "coverage_report_timeout", "覆盖报表读取超时")
@@ -646,8 +650,12 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 				writeError(w, 409, "metadata_read_path", "当前发现读取路径不支持此统计接口")
 				return
 			}
-			result, err := repo.DevicesIndexedMetadata(ctx, query)
+			result, err := repo.ReadDeviceMetadata(ctx, s.sensorID, query)
 			if err != nil {
+				if errors.Is(err, discovery.ErrReportPreparing) {
+					writeError(w, 503, "discovery_report_preparing", "正在生成首份统计报表")
+					return
+				}
 				log.Printf("discovery metadata read failed after %s: %v", time.Since(readStarted), err)
 				if strings.Contains(err.Error(), "mode") || strings.Contains(err.Error(), "view") || strings.Contains(err.Error(), "state") || (strings.Contains(err.Error(), "review reason") || strings.Contains(err.Error(), "discovery filter")) {
 					writeError(w, 400, "bad_filter", err.Error())

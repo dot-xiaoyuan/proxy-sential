@@ -112,10 +112,15 @@ export function DiscoveryCoveragePage() {
   }
   function feedback(label: string) {
     if (activeQuery.isFetching && !activeQuery.data) return <AppLoadingState label={`正在读取${label}…`} rows={4} />
+    if (activeQuery.error instanceof ApiError && activeQuery.error.status === 503 && activeQuery.error.message.includes('discovery_report_preparing')) {
+      return <p className="coverage-empty" role="status">正在生成首份统计报表。</p>
+    }
     if (activeQuery.isError) return <p role="alert" className="coverage-empty">
       {label}{activeQuery.error instanceof ApiError && activeQuery.error.status === 504 ? '读取超时。' : '读取失败。'}
       {activeQuery.data ? '当前显示上次成功读取的数据。' : '可用顶部的刷新按钮重试。'}
     </p>
+    const publication = activeQuery.data?.publication
+    if (publication) return <p className="coverage-timestamps">报表发布于 {observedTimeTitle(publication.published_at)}{publication.delayed && ' · 更新延迟，显示最近一次发布结果'}</p>
     return null
   }
 

@@ -35,6 +35,16 @@ func TestStructuredDiscoveryPostgresParity(t *testing.T) {
 	}
 	run(string(raw))
 	testConcurrentDiscoveryQueue(t, db)
+	raw, err = os.ReadFile("../../migrations/postgres/254_discovery_address_links_and_reports.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run(string(raw))
+	var ready bool
+	if err := db.QueryRow("SELECT discovery_address_links_ready()").Scan(&ready); err != nil || ready {
+		t.Fatal(ready, err)
+	}
+	run("ALTER TABLE discovery_list_observation ENABLE TRIGGER discovery_address_fact; ALTER TABLE discovery_list_observation ENABLE TRIGGER discovery_address_fact_clear; ALTER TABLE discovery_identity_links ENABLE TRIGGER discovery_address_identity; ALTER TABLE discovery_identity_links ENABLE TRIGGER discovery_address_identity_clear")
 	at := time.Now().UTC().Truncate(time.Second)
 	put := func(id, mac, ip, vlan, origin string, when time.Time) {
 		t.Helper()
@@ -68,11 +78,11 @@ func TestStructuredDiscoveryPostgresParity(t *testing.T) {
 	refresh := func() {
 		t.Helper()
 		for i := 0; i < 100; i++ {
-			var a, b int
-			if err := db.QueryRow("SELECT discovery_list_refresh_groups(5),discovery_list_refresh_ips(7)").Scan(&a, &b); err != nil {
+			var a, b, c int
+			if err := db.QueryRow("SELECT discovery_list_refresh_groups(5),discovery_list_refresh_ips(7), discovery_address_links_refresh(2)").Scan(&a, &b, &c); err != nil {
 				t.Fatal(err)
 			}
-			if a+b == 0 {
+			if a+b+c == 0 {
 				return
 			}
 		}
@@ -110,6 +120,7 @@ func TestStructuredDiscoveryPostgresParity(t *testing.T) {
 		}
 	}
 	compare := func(q DeviceQuery) {
+		t.Setenv("PROXY_SENTINEL_DISCOVERY_STRUCTURED_READS", "list,coverage,address_links")
 		t.Helper()
 		tx, err := db.BeginTx(context.Background(), &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 		if err != nil {
@@ -197,7 +208,10 @@ func TestStructuredDiscoveryPostgresParity(t *testing.T) {
 	compare(DeviceQuery{Window: 30 * 24 * time.Hour, IdentityScope: "devices"})
 	run("INSERT INTO discovery_identity_links VALUES('arp6','mac:00:12:34:00:00:05','{}')")
 	compare(DeviceQuery{Window: 24 * time.Hour, IdentityScope: "devices"})
+	run("UPDATE discovery_identity_links SET endpoint_id='mac:00:12:34:00:00:05' WHERE observation_id='product'")
+	compare(DeviceQuery{Window: 24 * time.Hour, IdentityScope: "devices"})
 	run("DELETE FROM discovery_identity_links")
+	compare(DeviceQuery{Window: 24 * time.Hour, IdentityScope: "devices"})
 	run("UPDATE discovery_list_group_current SET next_change=now()-interval '1 second' WHERE hours=24")
 	refresh()
 	var expired int

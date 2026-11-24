@@ -1223,7 +1223,7 @@ WHERE EXCLUDED.observed_at>passive_discovery_mdns_scoped_records.observed_at OR
 	if recordType != "SRV" && recordType != "A" && recordType != "AAAA" {
 		return result, "", nil
 	}
-	rows, err := db.QueryContext(ctx, `SELECT srv.record_name,srv.record_value,addr.record_value,least(srv.valid_until,addr.valid_until,txt.valid_until),coalesce(txt.record_value,''),greatest(srv.observed_at,addr.observed_at,txt.observed_at),srv.event_id, jsonb_build_array(jsonb_build_object('event_id',srv.event_id,'raw_ref',srv.raw_ref),jsonb_build_object('event_id',addr.event_id,'raw_ref',addr.raw_ref),jsonb_build_object('event_id',txt.event_id,'raw_ref',txt.raw_ref))
+	rows, err := db.QueryContext(ctx, `SELECT srv.record_name,srv.record_value,addr.record_value,least(srv.valid_until,addr.valid_until,txt.valid_until),coalesce(txt.record_value,''),greatest(srv.observed_at,addr.observed_at,txt.observed_at),srv.event_id, jsonb_build_array(jsonb_build_object('event_id',srv.event_id,'raw_ref',srv.raw_ref),jsonb_build_object('event_id',addr.event_id,'raw_ref',addr.raw_ref),jsonb_build_object('record_type','TXT','event_id',txt.event_id,'raw_ref',txt.raw_ref))
 FROM passive_discovery_mdns_scoped_records srv
 JOIN passive_discovery_mdns_scoped_records addr ON addr.sensor_id=srv.sensor_id AND addr.interface_name=srv.interface_name AND addr.scope_key=srv.scope_key AND addr.observed_at<=$3 AND addr.record_name=srv.record_value AND addr.record_type IN ('A','AAAA') AND addr.valid_until>$3
 LEFT JOIN passive_discovery_mdns_scoped_records txt ON txt.sensor_id=srv.sensor_id AND txt.interface_name=srv.interface_name AND txt.scope_key=srv.scope_key AND txt.observed_at<=$3 AND txt.record_name=srv.record_name AND txt.record_type='TXT' AND txt.valid_until>$3
@@ -2049,6 +2049,17 @@ func (s *DBStore) runPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 func (s *DBStore) RunPassiveDiscoveryMaterializer(ctx context.Context, sensorID string) {
 	if os.Getenv("PROXY_SENTINEL_PASSIVE_DISCOVERY_DISABLED") == "true" {
 		return
+	}
+	if os.Getenv("PROXY_SENTINEL_PASSIVE_RAW_ARCHIVE") == "true" {
+		done := make(chan struct{})
+		go func() { defer close(done); s.runPassiveRawArchive(ctx) }()
+		defer func() { <-done }()
+	}
+	if os.Getenv("PROXY_SENTINEL_DISCOVERY_REPORT_PUBLISHER") == "true" {
+		done := make(chan struct{})
+		repo := discovery.Repository{DB: s.pg.db, HardwareV2: true}
+		go func() { defer close(done); repo.RunReportPublisher(ctx, sensorID) }()
+		defer func() { <-done }()
 	}
 	if os.Getenv("PROXY_SENTINEL_DISCOVERY_LIST_WORKER") == "true" {
 		done := make(chan struct{})

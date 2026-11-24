@@ -466,8 +466,8 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
     setExporting(true)
     setExportProgress({count:0,total:0})
     try{
-      const {items:devices,snapshotAt}=await fetchDiscoveryExport<Device>(query,(count,total)=>setExportProgress({count,total}),discoveryTableRowKey)
-      const blob=new Blob(['\ufeff'+discoveryCSV(devices,types)],{type:'text/csv;charset=utf-8'})
+      const {items:devices,snapshotAt,scope,total}=await fetchDiscoveryExport<Device>(query,(count,total)=>setExportProgress({count,total}),discoveryTableRowKey)
+      const blob=new Blob(['\ufeff'+discoveryCSV(devices,types,{scope,snapshotAt,total})],{type:'text/csv;charset=utf-8'})
       const url=URL.createObjectURL(blob)
       const anchor=document.createElement('a')
       anchor.href=url
@@ -686,7 +686,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
           <strong>{discoveryTotal===undefined?(discoveryMetadata.isError?'统计读取失败':'统计中'):`共 ${discoveryTotal} ${countUnit}`}</strong>
           {!addressView&&discoveryMetadata.data&&<Typography.Text type="secondary">已确认 {discoveryMetadata.data.identified} · 待核实 {discoveryMetadata.data.candidate}</Typography.Text>}
           <Typography.Text className="discovery-overview-caption" type="secondary" title={hardwareV2?'按采集范围和发现分组计数':undefined}>
-            {scopeLabel}{discoveryMetadata.data?.as_of?` · 统计于 ${observedTimeTitle(discoveryMetadata.data.as_of)}`:''}{discoveryMetadata.isFetching?' · 统计更新中':''}
+            {scopeLabel}{discoveryMetadata.data?.as_of?` · 统计于 ${observedTimeTitle(discoveryMetadata.data.as_of)}`:''}{discoveryMetadata.data?.publication && ` · 报表发布于 ${observedTimeTitle(discoveryMetadata.data.publication.published_at)}`}{discoveryMetadata.data?.publication?.delayed?' · 发布延迟':''}{discoveryMetadata.isFetching?' · 统计更新中':''}
           </Typography.Text>
           {fresh?.status==='ready'&&<Typography.Text type="secondary" className="discovery-freshness">{fresh.lag_seconds<60?'数据实时':`数据延迟 ${Math.round(fresh.lag_seconds/60)} 分钟`}</Typography.Text>}
           {!addressView&&<Button type="link" size="small" className="discovery-overview-toggle" aria-expanded={overviewOpen} aria-controls="discovery-overview-breakdown" onClick={()=>setOverviewOpen(open=>!open)}>

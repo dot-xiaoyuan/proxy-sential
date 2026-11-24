@@ -164,3 +164,28 @@ PROXY_SENTINEL_SIGNAL_FRESHNESS='ttl=10m,dhcp=20m,ssdp=30m,identity=10m'
 执行时先将候选原子移入同文件系统的私有暂存目录，全部重新核验后再逐项移除，并持久化目录变更与追加审计。并发创建在原路径的新文件不会被移除；失败时恢复仍在暂存的文件，恢复名冲突时保留两份并记录位置。进程被强制终止时，按审计中的暂存及恢复副本映射检查残留，不把失败或中断当作全部清理成功。
 
 审计保存在 `data/acceptance-artifact-retirement-audit`，保留本地恢复副本及每项摘要。移除文件的逻辑字节量与文件系统可用空间变化分别记录；采集和数据库仍在写入时，不能把两次 df 差值全部归因于本次回收。
+
+## 204 被动发现的交接与核验
+
+204 的默认设备视图使用近 24 小时、7 天和 30 天三个统计窗口。每五分钟为每个窗口分别发布设备数量与排行、覆盖报表。筛选、设备列表和完整导出读取实时索引。CSV 的最后四列记录行的种类、筛选范围、快照时间和总数，空结果只有一条明确标注的导出摘要。按设备记录行计数可复核总数。
+
+先启用迁移 254 的四个地址关联触发器，再在被动发现服务启用 `PROXY_SENTINEL_DISCOVERY_ADDRESS_LINK_WORKER=true`。以 `SELECT discovery_address_links_ready()` 检查存量接入。新旧列表和导出在同一事务对齐后，在控制面的 `PROXY_SENTINEL_DISCOVERY_STRUCTURED_READS` 增加 `address_links`。回退该项时保留原有 list、statistics、coverage 选项。启用 `PROXY_SENTINEL_DISCOVERY_REPORT_PUBLISHER=true` 让被动发现服务生成报表，工作进程的结构化读配置随现场已核验的读路径设置。下列查询的六个结果齐全后，可分别开启控制面的 `published_metadata` 和 `published_coverage`。任一入口可单独退回实时读取。
+
+```sql
+SELECT sensor_id, report, hours, bucket_start, as_of, published_at
+FROM discovery_report_publications ORDER BY sensor_id, hours, report;
+```
+
+原文归档使用迁移 255 的 `passive_archive_capture` 触发器和被动发现服务的 `PROXY_SENTINEL_PASSIVE_RAW_ARCHIVE=true`。每个原文引用都有对应的观测、事件和语义摘要。按源批次的首次成功提交时间计保留期。工作进程校验文件代次、批次摘要和行摘要，重新从 ClickHouse 的 `passive_discovery_raw_archive` 计算归档正文摘要后才登记成功。存量从主键游标恢复，单独开启 `PROXY_SENTINEL_PASSIVE_ARCHIVE_ADOPT=true`；观察队列增长时可独立暂停。原文已轮转或首次提交凭据缺失的引用进入缺口。查询下列账本可区分等待、重试、达到八次重试上限、无原文引用以及已核验。找到对应原文并校验文件身份后，按具体 batch_id、row_hash 重置 attempts 和 next_attempt 即可重试，保留原始入库时间。
+
+```sql
+SELECT count(*) FILTER(WHERE verified_at IS NOT NULL) AS verified,
+       count(*) FILTER(WHERE verified_at IS NULL AND attempts=0) AS waiting,
+       count(*) FILTER(WHERE verified_at IS NULL AND attempts BETWEEN 1 AND 7) AS retrying,
+       count(*) FILTER(WHERE verified_at IS NULL AND attempts>=8) AS stopped
+FROM passive_archive_rows;
+SELECT last_id, complete, examined, started_at FROM passive_archive_adoption;
+SELECT count(*) AS missing_reference_members FROM passive_archive_members WHERE batch_id='';
+```
+
+隔离恢复时按已核验的 batch_id、row_hash 取出 raw_b64，Base64 解码后的字节应与原始记录（不含行结束符）逐字节相同。重复处理同一批次后复查原文数和 accepted_at。必要证据热查 30 天，保留至首次成功入库满一年；当前版本保留现有热数据，归档没有自动清理规则。存量尚未核验、案件引用未排除或容量尚未实测的区间继续保留。

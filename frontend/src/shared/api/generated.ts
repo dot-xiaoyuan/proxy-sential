@@ -7965,7 +7965,16 @@ export interface components {
              */
             no_binding: number;
         };
+        DiscoveryReportPublication: {
+            /** Format: date-time */
+            bucket_start: string;
+            /** Format: date-time */
+            published_at: string;
+            /** @description At least one complete publication interval was missed. */
+            delayed: boolean;
+        };
         DiscoveryCoverageReport: {
+            publication?: components["schemas"]["DiscoveryReportPublication"];
             /** Format: date-time */
             as_of: string;
             /** Format: date-time */
@@ -8180,6 +8189,7 @@ export interface components {
             oui_library_version: string;
         };
         DiscoveryDeviceMetadata: {
+            publication?: components["schemas"]["DiscoveryReportPublication"];
             classification_version?: string;
             /** Format: int64 */
             total: number;

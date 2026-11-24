@@ -34,35 +34,36 @@ type CoverageIPv4PendingRow struct {
 // CoverageReport counts addresses from the bounded discovery index. A /24 is
 // an observation bucket, not a claim about the campus routing configuration.
 type CoverageReport struct {
-	AsOf                    time.Time    `json:"as_of"`
-	IdentityAsOf            *time.Time   `json:"identity_as_of,omitempty"`
-	IdentityStatus          string       `json:"identity_status,omitempty"`
-	Window                  string       `json:"window"`
-	Subnet24                int64        `json:"subnet24"`
-	IPv4                    int64        `json:"ipv4"`
-	IPv6                    int64        `json:"ipv6"`
-	MAC                     int64        `json:"mac"`
-	IPMACPairs              int64        `json:"ip_mac_pairs"`
-	IPv4WithMAC             int64        `json:"ipv4_with_mac"`
-	IPMACUniquePairs        int64        `json:"ip_mac_unique_pairs"`
-	IPMACValidScopedPairs   int64        `json:"ip_mac_valid_scoped_pairs"`
-	MultiMACIPv4            int64        `json:"multi_mac_ipv4"`
-	MultiScopeIPMACPairs    int64        `json:"multi_scope_ip_mac_pairs"`
-	BlankAndFilledVLANPairs int64        `json:"blank_and_filled_vlan_pairs"`
-	ScopedMAC               int64        `json:"scoped_mac"`
-	Identified              *int64       `json:"identified,omitempty"`
-	DumbTerminals           *int64       `json:"dumb_terminals,omitempty"`
-	IdentityTotal           *int64       `json:"identity_total,omitempty"`
-	DiagnosticAsOf          *time.Time   `json:"diagnostic_as_of,omitempty"`
-	TypedIPv4               int64        `json:"typed_ipv4"`
-	IdentityNoTypeIPv4      int64        `json:"identity_no_type_ipv4"`
-	NoIdentityIPv4          int64        `json:"no_identity_ipv4"`
-	UntypedNetworkOnlyIPv4  int64        `json:"untyped_network_only_ipv4"`
-	UntypedDHCPOnlyIPv4     int64        `json:"untyped_dhcp_only_ipv4"`
-	UntypedApplicationIPv4  int64        `json:"untyped_application_ipv4"`
-	UntypedOtherIPv4        int64        `json:"untyped_other_ipv4"`
-	RevokedTypeIPv4         int64        `json:"revoked_type_ipv4"`
-	MirrorFunnel            MirrorFunnel `json:"mirror_funnel"`
+	Publication             *ReportPublication `json:"publication,omitempty"`
+	AsOf                    time.Time          `json:"as_of"`
+	IdentityAsOf            *time.Time         `json:"identity_as_of,omitempty"`
+	IdentityStatus          string             `json:"identity_status,omitempty"`
+	Window                  string             `json:"window"`
+	Subnet24                int64              `json:"subnet24"`
+	IPv4                    int64              `json:"ipv4"`
+	IPv6                    int64              `json:"ipv6"`
+	MAC                     int64              `json:"mac"`
+	IPMACPairs              int64              `json:"ip_mac_pairs"`
+	IPv4WithMAC             int64              `json:"ipv4_with_mac"`
+	IPMACUniquePairs        int64              `json:"ip_mac_unique_pairs"`
+	IPMACValidScopedPairs   int64              `json:"ip_mac_valid_scoped_pairs"`
+	MultiMACIPv4            int64              `json:"multi_mac_ipv4"`
+	MultiScopeIPMACPairs    int64              `json:"multi_scope_ip_mac_pairs"`
+	BlankAndFilledVLANPairs int64              `json:"blank_and_filled_vlan_pairs"`
+	ScopedMAC               int64              `json:"scoped_mac"`
+	Identified              *int64             `json:"identified,omitempty"`
+	DumbTerminals           *int64             `json:"dumb_terminals,omitempty"`
+	IdentityTotal           *int64             `json:"identity_total,omitempty"`
+	DiagnosticAsOf          *time.Time         `json:"diagnostic_as_of,omitempty"`
+	TypedIPv4               int64              `json:"typed_ipv4"`
+	IdentityNoTypeIPv4      int64              `json:"identity_no_type_ipv4"`
+	NoIdentityIPv4          int64              `json:"no_identity_ipv4"`
+	UntypedNetworkOnlyIPv4  int64              `json:"untyped_network_only_ipv4"`
+	UntypedDHCPOnlyIPv4     int64              `json:"untyped_dhcp_only_ipv4"`
+	UntypedApplicationIPv4  int64              `json:"untyped_application_ipv4"`
+	UntypedOtherIPv4        int64              `json:"untyped_other_ipv4"`
+	RevokedTypeIPv4         int64              `json:"revoked_type_ipv4"`
+	MirrorFunnel            MirrorFunnel       `json:"mirror_funnel"`
 
 	IPv4BindingFreshness *CoverageBindingFreshness `json:"ipv4_binding_freshness,omitempty"`
 	IPv6BindingFreshness *CoverageBindingFreshness `json:"ipv6_binding_freshness,omitempty"`

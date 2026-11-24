@@ -103,6 +103,10 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
   node text,site text,domain text,vlan text,vrf text,mac text,ip text,confidence text,evidence jsonb,
   name text,device_type text,manufacturer text,model_name text,capabilities jsonb,event_id text,product_clue jsonb)
  WHERE ` + strings.Join(baseWhere, " AND ") + ``
+	addressJoin := `LEFT JOIN LATERAL (
+  SELECT i.endpoint_id FROM discovery_identity_links i
+  WHERE i.observation_id=l.id AND l.raw_mac='' LIMIT 1
+ ) i ON true`
 	extraCTE, groupedUnion := "", ""
 	if query.structured {
 		if hours := cachedGroupWindow(query); hours > 0 {
@@ -112,6 +116,10 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 		}
 		if query.groupPageRows {
 			baseWhere = append(baseWhere, "l.base_identity IN (SELECT c.identity_key FROM candidates c JOIN cache_groups g USING(identity_key))")
+		}
+		if structuredReadEnabled("address_links") {
+			extraCTE = liveAddressLinksCTE + strings.Replace(extraCTE, "JOIN discovery_identity_links i ON i.observation_id=f.id", "JOIN live_address_links i ON i.observation_id=f.id", 1)
+			addressJoin = "LEFT JOIN live_address_links i ON i.observation_id=l.id AND l.raw_mac=''"
 		}
 		sourceRows = structuredSourceSQL(query, baseWhere)
 		identitySQL = "CASE WHEN coalesce(l.display_endpoint,'')='' THEN l.base_identity ELSE " + identitySQL + " END"
@@ -142,10 +150,7 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
   CASE WHEN ` + usableSourceMAC + ` AND i.endpoint_id IS NULL AND ix.endpoint_id IS NULL
    THEN l.source_campus END lease_campus
  FROM source_rows l
- LEFT JOIN LATERAL (
-  SELECT i.endpoint_id FROM discovery_identity_links i
-  WHERE i.observation_id=l.id AND l.raw_mac='' LIMIT 1
- ) i ON true
+ ` + addressJoin + `
  LEFT JOIN LATERAL (
   SELECT ix.endpoint_id FROM discovery_identity_links ix
   WHERE ix.observation_id=l.id AND l.raw_mac<>''

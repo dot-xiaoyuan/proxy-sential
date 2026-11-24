@@ -58,6 +58,17 @@ func cachedGroupWindow(q DeviceQuery) int {
 	return 0
 }
 
+// Pending generations are resolved from the two authoritative relations in the
+// reader's own snapshot. Concurrent link corrections cannot expose stale owners.
+const liveAddressLinksCTE = `, live_address_links AS MATERIALIZED (
+ SELECT c.observation_id,c.endpoint_id FROM discovery_address_link_current c
+ WHERE NOT EXISTS(SELECT 1 FROM discovery_address_link_dirty d WHERE d.observation_id=c.observation_id)
+ UNION ALL
+ SELECT i.observation_id,i.endpoint_id FROM (SELECT DISTINCT observation_id FROM discovery_address_link_dirty) d
+ JOIN discovery_identity_links i USING(observation_id)
+ WHERE EXISTS(SELECT 1 FROM discovery_list_observation f WHERE f.id=d.observation_id AND f.raw_mac='')
+)`
+
 func cachedGroupCTE(hours int) string {
 	// Incoming address-only links or an exceptional outgoing link can merge
 	// raw identity groups. Send both sides through the live membership query.
@@ -129,7 +140,11 @@ func structuredCoverageObservations(sensor, from, until string) string {
 // A switch set on a partially adopted database must yield an explicit error
 // even when the facts table is empty.
 func checkStructuredRead(ctx context.Context, db indexedQueryer) error {
-	rows, err := db.QueryContext(ctx, "SELECT discovery_list_assert_ready()")
+	statement := "SELECT discovery_list_assert_ready()"
+	if structuredReadEnabled("address_links") {
+		statement += " WHERE discovery_address_links_ready()"
+	}
+	rows, err := db.QueryContext(ctx, statement)
 	if err != nil {
 		return err
 	}

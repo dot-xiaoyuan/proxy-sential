@@ -93,13 +93,15 @@ export async function readDiscoveryExport<T>(response: Response, onProgress?: (c
   }
 }
 
-export async function fetchDiscoveryExport<T>(query: URLSearchParams, onProgress?: (count: number, total: number) => void, rowKey?: (item: T) => string): Promise<DiscoveryExportResult<T>> {
+export async function fetchDiscoveryExport<T>(query: URLSearchParams, onProgress?: (count: number, total: number) => void, rowKey?: (item: T) => string): Promise<DiscoveryExportResult<T> & {scope:string}> {
   const scope = new URLSearchParams(query)
   scope.delete('cursor')
   scope.delete('limit')
   scope.delete('offset')
+  scope.sort()
   const response = await fetch(`${getApiBase()}/discovery/devices/export?${scope.toString()}`, {credentials:'include',headers:{Accept:'application/x-ndjson'}})
-  return readDiscoveryExport(response,onProgress,rowKey)
+  const result = await readDiscoveryExport(response,onProgress,rowKey)
+  return {...result, scope:scope.toString()}
 }
 
 const statusLabels: Record<string, string> = { identified: '证据有效', candidate: '发现线索', conflict: '类型证据冲突', expired: '证据已过期' }
@@ -115,7 +117,7 @@ function deviceType(item: ExportableDevice, types: Record<string, string>): stri
   return observed ? types[observed] ?? observed : ''
 }
 
-export function discoveryCSV(items: ExportableDevice[], types: Record<string, string>): string {
+export function discoveryCSV(items: ExportableDevice[], types: Record<string, string>, manifest?: {scope:string; snapshotAt:string; total:number}): string {
   const rows: string[][] = [['标识', '名称', 'MAC', '当前地址', '设备类型', '历史型号类型', '型号自报时间', '品牌', '型号', '操作系统', '网络域', 'VLAN', '采集传感器', '证据状态', '识别置信度', '识别规则', '窗口内首次观测', '最近观测', '证据数', '待核实原因', '核实线索时间', '硬件类型状态', '类型依据时间', '活动状态', '硬件规则版本', '硬件来源引用', '人工核实类型', '人工核实型号', '实物或台账依据', '镜像覆盖核对', '核实时间', '核实人', 'IP 产品线索', '产品证据时间', '响应作用域', '产品原文引用', '产品匹配状态', '最后观测 IP', 'IP 观测时间']]
   for (const item of items) {
     rows.push([
@@ -154,6 +156,15 @@ export function discoveryCSV(items: ExportableDevice[], types: Record<string, st
       item.last_observed_ip ?? '',
       item.last_observed_ip_at ?? '',
     ])
+  }
+  if (manifest) {
+    if (!manifest.snapshotAt || manifest.total !== items.length) throw new Error('导出快照清单不完整')
+    const columns = rows[0].length
+    rows[0].push('记录种类', '筛选范围', '快照时间', '导出总数')
+    if (!items.length) rows.push(Array<string>(columns).fill(''))
+    for (const row of rows.slice(1)) {
+      row.push(items.length ? '发现记录' : '导出摘要', manifest.scope, manifest.snapshotAt, String(manifest.total))
+    }
   }
   return rows.map(row => row.map(csvCell).join(',')).join('\r\n') + '\r\n'
 }

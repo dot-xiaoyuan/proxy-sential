@@ -420,7 +420,31 @@ func (f HardwareFact) hasReferencedProductRecord() bool {
 	if f.Source == "sadp" {
 		return validOriginalDigest(str(f.RawRef, "payload_sha256"))
 	}
-	return f.Source == "dns_sd" && hasOriginalFileRecord(f.RawRef)
+	if f.Source != "dns_sd" {
+		return false
+	}
+	if hasOriginalFileRecord(f.RawRef) {
+		return true
+	}
+	if str(f.RawRef, "backend") != "derived_dns_sd" {
+		return false
+	}
+	// The SRV join emits exactly [SRV, address, TXT]. Older persisted joins
+	// predate the explicit TXT tag. Two-element PTR/address pairs have no TXT.
+	var records []struct {
+		Event string         `json:"event_id"`
+		Kind  string         `json:"record_type"`
+		Ref   map[string]any `json:"raw_ref"`
+	}
+	raw, err := json.Marshal(f.RawRef["records"])
+	if err != nil || json.Unmarshal(raw, &records) != nil || len(records) != 3 {
+		return false
+	}
+	txt := records[2]
+	if (txt.Kind != "" && txt.Kind != "TXT") || !hasOriginalFileRecord(txt.Ref) {
+		return false
+	}
+	return txt.Event == "zeek-"+str(txt.Ref, "content_sha256")[:24]
 }
 
 func hasOriginalFileRecord(ref map[string]any) bool {

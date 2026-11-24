@@ -9011,10 +9011,18 @@ components:
         expired: { type: integer, format: int64, minimum: 0, description: Distinct IPs with observed bindings that have all expired naturally. }
         uncertain: { type: integer, format: int64, minimum: 0, description: Distinct IPs without a valid unambiguous binding that have a withdrawal or a binding conflict. }
         no_binding: { type: integer, format: int64, minimum: 0, description: Distinct IPs with no binding record in the selected window. }
+    DiscoveryReportPublication:
+      type: object
+      required: [bucket_start, published_at, delayed]
+      properties:
+        bucket_start: { type: string, format: date-time }
+        published_at: { type: string, format: date-time }
+        delayed: { type: boolean, description: At least one complete publication interval was missed. }
     DiscoveryCoverageReport:
       type: object
       required: [as_of, window, subnet24, ipv4, ipv6, mac, ip_mac_pairs, scoped_mac, mirror_funnel]
       properties:
+        publication: { $ref: '#/components/schemas/DiscoveryReportPublication' }
         as_of: { type: string, format: date-time }
         identity_as_of: { type: string, format: date-time }
         identity_status: { type: string, enum: [timeout], description: The identity statistics exceeded their deadline. Address and mirror counts are still available. }
@@ -9093,6 +9101,7 @@ components:
       type: object
       required: [total, identified, candidate, conflict, expired, types, as_of, count_unit, window]
       properties:
+        publication: { $ref: '#/components/schemas/DiscoveryReportPublication' }
         classification_version: { type: string }
         total: { type: integer, format: int64, minimum: 0 }
         identified: { type: integer, format: int64, minimum: 0, description: Current non-conflicting identities with one explicit device type. }

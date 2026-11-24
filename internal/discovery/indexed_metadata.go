@@ -9,6 +9,7 @@ import (
 )
 
 type IndexedDeviceMetadata struct {
+	Publication           *ReportPublication        `json:"publication,omitempty"`
 	ClassificationVersion string                    `json:"classification_version,omitempty"`
 	Total                 int64                     `json:"total"`
 	Identified            int64                     `json:"identified"`

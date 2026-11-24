@@ -77,3 +77,10 @@ it('exports retained hardware separately from activity and never restores a revo
   expect(lines[1]).toContain('2026-11-09T08:00:00Z')
   expect(lines[2]).not.toContain('摄像机')
 })
+
+it('records the exact scope, timestamp and total in nonempty and empty downloads', () => {
+  const manifest = {scope:'mode=passive&type=camera',snapshotAt:'2026-11-24T10:00:00Z',total:1}
+  expect(discoveryCSV([{id:'one'}],{},manifest)).toContain('发现记录,mode=passive&type=camera,2026-11-24T10:00:00Z,1')
+  expect(discoveryCSV([],{}, {...manifest,total:0})).toContain('导出摘要,mode=passive&type=camera,2026-11-24T10:00:00Z,0')
+  expect(() => discoveryCSV([],{},manifest)).toThrow('清单不完整')
+})
