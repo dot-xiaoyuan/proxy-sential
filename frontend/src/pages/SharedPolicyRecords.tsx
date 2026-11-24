@@ -113,7 +113,7 @@ export function SharedPolicyRecords() {
  const [pageSize, setPageSize] = useState(20)
  const [paging, setPaging] = useState({scope:'',page:1,cursors:[''],snapshot:''})
  const requestedResult = params.get('decision_result') ?? 'matched'
- const result = ['matched', 'insufficient', 'expired', 'all'].includes(requestedResult) ? requestedResult : 'matched'
+ const result = ['matched', 'insufficient', 'expired', 'whitelist_suppressed', 'all'].includes(requestedResult) ? requestedResult : 'matched'
  const account = params.get('decision_account') ?? ''
  const ip = params.get('decision_ip') ?? ''
  const from = params.get('decision_from') ?? ''
@@ -157,7 +157,7 @@ export function SharedPolicyRecords() {
     searchValue={account}
     onSearchChange={value => update('decision_account', value)}
     filters={<>
-      <Select aria-label="记录结果" value={result} onChange={value => update('decision_result', value)} options={[{ value: 'matched', label: '策略命中' }, { value: 'insufficient', label: '归责或覆盖不足' }, { value: 'expired', label: '证据已过期' }, { value: 'all', label: '全部评估' }]} />
+      <Select aria-label="记录结果" value={result} onChange={value => update('decision_result', value)} options={[{ value: 'matched', label: '策略命中' }, { value: 'insufficient', label: '归责或覆盖不足' }, { value: 'expired', label: '证据已过期' }, { value: 'whitelist_suppressed', label: '白名单豁免' }, { value: 'all', label: '全部评估' }]} />
       <Button size="small" type="text" onClick={() => setMoreOpen(value => !value)}>{moreOpen ? '收起筛选' : '更多筛选'}{moreCount ? `（${moreCount}）` : ''}</Button>
     </>}
     panel={moreOpen ? <div className="app-filter-panel">
@@ -168,9 +168,9 @@ export function SharedPolicyRecords() {
   />
   <section className="shared-record-panel">
     <AppListHeader title="共享行为与策略命中" count={`${items.length} 条`} />
-    <div className="shared-record-intro"><Tag>仅记录，未执行</Tag><span>命中后不会下线或发送请求</span>{can(session.data,'actions:read')&&<Link to="/actions?tab=actions">查看处置记录</Link>}{can(session.data,'behavior-reports:read')&&<Link to="/actions?tab=reports">查看上报记录</Link>}<details><summary>判定与执行说明</summary><p>路由器身份、下游共享关系及事件时账号归责均核验通过后记录策略命中。每个连续违规时段只生成一次处置动作及每通道上报记录，证据变化继续留下策略决策。旧规则命中仍保留原始记录；核验状态说明其证据是否足以支持现行结论。所有处置与上报均为仅记录状态，不向外部系统发送请求。</p></details></div>
+    <div className="shared-record-intro"><Tag>仅记录，未执行</Tag><span>命中后不会下线或发送请求</span>{can(session.data,'actions:read')&&<Link to="/actions?tab=actions">查看处置记录</Link>}{can(session.data,'behavior-reports:read')&&<Link to="/actions?tab=reports">查看上报记录</Link>}<details><summary>判定与执行说明</summary><p>镜像活动与认证出口吻合且有明确路由器角色证据，或独立确认同一认证出口有多台终端时，记录共享命中。匹配白名单的观察保留豁免依据。每个连续违规时段只生成一次处置动作及每通道上报记录，证据变化继续留下策略决策。旧规则命中仍保留原始记录；核验状态说明其证据是否足以支持现行结论。所有处置与上报均为仅记录状态，不向外部系统发送请求。</p></details></div>
     {observation && <p className="shared-record-id">当前观察：{observation} <Button type="link" onClick={() => update('observation_id', '')}>清除关联筛选</Button></p>}
-    {invalidRange ? <Alert type="warning" title="请填写有效时间，且结束时间晚于开始时间" /> : query.isError ? <AppErrorAlert title="策略记录读取失败" /> : query.isLoading ? <AppLoadingState rows={3} /> : !items.length ? <div className="shared-record-empty"><AppEmptyState description={result==='matched'?'当前筛选下暂无策略命中记录':'当前筛选下暂无评估记录'} />{result==='matched'&&<><p className="shared-access-muted">已识别的路由器仍需核验共享关系，采集待办不属于策略命中。</p><Button onClick={()=>update('decision_result','insufficient')}>查看未通过评估</Button></>}</div> : <AppTable
+    {invalidRange ? <Alert type="warning" title="请填写有效时间，且结束时间晚于开始时间" /> : query.isError ? <AppErrorAlert title="策略记录读取失败" /> : query.isLoading ? <AppLoadingState rows={3} /> : !items.length ? <div className="shared-record-empty"><AppEmptyState description={result==='matched'?'当前筛选下暂无策略命中记录':'当前筛选下暂无评估记录'} />{result==='matched'&&<><p className="shared-access-muted">可在共享行为观察中查看候选出口及待核验原因。</p><Button onClick={()=>update('decision_result','insufficient')}>查看未通过评估</Button></>}</div> : <AppTable
       rowKey="decision_id"
       columns={columns}
       dataSource={items}

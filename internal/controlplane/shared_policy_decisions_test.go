@@ -48,3 +48,27 @@ func TestSharedDecisionCursorUsesStableOrderAndBindsFilters(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSharedDecisionListsWhitelistExemptions(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	server := &Server{productPolicies: &productPolicyState{db: db}}
+	mock.ExpectQuery("SELECT document,evaluated_at,decision_id.*trigger_type=.*result=.*ORDER BY").
+		WillReturnRows(sqlmock.NewRows([]string{"document", "at", "id"}).AddRow(`{"decision_id":"school-exemption","result":"whitelist_suppressed"}`, time.Now(), "school-exemption"))
+	w := httptest.NewRecorder()
+	server.queryPolicyDecisions(w, httptest.NewRequest("GET", "/policy-decisions?trigger=shared_access&result=whitelist_suppressed", nil))
+	var records struct {
+		Items []struct {
+			Result string `json:"result"`
+		} `json:"items"`
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &records) != nil || len(records.Items) != 1 || records.Items[0].Result != "whitelist_suppressed" {
+		t.Fatalf("exemptions: %d %s", w.Code, w.Body.String())
+	}
+	if err = mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

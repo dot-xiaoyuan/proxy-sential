@@ -134,7 +134,7 @@ func TestSharedBehaviorDefaultIncludesCurrentCandidatesForOperations(t *testing.
 
 func TestProtocolOnlyCurrentWindowsRemainInHistoricalClues(t *testing.T) {
 	where, _, err := sharedBehaviorWhere(SharedBehaviorQuery{View: "history", HistoryBasis: "clues"})
-	if err != nil || !strings.Contains(where, "window_end<=now() AND COALESCE(observation->'signal_groups','[]'::jsonb) ? 'ieee1905_association')") || strings.Contains(where, "coexisting_device_models") {
+	if err != nil || !strings.Contains(where, "window_end<=now() AND (COALESCE(observation->'signal_groups','[]'::jsonb) ? 'ieee1905_association' OR COALESCE(observation->>'confirmation_basis','')='authenticated_router'))") || strings.Contains(where, "coexisting_device_models") {
 		t.Fatalf("weak current evidence hidden or UA models counted as strong: %s %v", where, err)
 	}
 }

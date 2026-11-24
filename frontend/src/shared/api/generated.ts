@@ -5164,7 +5164,7 @@ export interface paths {
                     observation_id?: string;
                     trigger?: "shared_access";
                     ip?: string;
-                    result?: "matched" | "insufficient" | "expired";
+                    result?: "matched" | "insufficient" | "expired" | "whitelist_suppressed";
                     from?: string;
                     to?: string;
                     include_processing?: boolean;
@@ -5231,7 +5231,7 @@ export interface paths {
                     observation_id?: string;
                     trigger?: "shared_access";
                     ip?: string;
-                    result?: "matched" | "insufficient" | "expired";
+                    result?: "matched" | "insufficient" | "expired" | "whitelist_suppressed";
                     from?: string;
                     to?: string;
                     include_processing?: boolean;
@@ -14323,7 +14323,7 @@ export interface operations {
                 observation_id?: string;
                 trigger?: "shared_access";
                 ip?: string;
-                result?: "matched" | "insufficient" | "expired";
+                result?: "matched" | "insufficient" | "expired" | "whitelist_suppressed";
                 from?: string;
                 to?: string;
                 cursor?: string;
@@ -14362,10 +14362,10 @@ export interface operations {
                             /** @description Shared-access records always use observe. */
                             mode?: string;
                             planned_action?: string;
-                            /** @description Shared-access records always use not_sent. */
+                            /** @description Current sharing decisions use record_only. Older records can use not_sent. */
                             delivery_status?: string;
                             /** @enum {string} */
-                            result?: "matched" | "insufficient" | "expired";
+                            result?: "matched" | "insufficient" | "expired" | "whitelist_suppressed";
                             /** @enum {string} */
                             evidence_review_status?: "rule_verified" | "pending_review" | "insufficient_evidence" | "unverified";
                             evidence_review_reason?: string;

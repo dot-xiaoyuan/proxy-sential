@@ -134,7 +134,7 @@ func (s *DBStore) outletRouter(ctx context.Context, w sharedaccess.Window, l out
 	err := s.pg.db.QueryRowContext(ctx, `SELECT r.assessment_id,r.role,r.status,r.confidence,r.brand,r.model,
  CASE WHEN f.explicit_role OR (r.status='confirmed' AND f.independent_families>=2) THEN f.evidence_id ELSE '' END,f.rule_id,f.source_family,f.input,f.event_id
  FROM router_assessments r JOIN LATERAL (
- SELECT f.evidence_id,f.rule_id,f.source_family,coalesce(f.data->>'input','') AS input,coalesce(f.data->'event_ids'->>0,'') AS event_id,
+ SELECT f.evidence_id,f.rule_id,f.source_family,coalesce(f.data->>'model','') AS model,coalesce(f.data->>'input','') AS input,coalesce(f.data->'event_ids'->>0,'') AS event_id,
  dense_rank() OVER (ORDER BY f.source_family) + dense_rank() OVER (ORDER BY f.source_family DESC) - 1 AS independent_families,
  (f.rule_id IN ('ssdp-advertised-internet-gateway','first-hop-redundancy-router-role') OR
  (f.data->>'strength'='strong' AND coalesce(f.data->>'model','')<>'' AND
@@ -145,7 +145,7 @@ func (s *DBStore) outletRouter(ctx context.Context, w sharedaccess.Window, l out
  AND f.source_family NOT IN ('shared_gateway_behavior','client_fingerprint','weak_stack') AND coalesce(f.data->>'brand_reference_only','false')<>'true'
  ORDER BY explicit_role DESC,f.score DESC,f.last_seen DESC,f.evidence_id LIMIT 1) f ON true
  WHERE r.device_key='mac:'||$1 AND r.mac<>'' AND r.role='router'
- AND (r.status IN ('likely','confirmed') OR f.explicit_role)
+ AND (r.status IN ('likely','confirmed') OR f.model<>'' OR f.explicit_role)
  AND NOT r.ambiguous AND NOT r.brand_reference_only AND NOT r.infrastructure AND r.expires_at>$2 AND r.first_seen<=$2
  AND NOT EXISTS (SELECT 1 FROM router_evidence_facts x WHERE x.assessment_id=r.assessment_id AND (x.conflict OR x.exclusion)
  AND coalesce(x.data->>'conflict_code','')<>'ordinary_endpoint' AND x.first_seen<=$2 AND x.expires_at>$2)

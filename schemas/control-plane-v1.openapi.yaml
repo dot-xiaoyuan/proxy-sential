@@ -2437,6 +2437,7 @@ paths:
               - matched
               - insufficient
               - expired
+              - whitelist_suppressed
         - name: from
           in: query
           schema:
@@ -2518,13 +2519,14 @@ paths:
                           type: string
                         delivery_status:
                           type: string
-                          description: Shared-access records always use not_sent.
+                          description: Current sharing decisions use record_only. Older records can use not_sent.
                         result:
                           type: string
                           enum:
                             - matched
                             - insufficient
                             - expired
+                            - whitelist_suppressed
                         evidence_review_status:
                           type: string
                           enum: [rule_verified, pending_review, insufficient_evidence, unverified]
@@ -5367,6 +5369,7 @@ paths:
               - matched
               - insufficient
               - expired
+              - whitelist_suppressed
         - name: from
           in: query
           schema:
@@ -5452,6 +5455,7 @@ paths:
               - matched
               - insufficient
               - expired
+              - whitelist_suppressed
         - name: from
           in: query
           schema:

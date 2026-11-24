@@ -9,8 +9,12 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
     await page.getByRole('tab',{name:'证据快照'}).click();
     await page.getByRole('button',{name:/查看证据历史/}).click();
     await expect(page.locator('.case-history-record')).toHaveCount(20);
-    await page.getByRole('button',{name:'加载更早记录'}).click();
-    await expect(page.locator('.case-history-record')).toHaveCount(40);
+    const section = page.locator('.case-history-section');
+    const firstID = section.locator('.case-history-id').first();
+    const firstPageID = await firstID.innerText();
+    await section.getByTitle('下一页', { exact: true }).click();
+    await expect(firstID).not.toHaveText(firstPageID);
+    await expect(section.locator('.case-history-record')).toHaveCount(20);
     await page.locator('.case-history-record summary').first().click();
     await page.locator('.case-history-section').scrollIntoViewIfNeeded();
     const probe=await page.evaluate(() => ({

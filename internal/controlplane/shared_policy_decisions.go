@@ -79,7 +79,7 @@ func (s *Server) queryPolicyDecisionPage(w http.ResponseWriter, r *http.Request,
 		add("subject_ip=$%d::inet", v)
 	}
 	if v := q.Get("result"); v != "" {
-		if v != "matched" && v != "insufficient" && v != "expired" {
+		if v != "matched" && v != "insufficient" && v != "expired" && v != "whitelist_suppressed" {
 			writeError(w, 400, "bad_result", "不支持的结果")
 			return
 		}

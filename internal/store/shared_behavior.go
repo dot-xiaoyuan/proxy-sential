@@ -103,11 +103,11 @@ func sharedBehaviorWhere(query SharedBehaviorQuery) (string, []any, error) {
 		clauses[5] = "(" + clauses[5] + " OR observation->>'confirmation_basis'='authenticated_router')"
 	}
 	if query.View == "history" {
-		clauses = []string{"NOT (current AND rule_version='" + sharedaccess.BehaviorRuleVersion + "' AND expires_at>now() AND window_end>now()-interval '20 minutes' AND window_end<=now() AND COALESCE(observation->'signal_groups','[]'::jsonb) ? 'ieee1905_association')"}
+		clauses = []string{"NOT (current AND rule_version='" + sharedaccess.BehaviorRuleVersion + "' AND expires_at>now() AND window_end>now()-interval '20 minutes' AND window_end<=now() AND (COALESCE(observation->'signal_groups','[]'::jsonb) ? 'ieee1905_association' OR COALESCE(observation->>'confirmation_basis','')='authenticated_router'))"}
 		// Old scores and router projections do not prove downstream devices.
 		// Filter by evidence before choosing the newest historical episode.
 		strong := `(status IN ('confirmed','candidate') AND coverage_state='verified' AND COALESCE(observation->>'strong_anchor','') ='ieee1905_association' AND CASE WHEN observation->>'device_lower_bound' ~ '^[0-9]{1,9}$' THEN (observation->>'device_lower_bound')::int ELSE 0 END>=2 AND COALESCE(NULLIF(observation->'conflicts','null'::jsonb),'[]'::jsonb)='[]'::jsonb)`
-		strong = "(" + strong + " OR (status='confirmed' AND observation->>'confirmation_basis'='authenticated_router'))"
+		strong = "(" + strong + " OR (status='confirmed' AND COALESCE(observation->>'confirmation_basis','')='authenticated_router'))"
 		switch query.HistoryBasis {
 		case "", "shared":
 			clauses = append(clauses, strong)
