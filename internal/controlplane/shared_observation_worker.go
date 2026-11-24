@@ -13,7 +13,7 @@ import (
 	"proxy-sentinel/internal/policy"
 	"proxy-sentinel/internal/sharedaccess"
 	"proxy-sentinel/internal/store"
-	"slices"
+
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -391,8 +391,7 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 	diversitySatisfied := s.sharedConfig.SkipCaptureVerification && len(item.SignalGroups) >= 2
 	captureBypass := s.sharedConfig.SkipCaptureVerification
 	policyEligible := item.Current && (anchorSatisfied || diversitySatisfied || captureBypass) && w.Complete && w.CoverageVerified
-	trafficEvidence := item.Current && slices.Contains(item.SignalGroups, "ua_os") && slices.Contains(item.SignalGroups, "tls_stack")
-	if policyEligible || trafficEvidence {
+	if policyEligible {
 		identityStarted := time.Now()
 		mapping, mapErr := s.sharedConfig.Mapping(w)
 		if mapErr == nil {
@@ -401,38 +400,17 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 				return failure(e)
 			}
 			if authority.registered {
-				identityTo := w.To
-				identityContext := ctx
-				var cancelIdentity context.CancelFunc
-				if policyEligible {
-					identityTo = now
-				} else {
-					// Candidate attribution shares the realtime workers. Bound
-					// the extra lookup so a slow read cannot starve collection.
-					identityContext, cancelIdentity = context.WithTimeout(ctx, 1500*time.Millisecond)
-				}
-				sessions, e := reader.SharedIdentitySessions(identityContext, mapping, w.IP, w.From, identityTo, authority.interval)
-				if cancelIdentity != nil {
-					cancelIdentity()
-				}
+				sessions, e := reader.SharedIdentitySessions(ctx, mapping, w.IP, w.From, now, authority.interval)
 				if e != nil {
-					if policyEligible || ctx.Err() != nil {
-						return failure(e)
-					}
-					item.Reasons = append(item.Reasons, "认证账号核对暂未完成")
+					return failure(e)
 				}
-				if trafficEvidence && e == nil {
-					item.AccountID = sharedaccess.ObservationAccount(w, s.sharedConfig, sessions)
-				}
-				if policyEligible && s.sharedConfig.SkipCaptureVerification {
+				if s.sharedConfig.SkipCaptureVerification {
 					for i := range sessions {
 						sessions[i].IdentityIssue = ""
 					}
 				}
-				if policyEligible {
-					identityEvidence = sessions
-				}
-			} else if policyEligible {
+				identityEvidence = sessions
+			} else {
 				result.Reasons = []string{"identity_source_unregistered"}
 			}
 		}

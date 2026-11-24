@@ -17,7 +17,7 @@ func TestSharedBehaviorReportUsesCurrentTrafficAndVerifiedEvidence(t *testing.T)
 	}
 	defer db.Close()
 	now := time.Now().UTC()
-	mock.ExpectQuery(`count\(\*\) FILTER\( WHERE status='confirmed' AND coverage_state='verified'.*strong_anchor.* FROM shared_behavior_observations WHERE current=true.*window_end>now\(\)-interval '20 minutes'.*ua_os.*tls_stack.*generation_id=`).
+	mock.ExpectQuery(`count\(\*\) FILTER\( WHERE status='confirmed' AND coverage_state='verified'.*strong_anchor.* FROM shared_behavior_observations WHERE current=true.*window_end>now\(\)-interval '20 minutes'.*router_identity.*ttl_path.*tls_stack.*generation_id=`).
 		WillReturnRows(sqlmock.NewRows([]string{"now", "total", "confirmed"}).AddRow(now, 8, 1))
 	report, err := (&PostgresStore{db: db}).GetSharedBehaviorReport(context.Background())
 	if err != nil || report != (SharedBehaviorReport{AsOf: now, PendingReview: 7, Confirmed: 1}) {
@@ -60,7 +60,7 @@ func TestListSharedBehaviorUsesBoundedScopedCursor(t *testing.T) {
 	defer db.Close()
 	store := &PostgresStore{db: db}
 	at := time.Date(2026, 11, 12, 4, 0, 0, 0, time.UTC)
-	raw := []byte(`{"observation_id":"item","sensor_id":"sensor-a","ip":"192.0.2.1","status":"candidate","confidence":70,"signal_groups":[],"reasons":[],"conflicts":[],"coverage_state":"verified","rule_version":"shared-behavior/v13","first_seen":"2026-11-12T03:50:00Z","last_seen":"2026-11-12T04:00:00Z","window_start":"2026-11-12T03:50:00Z","window_end":"2026-11-12T04:00:00Z","expires_at":"2026-12-12T04:00:00Z","router":{},"score_components":[],"feature_samples":{},"event_ids":[]}`)
+	raw := []byte(`{"observation_id":"item","sensor_id":"sensor-a","ip":"192.0.2.1","status":"candidate","confidence":70,"signal_groups":[],"reasons":[],"conflicts":[],"coverage_state":"verified","rule_version":"shared-behavior/v14","first_seen":"2026-11-12T03:50:00Z","last_seen":"2026-11-12T04:00:00Z","window_start":"2026-11-12T03:50:00Z","window_end":"2026-11-12T04:00:00Z","expires_at":"2026-12-12T04:00:00Z","router":{},"score_components":[],"feature_samples":{},"event_ids":[]}`)
 	mock.ExpectQuery("SELECT observation,last_seen,observation_id FROM shared_behavior_observations").
 		WithArgs(3).
 		WillReturnRows(sqlmock.NewRows([]string{"observation", "last_seen", "observation_id"}).

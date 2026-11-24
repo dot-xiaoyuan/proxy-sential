@@ -1,12 +1,13 @@
 package sharedaccess
 
 import (
+	"encoding/json"
 	"slices"
 	"sort"
 	"time"
 )
 
-const BehaviorRuleVersion = "shared-behavior/v13"
+const BehaviorRuleVersion = "shared-behavior/v14"
 
 type BehaviorRouterContext struct {
 	AssessmentID string `json:"assessment_id,omitempty"`
@@ -42,6 +43,7 @@ type KnownDevice struct {
 }
 
 type BehaviorAssessment struct {
+	OutletEvidence          json.RawMessage                     `json:"authenticated_outlet,omitempty"`
 	Current                 bool                                `json:"current"`
 	ObservationID           string                              `json:"observation_id"`
 	GenerationID            string                              `json:"generation_id,omitempty"`

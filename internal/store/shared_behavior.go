@@ -94,7 +94,7 @@ func sharedBehaviorWhere(query SharedBehaviorQuery) (string, []any, error) {
 		return "", nil, fmt.Errorf("invalid shared behavior view")
 	}
 	if query.View == "traffic" {
-		clauses[5] = "(" + clauses[5] + " OR signal_groups @> ARRAY['ua_os','tls_stack']::text[])"
+		clauses[5] = "(" + clauses[5] + " OR (signal_groups @> ARRAY['router_identity']::text[] AND observation ? 'authenticated_outlet') OR signal_groups @> ARRAY['ttl_path','tls_stack']::text[])"
 	}
 	if query.View == "history" {
 		clauses = []string{"NOT (current AND rule_version='" + sharedaccess.BehaviorRuleVersion + "' AND expires_at>now() AND window_end>now()-interval '20 minutes' AND window_end<=now() AND COALESCE(observation->'signal_groups','[]'::jsonb) ? 'ieee1905_association')"}

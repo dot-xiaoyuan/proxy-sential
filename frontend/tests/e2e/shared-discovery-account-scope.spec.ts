@@ -17,8 +17,8 @@ for (const [width, height] of [[390, 844], [1280, 800], [1440, 900]]) {
         if (url.pathname !== '/api/v1/shared-access/devices') return original(input, init)
         const base = { sensor_id: 'test', role: 'router', role_source: 'assessment', identity_state: 'supported', identity_current: true, identity_expires_at: new Date(Date.now() + 3600000).toISOString(), last_observed_at: new Date().toISOString(), latest_account_at: new Date().toISOString(), ip: '192.0.2.1', identity_conflict: false, account_conflict: false, current_shared: false, auth_bindings: [] }
         const items = [
-          { ...base, profile_id: 'likely', brand: 'TP-Link', model: 'AX3000', mac: '00:11:22:33:44:55', router_status: 'likely', latest_account_id: 'student-1', identity_assessment_id: 'a1' },
-          { ...base, profile_id: 'candidate', brand: 'Huawei', model: 'AX3', mac: '00:11:22:33:44:66', router_status: 'candidate', latest_account_id: 'student-2' },
+          { ...base, profile_id: 'likely', brand: 'TP-Link', model: 'AX3000', mac: '00:11:22:33:44:55', router_status: 'likely', latest_account_id: 'student-1', auth_bindings: [{ account_id: 'student-1', match_basis: 'exact_mac', assigned_ips: [base.ip] }], identity_assessment_id: 'a1' },
+          { ...base, profile_id: 'candidate', brand: 'Huawei', model: 'AX3', mac: '00:11:22:33:44:66', router_status: 'candidate', latest_account_id: 'student-2', auth_bindings: [{ account_id: 'student-2', match_basis: 'exact_mac', assigned_ips: [base.ip] }] },
           { ...base, profile_id: 'unlinked', brand: 'ZTE', model: 'NoAccount', mac: '00:11:22:33:44:77', router_status: 'likely', latest_account_id: '' },
         ].filter(item => (!url.searchParams.get('router_status') || item.router_status === url.searchParams.get('router_status')) && (!url.searchParams.has('has_account') || Boolean(item.latest_account_id) === (url.searchParams.get('has_account') === 'true')))
         return Response.json({ items, page: { total: items.length, limit: 20 }, freshness_state: 'fresh' })
@@ -59,6 +59,8 @@ for (const [width, height] of [[390, 844], [1280, 800], [1440, 900]]) {
     }
 
     await page.goto('/shared-access?tab=routers')
+    await page.getByText('有关联账号', { exact: true }).click()
+    await expect(page.getByText('NoAccount', { exact: false })).toHaveCount(0)
     await expect(page.getByText('TP-Link AX3000', { exact: true })).toBeVisible()
     await expect(page.getByText('身份待确认', { exact: true })).toBeVisible()
     await expect(page.getByText('身份线索', { exact: true })).toBeVisible()
@@ -69,7 +71,8 @@ for (const [width, height] of [[390, 844], [1280, 800], [1440, 900]]) {
     await page.getByTitle('身份已确认', { exact: true }).click()
     await expect(page.getByText(/当前筛选下暂无路由器记录/)).toBeVisible()
     await page.getByRole('tab', { name: '共享终端档案', exact: true }).click()
-    await expect(page.getByText('仅显示有认证账号的档案')).toBeVisible()
+    await page.getByRole('combobox', { name: '账号关联范围' }).click()
+    await page.getByTitle('有关联账号', { exact: true }).click()
     await expect(page.getByText('student-1', { exact: true })).toBeVisible()
     await expect(page.getByText('student-2', { exact: true })).toBeVisible()
     await expect(page.getByText('NoAccount', { exact: false })).toHaveCount(0)

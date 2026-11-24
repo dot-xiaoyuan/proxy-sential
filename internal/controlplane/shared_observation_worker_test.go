@@ -102,14 +102,14 @@ func (t attributedTrafficDocument) Match(value driver.Value) bool {
 		document.Window.StrongAnchor == "" && document.Result.State == "insufficient" && document.Result.AccountID == ""
 }
 
-func TestSharedObservationAttributesMirrorTrafficWithoutRecordingAction(t *testing.T) {
+func TestSharedObservationPersistsAttributedMirrorTrafficWithoutRecordingAction(t *testing.T) {
 	t.Setenv("PROXY_SENTINEL_STREAM_SHARED_REQUIRED", "false")
 	now := time.Date(2026, 11, 21, 1, 0, 0, 0, time.UTC)
 	window := sharedaccess.Window{ID: "mirror-evidence", RuleVersion: sharedaccess.RuleVersion, SensorID: "mirror", CampusID: "ncu", AccessDomain: "capture", IP: "192.0.2.4", From: now.Add(-time.Minute), To: now.Add(-time.Second), LastObservedAt: now.Add(-time.Second), Sources: []string{"handshake-sidecar"}, EventIDs: []string{"realistic-handshake"}, Conflicts: []string{"capture_interval_incomplete:handshake-sidecar"}}
 	mapping := sharedaccess.IdentityMapping{SensorID: "mirror", CampusID: "ncu", AccessDomain: "capture", Source: "auth", IdentitySensorID: "auth", IdentityCampusID: "ncu", IdentityAccessDomain: "auth", ValidFrom: now.Add(-time.Hour), ValidUntil: now.Add(time.Hour)}
 	cfg := sharedaccess.Config{Version: "v1", FreshnessSeconds: 180, IdentityMappings: []sharedaccess.IdentityMapping{mapping}}
-	item := sharedaccess.BehaviorAssessment{Current: true, ObservationID: window.ID, SensorID: window.SensorID, CampusID: window.CampusID, AccessDomain: window.AccessDomain, IP: window.IP, Status: "candidate", CoverageState: "partial", SignalGroups: []string{"tls_stack", "ua_os"}, LastSeen: window.LastObservedAt}
-	identity := policy.Session{ID: "session", AccountID: "alice", IP: window.IP, Source: "auth", SensorID: "auth", CampusID: "ncu", AccessDomain: "auth", StartedAt: now.Add(-time.Hour), ConfirmedAt: window.To, Confirmations: []time.Time{now.Add(-2 * time.Minute), window.To}, HeartbeatSeconds: 60}
+	item := sharedaccess.BehaviorAssessment{Current: true, ObservationID: window.ID, SensorID: window.SensorID, CampusID: window.CampusID, AccessDomain: window.AccessDomain, IP: window.IP, Status: "candidate", CoverageState: "partial", SignalGroups: []string{"tls_stack", "ttl_path"}, LastSeen: window.LastObservedAt}
+	item.AccountID = "alice"
 	db, mock, err := sqlmock.New(sqlmock.ValueConverterOption(sharedTestConverter{}))
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +133,7 @@ func TestSharedObservationAttributesMirrorTrafficWithoutRecordingAction(t *testi
 		WithArgs("job", 1, sqlmock.AnyArg(), false, attributedTrafficDocument("alice"), "insufficient", "partial", "resolved", now, true).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
-	s := &Server{sharedConfig: cfg, operations: &operationsState{db: db}, reader: sharedReplayReader{window: window, item: item, sessions: []policy.Session{identity}}, identitySources: []identitySourceRegistration{{IdentityScope: store.IdentityScope{Source: "auth", SensorID: "auth", CampusID: "ncu", AccessDomain: "auth"}, IntervalSeconds: 60}}}
+	s := &Server{sharedConfig: cfg, operations: &operationsState{db: db}, reader: sharedReplayReader{window: window, item: item}, identitySources: []identitySourceRegistration{{IdentityScope: store.IdentityScope{Source: "auth", SensorID: "auth", CampusID: "ncu", AccessDomain: "auth"}, IntervalSeconds: 60}}}
 	if did, err := s.processSharedObservation(context.Background(), now); err != nil || !did {
 		t.Fatalf("processed=%v err=%v", did, err)
 	}

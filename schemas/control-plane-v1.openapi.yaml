@@ -6108,6 +6108,23 @@ components:
         window_start: { type: string, format: date-time }
         window_end: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
+        authenticated_outlet:
+          type: object
+          description: Authenticated session used to bind this mirror observation to an outlet.
+          required: [ip, gateway_mac, account_id, session_id, source, sensor_id, campus_id, access_domain, started_at, last_confirmed_at]
+          properties:
+            ip: { type: string }
+            gateway_mac: { type: string }
+            account_id: { type: string }
+            session_id: { type: string }
+            source: { type: string }
+            sensor_id: { type: string }
+            campus_id: { type: string }
+            access_domain: { type: string }
+            vlan: { type: string }
+            started_at: { type: string, format: date-time }
+            last_confirmed_at: { type: string, format: date-time }
+            identity_snapshot_ids: { type: array, items: { type: string } }
         router: { $ref: '#/components/schemas/SharedBehaviorRouterContext' }
         score_components: { type: array, items: { $ref: '#/components/schemas/SharedBehaviorScoreComponent' } }
         feature_samples:

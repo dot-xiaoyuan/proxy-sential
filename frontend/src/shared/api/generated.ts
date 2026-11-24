@@ -5872,6 +5872,23 @@ export interface components {
             window_end: string;
             /** Format: date-time */
             expires_at: string;
+            /** @description Authenticated session used to bind this mirror observation to an outlet. */
+            authenticated_outlet?: {
+                ip: string;
+                gateway_mac: string;
+                account_id: string;
+                session_id: string;
+                source: string;
+                sensor_id: string;
+                campus_id: string;
+                access_domain: string;
+                vlan?: string;
+                /** Format: date-time */
+                started_at: string;
+                /** Format: date-time */
+                last_confirmed_at: string;
+                identity_snapshot_ids?: string[];
+            };
             router: components["schemas"]["SharedBehaviorRouterContext"];
             score_components: components["schemas"]["SharedBehaviorScoreComponent"][];
             feature_samples: {

@@ -169,7 +169,10 @@ func (s *DBStore) ReadSharedObservation(ctx context.Context, scope SharedObserva
 			w.SourceScopes["packet-sidecar"] = packetScope
 		}
 	}
-	return w, item, nil
+	if s.pg != nil {
+		item, err = s.assessOutlet(ctx, cfg, w, item)
+	}
+	return w, item, err
 }
 
 func buildHandshakeObservation(scope SharedObservationScope, cfg sharedaccess.Config, rows []sharedObservationEvent, now time.Time) (sharedaccess.Window, sharedaccess.BehaviorAssessment, error) {
@@ -257,7 +260,23 @@ func buildHandshakeObservation(scope SharedObservationScope, cfg sharedaccess.Co
 			if (sample.Bucket != 0 && sample.Bucket != sample.ObservedAt.Unix()/5) || sample.EventID == "" || sample.ObservedAt.Before(now.Add(-10*time.Minute)) || sample.ObservedAt.After(now) || sample.ObservedAt.Before(payload.Coverage.From) || !sample.ObservedAt.Before(payload.Coverage.To) {
 				continue
 			}
-			for family, value := range sharedaccess.HandshakeFeatures(sample.Family, sample.Value) {
+			features := sharedaccess.HandshakeFeatures(sample.Family, sample.Value)
+			if _, ok := features["tls_stack"]; ok && sample.DestinationPort == 443 {
+				if sample.ClientVLAN != 0 {
+					if w.ClientVLAN != 0 && w.ClientVLAN != sample.ClientVLAN {
+						w.MixedClientVLAN = true
+					} else {
+						w.ClientVLAN = sample.ClientVLAN
+					}
+				}
+				for _, initial := range []int{32, 64, 128, 255} {
+					if hops := initial - int(sample.ClientTTL); hops >= 0 && hops <= 8 {
+						features["ttl_path"] = fmt.Sprintf("direction=outbound,initial=%d", initial)
+						break
+					}
+				}
+			}
+			for family, value := range features {
 				key := row.Source + "/" + family + "/" + sample.EventID
 				if old, ok := seen[key]; ok {
 					if old != value {
@@ -314,10 +333,14 @@ func buildHandshakeObservation(scope SharedObservationScope, cfg sharedaccess.Co
 	sort.Strings(w.EventIDs)
 	w.LastObservedAt = w.To
 	w.UAOS = featureValues(w.Samples["ua_os"])
+	w.TTLPaths = featureValues(w.Samples["ttl_path"])
 	w.TLSStacks = featureValues(w.Samples["tls_stack"])
 	w.Conflicts = append(w.Conflicts, sharedaccess.VerifyCoverage(w, cfg, facts)...)
 	if legacy {
 		w.Conflicts = append(w.Conflicts, "legacy_summary_without_timing")
+	}
+	if w.MixedClientVLAN {
+		w.Conflicts = append(w.Conflicts, "mixed_client_vlan")
 	}
 	if featureValueLimit {
 		w.Conflicts = append(w.Conflicts, "feature_value_limit")
@@ -350,7 +373,12 @@ func finalizeSharedObservation(w sharedaccess.Window, cfg sharedaccess.Config, n
 	if w.GatewayMAC != "" {
 		endpointID = "mac:" + w.GatewayMAC
 	}
-	item, present := sharedaccess.AssessBehavior(w.ID, endpointID, w, sharedaccess.BehaviorRouterContext{}, cfg.DeviceBound())
+	evaluation := w
+	evaluation.UAOS = nil
+	if w.MixedClientVLAN {
+		evaluation.TTLPaths = nil
+	}
+	item, present := sharedaccess.AssessBehavior(w.ID, endpointID, evaluation, sharedaccess.BehaviorRouterContext{}, cfg.DeviceBound())
 	if !present {
 		item = sharedaccess.BehaviorAssessment{ObservationID: w.ID, SensorID: w.SensorID, CampusID: w.CampusID, AccessDomain: w.AccessDomain, IP: w.IP, Status: "candidate", RuleVersion: sharedaccess.BehaviorRuleVersion, WindowStart: w.From, WindowEnd: w.To, FirstSeen: w.From, LastSeen: w.To, ExpiresAt: now.Add(30 * 24 * time.Hour), FeatureSamples: w.Samples, SignalGroups: []string{}, Reasons: []string{"当前证据未满足确认共享标准"}, Conflicts: w.Conflicts, EventIDs: w.EventIDs, KnownDevices: []sharedaccess.KnownDevice{}, ScoreComponents: []sharedaccess.BehaviorScoreComponent{}, CoverageState: "partial"}
 	}
@@ -384,7 +412,7 @@ func PersistSharedObservationTx(ctx context.Context, tx *sql.Tx, item sharedacce
 	}
 	upserted, err := tx.ExecContext(ctx, `INSERT INTO shared_behavior_observations(observation_id,sensor_id,campus_id,access_domain,ip,status,confidence,signal_groups,rule_version,coverage_state,first_seen,last_seen,window_start,window_end,expires_at,observation,current,generation_id)
  VALUES($1,$2,$3,$4,$5::inet,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
- ON CONFLICT(observation_id) DO UPDATE SET observation=EXCLUDED.observation,current=EXCLUDED.current,status=EXCLUDED.status,confidence=EXCLUDED.confidence,generation_id=EXCLUDED.generation_id,coverage_state=EXCLUDED.coverage_state,updated_at=now()
+ ON CONFLICT(observation_id) DO UPDATE SET signal_groups=EXCLUDED.signal_groups,observation=EXCLUDED.observation,current=EXCLUDED.current,status=EXCLUDED.status,confidence=EXCLUDED.confidence,generation_id=EXCLUDED.generation_id,coverage_state=EXCLUDED.coverage_state,updated_at=now()
  WHERE (shared_behavior_observations.observation,shared_behavior_observations.current,shared_behavior_observations.status,shared_behavior_observations.confidence,shared_behavior_observations.generation_id,shared_behavior_observations.coverage_state)
  IS DISTINCT FROM (EXCLUDED.observation,EXCLUDED.current,EXCLUDED.status,EXCLUDED.confidence,EXCLUDED.generation_id,EXCLUDED.coverage_state)`, item.ObservationID, item.SensorID, item.CampusID, item.AccessDomain, item.IP, item.Status, item.Confidence, item.SignalGroups, item.RuleVersion, item.CoverageState, item.FirstSeen, item.LastSeen, item.WindowStart, item.WindowEnd, item.ExpiresAt, raw, item.Current, item.GenerationID)
 	if err != nil {

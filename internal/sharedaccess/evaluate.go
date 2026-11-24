@@ -52,6 +52,8 @@ type RecordRef struct {
 }
 
 type Window struct {
+	ClientVLAN        uint16            `json:"client_vlan,omitempty"`
+	MixedClientVLAN   bool              `json:"mixed_client_vlan,omitempty"`
 	SourceEpochs      map[string]string `json:"source_epochs,omitempty"`
 	SourceScopes      map[string]string `json:"source_scopes,omitempty"`
 	GatewayMAC        string            `json:"gateway_mac,omitempty"`

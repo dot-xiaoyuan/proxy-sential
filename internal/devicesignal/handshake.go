@@ -23,6 +23,8 @@ import (
 // a TLS ClientHello server name and ALPN, or an HTTP request's Host and User-Agent. Only
 // the header fields are read; bodies and application data are never retained.
 type handshakeObservation struct {
+	ClientVLAN      uint16
+	ClientTTL       uint8
 	JA3             string
 	JA4             string
 	EventID         string
@@ -127,7 +129,7 @@ func parseHandshakeFrame(frame []byte) (handshakeObservation, bool) {
 		return handshakeObservation{}, false
 	}
 	payload := tcp[dataOffset:]
-	observation := handshakeObservation{IP: netip.AddrFrom4(source), MAC: ethernet.source, ObservedAt: time.Now().UTC(), DestinationPort: dstPort}
+	observation := handshakeObservation{ClientVLAN: ethernet.innerVLAN, ClientTTL: ip[8], IP: netip.AddrFrom4(source), MAC: ethernet.source, ObservedAt: time.Now().UTC(), DestinationPort: dstPort}
 	switch dstPort {
 	case 443:
 		if len(payload) >= 5 {
@@ -296,6 +298,8 @@ func (s *handshakeSummary) add(o handshakeObservation, sampleBudget int) {
 }
 
 type handshakeFeatureObservation struct {
+	clientVLAN                   uint16
+	clientTTL                    uint8
 	eventID, userAgent, ja3, ja4 string
 	observedAt                   time.Time
 	destinationPort              uint16
@@ -306,7 +310,7 @@ func (o handshakeObservation) feature() (handshakeFeatureObservation, bool) {
 		return handshakeFeatureObservation{}, false
 	}
 	return handshakeFeatureObservation{
-		eventID: o.EventID, userAgent: o.UserAgent, ja3: o.JA3, ja4: o.JA4,
+		clientVLAN: o.ClientVLAN, clientTTL: o.ClientTTL, eventID: o.EventID, userAgent: o.UserAgent, ja3: o.JA3, ja4: o.JA4,
 		observedAt: o.ObservedAt, destinationPort: o.DestinationPort,
 	}, true
 }
@@ -338,7 +342,11 @@ func (s *handshakeSummary) addFeature(o handshakeFeatureObservation, sampleBudge
 		}
 		sampleBudget--
 		s.sampleCounts[bucketKey]++
-		s.samples[key] = sharedaccess.HandshakeSample{Family: family, Value: value, EventID: o.eventID, ObservedAt: o.observedAt, Bucket: bucket, DestinationPort: o.destinationPort}
+		var ttl uint8
+		if family == "ja3" {
+			ttl = o.clientTTL
+		}
+		s.samples[key] = sharedaccess.HandshakeSample{ClientVLAN: o.clientVLAN, ClientTTL: ttl, Family: family, Value: value, EventID: o.eventID, ObservedAt: o.observedAt, Bucket: bucket, DestinationPort: o.destinationPort}
 	}
 	return len(s.samples) - before
 }

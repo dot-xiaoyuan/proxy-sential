@@ -22,7 +22,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
           const response = await original(input, init)
           const data = await response.json()
           return Response.json({ ...data, items: data.items.map((row: object) => ({
-            ...row, status: 'candidate', confidence: 59, signal_groups: ['ua_os', 'tls_stack'],
+            ...row, status: 'candidate', confidence: 59, signal_groups: ['router_identity', 'ttl_path', 'tls_stack'],
             strong_anchor: '', device_lower_bound: 0,
           })) })
         }
@@ -39,9 +39,9 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     for (const tab of ['routers', 'devices', 'associations']) {
       await page.goto(`/shared-access?tab=${tab}`)
       if (tab === 'associations') {
-        await expect(page.getByText('UA 自报系统', { exact: true })).toBeVisible()
+        await expect(page.getByText('路由器身份依据', { exact: true }).first()).toBeVisible()
         await expect(page.getByText('共享行为待核验', { exact: true })).toBeVisible()
-        await expect(page.getByText(/UA 为客户端自报信息/)).toBeVisible()
+        await expect(page.getByText(/优先核对认证出口上的路由器/)).toBeVisible()
       } else {
         await expect(page.getByText('TP-Link TL-WDR5620', { exact: true })).toBeVisible()
         await expect(page.getByText('已确认当前共享', { exact: true })).toHaveCount(0)

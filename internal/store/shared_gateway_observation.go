@@ -107,16 +107,37 @@ func (s *DBStore) ResolveSharedGateway(ctx context.Context, cfg sharedaccess.Con
 			}
 		}
 	}()
-	ip, err := s.ieee1905GatewayIPAt(ctx, scope.SensorID, scope.CampusID, mac, at)
+	ownershipWindow := sharedaccess.Window{SensorID: scope.SensorID, CampusID: scope.CampusID, AccessDomain: scope.AccessDomain, From: at, To: now, LastObservedAt: at}
+	binding, known, err := s.lookupGatewayBinding(ctx, cfg, ownershipWindow, mac)
 	if err != nil {
 		return true, err
 	}
-	current, err := s.ieee1905GatewayIPAt(ctx, scope.SensorID, scope.CampusID, mac, now)
-	if err != nil {
-		return true, err
+	ip := ""
+	if binding != nil {
+		ip = binding.IP
 	}
-	if current != ip {
-		ip = ""
+	if !known {
+		ip, err = s.ieee1905GatewayIPAt(ctx, scope.SensorID, scope.CampusID, mac, at)
+		if err != nil {
+			return true, err
+		}
+		current, e := s.ieee1905GatewayIPAt(ctx, scope.SensorID, scope.CampusID, mac, now)
+		if e != nil {
+			return true, e
+		}
+		if current != ip {
+			ip = ""
+		}
+		if ip != "" {
+			ownershipWindow.IP = ip
+			owner, exists, e := s.lookupGatewayBinding(ctx, cfg, ownershipWindow, "")
+			if e != nil {
+				return true, e
+			}
+			if exists && (owner == nil || owner.MAC != mac) {
+				ip = ""
+			}
+		}
 	}
 	expired := !now.Before(at.Add(cfg.Freshness()))
 	reason := ""
@@ -367,21 +388,41 @@ func (s *DBStore) includeSharedGateway(ctx context.Context, scope SharedObservat
 			w.CoverageFacts = append(w.CoverageFacts, fact)
 		}
 	}
-	// A lease must cover the whole evidence window and remain unrevoked now.
-	// It is checked independently from account authentication and retained in proof.
-	var leaseID string
-	var observed, until time.Time
-	err = s.pg.db.QueryRowContext(ctx, `SELECT l.event_id,l.observed_at,l.valid_until FROM device_address_leases l
+	ownershipWindow := w
+	ownershipWindow.To = now
+	binding, known, err := s.lookupGatewayBinding(ctx, cfg, ownershipWindow, macs[0])
+	if err != nil {
+		return handshake, item, err
+	}
+	if !known {
+		binding, known, err = s.lookupGatewayBinding(ctx, cfg, ownershipWindow, "")
+		if err != nil {
+			return handshake, item, err
+		}
+	}
+	if known {
+		if binding == nil || binding.IP != scope.IP || binding.MAC != macs[0] {
+			w.Conflicts = append(w.Conflicts, "gateway_ownership_conflicting")
+		} else {
+			w.GatewayLease, _ = json.Marshal(binding)
+		}
+	} else {
+		// A lease must cover the whole evidence window and remain unrevoked now.
+		// It is checked independently from account authentication and retained in proof.
+		var leaseID string
+		var observed, until time.Time
+		err = s.pg.db.QueryRowContext(ctx, `SELECT l.event_id,l.observed_at,l.valid_until FROM device_address_leases l
  WHERE l.sensor_id=$1 AND l.campus_id=$2 AND l.endpoint_id=$3 AND l.ip=$4::inet AND l.action='ack' AND l.observed_at<=$5 AND l.valid_until>$6
  AND NOT EXISTS(SELECT 1 FROM device_address_leases n WHERE n.sensor_id=l.sensor_id AND n.campus_id=l.campus_id AND n.observed_at>=l.observed_at AND n.observed_at<=$6 AND
  ((n.action='stop' AND n.endpoint_id=l.endpoint_id AND n.ip=l.ip) OR (n.action='ack' AND ((n.ip=l.ip AND n.endpoint_id<>l.endpoint_id) OR (n.endpoint_id=l.endpoint_id AND n.ip<>l.ip))))) ORDER BY l.observed_at DESC,l.event_id LIMIT 1`, scope.SensorID, scope.CampusID, "mac:"+macs[0], scope.IP, w.From, now).Scan(&leaseID, &observed, &until)
-	if err != nil && err != sql.ErrNoRows {
-		return handshake, item, err
-	}
-	if err == sql.ErrNoRows {
-		w.Conflicts = append(w.Conflicts, "gateway_ownership_unavailable")
-	} else {
-		w.GatewayLease, _ = json.Marshal(map[string]any{"event_id": leaseID, "gateway_mac": macs[0], "ip": scope.IP, "observed_at": observed, "valid_until": until, "sensor_id": scope.SensorID, "campus_id": scope.CampusID})
+		if err != nil && err != sql.ErrNoRows {
+			return handshake, item, err
+		}
+		if err == sql.ErrNoRows {
+			w.Conflicts = append(w.Conflicts, "gateway_ownership_unavailable")
+		} else {
+			w.GatewayLease, _ = json.Marshal(map[string]any{"event_id": leaseID, "gateway_mac": macs[0], "ip": scope.IP, "observed_at": observed, "valid_until": until, "sensor_id": scope.SensorID, "campus_id": scope.CampusID})
+		}
 	}
 	sort.Strings(w.Conflicts)
 	w.Complete = len(w.Conflicts) == 0
