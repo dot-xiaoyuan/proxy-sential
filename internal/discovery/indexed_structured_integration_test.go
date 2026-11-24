@@ -21,12 +21,20 @@ func TestStructuredDiscoveryPostgresParity(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	run("ALTER TABLE discovery_observation_latest ADD source_id text DEFAULT 'capture', ADD service_type text DEFAULT '', ADD port text DEFAULT ''")
 	raw, err := os.ReadFile("../../migrations/postgres/252_discovery_list_projection.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	run(string(raw))
+	// Exercise the upgrade with pending work already created by the earlier migration.
+	run("SELECT discovery_list_dirty_key('concurrent')")
+	run("INSERT INTO discovery_list_ip_dirty(sensor_id,device_key,ip,origin) VALUES ('sensor','concurrent','10.0.0.1','arp')")
+	raw, err = os.ReadFile("../../migrations/postgres/253_discovery_queue_generations.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run(string(raw))
+	testConcurrentDiscoveryQueue(t, db)
 	at := time.Now().UTC().Truncate(time.Second)
 	put := func(id, mac, ip, vlan, origin string, when time.Time) {
 		t.Helper()
@@ -161,7 +169,15 @@ func TestStructuredDiscoveryPostgresParity(t *testing.T) {
 	compare(DeviceQuery{Window: 24 * time.Hour, IdentityScope: "devices"})
 	refresh()
 	compare(DeviceQuery{Window: 30 * 24 * time.Hour, IdentityScope: "devices"})
+	run("INSERT INTO discovery_identity_links VALUES('arp6','mac:00:12:34:00:00:05','{}')")
+	compare(DeviceQuery{Window: 24 * time.Hour, IdentityScope: "devices"})
 	run("DELETE FROM discovery_identity_links")
+	run("UPDATE discovery_list_group_current SET next_change=now()-interval '1 second' WHERE hours=24")
+	refresh()
+	var expired int
+	if err := db.QueryRow("SELECT count(*) FROM discovery_list_group_current WHERE next_change<=now()").Scan(&expired); err != nil || expired != 0 {
+		t.Fatal(expired, err)
+	}
 	run("UPDATE discovery_observation_latest SET valid_until=now()-interval '1 minute' WHERE id='dhcp'")
 	refresh()
 	compare(DeviceQuery{Window: 24 * time.Hour})
@@ -169,5 +185,48 @@ func TestStructuredDiscoveryPostgresParity(t *testing.T) {
 	var sizes string
 	if err := db.QueryRow("SELECT concat_ws(',',(SELECT count(*) FROM discovery_list_observation),(SELECT count(*) FROM discovery_list_group_current),(SELECT count(*) FROM discovery_list_ip_current))").Scan(&sizes); err != nil || strings.TrimSpace(sizes) != "0,0,0" {
 		t.Fatal(sizes, err)
+	}
+}
+
+func testConcurrentDiscoveryQueue(t *testing.T, db *sql.DB) {
+	t.Helper()
+	var schema string
+	if err := db.QueryRow("SELECT current_schema()").Scan(&schema); err != nil {
+		t.Fatal(err)
+	}
+	producer, err := sql.Open("pgx", os.Getenv("PROXY_SENTINEL_TEST_POSTGRES_DSN"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer producer.Close()
+	tx, err := producer.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec("SET LOCAL search_path TO " + schema); err != nil {
+		t.Fatal(err)
+	}
+	const enqueue = `SELECT discovery_list_dirty_key('concurrent');
+	 INSERT INTO discovery_list_ip_dirty(sensor_id,device_key,ip,origin)
+	 VALUES('sensor','concurrent','10.0.0.1','arp') ON CONFLICT DO NOTHING`
+	if _, err = tx.Exec(enqueue); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec("SET lock_timeout='1s'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(enqueue); err != nil {
+		t.Fatal(err)
+	}
+	var groups, ips int
+	if err = db.QueryRow("SELECT discovery_list_refresh_groups(5),discovery_list_refresh_ips(7)").Scan(&groups, &ips); err != nil || groups < 1 || ips != 2 {
+		t.Fatal(groups, ips, err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.QueryRow("SELECT count(*),(SELECT count(*) FROM discovery_list_ip_dirty) FROM discovery_list_dirty").Scan(&groups, &ips); err != nil || groups != 1 || ips != 1 {
+		t.Fatal(groups, ips, err)
 	}
 }

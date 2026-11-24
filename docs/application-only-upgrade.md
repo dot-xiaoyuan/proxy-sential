@@ -42,6 +42,8 @@ bash upgrade-application.sh --version VERSION \
 
 PostgreSQL 迁移 252 新增紧凑观测字段、设备窗口汇总和 IPv4 协议计数所用的当前表。原文仍从发现观测读取。每个当前观测最多有一行结构化字段，每个普通 MAC 身份最多有 24 小时、7 天、30 天三行汇总，每个 IPv4、设备键、协议组合最多有一行时间戳。观测替换、撤回、删除时在同一事务修正结构化行和待处理键。窗口滚动和有效期到达时重新领取相关身份，读取期间有变更或过期的汇总使用当前结构化事实。画像与硬件结论从各自的当前表读取。
 
-1. 安装器完成迁移后，在 204 的 PostgreSQL 事务中执行 `ALTER TABLE discovery_observation_latest ENABLE TRIGGER discovery_list_sync` 和 `ALTER TABLE discovery_observation_latest ENABLE TRIGGER discovery_list_truncate`。这两个触发器初始关闭。
+迁移 253 将同一事务内重复的待处理键合并，不同事务使用各自的代次。领取、刷新与确认在一个事务内完成，过期身份从到期索引直接领取。
+
+1. 安装器完成迁移 252、253 后，在 204 的 PostgreSQL 事务中执行 `ALTER TABLE discovery_observation_latest ENABLE TRIGGER discovery_list_sync` 和 `ALTER TABLE discovery_observation_latest ENABLE TRIGGER discovery_list_truncate`。这两个触发器初始关闭。
 2. 在 204 的被动发现服务设置 `PROXY_SENTINEL_DISCOVERY_LIST_WORKER=true`。工作进程按主键和字节数分批接入存量，每批提交断点，再更新受影响的汇总。可在切换前以独立事务重复调用 `SELECT discovery_list_adopt(128)`、`SELECT discovery_list_refresh_groups(64),discovery_list_refresh_ips(250)` 做同样的准备工作。用 `SELECT discovery_list_assert_ready()` 核对写入触发器和接入完成状态。
 3. 控制面用 `PROXY_SENTINEL_DISCOVERY_STRUCTURED_READS` 选择已对账的读取项，逗号分隔。依次启用 `statistics`、`list`、`coverage`。列表项包含翻页定位和导出。回退某一项时从该变量移除并重启控制面，写入可以继续，原观测及身份数据保留。

@@ -41,7 +41,7 @@ func hardwareIntegrationDB(t *testing.T) *sql.DB {
 			t.Fatalf("migration %s: %v", name, err)
 		}
 	}
-	_, err = db.Exec(`CREATE TABLE discovery_observation_latest(id text PRIMARY KEY,device_key text,origin text,observed_at timestamptz,valid_until timestamptz,withdrawn boolean,data jsonb);
+	_, err = db.Exec(`CREATE TABLE discovery_observation_latest(id text PRIMARY KEY,device_key text,origin text,observed_at timestamptz,valid_until timestamptz,withdrawn boolean,data jsonb,source_id text DEFAULT 'capture',service_type text DEFAULT '',port text DEFAULT '');
  CREATE TABLE discovery_identity_links(observation_id text,endpoint_id text,basis jsonb);
  CREATE TABLE device_address_leases(event_id text,action text,sensor_id text,ip inet,campus_id text,endpoint_id text);
  CREATE TABLE endpoint_recognition_summary(endpoint_id text,role text,os_family text,summary jsonb,confidence double precision,conflict boolean,last_seen timestamptz);`)

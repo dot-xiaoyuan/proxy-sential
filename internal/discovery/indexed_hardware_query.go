@@ -263,5 +263,6 @@ LEFT JOIN LATERAL (
   AND dl.event_id=l.id AND dl.action='ack' AND host(dl.ip)=l.raw_ip AND dl.endpoint_id='mac:'||l.search_mac
  LIMIT 1
 ) dl ON true
-` + profileJoin + `ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`, nil
+` + profileJoin + `ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id,
+ page_o.observed_at DESC,page_o.device_key COLLATE "C",page_o.source_id COLLATE "C",page_o.origin COLLATE "C",page_o.service_type COLLATE "C",page_o.port COLLATE "C"`, nil
 }

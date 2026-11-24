@@ -61,9 +61,19 @@ func cachedGroupWindow(q DeviceQuery) int {
 func cachedGroupCTE(hours int) string {
 	// Incoming address-only links or an exceptional outgoing link can merge
 	// raw identity groups. Send both sides through the live membership query.
-	return fmt.Sprintf(`, exception_keys AS MATERIALIZED (
- SELECT f.base_identity identity_key FROM discovery_identity_links i JOIN discovery_list_observation f ON f.id=i.observation_id
- WHERE coalesce(i.basis->>'mac','')='' OR lower(i.endpoint_id)<>'mac:'||lower(i.basis->>'mac')
+	return fmt.Sprintf(`, exceptional_links AS MATERIALIZED (
+ SELECT observation_id,endpoint_id FROM discovery_identity_links
+ WHERE coalesce(basis->>'mac','')='' OR lower(endpoint_id)<>'mac:'||lower(basis->>'mac')
+), exceptional_members AS MATERIALIZED (
+ SELECT f.base_identity,f.sensor_id,f.site_id,f.access_domain,f.vlan,f.vrf,lower(i.endpoint_id) endpoint
+ FROM exceptional_links i CROSS JOIN LATERAL (
+   SELECT * FROM discovery_list_observation f WHERE f.id=i.observation_id AND f.observed_at>=$1 OFFSET 0
+ ) f
+), exception_keys AS MATERIALIZED (
+ SELECT base_identity identity_key FROM exceptional_members
+ UNION
+ SELECT jsonb_build_array('identity',sensor_id,site_id,access_domain,vlan,vrf,'mac',substring(endpoint FROM 5))::text
+ FROM exceptional_members WHERE endpoint LIKE 'mac:%%'
  UNION
  SELECT jsonb_build_array('identity',f.sensor_id,f.site_id,f.access_domain,f.vlan,f.vrf,'mac',substring(lower(i.endpoint_id) FROM 5))::text
  FROM discovery_list_observation f JOIN discovery_identity_links i ON i.observation_id=f.id
