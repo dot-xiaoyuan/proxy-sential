@@ -75,7 +75,9 @@ var handshakeProgram = []bpfInsn{
 	{Code: 6, Jt: 0, Jf: 0, K: 0},
 }
 
-// Compiled with libpcap for Ethernet and snaplen 2048. For IPv4 TCP with
+const handshakeEvidenceSnaplen = 4096
+
+// Compiled with libpcap for Ethernet with a bounded accept length. For IPv4 TCP with
 // zero or one VLAN tag, accept TLS handshake records on port 443 and
 // GET, POST, HEAD or PUT on port 80. Userspace disambiguates the TLS
 // handshake type so a short candidate isn't lost before classification.
@@ -134,6 +136,6 @@ var handshakeEvidenceProgram = []bpfInsn{
 	{Code: 21, Jt: 2, Jf: 0, K: 1347375956},
 	{Code: 21, Jt: 1, Jf: 0, K: 1212498244},
 	{Code: 21, Jt: 0, Jf: 1, K: 1347769376},
-	{Code: 6, Jt: 0, Jf: 0, K: 2048},
+	{Code: 6, Jt: 0, Jf: 0, K: handshakeEvidenceSnaplen},
 	{Code: 6, Jt: 0, Jf: 0, K: 0},
 }

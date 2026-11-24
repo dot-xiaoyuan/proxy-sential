@@ -271,6 +271,7 @@ type handshakeSummary struct {
 	metadataOmitted                int
 	coverage                       sharedaccess.CoverageV2
 	count                          int
+	featureQueued                  bool
 	snis, alpns, hosts, userAgents map[string]bool
 }
 
@@ -281,6 +282,10 @@ type handshakeKey struct {
 
 func newHandshakeSummary() *handshakeSummary {
 	return &handshakeSummary{snis: map[string]bool{}, alpns: map[string]bool{}, hosts: map[string]bool{}, userAgents: map[string]bool{}}
+}
+
+func (s *handshakeSummary) hasCompleteQueuedEvidence() bool {
+	return s.featureQueued && s.truncated == 0 && s.overflow == 0
 }
 
 func (s *handshakeSummary) add(o handshakeObservation, sampleBudget int) {
@@ -517,9 +522,13 @@ func selectHandshakePool(keys []handshakeKey, summaries map[handshakeKey]*handsh
 		return nil
 	}
 	sort.Slice(keys, func(i, j int) bool {
-		a, b := summaries[keys[i]].count, summaries[keys[j]].count
-		if a != b {
-			return a > b
+		a, b := summaries[keys[i]], summaries[keys[j]]
+		aComplete, bComplete := a.hasCompleteQueuedEvidence(), b.hasCompleteQueuedEvidence()
+		if aComplete != bComplete {
+			return aComplete
+		}
+		if a.count != b.count {
+			return a.count > b.count
 		}
 		if keys[i].IP != keys[j].IP {
 			return keys[i].IP.Less(keys[j].IP)

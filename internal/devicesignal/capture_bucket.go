@@ -183,6 +183,7 @@ func (b *captureBucket) recordHandshake(observation handshakeObservation) {
 	}
 	b.handshakeCandidates = append(b.handshakeCandidates, handshakeCandidate{summary: summary, feature: feature})
 	b.handshakeCandidateBytes += size
+	summary.featureQueued = true
 }
 
 func (b *captureBucket) selectHandshakes(limit int, bucket time.Time, priorityCIDRs []netip.Prefix) []handshakeKey {

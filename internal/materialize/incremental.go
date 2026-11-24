@@ -83,7 +83,7 @@ func RunIncrementalOnce(ctx context.Context, backend IncrementalStore, opts Incr
 	// feature byte limit and caller deadline apply in both modes.
 	maxClaimsPerLease := 8
 	if opts.Drain {
-		maxClaimsPerLease = 16
+		maxClaimsPerLease = 24
 	}
 	claimLimit := min(opts.ClaimLimit, maxClaimsPerLease)
 	if !opts.SkipExpiry {

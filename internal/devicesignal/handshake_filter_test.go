@@ -159,7 +159,7 @@ func TestHandshakeEvidenceProgramAndCoverageClassifyLargeClientHello(t *testing.
 		if tagged {
 			packet = append(append(append([]byte{}, frame[:12]...), 0x81, 0, 0, 10), frame[12:]...)
 		}
-		if limit := int(runClassicBPF(handshakeEvidenceProgram, packet)); limit != 2048 || len(packet) > limit {
+		if limit := int(runClassicBPF(handshakeEvidenceProgram, packet)); limit != handshakeEvidenceSnaplen || len(packet) > limit {
 			t.Fatalf("tagged=%t frame=%d cap=%d", tagged, len(packet), limit)
 		}
 		bucket := newCaptureBucket()
@@ -180,11 +180,36 @@ func TestHandshakeEvidenceProgramAndCoverageClassifyLargeClientHello(t *testing.
 	}
 	for _, method := range []string{"GET ", "POST", "HEAD", "PUT "} {
 		packet := buildTCPFrame(mac, ip, 80, []byte(method+" / HTTP/1.1\r\n\r\n"))
-		if runClassicBPF(handshakeEvidenceProgram, packet) != 2048 {
+		if runClassicBPF(handshakeEvidenceProgram, packet) != handshakeEvidenceSnaplen {
 			t.Fatalf("HTTP method %q filtered", method)
 		}
 	}
 	if runClassicBPF(handshakeEvidenceProgram, buildTCPFrame(mac, ip, 443, []byte("GET / HTTP/1.1\r\n\r\n"))) != 0 {
 		t.Fatal("HTTP prefix on the TLS port was accepted")
+	}
+}
+
+func TestHandshakeEvidenceProgramKeepsCompleteLargeSingleFrameHello(t *testing.T) {
+	mac := [6]byte{2, 0, 0, 0, 0, 1}
+	ip := [4]byte{192, 0, 2, 24}
+	hello := appendClientHelloExtension(clientHello("capture.example", "h2"), 21, make([]byte, 2600))
+	frame := buildTCPFrame(mac, ip, 443, hello)
+	for _, tagged := range []bool{false, true} {
+		packet := frame
+		if tagged {
+			packet = append(append(append([]byte{}, frame[:12]...), 0x81, 0, 0, 10), frame[12:]...)
+		}
+		captureLength := int(runClassicBPF(handshakeEvidenceProgram, packet))
+		if captureLength != 4096 || len(packet) <= 2048 || len(packet) > captureLength {
+			t.Fatalf("tagged=%t frame=%d capture=%d", tagged, len(packet), captureLength)
+		}
+		observation, disposition := classifyHandshakeFrame(packet[:min(len(packet), captureLength)])
+		if disposition != handshakeObserved || observation.Truncated || observation.JA3 == "" {
+			t.Fatalf("tagged=%t complete ClientHello did not produce a fingerprint", tagged)
+		}
+		partial, disposition := classifyHandshakeFrame(packet[:2048])
+		if disposition != handshakeObserved || !partial.Truncated || partial.JA3 != "" {
+			t.Fatalf("tagged=%t incomplete ClientHello did not retain the truncation", tagged)
+		}
 	}
 }

@@ -1292,7 +1292,7 @@ func runRiskMaterialize(args []string) error {
 	interval := fs.Duration("interval", 0, "base materialization interval; incremental workers can run at half the interval when full batches commit quickly")
 	limit := fs.Int("event-limit", 200000, "maximum events per rolling window")
 	incremental := fs.Bool("incremental", false, "evaluate only confirmed, dirty stream risk subjects")
-	claimLimit := fs.Int("claim-limit", 64, "requested dirty subjects per incremental transaction, capped at 8 normally and 16 while draining")
+	claimLimit := fs.Int("claim-limit", 64, "requested dirty subjects per incremental transaction, capped at 8 normally and 24 while draining")
 	featureLimit := fs.Int("feature-limit", 20000, "legacy feature read bound; incremental reads use pages of at most 5000 rows and a separate 100000-row/64MiB group guard")
 	sharedAccess := fs.Bool("shared-access", os.Getenv("PROXY_SENTINEL_SHARED_ACCESS_ENABLED") == "true", "build scoped shared access evidence for observation policies")
 	routerDedicated := fs.Bool("router-observations-dedicated", os.Getenv("PROXY_SENTINEL_ROUTER_OBSERVATIONS_DEDICATED") == "true", "use the healthy incremental recognition owner instead of replaying router observations")

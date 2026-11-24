@@ -61,6 +61,33 @@ func TestHandshakeV2CandidateLimitReportsCoverageGap(t *testing.T) {
 	}
 }
 
+func TestHandshakeV2PrioritizesCompleteEvidenceAndRotatesRemainingKeys(t *testing.T) {
+	state := newCaptureBucket()
+	state.handshakeCaptureV2 = true
+	start := time.Unix(1800, 0)
+	complete := netip.MustParseAddr("192.0.2.10")
+	partial := []netip.Addr{netip.MustParseAddr("192.0.2.20"), netip.MustParseAddr("192.0.2.21")}
+	state.recordHandshake(handshakeObservation{IP: complete, JA3: "full", EventID: "full", ObservedAt: start})
+	for _, ip := range partial {
+		for i := 0; i < 10; i++ {
+			state.recordHandshake(handshakeObservation{IP: ip, Truncated: true, ObservedAt: start})
+		}
+	}
+	seen := map[netip.Addr]bool{}
+	for i := range 2 {
+		keys := state.selectHandshakes(2, start.Add(time.Duration(i)*30*time.Second), nil)
+		if len(keys) != 2 || keys[0].IP != complete {
+			t.Fatalf("selection=%v, want the complete evidence and one rotating slot", keys)
+		}
+		seen[keys[1].IP] = true
+	}
+	for _, ip := range partial {
+		if !seen[ip] {
+			t.Fatalf("missing incomplete evidence from rotation: %s", ip)
+		}
+	}
+}
+
 func TestHandshakeJA3RequiresCompleteClientHello(t *testing.T) {
 	raw := clientHello("test.example", "h2")
 	want := md5.Sum([]byte("771,4865,0-16,,"))
