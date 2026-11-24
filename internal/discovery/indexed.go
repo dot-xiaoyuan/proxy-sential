@@ -137,16 +137,24 @@ ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
 	}
 	defer rows.Close()
 	deviceRows := []deviceObservationRow{}
-	categories := map[string]string{}
+	type pageGroup struct {
+		category string
+		lastSeen time.Time
+	}
+	groups := map[string]pageGroup{}
 	for rows.Next() {
 		var row deviceObservationRow
 		var raw []byte
-		var category string
+		var group pageGroup
 		fields := []any{&row.IndexedIdentityKey, &row.DeviceKey, &raw, &row.EndpointID, &row.ProfileDeviceType, &row.ProfileTypeConfidence, &row.ProfileConflict}
 		if r.HardwareV2 {
 			fields = append(fields, &row.ProfileCandidateRole)
 		}
-		if err = rows.Scan(append(fields, &category)...); err != nil {
+		fields = append(fields, &group.category)
+		if r.HardwareV2 {
+			fields = append(fields, &group.lastSeen)
+		}
+		if err = rows.Scan(fields...); err != nil {
 			return nil, err
 		}
 		if err = json.Unmarshal(raw, &row.Observation); err != nil {
@@ -155,7 +163,7 @@ ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
 		if r.HardwareV2 {
 			row.Observation.MarkUnattributedSNMPClue()
 		}
-		categories[row.IndexedIdentityKey] = category
+		groups[row.IndexedIdentityKey] = group
 		deviceRows = append(deviceRows, row)
 	}
 	if err = rows.Err(); err != nil {
@@ -180,8 +188,14 @@ ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
 		candidateTypes = indexedPageCandidateTypes(deviceRows)
 	}
 	for i := range items {
+		group := groups[items[i].indexedIdentityKey]
+		// Repeated identical evidence advances the current row time independently
+		// of the stored document. The cursor must use the SQL ordering boundary.
+		if r.HardwareV2 {
+			items[i].LastSeen = group.lastSeen
+		}
 		if items[i].DeviceType == "" {
-			items[i].Category = categories[items[i].indexedIdentityKey]
+			items[i].Category = group.category
 		}
 		if items[i].ClassificationStatus == "candidate" {
 			items[i].CandidateDeviceType = candidateTypes[items[i].indexedIdentityKey]

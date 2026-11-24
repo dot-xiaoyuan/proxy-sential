@@ -254,7 +254,7 @@ JOIN discovery_observation_latest page_o ON (page_o.device_key,page_o.source_id,
  SELECT identity_key,device_key,last_seen,category FROM matched` + positionWhere + `
  ORDER BY last_seen DESC,identity_key COLLATE "C" LIMIT $` + limitParameter + `
 )` + cachedRows + `
-SELECT c.identity_key,c.device_key,page_o.data,coalesce(dl.endpoint_id,l.linked_endpoint) linked_endpoint,` + profiles + `,c.category
+SELECT c.identity_key,c.device_key,page_o.data,coalesce(dl.endpoint_id,l.linked_endpoint) linked_endpoint,` + profiles + `,c.category,c.last_seen
 FROM ` + pageRows + ` l JOIN candidates c USING(identity_key)
 ` + pageSource + `
 LEFT JOIN LATERAL (

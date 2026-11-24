@@ -83,6 +83,32 @@ func TestStructuredDiscoveryPostgresParity(t *testing.T) {
 	if err := db.QueryRow("SELECT count(*) FROM discovery_list_group_current WHERE hours=24").Scan(&groups); err != nil || groups < 26 {
 		t.Fatal(groups, err)
 	}
+	// A repeated observation touches the structured timestamp without rewriting its evidence.
+	run("UPDATE discovery_observation_latest SET observed_at=$1 WHERE id='arp0'", at)
+	for _, surface := range []string{"", "list"} {
+		t.Setenv("PROXY_SENTINEL_DISCOVERY_STRUCTURED_READS", surface)
+		q := DeviceQuery{Mode: "passive", Window: 24 * time.Hour, Limit: 1, SnapshotAt: at, IdentityScope: "devices"}
+		repo := Repository{DB: db, HardwareV2: true}
+		page, err := repo.devicesIndexed(context.Background(), db, q, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		first := page["items"].([]DeviceView)
+		if len(first) != 1 {
+			t.Fatalf("first page has %d rows", len(first))
+		}
+		if !first[0].LastSeen.Equal(at) {
+			t.Fatalf("latest observation time lost: %+v", first[0].LastSeen)
+		}
+		if first[0].Observations[0].ObservedAt.Equal(at) {
+			t.Fatal("retained evidence time was rewritten")
+		}
+		q.Cursor = page["next_cursor"].(string)
+		page, err = repo.devicesIndexed(context.Background(), db, q, false)
+		if err != nil || len(page["items"].([]DeviceView)) != 1 || page["items"].([]DeviceView)[0].ID == first[0].ID {
+			t.Fatal("cursor lost next page", err)
+		}
+	}
 	compare := func(q DeviceQuery) {
 		t.Helper()
 		tx, err := db.BeginTx(context.Background(), &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
