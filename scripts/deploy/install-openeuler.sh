@@ -678,9 +678,23 @@ fi
 
 # Signal sidecars reopen their output path for every bucket, so plain rename
 # rotation is safe. Ship their configs and the timer that drives them.
-for config in proxy-sentinel-shared-signals proxy-sentinel-router-signals proxy-sentinel-flow-syn-signals; do
+for config in proxy-sentinel-shared-signals proxy-sentinel-flow-syn-signals; do
   sed "s#/opt/proxy-sentinel#$root#g" "$release_dir/deploy/logrotate/$config" > "/etc/logrotate.d/$config"
   chmod 0644 "/etc/logrotate.d/$config"
+done
+packet_logrotate_dir="$root/config/logrotate"
+install -d -m 0755 "$packet_logrotate_dir"
+sed "s#/opt/proxy-sentinel#$root#g" "$release_dir/deploy/logrotate/proxy-sentinel-router-signals" > "$packet_logrotate_dir/proxy-sentinel-router-signals"
+chmod 0644 "$packet_logrotate_dir/proxy-sentinel-router-signals"
+# Move old managed rules and archived copies out of the distribution include.
+# Older openEuler logrotate builds can treat suffixes like .pre-retention-* as config.
+packet_logrotate_legacy=""
+for legacy_rule in /etc/logrotate.d/proxy-sentinel-router-signals /etc/logrotate.d/proxy-sentinel-router-signals.pre-*; do
+  [[ -f "$legacy_rule" ]] || continue
+  if [[ -z "$packet_logrotate_legacy" ]]; then
+    packet_logrotate_legacy="$(mktemp -d "$packet_logrotate_dir/legacy.XXXXXX")"
+  fi
+  mv -- "$legacy_rule" "$packet_logrotate_legacy/"
 done
 for unit in proxy-sentinel-shared-logrotate.service proxy-sentinel-shared-logrotate.timer; do
   sed "s#/opt/proxy-sentinel#$root#g" "$release_dir/deploy/systemd/$unit" > "/etc/systemd/system/$unit"

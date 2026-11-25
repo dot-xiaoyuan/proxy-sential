@@ -21,13 +21,14 @@ import (
 // A recovery directory holds hard links to a single snapshot of numbered
 // rotations and, optionally, ttl-live-*.jsonl from the same source.
 const deviceSignalRecoveryDirEnv = "PROXY_SENTINEL_DEVICE_SIGNAL_RECOVERY_DIR"
+const datedSignalFileOrdinal = -2
 
 type signalFile struct {
 	path       string
 	info       os.FileInfo
 	id         string
 	legacyID   string // Allows a proved old cursor to finish before birth-aware rotation.
-	ordinal    int    // 1 is newest rotation, 0 is protected live, -1 is current.
+	ordinal    int    // 1 is newest rotation, 0 is protected live, -1 is current, -2 is dated.
 	chainSeq   int    // -1 outside the protected compressed successor chain.
 	protected  bool
 	compressed bool
@@ -69,13 +70,18 @@ func readDeviceSignalChunk(path string, cursor streamlog.SourceCursor, maxBytes 
 			}
 		}
 	}
-	next, err := nextSignalFile(path, files, file)
+	var next signalFile
+	if file.ordinal == datedSignalFileOrdinal {
+		next, err = verifiedDatedSignalSuccessor(path, files, file, cursor)
+	} else {
+		next, err = nextSignalFile(path, files, file)
+	}
 	if err != nil {
 		return sourceChunk{}, err
 	}
+	dated := file.ordinal == datedSignalFileOrdinal
 	for _, candidate := range []signalFile{file, next} {
-		current, err := os.Lstat(candidate.path)
-		if err != nil || !os.SameFile(candidate.info, current) {
+		if !signalFileStillPresent(candidate, dated) {
 			return sourceChunk{}, ErrStreamSourceGap
 		}
 	}
@@ -85,11 +91,19 @@ func readDeviceSignalChunk(path string, cursor streamlog.SourceCursor, maxBytes 
 		clearSignalGzip(path)
 		read, err = readSignalRaw(path, next, streamlog.SourceCursor{FileID: next.id}, maxBytes)
 	}
-	if err != nil || len(read.data) == 0 && next.path != path {
+	if err != nil || len(read.data) == 0 && next.path != path || dated && !signalFileStillPresent(file, true) {
 		return sourceChunk{}, ErrStreamSourceGap
 	}
 	read.verifiedRotation = true
 	return read, nil
+}
+
+func signalFileStillPresent(file signalFile, checkContents bool) bool {
+	current, err := os.Lstat(file.path)
+	if err != nil || !os.SameFile(file.info, current) {
+		return false
+	}
+	return !checkContents || (current.Size() == file.info.Size() && current.ModTime().Equal(file.info.ModTime()))
 }
 
 func matchingSignalCursorFiles(path string, files []signalFile, cursor streamlog.SourceCursor, probe func(string, streamlog.SourceCursor) bool) []signalFile {
@@ -194,6 +208,9 @@ func signalFileOrdinal(source, candidate string, protected bool) (int, bool, boo
 	}
 	base, name := filepath.Base(source), filepath.Base(candidate)
 	stem := strings.TrimSuffix(base, ".jsonl")
+	if !protected && base == "ttl.jsonl" && isDatedPacketRotation(name) {
+		return datedSignalFileOrdinal, false, true
+	}
 	if protected && (stem == "ttl" || stem == "handshake") {
 		if _, ok := signalFileChainSequence(name, stem); ok {
 			return 0, true, true
@@ -484,7 +501,7 @@ func openVerifiedSignalGzip(file signalFile, cursor streamlog.SourceCursor) (*si
 		return nil, ErrStreamSourceGap
 	}
 	before, err := f.Stat()
-	if err != nil || !os.SameFile(before, file.info) {
+	if err != nil || !os.SameFile(before, file.info) || before.Size() != file.info.Size() || !before.ModTime().Equal(file.info.ModTime()) {
 		f.Close()
 		return nil, ErrStreamSourceGap
 	}
