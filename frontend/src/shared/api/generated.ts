@@ -8144,6 +8144,11 @@ export interface components {
                 confirmed_inactive: number;
             };
             mirror_funnel: components["schemas"]["DiscoveryMirrorFunnel"];
+            /**
+             * Format: int64
+             * @description Distinct IPv4 addresses present both in ipv4 (device observations in this window) and in mirror_funnel.ipv4_total (mirror census window). The two sets use different scopes; their union is ipv4 + mirror_funnel.ipv4_total - ipv4_mirror_overlap. Absent when the mirror census has no window or the overlap read failed.
+             */
+            ipv4_mirror_overlap?: number;
         };
         DiscoveryMirrorFunnel: {
             /** @enum {string} */

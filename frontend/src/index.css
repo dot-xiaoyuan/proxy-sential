@@ -6012,22 +6012,47 @@ pre.wrap-code {
 .coverage-panel-heading p { margin: 3px 0 0; color: #475569; font-size: 12px; }
 .coverage-highlight { display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; color: #475569; font-size: 12px; }
 .coverage-highlight strong { color: #115e59; font-size: 22px; line-height: 1.25; }
-.coverage-headline { display: grid; gap: 14px; min-width: 0; padding: 20px; background: var(--surface, #fff); color: #0f172a; border: 1px solid #e2e8f0; border-radius: 8px; }
-.coverage-headline-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; color: #475569; font-size: 12px; }
-.coverage-headline-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0; }
-.coverage-headline-card { min-width: 0; padding: 12px 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; }
-.coverage-headline-card dt { color: #334155; font-size: 13px; font-weight: 600; }
-.coverage-headline-card dd { margin: 4px 0 0; overflow-wrap: anywhere; }
-.coverage-headline-card dd strong { font-size: 28px; line-height: 1.2; color: #0f172a; font-variant-numeric: tabular-nums; }
-.coverage-headline-card dd span { color: #475569; font-size: 12px; }
-.coverage-headline-card small { display: block; margin-top: 4px; color: #475569; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
-.coverage-headline-card.is-confirmed dd strong { color: #115e59; }
-.coverage-headline-card.is-inferred dd strong { color: #1e40af; }
-.coverage-headline-bar { display: block; width: 100%; height: 12px; background: #e2e8f0; border-radius: 6px; overflow: hidden; }
-.coverage-headline-seg { fill: var(--coverage-chart-color); }
-.coverage-headline-composition { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0; color: #334155; font-size: 13px; }
-.coverage-headline-composition > span:first-child { color: #0f172a; font-weight: 650; }
-.coverage-headline-composition > span { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.coverage-lead { margin: 0; padding: 16px 20px; background: var(--surface, #fff); border: 1px solid #e2e8f0; border-radius: 8px; color: #1e293b; font-size: 15px; line-height: 1.7; }
+.coverage-lead strong { color: #0f172a; font-size: 18px; font-variant-numeric: tabular-nums; margin-inline: 2px; }
+.coverage-funnel-steps { display: grid; gap: 6px; list-style: none; margin: 0; padding: 0; }
+.coverage-funnel-step {
+  display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr) 172px;
+  align-items: center; gap: 6px 18px; padding: 10px 0; min-width: 0;
+}
+.coverage-funnel-label { display: grid; gap: 2px; min-width: 0; }
+.coverage-funnel-label strong { color: #0f172a; font-size: 14px; font-weight: 650; }
+.coverage-funnel-label span { color: #475569; font-size: 12px; }
+.coverage-funnel-bar { display: block; width: 100%; height: 14px; border-radius: 4px; overflow: hidden; }
+.coverage-type-groups .coverage-funnel-bar, .coverage-reasons .coverage-funnel-bar { height: 8px; }
+.coverage-funnel-track { fill: #f1f5f9; }
+.coverage-funnel-fill { fill: var(--coverage-chart-color); }
+.coverage-funnel-value { display: flex; align-items: baseline; justify-content: flex-end; flex-wrap: wrap; gap: 2px 8px; min-width: 0; }
+.coverage-funnel-value strong { color: #0f172a; font-size: 24px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.coverage-funnel-value small { color: #475569; font-size: 12px; white-space: nowrap; }
+.coverage-funnel-legend { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 4px 20px; list-style: none; margin: 0; padding: 0; color: #334155; font-size: 13px; }
+.coverage-funnel-legend li { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; }
+.coverage-funnel-legend strong { color: #0f172a; font-variant-numeric: tabular-nums; }
+.coverage-funnel-legend small { color: #475569; font-size: 12px; }
+.coverage-funnel-legend em { color: #475569; font-size: 12px; font-style: normal; }
+.coverage-funnel-drop {
+  margin-left: calc(min(240px, 30%) + 18px); padding: 2px 0 2px 12px; border-left: 2px solid #cbd5e1;
+  color: #475569; font-size: 12px; line-height: 1.5;
+}
+.coverage-type-block { display: grid; gap: 8px; }
+.coverage-type-block + .coverage-type-block, .coverage-type-block + .coverage-footnote + .coverage-type-block { margin-top: 18px; }
+.coverage-type-block h5 { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin: 0; color: #0f172a; font-size: 14px; font-weight: 650; }
+.coverage-type-block h5 span { color: #475569; font-size: 12px; font-weight: 400; }
+.coverage-type-groups, .coverage-reasons { display: grid; gap: 12px; list-style: none; margin: 0; padding: 0; }
+.coverage-type-group-head, .coverage-reason-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 10px; margin-bottom: 4px; color: #334155; font-size: 13px; }
+.coverage-type-group-head span, .coverage-reason-head span { flex: 1 1 auto; min-width: 0; }
+.coverage-type-group-head strong, .coverage-reason-head strong { color: #0f172a; font-size: 15px; font-variant-numeric: tabular-nums; }
+.coverage-reason-head small { min-width: 44px; color: #475569; font-size: 12px; text-align: right; }
+.coverage-type-groups p, .coverage-reasons p { display: flex; flex-wrap: wrap; gap: 2px 12px; margin: 4px 0 0; color: #475569; font-size: 12px; line-height: 1.5; }
+.coverage-type-groups p span { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.coverage-scope-notes { display: grid; gap: 4px; margin: 0; padding-left: 18px; color: #475569; font-size: 12px; line-height: 1.6; }
+.coverage-technical > summary { cursor: pointer; color: #1e40af; font-size: 14px; font-weight: 600; }
+.coverage-technical-body { display: grid; gap: 18px; margin-top: 14px; min-width: 0; }
+.coverage-technical-body .coverage-panel { padding: 0; border: 0; }
 .coverage-breakdown { display: grid; gap: 12px; list-style: none; padding: 0; margin: 0; }
 .coverage-breakdown-label {
   display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline;
@@ -6120,7 +6145,7 @@ pre.wrap-code {
 .coverage-network-details li { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 8px; padding: 5px 0; color: #475569; font-size: 12px; }
 .coverage-network-details a { color: #214f8a; overflow-wrap: anywhere; }
 @media (max-width: 1040px) {
-  .coverage-metrics, .coverage-headline-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .coverage-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 768px) {
   .coverage-panels { grid-template-columns: 1fr; }
@@ -6130,8 +6155,12 @@ pre.wrap-code {
   .coverage-tabs .ant-tabs-tab-btn { font-size: 12px; }
   .coverage-metric, .coverage-panel, .coverage-census { padding: 14px; }
   .coverage-metric dd strong { font-size: 21px; }
-  .coverage-headline { padding: 14px; }
-  .coverage-headline-card dd strong { font-size: 22px; }
+  .coverage-lead { padding: 12px 14px; font-size: 14px; }
+  .coverage-funnel-step { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; }
+  .coverage-funnel-step .coverage-funnel-bar { grid-column: 1 / -1; grid-row: 2; }
+  .coverage-funnel-legend { grid-column: 1 / -1; }
+  .coverage-funnel-value strong { font-size: 20px; }
+  .coverage-funnel-drop { margin-left: 0; }
   .coverage-donut { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .coverage-donut-chart { max-width: 128px; }
   .coverage-network-chart { --network-label-width: min(42%, 126px); --network-value-width: 44px; }

@@ -1,6 +1,7 @@
 import type { components } from '../shared/api/generated'
 import { observedTimeTitle } from '../shared/ui/observedTime'
 import { deviceTypeLabel } from '../entities/device/DeviceInventoryCells'
+import { buildCoverageSummary, type CoverageSummary, type Tone } from './discoveryCoverageSummary'
 
 export type CoverageReport = components['schemas']['DiscoveryCoverageReport']
 export type CoverageComposition = { types?: { device_type: string; count: number }[]; candidate_types?: { device_type: string; count: number }[]; dumb_terminals?: number }
@@ -89,7 +90,7 @@ function CoveragePendingTable({ rows }: { rows: PendingRow[] }) {
   </table>
 }
 
-function CoverageProtocolReplay() {
+export function CoverageProtocolReplay() {
   return <details className="coverage-panel coverage-protocol-replay">
     <summary>设备协议回放明细 · 11 月 23 日 18:54</summary>
     <p className="coverage-footnote">2026/11/23 18:54 的固定 24 小时快照。从 1,062 条回放观测中追查 197 个已关联且有设备协议的待确认 IPv4。</p>
@@ -157,146 +158,212 @@ function HardwareTrendPanel({ trend }: { trend: NonNullable<CoverageReport['hard
     </section>
 }
 
-type TypeRow = { device_type: string; count: number }
+const windowLabels: Record<string, string> = { '15m': '近 15 分钟', '24h': '近 24 小时', '168h': '近 7 天', '720h': '近 30 天' }
 
-function TypeComposition({ label, rows, limit }: { label: string; rows?: TypeRow[]; limit: number }) {
-  const sorted = (rows ?? []).filter(row => row.count > 0).sort((a, b) => b.count - a.count || a.device_type.localeCompare(b.device_type))
-  if (sorted.length === 0) return null
-  const rest = sorted.slice(limit).reduce((sum, row) => sum + row.count, 0)
-  return <p className="coverage-headline-composition">
-    <span>{label}</span>
-    {sorted.slice(0, limit).map(row => <span key={row.device_type}>{deviceTypeLabel(row.device_type)} {count(row.count)}</span>)}
-    {rest > 0 && <span>其他 {count(rest)}</span>}
-  </p>
+function FunnelBar({ segments, label }: { segments: { value: number; tone: Tone }[]; label: string }) {
+  let x = 0
+  return <svg className="coverage-funnel-bar" viewBox="0 0 100 10" preserveAspectRatio="none" role="img" aria-label={label}>
+    <rect className="coverage-funnel-track" x="0" y="0" width="100" height="10" />
+    {segments.filter(segment => segment.value > 0).map((segment, index) => {
+      const start = x
+      x += segment.value
+      return <rect key={index} className={`coverage-funnel-fill coverage-chart-${segment.tone}`} x={start} y="0" width={segment.value} height="10" />
+    })}
+  </svg>
 }
 
-// Headline: the four numbers leadership asks for, sharing one denominator.
-function CoverageHeadline({ report, composition }: { report: CoverageReport; composition?: CoverageComposition }) {
-  const typed = report.typed_ipv4
-  const unlinked = report.no_identity_ipv4
-  const discovered = typed !== undefined && report.identity_no_type_ipv4 !== undefined && unlinked !== undefined
-    ? typed + report.identity_no_type_ipv4 + unlinked : report.ipv4
-  const inferred = report.ipv4_pending?.filter(row => row.status === 'with_profile')
-    .reduce((sum, row) => sum + (row.network_only ?? 0) + (row.dhcp_only ?? 0) + (row.device_protocol ?? 0) + (row.other ?? 0), 0)
-  const pending = discovered !== undefined && typed !== undefined && inferred !== undefined ? discovered - typed - inferred : undefined
-  const share = (value?: number) => value !== undefined && discovered ? ` · ${percent(value, discovered)}` : ''
-  const lagMinutes = report.identity_as_of ? Math.round((Date.parse(report.as_of) - Date.parse(report.identity_as_of)) / 60_000) : 0
-  const segments = discovered && typed !== undefined && inferred !== undefined && pending !== undefined
-    ? [{ key: 'confirmed', color: 'teal', value: typed }, { key: 'inferred', color: 'blue', value: inferred }, { key: 'pending', color: 'slate', value: pending }]
-      .reduce<{ key: string; color: string; x: number; width: number }[]>((acc, seg) => {
-        const x = acc.reduce((sum, item) => sum + item.width, 0)
-        return [...acc, { key: seg.key, color: seg.color, x, width: 100 * seg.value / discovered }]
-      }, [])
-    : []
-  const cards = [
-    { key: 'discovered', label: '发现的 IPv4 地址', value: discovered, className: '', note: '窗口内有设备层观测，按地址去重' },
-    { key: 'confirmed', label: '已确认类型', value: typed, className: 'is-confirmed', note: `硬件结论${share(typed)}` },
-    { key: 'inferred', label: '推测类型', value: inferred, className: 'is-inferred', note: `画像线索，非确定结论${share(inferred)}` },
-    { key: 'pending', label: '类型待确认', value: pending, className: '', note: `含归属待核实 ${count(unlinked ?? 0)} 个${share(pending)}` },
-  ]
-  return <section className="coverage-headline" aria-label="覆盖概要">
-    <div className="coverage-headline-meta">
-      {lagMinutes > 5 && <span className="coverage-warning">发现处理滞后约 {lagMinutes} 分钟</span>}
-      {report.identity_as_of && <span>数字截至发现处理水位 {observedTimeTitle(report.identity_as_of)}</span>}
-      {report.subnet24 !== undefined && <span>/24 分组 {count(report.subnet24)} 组</span>}
-      {report.identity_total !== undefined && <span>窗口内发现身份 {count(report.identity_total)} 个</span>}
-    </div>
-    <dl className="coverage-headline-cards">
-      {cards.map(card => <div key={card.key} className={`coverage-headline-card ${card.className}`.trim()}>
-        <dt>{card.label}</dt>
-        <dd>{card.value !== undefined && <><strong>{count(card.value)}</strong> <span>个地址</span></>}</dd>
-        <small>{card.note}</small>
-      </div>)}
-    </dl>
-    {segments.length > 0 && <svg className="coverage-headline-bar" viewBox="0 0 100 12" preserveAspectRatio="none" role="img"
-      aria-label={`发现 IPv4 构成：已确认类型 ${count(typed ?? 0)} 个，推测类型 ${count(inferred ?? 0)} 个，类型待确认 ${count(pending ?? 0)} 个`}>
-      {segments.map(seg => <rect key={seg.key} className={`coverage-headline-seg coverage-chart-${seg.color}`} x={seg.x} y="0" width={seg.width} height="12" />)}
-    </svg>}
-    {composition && <>
-      <TypeComposition label="已确认类型（按发现身份）" rows={composition.types} limit={6} />
-      {composition.dumb_terminals !== undefined && <p className="coverage-headline-composition"><span>哑终端（按发现身份）</span><span>{count(composition.dumb_terminals)} 个，已包含在确认类型中</span></p>}
-      <TypeComposition label="推测类型（按发现身份）" rows={composition.candidate_types} limit={4} />
-    </>}
-    <p className="coverage-footnote">已确认类型来自硬件结论；推测类型仅来自画像线索。构成行按发现身份计数，与地址数不可直接相加。</p>
+function CoverageFunnel({ summary }: { summary: CoverageSummary }) {
+  const { total, device, confirmed, inferred, pending, mirror, mirrorOnly } = summary
+  if (device === undefined) return null
+  const base = total ?? device
+  const width = (value: number) => base > 0 ? 100 * value / base : 0
+  const identified = confirmed !== undefined ? confirmed + (inferred ?? 0) : undefined
+  return <section className="coverage-panel coverage-funnel" aria-labelledby="coverage-funnel-heading">
+    <header className="coverage-panel-heading"><div>
+      <h4 id="coverage-funnel-heading">发现与识别</h4>
+      <p>按 IPv4 地址去重，每一层都包含在上一层中</p>
+    </div></header>
+    <ol className="coverage-funnel-steps">
+      {total !== undefined && <li className="coverage-funnel-step">
+        <div className="coverage-funnel-label"><strong>共发现 IPv4 地址</strong><span>流量或设备报文中出现过的地址</span></div>
+        <FunnelBar label={`共发现 ${count(total)} 个 IPv4 地址`} segments={[{ value: 100, tone: 'slate' }]} />
+        <div className="coverage-funnel-value"><strong>{count(total)}</strong></div>
+      </li>}
+      {total !== undefined && mirrorOnly !== undefined && mirrorOnly > 0 && <li className="coverage-funnel-drop">
+        {count(mirrorOnly)} 个只在流量中出现，没有设备层报文，无法判断类型
+      </li>}
+      <li className="coverage-funnel-step">
+        <div className="coverage-funnel-label"><strong>有设备层报文</strong><span>ARP、DHCP、设备协议等可用于识别的报文</span></div>
+        <FunnelBar label={`有设备层报文 ${count(device)} 个`} segments={[{ value: width(device), tone: 'blue' }]} />
+        <div className="coverage-funnel-value"><strong>{count(device)}</strong>{total !== undefined && total > 0 && <small>占 {percent(device, total)}</small>}</div>
+      </li>
+      {pending !== undefined && pending > 0 && <li className="coverage-funnel-drop">
+        {count(pending)} 个有设备层报文，类型待确认，原因见下方
+      </li>}
+      {identified !== undefined && confirmed !== undefined && <li className="coverage-funnel-step">
+        <div className="coverage-funnel-label">
+          <strong>{inferred !== undefined ? '识别出类型' : '已确认类型'}</strong>
+          <span>{inferred !== undefined ? '已确认与推测分开计数' : '推测线索暂不可用'}</span>
+        </div>
+        <FunnelBar label={inferred !== undefined
+          ? `识别出类型 ${count(identified)} 个，其中已确认 ${count(confirmed)} 个，推测 ${count(inferred)} 个`
+          : `已确认类型 ${count(confirmed)} 个`}
+          segments={[{ value: width(confirmed), tone: 'teal' }, { value: width(inferred ?? 0), tone: 'blue' }]} />
+        <div className="coverage-funnel-value"><strong>{count(identified)}</strong>{device > 0 && <small>占设备层 {percent(identified, device)}</small>}</div>
+        <ul className="coverage-funnel-legend">
+          <li><span className="coverage-chart-key coverage-chart-teal" aria-hidden="true" />已确认 <strong>{count(confirmed)}</strong>{device > 0 && <small>{percent(confirmed, device)}</small>}</li>
+          {inferred !== undefined && <li><span className="coverage-chart-key coverage-chart-blue" aria-hidden="true" />推测 <strong>{count(inferred)}</strong>{device > 0 && <small>{percent(inferred, device)}</small>}<em>画像线索，非确定结论</em></li>}
+        </ul>
+      </li>}
+    </ol>
+    {total === undefined && mirror !== undefined && <p className="coverage-footnote">镜像流量另见 {count(mirror)} 个站点网段地址，与上面的地址部分重叠，合并总数暂不可用。</p>}
+  </section>
+}
+
+const categoryTypes: { key: string; label: string; types: string[] }[] = [
+  { key: 'network', label: '网络设备', types: ['access_point', 'router', 'switch', 'firewall', 'gateway', 'wireless_host', 'wireless_controller', 'voice_gateway'] },
+  { key: 'dumb', label: '哑终端', types: ['printer', 'scanner', 'camera', 'recorder', 'nvr', 'access_control', 'voip_phone', 'media_player', 'media_device', 'display', 'tv', 'ups', 'pdu', 'environment_monitor'] },
+  { key: 'computer', label: '电脑与移动终端', types: ['laptop', 'desktop', 'mobile', 'tablet', 'server', 'virtual_machine'] },
+]
+
+type TypeRow = { device_type: string; count: number }
+
+function groupTypes(rows?: TypeRow[]) {
+  const items = (rows ?? []).filter(row => row.count > 0)
+  const groups = [...categoryTypes, { key: 'other', label: '其他', types: [] as string[] }].map(category => {
+    const members = items.filter(row => category.key === 'other'
+      ? !categoryTypes.some(known => known.types.includes(row.device_type))
+      : category.types.includes(row.device_type))
+      .sort((a, b) => b.count - a.count || a.device_type.localeCompare(b.device_type))
+    return { ...category, members, total: members.reduce((sum, row) => sum + row.count, 0) }
+  }).filter(group => group.total > 0)
+    .sort((a, b) => Number(a.key === 'other') - Number(b.key === 'other') || b.total - a.total)
+  return { groups, total: groups.reduce((sum, group) => sum + group.total, 0) }
+}
+
+function TypeGroups({ label, rows, tone }: { label: string; rows?: TypeRow[]; tone: Tone }) {
+  const { groups, total } = groupTypes(rows)
+  if (total === 0) return null
+  const max = Math.max(...groups.map(group => group.total))
+  return <section className="coverage-type-block" aria-label={label}>
+    <h5>{label}<span>{count(total)} 个设备记录</span></h5>
+    <ul className="coverage-type-groups">
+      {groups.map(group => <li key={group.key}>
+        <div className="coverage-type-group-head"><span>{group.label}</span><strong>{count(group.total)}</strong></div>
+        <FunnelBar label={`${label}·${group.label} ${count(group.total)} 个`} segments={[{ value: 100 * group.total / max, tone }]} />
+        <p>{group.members.slice(0, 5).map(row => <span key={row.device_type}>{deviceTypeLabel(row.device_type)} {count(row.count)}</span>)}
+          {group.members.length > 5 && <span>其他 {count(group.members.slice(5).reduce((sum, row) => sum + row.count, 0))}</span>}</p>
+      </li>)}
+    </ul>
+  </section>
+}
+
+function CoverageComposition({ composition }: { composition?: CoverageComposition }) {
+  const hasConfirmed = (composition?.types ?? []).some(row => row.count > 0)
+  const hasInferred = (composition?.candidate_types ?? []).some(row => row.count > 0)
+  return <section className="coverage-panel" aria-labelledby="coverage-types-heading">
+    <header className="coverage-panel-heading"><div>
+      <h4 id="coverage-types-heading">识别出了什么</h4>
+      <p>按设备记录计数，同一设备在不同 VLAN 会分别计数</p>
+    </div></header>
+    {!composition ? <p className="coverage-empty">正在读取类型构成…</p>
+      : !hasConfirmed && !hasInferred ? <p className="coverage-empty">选定范围内暂无类型结论。</p>
+        : <>
+          <TypeGroups label="已确认类型" rows={composition.types} tone="teal" />
+          {composition.dumb_terminals !== undefined && composition.dumb_terminals > 0 &&
+            <p className="coverage-footnote">其中哑终端 <strong>{count(composition.dumb_terminals)}</strong> 个，包括打印机、摄像机、门禁、话机等。</p>}
+          <TypeGroups label="推测类型（待确认）" rows={composition.candidate_types} tone="blue" />
+        </>}
+  </section>
+}
+
+function CoverageReasons({ summary }: { summary: CoverageSummary }) {
+  const { device, confirmed, reasons } = summary
+  const unconfirmed = device !== undefined && confirmed !== undefined ? device - confirmed : undefined
+  const max = Math.max(1, ...reasons.map(reason => reason.value))
+  return <section className="coverage-panel" aria-labelledby="coverage-reasons-heading">
+    <header className="coverage-panel-heading"><div>
+      <h4 id="coverage-reasons-heading">还没确认类型的原因</h4>
+      <p>{unconfirmed !== undefined ? `${count(unconfirmed)} 个有设备层报文的地址尚未确认类型，按主要证据分组，互不重叠` : '按主要证据分组，互不重叠'}</p>
+    </div></header>
+    {reasons.length === 0 ? <p className="coverage-empty">{device === 0 ? '选定范围内暂无有设备层报文的地址。'
+      : unconfirmed === 0 ? '有设备层报文的地址均已确认类型。' : '本次统计暂无原因分组。'}</p>
+      : <ul className="coverage-reasons">
+        {reasons.map(reason => <li key={reason.key}>
+          <div className="coverage-reason-head">
+            <span>{reason.label}</span>
+            <strong>{count(reason.value)}</strong>
+            {unconfirmed !== undefined && unconfirmed > 0 && <small>{percent(reason.value, unconfirmed)}</small>}
+          </div>
+          <FunnelBar label={`${reason.label} ${count(reason.value)} 个地址`} segments={[{ value: 100 * reason.value / max, tone: reason.tone }]} />
+          <p>{reason.detail}</p>
+        </li>)}
+      </ul>}
   </section>
 }
 
 export function DiscoveryCoverageReport({ report, composition }: { report: CoverageReport; composition?: CoverageComposition }) {
-  const { typed_ipv4: typed, identity_no_type_ipv4: needsType, no_identity_ipv4: unlinked } = report
+  const summary = buildCoverageSummary(report)
+  const { device, confirmed, inferred, total, deviceOutsideMirror } = summary
   const review = report.ipv4_type_review
-  const total = typed !== undefined && needsType !== undefined && unlinked !== undefined
-    ? typed + needsType + unlinked : undefined
-  const breakdown = [
-    { label: '仅网络层 · ARP、NDP 等', value: report.untyped_network_only_ipv4 },
-    { label: '有 DHCP · 缺设备协议证据', value: report.untyped_dhcp_only_ipv4 },
-    { label: '有设备协议证据', value: report.untyped_application_ipv4 },
-    { label: '其他证据', value: report.untyped_other_ipv4 },
-  ].flatMap(({ label, value }) => value === undefined ? [] : [{ label, value }])
-
+  const lagMinutes = report.identity_as_of ? Math.round((Date.parse(report.as_of) - Date.parse(report.identity_as_of)) / 60_000) : 0
+  const funnel = report.mirror_funnel
+  const windowLabel = windowLabels[report.window] ?? '所选时间范围'
   return <section className="coverage-content" aria-label="设备发现覆盖报表">
-    <div className="coverage-timestamps">
-      <span>{report.diagnostic_as_of
-        ? `设备观测截至 ${observedTimeTitle(report.diagnostic_as_of)}`
-        : `统计时间 ${observedTimeTitle(report.as_of)}`}</span>
+    <div className="coverage-timestamps" aria-label="数据时效">
+      {report.identity_as_of ? <span>设备数据截至 {observedTimeTitle(report.identity_as_of)}</span>
+        : <span>统计时间 {observedTimeTitle(report.as_of)}</span>}
+      {funnel?.as_of && <span>镜像流量截至 {observedTimeTitle(funnel.as_of)}</span>}
+      {lagMinutes > 5 && <span className="coverage-warning">发现处理滞后约 {lagMinutes} 分钟，最新的设备变化尚未计入</span>}
+      {funnel && funnel.status !== 'ready' && funnel.status !== 'initializing' && <span className="coverage-warning">
+        {funnel.status === 'partial' ? '镜像统计窗口覆盖不完整' : '镜像统计更新延迟'}
+        {funnel.available_from && `，起点 ${observedTimeTitle(funnel.available_from)}`}</span>}
     </div>
     {report.identity_status === 'timeout' && <p className="coverage-empty" role="status">身份统计读取超时。地址覆盖和镜像配对数据已加载，可刷新重试身份统计。</p>}
-    <CoverageHeadline report={report} composition={composition} />
-    {report.planned_ipv4 && <PlannedIPv4Panel report={report.planned_ipv4} />}
-    {(report.ipv4_binding_freshness || report.ipv6_binding_freshness) &&
-      <section className="coverage-panel" aria-labelledby="coverage-freshness-heading">
-        <header className="coverage-panel-heading">
-          <div><h4 id="coverage-freshness-heading">地址绑定时效</h4><p>按所选窗口内的设备观测地址去重，统计时仍有有效绑定的地址优先计入当前有效。</p></div>
-        </header>
-        <div className="coverage-panels">
-          {report.ipv4_binding_freshness && <section aria-label="IPv4 绑定时效">
-            <h5 className="coverage-binding-family">IPv4 · {count(report.ipv4)} 个地址</h5>
-            <BindingFreshnessRows freshness={report.ipv4_binding_freshness} />
-          </section>}
-          {report.ipv6_binding_freshness && <section aria-label="IPv6 绑定时效">
-            <h5 className="coverage-binding-family">IPv6 · {count(report.ipv6)} 个地址</h5>
-            <BindingFreshnessRows freshness={report.ipv6_binding_freshness} />
-          </section>}
-        </div>
-      </section>}
-    {total !== undefined && typed !== undefined && needsType !== undefined && unlinked !== undefined &&
-      <div className="coverage-panels">
-        <section className="coverage-panel" aria-labelledby="coverage-address-heading">
-          <header className="coverage-panel-heading">
-            <div><h4 id="coverage-address-heading">观测 IPv4 的硬件类型确认覆盖</h4><p>{count(typed)} / {count(total)} 个有设备观测的 IPv4 对应已确认硬件类型</p></div>
-            {total > 0 && <div className="coverage-highlight"><strong>{percent(typed, total)}</strong></div>}
-          </header>
-          {total > 0 ? <CoverageDonut label="IPv4 地址类型确认构成" total={total} unit="个 IPv4 地址" rows={[
-            { label: '已确认硬件类型', value: typed, color: 'teal' },
-            { label: '已关联，尚待确认', value: needsType - (review?.withdrawn_confirmation ?? 0) - (review?.conflict ?? 0) },
-            ...(review ? [
-              { label: '曾确认，现已撤回', value: review.withdrawn_confirmation, color: 'amber' as const },
-              { label: '类型证据冲突', value: review.conflict, color: 'purple' as const },
-            ] : []),
-            { label: '归属待核实', value: unlinked, color: 'slate' },
-          ]} /> : <p className="coverage-empty">选定范围内暂无设备侧 IPv4 观测。</p>}
-          <p className="coverage-footnote">按所选窗口内的 IPv4 地址去重，包含历史绑定。仅有画像推测的地址归入待确认。{review && <>有 <strong>{count(review.confirmed_inactive)} 个</strong>地址的设备活动线索已到期，仍计入已确认。</>}</p>
-        </section>
-        <section className="coverage-panel" aria-labelledby="coverage-gap-heading">
-          <header className="coverage-panel-heading"><div><h4 id="coverage-gap-heading">类型待确认的证据</h4>
-            <p>{report.ipv4_pending
-              ? `${count(needsType + unlinked)} 个 IPv4 暂无确认类型，含地址归属待核实。`
-              : `分母为 ${count(needsType)} 个已关联设备、类型待确认的 IP`}</p></div></header>
-          {report.ipv4_pending ? <>
-            <CoveragePendingTable rows={report.ipv4_pending} />
-            <p className="coverage-footnote">有 DHCP 一栏只统计窗口内暂无设备协议的地址。</p>
-          </> : breakdown.length > 0 && needsType > 0
-            ? <CoverageRows total={needsType} unit="个 IP" rows={breakdown}/>
-            : <p className="coverage-empty">{needsType === 0 ? '当前没有这类记录。' : '本次统计暂无协议分项。'}</p>}
-          {report.revoked_type_ipv4 !== undefined && needsType > 0 && <div className="coverage-evidence-note">
-            <p>待确认地址中，<strong>{count(report.revoked_type_ipv4)} 个</strong>关联到撤回状态，包含撤回的候选线索。</p>
-            {review && <p>其中 <strong>{count(review.withdrawn_confirmation)} 个</strong>地址关联到曾确认的硬件类型。</p>}
-          </div>}
-        </section>
-      </div>}
+    {device !== undefined && <p className="coverage-lead">
+      {windowLabel}{total !== undefined ? <>共发现 <strong>{count(total)}</strong> 个 IPv4 地址，其中 <strong>{count(device)}</strong> 个有设备层报文。</>
+        : <>有设备层报文的 IPv4 地址 <strong>{count(device)}</strong> 个。</>}
+      {confirmed !== undefined && device > 0 && <>已确认类型 <strong>{count(confirmed)}</strong> 个，占 {percent(confirmed, device)}</>}
+      {inferred !== undefined && inferred > 0 && <>；另有 <strong>{count(inferred)}</strong> 个推测出类型，待证据确认</>}
+      {confirmed !== undefined && device > 0 && '。'}
+    </p>}
+    <CoverageFunnel summary={summary} />
+    <div className="coverage-panels">
+      <CoverageComposition composition={composition} />
+      <CoverageReasons summary={summary} />
+    </div>
     {report.hardware_trend && <HardwareTrendPanel trend={report.hardware_trend} />}
-    <CoverageProtocolReplay />
-    {report.profile_candidate_identities !== undefined && <p className="coverage-footnote">另有 <strong>{count(report.profile_candidate_identities)} 个发现身份</strong>已有画像类型线索，待确认硬件类型。</p>}
-    <p className="coverage-footnote">同一设备可能对应多个地址或采集范围。/24 分组按观测地址统计。</p>
+    <ul className="coverage-scope-notes" aria-label="统计口径">
+      <li>地址数不等于设备台数：同一设备可能使用多个地址，同一地址也可能被不同设备先后使用。</li>
+      {deviceOutsideMirror !== undefined && deviceOutsideMirror > 0 && <li>有 {count(deviceOutsideMirror)} 个有设备层报文的地址不在站点网段的流量统计范围内，已计入共发现总数。</li>}
+      {report.ipv6 > 0 && <li>另有 IPv6 地址 {count(report.ipv6)} 个，未计入以上数字。</li>}
+      {review && review.confirmed_inactive > 0 && <li>已确认类型中有 {count(review.confirmed_inactive)} 个地址的设备活动线索已到期，仍按已确认计入。</li>}
+    </ul>
+    <details className="coverage-panel coverage-technical">
+      <summary>查看技术明细</summary>
+      <div className="coverage-technical-body">
+        {report.ipv4_pending && <section aria-labelledby="coverage-matrix-heading">
+          <h5 id="coverage-matrix-heading" className="coverage-binding-family">待确认地址的类型状态与证据</h5>
+          <CoveragePendingTable rows={report.ipv4_pending} />
+          <p className="coverage-footnote">有 DHCP 一栏只统计窗口内暂无设备协议的地址。</p>
+        </section>}
+        {(report.ipv4_binding_freshness || report.ipv6_binding_freshness) && <section aria-labelledby="coverage-freshness-heading">
+          <h5 id="coverage-freshness-heading" className="coverage-binding-family">地址绑定时效</h5>
+          <p className="coverage-footnote">按窗口内的设备观测地址去重，统计时仍有有效绑定的地址优先计入当前有效。</p>
+          <div className="coverage-panels">
+            {report.ipv4_binding_freshness && <section aria-label="IPv4 绑定时效">
+              <h5 className="coverage-binding-family">IPv4 · {count(report.ipv4)} 个地址</h5>
+              <BindingFreshnessRows freshness={report.ipv4_binding_freshness} />
+            </section>}
+            {report.ipv6_binding_freshness && <section aria-label="IPv6 绑定时效">
+              <h5 className="coverage-binding-family">IPv6 · {count(report.ipv6)} 个地址</h5>
+              <BindingFreshnessRows freshness={report.ipv6_binding_freshness} />
+            </section>}
+          </div>
+        </section>}
+        {report.planned_ipv4 && <PlannedIPv4Panel report={report.planned_ipv4} />}
+      </div>
+    </details>
   </section>
 }
 

@@ -9111,6 +9111,7 @@ components:
             conflict: { type: integer, format: int64, minimum: 0, description: Pending IPv4 addresses with conflicting hardware type evidence and no retained revoked confirmation. }
             confirmed_inactive: { type: integer, format: int64, minimum: 0, description: Confirmed IPv4 addresses with no associated confirmed identity having a still-valid activity observation. }
         mirror_funnel: { $ref: '#/components/schemas/DiscoveryMirrorFunnel' }
+        ipv4_mirror_overlap: { type: integer, format: int64, minimum: 0, description: 'Distinct IPv4 addresses present both in ipv4 (device observations in this window) and in mirror_funnel.ipv4_total (mirror census window). The two sets use different scopes; their union is ipv4 + mirror_funnel.ipv4_total - ipv4_mirror_overlap. Absent when the mirror census has no window or the overlap read failed.' }
     DiscoveryMirrorFunnel:
       type: object
       required: [status, evaluated_at, ipv4_total, ipv4_only, mac_total, mac_only, ip_mac_pairs, scoped_pairs, trusted_identities, identified_pairs, typed_pairs, oui_matched, locally_administered_mac, no_oui_global_mac, oui_library_version]

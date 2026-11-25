@@ -66,6 +66,12 @@ type CoverageReport struct {
 	UntypedOtherIPv4        int64              `json:"untyped_other_ipv4"`
 	RevokedTypeIPv4         int64              `json:"revoked_type_ipv4"`
 	MirrorFunnel            MirrorFunnel       `json:"mirror_funnel"`
+	// IPv4MirrorOverlap counts addresses present both in the device-observation
+	// window (ipv4) and in the mirror census window (mirror_funnel.ipv4_total).
+	// The two sets have different scopes, so their union is
+	// ipv4 + mirror_funnel.ipv4_total - ipv4_mirror_overlap. Nil means the
+	// mirror census had no window or the overlap read failed.
+	IPv4MirrorOverlap *int64 `json:"ipv4_mirror_overlap,omitempty"`
 
 	IPv4BindingFreshness *CoverageBindingFreshness `json:"ipv4_binding_freshness,omitempty"`
 	IPv6BindingFreshness *CoverageBindingFreshness `json:"ipv6_binding_freshness,omitempty"`
@@ -123,6 +129,18 @@ func (r Repository) DiscoveryCoverageReport(ctx context.Context, sensor string, 
 	})
 	if err := group.Wait(); err != nil {
 		return CoverageReport{}, err
+	}
+	if out.MirrorFunnel.AsOf != nil {
+		mirrorUntil := *out.MirrorFunnel.AsOf
+		overlap, err := coverageMirrorOverlap(ctx, r.DB, sensor, at.Add(-window), at, mirrorUntil.Add(-window), mirrorUntil)
+		if ctx.Err() != nil {
+			return CoverageReport{}, ctx.Err()
+		}
+		// The overlap only adds a union total. A failed read leaves it absent
+		// so the published address and mirror counts remain available.
+		if err == nil {
+			out.IPv4MirrorOverlap = &overlap
+		}
 	}
 	out.Window = indexedWindowLabel(window)
 	if out.IdentityAsOf != nil {
@@ -298,4 +316,22 @@ FROM freshness_counts`
 		out.IPv4BindingFreshness, out.IPv6BindingFreshness = &v4, &v6
 	}
 	return err
+}
+
+// coverageMirrorOverlap uses the same address sets as coverageAddressCounts
+// (observed IPv4 in the device window) and mirrorFunnelCounts (IPv4 census
+// identifiers in the mirror window), so the reported union is exact.
+func coverageMirrorOverlap(ctx context.Context, db *sql.DB, sensor string, from, until, mirrorFrom, mirrorUntil time.Time) (int64, error) {
+	const statement = `WITH device AS MATERIALIZED (
+ SELECT DISTINCT l.data->>'ip' ip FROM discovery_observation_latest l
+ WHERE l.observed_at>=$2 AND l.observed_at<=$3 AND l.data->>'node'=$1 AND NOT l.withdrawn
+  AND l.data->>'ip' ~ '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'
+), mirror AS MATERIALIZED (
+ SELECT DISTINCT value ip FROM passive_census_identifier_current
+ WHERE sensor_id=$1 AND kind='ip' AND ip_family=4 AND last_seen>=$4 AND last_seen<=$5
+)
+SELECT count(*) FROM device JOIN mirror USING(ip)`
+	var overlap int64
+	err := db.QueryRowContext(ctx, statement, sensor, from, until, mirrorFrom, mirrorUntil).Scan(&overlap)
+	return overlap, err
 }

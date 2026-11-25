@@ -137,7 +137,7 @@ test('both reports show an animated loading state and recover after a timeout', 
   })
   const checks = [
     { route: '/reports/data', label: '正在读取网络访问统计…', error: '网络访问统计读取超时', ready: '活跃 IP', shot: 'global' },
-    { route: '/devices/coverage', label: '正在读取覆盖总览…', error: '覆盖总览读取超时', ready: '观测 IPv4 的类型确认占比', shot: 'coverage' },
+    { route: '/devices/coverage', label: '正在读取覆盖总览…', error: '覆盖总览读取超时', ready: '发现与识别', shot: 'coverage' },
   ]
   for (const { route, label, error, ready, shot } of checks) {
     await page.evaluate(target => {

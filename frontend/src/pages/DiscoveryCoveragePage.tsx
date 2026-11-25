@@ -7,7 +7,7 @@ import { ApiError, request } from '../shared/api/client'
 import type { components } from '../shared/api/generated'
 import { observedTimeTitle } from '../shared/ui/observedTime'
 import { AppLoadingState } from '../shared/ui'
-import { DiscoveryCoverageReport, DiscoveryMirrorCoverage, type CoverageReport } from './DiscoveryCoverageReport'
+import { CoverageProtocolReplay, DiscoveryCoverageReport, DiscoveryMirrorCoverage, type CoverageReport } from './DiscoveryCoverageReport'
 import { DiscoveryCoverageDiagnostics } from './DiscoveryCoverageDiagnostics'
 import { TruthReviewPanel } from './TruthReviewPanel'
 import { CensusPanel } from './CensusPanel'
@@ -150,7 +150,8 @@ export function DiscoveryCoveragePage() {
           {censusOpened && <CensusPanel />}
         </details>
       </> : item.key === 'review' ? <TruthReviewPanel /> : <section className="coverage-content" aria-label="历史现场核查">
-        <p className="coverage-empty">这是 11 月 15 日的核查快照，日期和范围固定。</p>
+        <p className="coverage-empty">以下是固定日期的核查快照，不随时间范围变化。</p>
+        <CoverageProtocolReplay />
         <DiscoveryCoverageDiagnostics />
       </section>,
     }))} />

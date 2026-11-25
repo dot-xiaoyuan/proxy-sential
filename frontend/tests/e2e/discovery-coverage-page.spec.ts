@@ -55,26 +55,25 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
 
     await page.goto('/devices/coverage')
     const report = page.getByRole('region',{name:'设备发现覆盖报表'})
-    const stages = report.getByRole('region',{name:'观测 IPv4 的硬件类型确认覆盖'})
-    await expect(stages).toContainText('33.3%')
-    await expect(stages).toContainText('曾确认，现已撤回')
-    await expect(stages).toContainText('仍计入已确认')
-    await expect(report.getByText(/已有画像类型线索，待确认硬件类型/)).toContainText('2 个发现身份')
-    await expect(stages.getByRole('img',{name:/IPv4 地址类型确认构成/})).toBeVisible()
-    await expect(report.getByRole('region',{name:'类型待确认的证据'})).toContainText('仅网络层')
+    const funnel = report.getByRole('region',{name:'发现与识别'})
+    await expect(report.locator('.coverage-lead')).toContainText('共发现 7,575 个 IPv4 地址，其中 3,438 个有设备层报文')
+    await expect(funnel).toContainText('4,137 个只在流量中出现')
+    await expect(funnel.getByRole('img',{name:'识别出类型 1,755 个，其中已确认 347 个，推测 1,408 个'})).toBeVisible()
+    await expect(funnel).toContainText('占设备层 51.0%')
+    const reasons = report.getByRole('region',{name:'还没确认类型的原因'})
+    await expect(reasons).toContainText('3,091 个有设备层报文的地址尚未确认类型')
+    await expect(reasons.locator('.coverage-reason-head').first()).toContainText('已推测出类型，待证据确认1,408')
+    await expect(report.getByRole('region',{name:'识别出了什么'})).toBeVisible()
+    await expect(report).toContainText('发现处理滞后约 22 分钟')
+    await expect(report.getByText('待确认地址的类型状态与证据')).not.toBeVisible()
+    await page.screenshot({path:info.outputPath(`coverage-overview-${viewport.width}.png`),animations:'disabled'})
+    await report.getByText('查看技术明细').click()
     const matrix = report.getByRole('table',{name:'待确认 IPv4 的画像及协议证据'})
-    await expect(matrix.getByRole('row',{name:/已有画像类型线索/}).getByRole('cell').first()).toHaveText('1')
+    await expect(matrix.getByRole('row',{name:/已有画像类型线索/}).getByRole('cell').first()).toHaveText('35')
     await expect(matrix.getByRole('row',{name:/地址归属待核实/})).toBeVisible()
-    await matrix.screenshot({path:info.outputPath(`coverage-pending-${viewport.width}.png`),animations:'disabled'})
-    await report.getByText('设备协议回放明细 · 11 月 23 日 18:54').click()
-    await expect(report.getByText(/固定 24 小时快照/)).toBeVisible()
-    await expect(report.getByRole('progressbar',{name:'协议响应缺可信 MAC'})).toHaveAttribute('value','129')
     const freshness = report.getByRole('region', {name:'IPv4 绑定时效', exact:true})
-    await expect(freshness.getByRole('progressbar',{name:'当前有效绑定'})).toHaveAttribute('value','1')
-    await expect(freshness.getByRole('progressbar',{name:'仅有过期绑定'})).toHaveAttribute('value','1')
-    await expect(freshness.getByRole('progressbar',{name:'窗口内无绑定记录'})).toHaveAttribute('value','1')
+    await expect(freshness.getByRole('progressbar',{name:'当前有效绑定'})).toHaveAttribute('value','1370')
     await expect(report.getByRole('region',{name:'IPv6 绑定时效',exact:true})).toBeVisible()
-    await expect(report).toContainText('滞后约 22 分钟')
     await expect(page.getByRole('region',{name:'镜像标识与配对'})).not.toBeVisible()
     await expect(page.getByLabel('设备事实原因分析')).not.toBeVisible()
     await assertCoverageLayout(page)
@@ -105,12 +104,12 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
     await page.getByRole('tab',{name:'镜像与配对'}).click()
     const mirror = page.getByRole('region',{name:'镜像标识与配对'})
     const pairCounts = mirror.getByRole('region',{name:'有效 IP–MAC 配对'})
-    await expect(pairCounts).toContainText('40.0%')
+    await expect(pairCounts).toContainText('79.5%')
     await expect(pairCounts.getByRole('img',{name:/有效配对的身份与类型构成/})).toBeVisible()
     await expect(pairCounts).toContainText('身份待关联')
     await expect(pairCounts).toContainText('其中类型已确认')
     await expect(mirror).toContainText('绑定状态截至')
-    await expect(mirror.getByRole('region',{name:'镜像 IPv4 绑定时效'}).getByRole('progressbar',{name:'仅有过期绑定'})).toHaveAttribute('value','2')
+    await expect(mirror.getByRole('region',{name:'镜像 IPv4 绑定时效'}).getByRole('progressbar',{name:'仅有过期绑定'})).toHaveAttribute('value','2100')
     await expect(page.getByLabel('镜像可见标识统计')).not.toBeVisible()
     await page.getByText('查看 MAC 管理位和厂商前缀').click()
     await expect(mirror.getByText('全局管理 · 匹配 OUI')).toBeVisible()
@@ -121,6 +120,8 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
 
     await page.getByRole('tab',{name:'历史核查'}).click()
     await expect(page.getByLabel('历史现场核查')).toContainText('11 月 15 日')
+    await page.getByText('设备协议回放明细 · 11 月 23 日 18:54').click()
+    await expect(page.getByRole('progressbar',{name:'协议响应缺可信 MAC'})).toHaveAttribute('value','129')
     await expect(page.locator('.discovery-diagnostics-table tbody tr')).toHaveCount(46)
     await assertCoverageLayout(page)
     expect(errors).toEqual([])
@@ -167,6 +168,7 @@ for (const viewport of [{width:390,height:844}, {width:1280,height:800}, {width:
     })
     await page.setViewportSize(viewport)
     await page.goto('/devices/coverage?window=24h')
+    await page.getByText('查看技术明细').click()
     const panel = page.getByRole('region', {name:'规划设备网段的可见 IPv4'})
     await expect(panel.locator('header strong')).toHaveText('2 个地址')
     await expect(panel.getByRole('listitem').first()).toHaveText('192.0.2.2-192.0.2.10 · 摄像头2 个地址')
@@ -182,30 +184,38 @@ for (const viewport of [{width:390,height:844}, {width:1280,height:800}, {width:
 }
 
 for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:1440,height:900}]) {
-  test(`coverage headline leads with discovered, confirmed, inferred and pending IPv4 at ${viewport.width}px`, async ({page}, info) => {
+  test(`coverage overview reads as one funnel without overflow at ${viewport.width}px`, async ({page}, info) => {
     const errors:string[] = []
     page.on('pageerror', error => errors.push(error.message))
     page.on('console', message => {if(message.type()==='error')errors.push(message.text())})
     page.on('response', response => {if(response.status()>=400)errors.push(`${response.status()} ${response.url()}`)})
     await page.setViewportSize(viewport)
     await page.goto('/devices/coverage?window=24h')
-    const headline = page.getByRole('region',{name:'覆盖概要'})
-    await expect(headline).toBeVisible()
-    const cards = headline.locator('.coverage-headline-card')
-    await expect(cards).toHaveCount(4)
-    const labels = await cards.locator('dt').allTextContents()
-    expect(labels).toEqual(['发现的 IPv4 地址','已确认类型','推测类型','类型待确认'])
-    await expect(headline.getByRole('img', {name:/发现 IPv4 构成/})).toBeVisible()
-    const layout = await headline.evaluate(element => ({
-      overflow: element.scrollWidth > element.clientWidth + 1,
-      pageOverflow: document.documentElement.scrollWidth > innerWidth + 2,
-      cardsFit: [...element.querySelectorAll('.coverage-headline-card')].every(card => card.scrollWidth <= card.clientWidth + 1),
-    }))
-    expect(layout.overflow).toBe(false)
+    const funnel = page.getByRole('region',{name:'发现与识别'})
+    await expect(funnel).toBeVisible()
+    const labels = await funnel.locator('.coverage-funnel-label strong').allTextContents()
+    expect(labels).toEqual(['共发现 IPv4 地址','有设备层报文','识别出类型'])
+    const layout = await page.evaluate(() => {
+      const panels = [...document.querySelectorAll('.coverage-lead,.coverage-funnel,.coverage-panel,.coverage-funnel-step,.coverage-reasons li,.coverage-type-groups li')]
+      const bars = [...document.querySelectorAll('.coverage-funnel-step .coverage-funnel-bar')].map(bar => bar.getBoundingClientRect().width)
+      return {
+        pageOverflow: document.documentElement.scrollWidth > innerWidth + 2,
+        clipped: panels.filter(el => el.getClientRects().length > 0 && (el.scrollWidth > el.clientWidth + 1 || el.getBoundingClientRect().right > innerWidth + 2)).length,
+        narrowBars: bars.filter(width => width < 120).length,
+        barSpread: Math.max(...bars) - Math.min(...bars),
+        leadTop: document.querySelector('.coverage-lead')!.getBoundingClientRect().top,
+        funnelBottom: document.querySelector('.coverage-funnel')!.getBoundingClientRect().bottom,
+      }
+    })
     expect(layout.pageOverflow).toBe(false)
-    expect(layout.cardsFit).toBe(true)
-    expect(headline).not.toHaveText('未识别')
-    await headline.screenshot({path:info.outputPath(`coverage-headline-${viewport.width}.png`), animations:'disabled'})
+    expect(layout.clipped).toBe(0)
+    expect(layout.narrowBars).toBe(0)
+    expect(layout.barSpread).toBeLessThanOrEqual(1)
+    expect(layout.leadTop).toBeLessThan(viewport.height)
+    if (viewport.width >= 1280) expect(layout.funnelBottom).toBeLessThan(viewport.height + 120)
+    await expect(page.locator('body')).not.toContainText('未识别')
+    await page.screenshot({path:info.outputPath(`coverage-overview-full-${viewport.width}.png`), fullPage:true, animations:'disabled'})
+    await page.locator('.coverage-content > .coverage-panels').first().screenshot({path:info.outputPath(`coverage-overview-panels-${viewport.width}.png`), animations:'disabled'})
     expect(errors).toEqual([])
   })
 }
