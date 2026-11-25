@@ -101,6 +101,60 @@ function CoverageProtocolReplay() {
   </details>
 }
 
+function PlannedIPv4Panel({ report }: { report: NonNullable<CoverageReport['planned_ipv4']> }) {
+  const status = {
+    ready: '', partial: '投影仅覆盖部分时间或仍有积压。', delayed: '镜像地址投影更新延迟。',
+    initializing: '正在等待镜像地址投影。', configuration_error: '报表范围配置有误。', unavailable: '本次范围统计读取失败。',
+  }[report.status]
+  return <section className="coverage-panel" aria-labelledby="planned-ipv4-heading">
+    <header className="coverage-panel-heading">
+      <div><h4 id="planned-ipv4-heading">规划设备网段的可见 IPv4</h4>
+        <p>覆盖分母按镜像中出现的 IPv4 去重，重叠范围只计一次。设备类别来自网段规划。</p>
+      </div>
+      {report.visible_ipv4 !== undefined && <strong>{count(report.visible_ipv4)} 个地址</strong>}
+    </header>
+    {status && <p className="coverage-footnote" role="status">{status}</p>}
+    {report.ranges?.length ? <ul className="coverage-network-details">
+      {report.ranges.map(row => <li key={JSON.stringify([row.range, row.device_type])}>
+        <span>{row.range} · {row.device_type}</span><strong>{count(row.visible_ipv4)} 个地址</strong>
+      </li>)}
+    </ul> : null}
+    <div className="coverage-timestamps">
+      {report.available_from && <span>可用起点 {observedTimeTitle(report.available_from)}</span>}
+      {report.as_of && <span>镜像统计截至 {observedTimeTitle(report.as_of)}</span>}
+      {report.version && <span title={report.version}>范围版本 {report.version.slice(0, 12)}</span>}
+    </div>
+  </section>
+}
+
+function HardwareTrendPanel({ trend }: { trend: NonNullable<CoverageReport['hardware_trend']> }) {
+  const end = Date.parse(trend.as_of)
+  const windowMs = trend.window_days * 86_400_000
+  const priorIncomplete = !trend.observation_from || Date.parse(trend.observation_from) > end - 2 * windowMs
+  const changesIncomplete = !trend.changes_from || Date.parse(trend.changes_from) > end - windowMs
+  return <section className="coverage-panel" aria-labelledby="coverage-trend-heading">
+      <header className="coverage-panel-heading"><div>
+        <h4 id="coverage-trend-heading">近 {trend.window_days} 天硬件身份变化</h4>
+        <p>按采集范围和设备身份去重，与上一个等长时段比较。上期出现、本期无记录的身份仍可能在网。</p>
+      </div></header>
+      <dl className="coverage-metrics">
+        {([['首次观测', trend.first_seen], ['已确认类型变更', trend.changed_type],
+          ['仅上期有观测', trend.previous_only]] as const).map(([label, value]) =>
+          <div className="coverage-metric" key={label}><dt>{label}</dt>
+            <dd>{value === undefined ? '覆盖待核查' : <><strong>{count(value)}</strong> 个</>}</dd>
+          </div>)}
+      </dl>
+      {(priorIncomplete || changesIncomplete) && <p className="coverage-warning">窗口覆盖不完整。
+        {priorIncomplete && '两期对照超出留存观测范围。'}{changesIncomplete && '变更账本只覆盖部分统计时段。'}</p>}
+      <div className="coverage-timestamps">
+        {trend.observation_from && <span>最早留存观测 {observedTimeTitle(trend.observation_from)}</span>}
+        {trend.changes_from && <span>类型变更账本起点 {observedTimeTitle(trend.changes_from)}</span>}
+        {trend.last_success_at && <span>投影最近成功 {observedTimeTitle(trend.last_success_at)}</span>}
+      </div>
+      <p className="coverage-footnote">数字仅计入已有记录，此前连续覆盖待核查。流量图表明细保留 8 天，小时和天汇总保留 31 天。设备变化取自硬件身份投影和变更账本。</p>
+    </section>
+}
+
 export function DiscoveryCoverageReport({ report }: { report: CoverageReport }) {
   const { typed_ipv4: typed, identity_no_type_ipv4: needsType, no_identity_ipv4: unlinked } = report
   const review = report.ipv4_type_review
@@ -136,6 +190,7 @@ export function DiscoveryCoverageReport({ report }: { report: CoverageReport }) 
         {detail && <dd className="coverage-metric-detail">{detail}</dd>}
       </div>)}
     </dl>
+    {report.planned_ipv4 && <PlannedIPv4Panel report={report.planned_ipv4} />}
     {(report.ipv4_binding_freshness || report.ipv6_binding_freshness) &&
       <section className="coverage-panel" aria-labelledby="coverage-freshness-heading">
         <header className="coverage-panel-heading">
@@ -187,6 +242,7 @@ export function DiscoveryCoverageReport({ report }: { report: CoverageReport }) 
           </div>}
         </section>
       </div>}
+    {report.hardware_trend && <HardwareTrendPanel trend={report.hardware_trend} />}
     <CoverageProtocolReplay />
     {report.profile_candidate_identities !== undefined && <p className="coverage-footnote">另有 <strong>{count(report.profile_candidate_identities)} 个发现身份</strong>已有画像类型线索，待确认硬件类型。</p>}
     <p className="coverage-footnote">同一设备可能对应多个地址或采集范围。/24 分组按观测地址统计。</p>

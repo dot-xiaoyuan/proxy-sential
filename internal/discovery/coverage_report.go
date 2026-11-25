@@ -34,6 +34,8 @@ type CoverageIPv4PendingRow struct {
 // CoverageReport counts addresses from the bounded discovery index. A /24 is
 // an observation bucket, not a claim about the campus routing configuration.
 type CoverageReport struct {
+	PlannedIPv4             *PlannedIPv4Report `json:"planned_ipv4,omitempty"`
+	HardwareTrend           *HardwareTrend     `json:"hardware_trend,omitempty"`
 	Publication             *ReportPublication `json:"publication,omitempty"`
 	AsOf                    time.Time          `json:"as_of"`
 	IdentityAsOf            *time.Time         `json:"identity_as_of,omitempty"`

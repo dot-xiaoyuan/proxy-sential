@@ -7341,6 +7341,10 @@ components:
       type: object
       required: [user, role, permissions]
       properties:
+        site_profile:
+          type: string
+          enum: [passive_assets]
+          description: Asset product navigation when enabled on this control plane.
         user:
           type: object
           required: [id, name]
@@ -9022,6 +9026,39 @@ components:
       type: object
       required: [as_of, window, subnet24, ipv4, ipv6, mac, ip_mac_pairs, scoped_mac, mirror_funnel]
       properties:
+        planned_ipv4:
+          type: object
+          description: Published mirror-visible IPv4 denominator for configured planning ranges. Device types are planning labels. An address in overlapping ranges counts once in the total.
+          required: [status]
+          properties:
+            status: {type: string, enum: [ready, partial, delayed, initializing, configuration_error, unavailable]}
+            version: {type: string}
+            capture_version: {type: string}
+            available_from: {type: string, format: date-time}
+            as_of: {type: string, format: date-time}
+            visible_ipv4: {type: integer, format: int64, minimum: 0}
+            ranges:
+              type: array
+              items:
+                type: object
+                required: [range, device_type, visible_ipv4]
+                properties:
+                  range: {type: string}
+                  device_type: {type: string}
+                  visible_ipv4: {type: integer, format: int64, minimum: 0}
+        hardware_trend:
+          type: object
+          description: Recorded scoped hardware identities for the published 7 or 30 day window. Counts without supporting rows are omitted because continuous historical capture is unverified.
+          required: [as_of, window_days]
+          properties:
+            window_days: { type: integer, enum: [7, 30] }
+            as_of: { type: string, format: date-time }
+            observation_from: { type: string, format: date-time }
+            changes_from: { type: string, format: date-time }
+            last_success_at: { type: string, format: date-time }
+            first_seen: { type: integer, format: int64, minimum: 1 }
+            changed_type: { type: integer, format: int64, minimum: 1 }
+            previous_only: { type: integer, format: int64, minimum: 1 }
         publication: { $ref: '#/components/schemas/DiscoveryReportPublication' }
         as_of: { type: string, format: date-time }
         identity_as_of: { type: string, format: date-time }

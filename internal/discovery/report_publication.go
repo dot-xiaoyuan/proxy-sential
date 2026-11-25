@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"time"
 )
 
@@ -105,6 +106,23 @@ func (r Repository) publishReport(ctx context.Context, sensor, report string, wi
 		if coverage.IdentityStatus == "timeout" {
 			return fmt.Errorf("coverage identities: %w", context.DeadlineExceeded)
 		}
+		if hours == 168 || hours == 720 {
+			trendCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			trend, trendErr := hardwareTrend(trendCtx, r.DB, sensor, coverage.AsOf, window)
+			cancel()
+			if trendErr != nil {
+				log.Printf("hardware trend %s %dh: %v", sensor, hours, trendErr)
+			} else {
+				coverage.HardwareTrend = trend
+			}
+		}
+		rangeCtx, cancelRanges := context.WithTimeout(ctx, 3*time.Second)
+		planned, rangeErr := readPlannedIPv4(rangeCtx, r.DB, sensor, window, os.Getenv("PROXY_SENTINEL_CENSUS_REPORT_RANGES"))
+		cancelRanges()
+		if rangeErr != nil {
+			log.Printf("planned IPv4 coverage %s %dh: %v", sensor, hours, rangeErr)
+		}
+		coverage.PlannedIPv4 = planned
 		doc, asOf = coverage, coverage.AsOf
 	default:
 		return fmt.Errorf("invalid discovery publication %q", report)

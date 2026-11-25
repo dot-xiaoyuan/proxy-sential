@@ -116,6 +116,7 @@ type Server struct {
 }
 
 type Session struct {
+	SiteProfile string   `json:"site_profile,omitempty"`
 	User        User     `json:"user"`
 	Role        string   `json:"role"`
 	Permissions []string `json:"permissions"`
@@ -735,7 +736,7 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 	case func() bool { _, _, _, ok := srun4KPath(path); return ok }():
 		s.handleSRun4K(w, r, path)
 	case r.Method == http.MethodGet && path == "/session":
-		writeJSON(w, http.StatusOK, session)
+		s.writeSession(w, session)
 	case r.Method == http.MethodGet && (path == "/shared-access/devices" || strings.HasPrefix(path, "/shared-access/devices/")):
 		s.handleSharedDeviceProfiles(w, r, path)
 	case r.Method == http.MethodGet && (path == "/shared-access/observations" || strings.HasPrefix(path, "/shared-access/observations/")):
@@ -1157,6 +1158,13 @@ func sessionFromContext(ctx context.Context) Session {
 	return Session{User: User{ID: "system", Name: "系统"}, Role: "viewer"}
 }
 
+func (s *Server) writeSession(w http.ResponseWriter, session Session) {
+	if os.Getenv("PROXY_SENTINEL_SITE_PROFILE") == "passive_assets" {
+		session.SiteProfile = "passive_assets"
+	}
+	writeJSON(w, http.StatusOK, session)
+}
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if s.auth == nil || !s.auth.enabled {
 		writeError(w, http.StatusConflict, "local_auth_disabled", "local authentication is not enabled")
@@ -1177,7 +1185,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	session := sessionForUser(current.User)
 	session.CSRFToken = current.CSRFToken
 	s.appendAudit(r.Context(), "security.login", current.User.ID, "succeeded")
-	writeJSON(w, http.StatusOK, session)
+	s.writeSession(w, session)
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {

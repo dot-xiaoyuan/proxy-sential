@@ -833,6 +833,23 @@ func TestOfflineFingerprintUpdateAndInvalidImport(t *testing.T) {
 	}
 }
 
+func TestAssetSiteProfileInSession(t *testing.T) {
+	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "office-30", ReadOnly: true})
+	for _, setting := range []string{"", "unsupported", "passive_assets"} {
+		t.Setenv("PROXY_SENTINEL_SITE_PROFILE", setting)
+		var response map[string]any
+		getJSON(t, server, "/api/v1/session", http.StatusOK, &response)
+		profile, exists := response["site_profile"]
+		if setting == "passive_assets" {
+			if profile != setting {
+				t.Fatalf("expected configured site profile, got %v", profile)
+			}
+		} else if exists {
+			t.Fatalf("unexpected site profile %v for setting %q", profile, setting)
+		}
+	}
+}
+
 func TestReadOnlySessionLabelsAndRulesReload(t *testing.T) {
 	server := NewServer(Options{ShadowDir: t.TempDir(), SensorID: "office-30", ReadOnly: true})
 

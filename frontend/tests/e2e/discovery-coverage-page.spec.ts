@@ -126,3 +126,57 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
     expect(errors).toEqual([])
   })
 }
+
+for (const viewport of [{width:390,height:844}, {width:1280,height:800}, {width:1440,height:900}]) {
+  test(`weekly and monthly hardware trends remain readable at ${viewport.width}px`, async ({page}, info) => {
+    const errors: string[] = []
+    page.on('pageerror', error => errors.push(error.message))
+    page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
+    page.on('response', response => { if (response.status() >= 400) errors.push(String(response.status())) })
+    page.on('requestfailed', request => {
+      if (request.failure()?.errorText !== 'net::ERR_ABORTED') errors.push(request.url())
+    })
+    await page.setViewportSize(viewport)
+    for (const [hours, days] of [[168,7],[720,30]]) {
+      await page.goto(`/devices/coverage?window=${hours}h`)
+      const trend = page.getByRole('region', {name:`近 ${days} 天硬件身份变化`})
+      await expect(trend).toContainText('仅上期有观测')
+      await expect(trend).toContainText('覆盖待核查')
+      await trend.scrollIntoViewIfNeeded()
+      await assertCoverageLayout(page)
+      await page.screenshot({path:info.outputPath(`trend-${days}d-${viewport.width}.png`),animations:'disabled'})
+    }
+    expect(errors).toEqual([])
+  })
+}
+
+for (const viewport of [{width:390,height:844}, {width:1280,height:800}, {width:1440,height:900}]) {
+  test(`planned IPv4 coverage uses the published ranges at ${viewport.width}px`, async ({page}, info) => {
+    const errors: string[] = []
+    page.on('pageerror', error => errors.push(error.message))
+    page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
+    const cancelled = new Set<string>()
+    const successful = new Set<string>()
+    page.on('response', response => {
+      if (response.ok()) successful.add(response.url())
+      if (response.status() >= 400) errors.push(String(response.status()))
+    })
+    page.on('requestfailed', request => {
+      if (request.failure()?.errorText === 'net::ERR_ABORTED') cancelled.add(request.url())
+      else errors.push(request.url())
+    })
+    await page.setViewportSize(viewport)
+    await page.goto('/devices/coverage?window=24h')
+    const panel = page.getByRole('region', {name:'规划设备网段的可见 IPv4'})
+    await expect(panel.locator('header strong')).toHaveText('2 个地址')
+    await expect(panel.getByRole('listitem').first()).toHaveText('192.0.2.2-192.0.2.10 · 摄像头2 个地址')
+    await expect(panel).toContainText('可用起点')
+    await expect(panel).toContainText('镜像统计截至')
+    await panel.scrollIntoViewIfNeeded()
+    await assertCoverageLayout(page)
+    expect(await panel.evaluate(e => e.scrollWidth <= e.clientWidth + 1)).toBe(true)
+    await page.screenshot({path:info.outputPath('planned-ranges.png'), animations:'disabled'})
+    expect([...cancelled].filter(url => !successful.has(url))).toEqual([])
+    expect(errors).toEqual([])
+  })
+}

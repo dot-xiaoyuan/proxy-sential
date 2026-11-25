@@ -1,7 +1,7 @@
 import { Notice as Alert } from '../shared/ui/Notice'
 import { OperationTaskProgress } from '../shared/ui/OperationTaskProgress'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { Navigate, NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   DashboardOutlined,
   BarChartOutlined,
@@ -21,7 +21,7 @@ import type { MenuProps } from 'antd'
 import { useLogout, useSession } from '../shared/api/queries'
 import { LoginPage } from '../pages/LoginPage'
 import { can } from '../shared/auth/permissions'
-import { routeOwner, routePermission, visibleNavigation } from './navigation'
+import { assetSiteAllows, routeOwner, routePermission, visibleNavigation } from './navigation'
 
 import type { Session } from '../shared/api/types'
 
@@ -72,7 +72,12 @@ export function AppShell() {
 
   if (session.isLoading) return <main className="app-bootstrap-loading" aria-busy="true"><SentinelLogo/><Spin size="large"/><Typography.Text type="secondary">正在恢复会话…</Typography.Text></main>
   if (session.isError || !session.data) return <LoginPage />
-	const navItems = buildNavItems(session.data)
+  const assetSite = session.data.site_profile === 'passive_assets'
+  if (assetSite && (location.pathname === '/' || !assetSiteAllows(location.pathname, location.search))) {
+    const first = visibleNavigation(session.data)[0]?.items[0]
+    return first ? <Navigate to={first.to} replace /> : <Alert showIcon type="warning" title="当前账号无可访问的资产页面" />
+  }
+  const navItems = buildNavItems(session.data)
   const permission = routePermission(location.pathname, location.search, session.data)
 
   const menu = (
@@ -104,7 +109,7 @@ export function AppShell() {
           {!collapsed && (
             <div className="brand-copy">
               <div className="brand-title">Proxy Sentinel</div>
-              <div className="brand-subtitle">高校网络风险运营平台</div>
+              <div className="brand-subtitle">{assetSite ? '校园网资产发现' : '高校网络风险运营平台'}</div>
             </div>
           )}
         </div>

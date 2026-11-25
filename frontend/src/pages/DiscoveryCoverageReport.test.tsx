@@ -82,3 +82,34 @@ it('shows the window evidence matrix and labels the protocol replay as a fixed s
   expect(screen.getByText(/固定 24 小时快照/)).toBeVisible()
   expect(screen.getByText('协议响应缺可信 MAC')).toBeVisible()
 })
+
+it('shows recorded identity changes and leaves gaps visible in a partial month', () => {
+  render(<DiscoveryCoverageReport report={{...report, window:'720h', hardware_trend:{
+    as_of:report.as_of, window_days:30, observation_from:'2026-11-12T00:00:00Z',
+    first_seen:3, previous_only:1,
+  }}}/>)
+  const trend = screen.getByRole('region', {name:'近 30 天硬件身份变化'})
+  expect(trend).toHaveTextContent('首次观测')
+  expect(trend).toHaveTextContent('此前连续覆盖待核查')
+  expect(trend).not.toHaveTextContent('0 个')
+})
+
+it('shows the published deduplicated denominator separately from planning labels and the global count', () => {
+  const { rerender } = render(<DiscoveryCoverageReport report={report} />)
+  expect(screen.queryByRole('region',{name:'规划设备网段的可见 IPv4'})).toBeNull()
+  rerender(<DiscoveryCoverageReport report={{...report,planned_ipv4:{
+    status:'partial', version:'version-1', as_of:report.as_of, available_from:report.as_of,
+    visible_ipv4:2, ranges:[{range:'192.0.2.0/24',device_type:'摄像头',visible_ipv4:2},
+      {range:'192.0.2.1',device_type:'监控设备',visible_ipv4:1}],
+  }}}/>)
+  const panel = screen.getByRole('region',{name:'规划设备网段的可见 IPv4'})
+  expect(within(panel).getAllByRole('listitem')).toHaveLength(2)
+  expect(panel.querySelector('header strong')).toHaveTextContent('2 个地址')
+  expect(panel).toHaveTextContent('192.0.2.1 · 监控设备')
+  expect(panel).toHaveTextContent('可用起点')
+  expect(panel).toHaveTextContent('范围版本 version-1')
+  expect(within(panel).getByRole('status')).toHaveTextContent('部分时间')
+  rerender(<DiscoveryCoverageReport report={{...report,planned_ipv4:{status:'unavailable'}}}/>)
+  expect(within(panel).getByRole('status')).toHaveTextContent('读取失败')
+  expect(panel).not.toHaveTextContent('0 个地址')
+})

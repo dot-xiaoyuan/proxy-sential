@@ -6489,6 +6489,11 @@ export interface components {
             password: string;
         };
         Session: {
+            /**
+             * @description Asset product navigation when enabled on this control plane.
+             * @enum {string}
+             */
+            site_profile?: "passive_assets";
             user: {
                 id: string;
                 name: string;
@@ -7974,6 +7979,44 @@ export interface components {
             delayed: boolean;
         };
         DiscoveryCoverageReport: {
+            /** @description Published mirror-visible IPv4 denominator for configured planning ranges. Device types are planning labels. An address in overlapping ranges counts once in the total. */
+            planned_ipv4?: {
+                /** @enum {string} */
+                status: "ready" | "partial" | "delayed" | "initializing" | "configuration_error" | "unavailable";
+                version?: string;
+                capture_version?: string;
+                /** Format: date-time */
+                available_from?: string;
+                /** Format: date-time */
+                as_of?: string;
+                /** Format: int64 */
+                visible_ipv4?: number;
+                ranges?: {
+                    range: string;
+                    device_type: string;
+                    /** Format: int64 */
+                    visible_ipv4: number;
+                }[];
+            };
+            /** @description Recorded scoped hardware identities for the published 7 or 30 day window. Counts without supporting rows are omitted because continuous historical capture is unverified. */
+            hardware_trend?: {
+                /** @enum {integer} */
+                window_days: 7 | 30;
+                /** Format: date-time */
+                as_of: string;
+                /** Format: date-time */
+                observation_from?: string;
+                /** Format: date-time */
+                changes_from?: string;
+                /** Format: date-time */
+                last_success_at?: string;
+                /** Format: int64 */
+                first_seen?: number;
+                /** Format: int64 */
+                changed_type?: number;
+                /** Format: int64 */
+                previous_only?: number;
+            };
             publication?: components["schemas"]["DiscoveryReportPublication"];
             /** Format: date-time */
             as_of: string;

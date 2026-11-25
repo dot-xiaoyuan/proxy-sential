@@ -74,8 +74,25 @@ export function routePermission(path: string, search: string, session?: Session)
   if(path === '/actions') return tab==='actions'?'actions:read':tab==='reports'?'behavior-reports:read':'policies:read'
   return routeOwner(path,search)?.entry.permission
 }
+const assetSiteGroups: [string, string[]][] = [
+  ['assets', ['discovered-devices','discovery-coverage','devices']],
+  ['data-report', ['data-report']],
+  ['strategy', ['rules']],
+  ['system', ['sources','organization','users','audit']],
+]
+const assetSiteKeys = new Set(assetSiteGroups.flatMap(([,keys])=>keys))
+export function assetSiteAllows(path: string, search: string) {
+  if (path === '/' || path === '/accounts' || path.startsWith('/accounts/')) return true
+  const owner = routeOwner(path,search)
+  return Boolean(owner && assetSiteKeys.has(owner.entry.key))
+}
+
 export function visibleNavigation(session: Session) {
- return navigation.map(group => ({...group,items:group.items.flatMap(entry => {
+ const groups = session.site_profile === 'passive_assets' ? assetSiteGroups.map(([groupKey, keys]) => {
+   const group = navigation.find(g => g.key === groupKey)!
+   return {...group, items:keys.map(key => group.items.find(i => i.key === key)!)}
+ }) : navigation
+ return groups.map(group => ({...group,items:group.items.flatMap(entry => {
   if(entry.hidden)return []
   if(!entry.permission || can(session,entry.permission))return [entry]
   const alternative=entry.readAlternatives?.find(option=>can(session,option.permission))
