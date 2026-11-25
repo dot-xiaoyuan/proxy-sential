@@ -25,6 +25,7 @@ type Observation struct {
 }
 
 type packetObservation struct {
+	directTCP         bool
 	IP, DestinationIP netip.Addr
 	MAC               [6]byte
 	Direction         string
@@ -34,6 +35,7 @@ type packetObservation struct {
 }
 
 type bucketKey struct {
+	DiscoverySYN       bool
 	IP, MAC, Direction string
 	VLAN               string
 	TCPStack           string
@@ -48,7 +50,7 @@ type tcpFingerprint struct {
 	WindowScale uint8
 	Flags       uint8
 	OptionCount uint8
-	Options     [16]uint8
+	Options     [40]uint8
 }
 
 func (f tcpFingerprint) present() bool { return f.Flags&1 != 0 }
@@ -65,6 +67,7 @@ func (f tcpFingerprint) String() string {
 }
 
 type packetBucketKey struct {
+	DiscoverySYN bool
 	IP           netip.Addr
 	MAC          [6]byte
 	Direction    string
@@ -111,7 +114,8 @@ func parsePacketFrame(frame []byte) (packetObservation, bool) {
 		copy(source[:], frame[offset+12:offset+16])
 		copy(destination[:], frame[offset+16:offset+20])
 		value := packetObservation{IP: netip.AddrFrom4(source), MAC: srcMAC, DestinationIP: netip.AddrFrom4(destination), Direction: "unknown", Version: 4, TTL: int(frame[offset+8])}
-		if frame[offset+9] == 6 && (uint16(frame[offset+6])<<8|uint16(frame[offset+7]))&0x1fff == 0 {
+		value.directTCP = frame[offset+9] == 6
+		if value.directTCP && (uint16(frame[offset+6])<<8|uint16(frame[offset+7]))&0x1fff == 0 {
 			value.TCP = parseTCPFingerprint(frame, offset+headerLength, frame[offset+6]&0x40 != 0)
 		}
 		value.TrafficScope = packetTTLTrafficScope(frame, value.DestinationIP, frame[offset+9], offset+headerLength, (uint16(frame[offset+6])<<8|uint16(frame[offset+7]))&0x1fff != 0)
@@ -124,7 +128,8 @@ func parsePacketFrame(frame []byte) (packetObservation, bool) {
 		copy(source[:], frame[offset+8:offset+24])
 		copy(destination[:], frame[offset+24:offset+40])
 		value := packetObservation{IP: netip.AddrFrom16(source), MAC: srcMAC, DestinationIP: netip.AddrFrom16(destination), Direction: "unknown", Version: 6, TTL: int(frame[offset+7])}
-		if frame[offset+6] == 6 {
+		value.directTCP = frame[offset+6] == 6
+		if value.directTCP {
 			value.TCP = parseTCPFingerprint(frame, offset+40, true)
 		}
 		value.TrafficScope = packetTTLTrafficScope(frame, value.DestinationIP, frame[offset+6], offset+40, false)
@@ -139,7 +144,7 @@ func parseTCPFingerprint(frame []byte, offset int, df bool) tcpFingerprint {
 		return tcpFingerprint{}
 	}
 	flags := frame[offset+13]
-	if flags&0x02 == 0 || flags&0x10 != 0 {
+	if flags&0x17 != 0x02 {
 		return tcpFingerprint{}
 	}
 	headerLength := int(frame[offset+12]>>4) * 4
@@ -150,7 +155,10 @@ func parseTCPFingerprint(frame []byte, offset int, df bool) tcpFingerprint {
 	if df {
 		result.Flags |= 8
 	}
-	for index := offset + 20; index < offset+headerLength && int(result.OptionCount) < len(result.Options); {
+	for index := offset + 20; index < offset+headerLength; {
+		if int(result.OptionCount) == len(result.Options) {
+			return tcpFingerprint{}
+		}
 		kind := frame[index]
 		result.Options[result.OptionCount] = kind
 		result.OptionCount++
@@ -170,16 +178,24 @@ func parseTCPFingerprint(frame []byte, offset int, df bool) tcpFingerprint {
 		}
 		switch kind {
 		case 2:
-			if length == 4 {
-				result.MSS = uint16(frame[index+2])<<8 | uint16(frame[index+3])
+			if length != 4 {
+				return tcpFingerprint{}
 			}
+			result.MSS = uint16(frame[index+2])<<8 | uint16(frame[index+3])
 		case 3:
-			if length == 3 {
-				result.WindowScale = frame[index+2]
+			if length != 3 {
+				return tcpFingerprint{}
 			}
+			result.WindowScale = frame[index+2]
 		case 4:
+			if length != 2 {
+				return tcpFingerprint{}
+			}
 			result.Flags |= 2
 		case 8:
+			if length != 10 {
+				return tcpFingerprint{}
+			}
 			result.Flags |= 4
 		}
 		index += length
@@ -194,7 +210,7 @@ func writePacketBucketWithScope(path, sensorID, interfaceName, instance string, 
 func writePacketBucketWithSource(path, sensorID, interfaceName, instance, source string, scope *normalized.CaptureScope, bucket time.Time, values map[packetBucketKey]int) error {
 	converted := make(map[bucketKey]int, len(values))
 	for key, count := range values {
-		converted[bucketKey{IP: key.IP.String(), MAC: net.HardwareAddr(key.MAC[:]).String(), Direction: key.Direction, TrafficScope: key.TrafficScope, TCPStack: key.TCP.String(), TCPWindow: key.TCP.Window, VLAN: key.VLAN, Version: key.Version, TTL: key.TTL}] = count
+		converted[bucketKey{DiscoverySYN: key.DiscoverySYN, IP: key.IP.String(), MAC: net.HardwareAddr(key.MAC[:]).String(), Direction: key.Direction, TrafficScope: key.TrafficScope, TCPStack: key.TCP.String(), TCPWindow: key.TCP.Window, VLAN: key.VLAN, Version: key.Version, TTL: key.TTL}] = count
 	}
 	return writeBucketWithSource(path, sensorID, interfaceName, instance, source, scope, bucket, converted)
 }
@@ -226,8 +242,11 @@ func writeBucketWithSource(path, sensorID, interfaceName, instance, source strin
 	encoder := json.NewEncoder(file)
 	for _, key := range keys {
 		identity := fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%d\x00%s\x00%s\x00%s", sensorID, key.IP, key.Direction, key.Version, key.TTL, key.TCPStack, bucket.UTC().Format(time.RFC3339), key.TrafficScope)
-		if key.TCPWindow > 0 {
+		if key.TCPWindow > 0 || key.DiscoverySYN {
 			identity += fmt.Sprintf("\x00window=%d\x00vlan=%s", key.TCPWindow, key.VLAN)
+		}
+		if key.DiscoverySYN {
+			identity += "\x00tcp_syn"
 		}
 		if source != "packet-sidecar" {
 			identity += "\x00" + source
@@ -241,7 +260,7 @@ func writeBucketWithSource(path, sensorID, interfaceName, instance, source strin
 		if key.TCPStack != "" {
 			event.Payload["tcp_stack"] = key.TCPStack
 		}
-		if key.TCPWindow > 0 {
+		if key.TCPWindow > 0 || key.DiscoverySYN {
 			event.Payload["tcp_window"] = key.TCPWindow
 			if key.VLAN != "" {
 				event.Payload["vlan"] = key.VLAN
@@ -252,6 +271,12 @@ func writeBucketWithSource(path, sensorID, interfaceName, instance, source strin
 			event.Payload["origin"] = "hop_limit"
 			delete(event.Payload, "ttl")
 			event.Payload["hop_limit"] = key.TTL
+		}
+		if key.DiscoverySYN {
+			event.SourceEventType = "tcp_syn"
+			event.Payload["origin"] = "tcp_syn"
+			delete(event.Payload, "neighbor_mac")
+			delete(event.Payload, "neighbor_role")
 		}
 		if instance != "" {
 			raw, _ := json.Marshal([]string{event.EventID, instance, interfaceName, key.MAC})

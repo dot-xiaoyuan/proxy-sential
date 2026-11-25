@@ -203,3 +203,17 @@ func requireNestedString(t *testing.T, event map[string]any, objectKey, fieldKey
 		t.Fatalf("expected non-empty string %s.%s, got %#v", objectKey, fieldKey, object[fieldKey])
 	}
 }
+
+func TestSuricataKeepsDistinctServerJA3S(t *testing.T) {
+	result := tlsPayload(map[string]any{"ja3": map[string]any{"hash": "client"}, "ja3s": map[string]any{"hash": "server"}})
+	if result["ja3"] != "client" || result["ja3s"] != "server" {
+		t.Fatalf("unexpected handshake roles %v", result)
+	}
+}
+
+func TestTLSStackRetainsBothSuricataVLANs(t *testing.T) {
+	e, err := convertLine([]byte(`{"timestamp":"2026-10-01T00:00:00Z","src_ip":"192.0.2.1","dest_ip":"192.0.2.2","event_type":"tls","vlan":[4005,19],"tls":{"ja3s":{"hash":"abc"}}}`), 1, Options{})
+	if err != nil || e.Payload["vlan"] != "4005" || e.Payload["tls_stack_vlan"] != "4005/19" {
+		t.Fatalf("lost TLS scope: %+v %v", e, err)
+	}
+}

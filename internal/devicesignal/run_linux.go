@@ -107,7 +107,12 @@ func Run(ctx context.Context, opts Options) error {
 	if err := syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_RCVBUF, 32<<20); err != nil {
 		return fmt.Errorf("set capture receive buffer: %w", err)
 	}
-	if opts.HandshakeOnly {
+	discoverySYN := opts.RouterProtocolsOnly && os.Getenv("PROXY_SENTINEL_PASSIVE_BEHAVIOR_WRITE") == "true" && opts.CaptureScope != nil && len(opts.CaptureScope.UserCIDRs) > 0
+	if discoverySYN {
+		if err := attachDiscoverySYNFilter(fd); err != nil {
+			return fmt.Errorf("attach discovery protocol and SYN BPF: %w", err)
+		}
+	} else if opts.HandshakeOnly {
 		if err := attachHandshakeFilter(fd); err != nil {
 			return fmt.Errorf("attach handshake BPF: %w", err)
 		}
@@ -123,6 +128,15 @@ func Run(ctx context.Context, opts Options) error {
 	_ = syscall.SetNonblock(fd, true)
 	state := newCaptureBucket()
 	state.handshakeEnabled = opts.HandshakeOnly
+	if discoverySYN {
+		for _, cidr := range opts.CaptureScope.UserCIDRs {
+			prefix, err := netip.ParsePrefix(cidr)
+			if err != nil {
+				return fmt.Errorf("invalid SYN discovery source range: %w", err)
+			}
+			state.discoveryNetworks = append(state.discoveryNetworks, prefix)
+		}
+	}
 	packetSource := "packet-sidecar"
 	if opts.SharedSignalsOnly {
 		packetSource = "shared-syn-sidecar"
@@ -164,7 +178,7 @@ func Run(ctx context.Context, opts Options) error {
 		if !opts.HandshakeOnly && !opts.SharedSignalsOnly {
 			end := time.Now().UTC()
 			received, drops, known := packetCaptureStats(fd)
-			coverage := sharedaccess.CoverageV2{SchemaVersion: "capture-coverage/v2", From: coverageFrom, To: end, KernelStatsKnown: known, Received: uint64(received), Dropped: uint64(drops), ParseUnknown: state.controlParseFailures, KeyDrops: state.controlKeyDrops, Stopped: ctx.Err() != nil}
+			coverage := sharedaccess.CoverageV2{SchemaVersion: "capture-coverage/v2", From: coverageFrom, To: end, KernelStatsKnown: known, Received: uint64(received), Dropped: uint64(drops), ParseUnknown: state.controlParseFailures, KeyDrops: state.controlKeyDrops + state.droppedPacketKeys, Stopped: ctx.Err() != nil}
 			for key, signal := range selected {
 				if signal.Kind == "ieee1905_client_snapshot" || signal.Kind == "ieee1905_client_association" {
 					// Copy: the liveness tracker must compare only protocol content.
@@ -267,6 +281,7 @@ func Run(ctx context.Context, opts Options) error {
 			state.controls = map[string]controlSignal{}
 			state.handshakes = map[handshakeKey]*handshakeSummary{}
 			state.droppedPacketKeys = 0
+			state.discoverySYNKeys = 0
 			state.handshakeParseFailures = 0
 			state.handshakeFeatureSamples = 0
 			state.controlParseFailures = 0
@@ -300,6 +315,7 @@ func Run(ctx context.Context, opts Options) error {
 					state.controls = map[string]controlSignal{}
 					state.handshakes = map[handshakeKey]*handshakeSummary{}
 					state.droppedPacketKeys = 0
+					state.discoverySYNKeys = 0
 					state.handshakeParseFailures = 0
 					state.handshakeFeatureSamples = 0
 					state.controlParseFailures = 0

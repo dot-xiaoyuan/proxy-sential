@@ -264,3 +264,40 @@ func TestParseWSDiscoveryResponseButNotProbe(t *testing.T) {
 		t.Fatal("WS-Discovery client probe was accepted as device evidence")
 	}
 }
+
+func TestDiscoverySYNFilterAndScopedStackEvent(t *testing.T) {
+	frame := flowSYNFrame(true, 2)
+	frame[14], frame[15] = 0, 19
+	tagged := append([]byte{}, frame[:12]...)
+	tagged = append(tagged, 0x88, 0xa8, 0x0f, 0xa5)
+	frame = append(tagged, frame[12:]...)
+	for _, tc := range []struct {
+		flags byte
+		want  uint32
+	}{{2, 128}, {0x12, 0}, {0x10, 0}, {3, 0}, {6, 0}} {
+		frame[22+20+13] = tc.flags
+		if got := runClassicBPF(discoverySYNProgram, frame); got != tc.want {
+			t.Fatalf("flags %x accept %d want %d", tc.flags, got, tc.want)
+		}
+	}
+	frame[22+20+13] = 2
+	bucket := newCaptureBucket()
+	bucket.discoveryNetworks = []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+	scope := &normalized.CaptureScope{UserCIDRs: []string{"10.0.0.0/8"}}
+	bucket.addFrame(frame, scope)
+	if len(bucket.packets) != 1 {
+		t.Fatalf("missing scoped SYN: %+v", bucket)
+	}
+	file := filepath.Join(t.TempDir(), "events")
+	if err := writePacketBucketWithScope(file, "sensor", "mirror", "instance", nil, time.Now().UTC(), bucket.packets); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(file)
+	var e normalized.Event
+	if err != nil || json.Unmarshal(raw, &e) != nil {
+		t.Fatal("invalid event", err)
+	}
+	if e.Type != "device" || e.SourceEventType != "tcp_syn" || e.Subject["ip"] != "10.202.4.8" || e.Subject["mac"] != nil || e.Payload["neighbor_mac"] != nil || e.Payload["vlan"] != "4005/19" || e.Payload["tcp_window"] != float64(0) {
+		t.Fatalf("unsafe stack attribution %+v", e)
+	}
+}

@@ -47,3 +47,21 @@ func TestSIPOriginalRecordsHaveDistinctStableReferences(t *testing.T) {
 		t.Fatal("different SIP records share the empty-byte digest")
 	}
 }
+
+func TestX509MetadataAndServerLeafShareFingerprint(t *testing.T) {
+	const fp = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	for _, tc := range []struct{ kind, record string }{
+		{"x509", `{"ts":1785232800,"fingerprint":"` + fp + `","certificate.subject":"CN=fixture","host_cert":true}`},
+		{"ssl", `{"ts":1785232800,"id.orig_h":"192.0.2.1","id.resp_h":"192.0.2.2","cert_chain_fps":["` + fp + `"],"subject":"CN=fixture"}`},
+	} {
+		var out bytes.Buffer
+		stats, err := Convert(strings.NewReader(tc.record+"\n"), &out, Options{LogKind: tc.kind})
+		var e normalized.Event
+		if err != nil || stats.Emitted != 1 || json.Unmarshal(out.Bytes(), &e) != nil || e.Payload["certificate_fingerprint"] != fp {
+			t.Fatalf("missing %s metadata: %+v %v", tc.kind, stats, err)
+		}
+		if tc.kind == "x509" && (e.Subject["ip"] != nil || e.Flow["dst_ip"] != nil) {
+			t.Fatal("invented endpoint on detached certificate")
+		}
+	}
+}

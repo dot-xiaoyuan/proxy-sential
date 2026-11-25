@@ -1,6 +1,7 @@
 package devicesignal
 
 import (
+	"net/netip"
 	"os"
 	"time"
 
@@ -11,6 +12,8 @@ import (
 // ownership from transit traffic. Control and IP packet eligibility are separate.
 type captureBucket struct {
 	behaviorTCPWindow bool
+	discoveryNetworks []netip.Prefix
+	discoverySYNKeys  int
 	packets           map[packetBucketKey]int
 	controls          map[string]controlSignal
 	droppedPacketKeys int
@@ -41,6 +44,35 @@ func (b *captureBucket) addFrame(frame []byte, scope *normalized.CaptureScope) {
 		b.addHandshake(frame)
 	}
 	if value, ok := parsePacketFrame(frame); ok && value.TTL > 0 {
+		if len(b.discoveryNetworks) > 0 && value.directTCP {
+			// This collector receives a bounded slice of an initial SYN. Save
+			// only the sender's stack and VLAN, never the forwarding MAC.
+			if !value.TCP.present() {
+				return
+			}
+			if !flowSourceAllowed(value.IP, b.discoveryNetworks) {
+				return
+			}
+			direction := "outbound"
+			if flowSourceAllowed(value.DestinationIP, b.discoveryNetworks) {
+				direction = "internal"
+			}
+			eth, ok := parseEthernetFrame(frame)
+			if !ok {
+				return
+			}
+			key := packetBucketKey{IP: value.IP, Version: value.Version, TTL: value.TTL, Direction: direction, VLAN: eth.vlanScope, TCP: value.TCP, DiscoverySYN: true}
+			if _, found := b.packets[key]; !found {
+				// Reserve capacity for ARP, DHCP and the original control signals.
+				if b.discoverySYNKeys >= 2048 || len(b.packets) >= maxPacketBucketKeys {
+					b.droppedPacketKeys++
+					return
+				}
+				b.discoverySYNKeys++
+			}
+			b.packets[key]++
+			return
+		}
 		var vlan string
 		if b.behaviorTCPWindow && value.TCP.Window > 0 {
 			if ethernet, ok := parseEthernetFrame(frame); ok {

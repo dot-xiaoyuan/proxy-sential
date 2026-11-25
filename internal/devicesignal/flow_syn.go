@@ -220,3 +220,12 @@ func writeFlowSYNBucket(path, sensorID, interfaceName, instance string, scope *n
 	}
 	return file.Sync()
 }
+
+func flowSourceAllowed(source netip.Addr, prefixes []netip.Prefix) bool {
+	for _, prefix := range prefixes {
+		if prefix.Contains(source.Unmap()) {
+			return true
+		}
+	}
+	return false
+}

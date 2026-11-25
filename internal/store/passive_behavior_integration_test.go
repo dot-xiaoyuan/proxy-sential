@@ -153,4 +153,23 @@ CREATE TABLE passive_hardware_current (identity_key text PRIMARY KEY,hardware_ty
 	if err != nil || result.CandidateType != "" || len(result.Items) != 0 {
 		t.Fatalf("late revocation left a current clue: %+v %v", result, err)
 	}
+	// Enrich an already committed and processed batch, then retry it.
+	// Previous segment checksums must still match after their payloads exit.
+	server := tls
+	server.EventID = "server-stack"
+	server.Flow = map[string]any{"src_ip": "192.0.2.1", "dst_ip": "10.42.0.10"}
+	server.Payload = map[string]any{"vlan": "20", "ja3s": "0123456789abcdef0123456789abcdef"}
+	items = append(items, server)
+	for i := 0; i < 2; i++ {
+		if err := store.stagePassiveBehavior(ctx, batch, items); err != nil {
+			t.Fatal(err)
+		}
+	}
+	process(true)
+	process(false)
+	var clues int
+	if err := db.QueryRow("SELECT count(*) FROM passive_behavior_windows WHERE kind='ja3s' AND ip='10.42.0.10' AND owner_key LIKE 'ip.%'").Scan(&clues); err != nil || clues != 1 {
+		t.Fatalf("response after MAC revocation: clues=%d err=%v", clues, err)
+	}
+
 }

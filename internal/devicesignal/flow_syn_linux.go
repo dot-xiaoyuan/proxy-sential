@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/netip"
 	"proxy-sentinel/internal/sharedaccess"
 	"time"
 )
@@ -134,13 +133,4 @@ func runFlowSYN(ctx context.Context, opts Options) error {
 			}
 		}
 	}
-}
-
-func flowSourceAllowed(source netip.Addr, prefixes []netip.Prefix) bool {
-	for _, prefix := range prefixes {
-		if prefix.Contains(source.Unmap()) {
-			return true
-		}
-	}
-	return false
 }

@@ -15,6 +15,9 @@ const evidenceLabels: Record<string, string> = {
   ntp: 'NTP 目标',
   tcp_stack: 'TCP 握手指纹',
   tcp_os_clue: '系统线索',
+  ja3s: '服务端 TLS 握手指纹（JA3S）',
+  certificate_fingerprint: '服务端证书指纹',
+  certificate_chain_fingerprint: '服务端出示的证书链指纹',
 }
 
 export function DiscoveryBehaviorEvidence({evidenceKey}: {evidenceKey: string}) {

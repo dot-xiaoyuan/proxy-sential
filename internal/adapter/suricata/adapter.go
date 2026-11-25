@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
+	"strconv"
 	"strings"
 	"time"
 
@@ -160,6 +161,25 @@ func convertLine(raw []byte, lineOffset int, opts Options) (normalized.Event, er
 	if vlan := firstVLAN(eve.VLAN); vlan != "" {
 		payload["vlan"] = vlan
 	}
+	// Older consumers use the outer VLAN only. Preserve the complete
+	// stacked scope independently for responder-side TLS stack evidence.
+	if tags, ok := eve.VLAN.([]any); eve.EventType == "tls" && ok && len(tags) > 1 {
+		tagStack := make([]string, 0, 2)
+		if len(tags) == 2 {
+			for _, tag := range tags {
+				id, err := strconv.ParseUint(fmt.Sprint(tag), 10, 12)
+				if err != nil {
+					break
+				}
+				tagStack = append(tagStack, strconv.FormatUint(id, 10))
+			}
+		}
+		if len(tagStack) == 2 {
+			payload["tls_stack_vlan"] = strings.Join(tagStack, "/")
+		} else {
+			payload["tls_stack_scope_invalid"] = true
+		}
+	}
 	observer := map[string]any{"collector_instance_id": opts.CollectorInstanceID}
 	if opts.SensorID != "" {
 		observer["sensor_id"] = opts.SensorID
@@ -286,6 +306,9 @@ func tlsPayload(tls map[string]any) map[string]any {
 	copyString(payload, tls, "version")
 	if ja3 := fingerprint(tls["ja3"]); ja3 != "" {
 		payload["ja3"] = ja3
+	}
+	if ja3s := fingerprint(tls["ja3s"]); ja3s != "" {
+		payload["ja3s"] = ja3s
 	}
 	if ja4 := fingerprint(tls["ja4"]); ja4 != "" {
 		payload["ja4"] = ja4

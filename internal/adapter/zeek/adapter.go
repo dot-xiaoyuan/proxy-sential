@@ -370,7 +370,8 @@ func connectionEventFromFields(raw []byte, fields map[string]string, lineOffset 
 func protocolEventFromFields(raw []byte, fields map[string]string, lineOffset int, opts Options) (normalized.Event, error) {
 	timestamp := normalizeTimestamp(first(fields, "ts", "timestamp"))
 	srcIP, dstIP := first(fields, "id.orig_h", "src_ip", "host", "orig_h"), first(fields, "id.resp_h", "dst_ip", "resp_h")
-	if timestamp == "" || srcIP == "" {
+	detachedCert := opts.LogKind == "x509" && srcIP == "" && dstIP == "" && first(fields, "fingerprint") != ""
+	if timestamp == "" || (srcIP == "" && !detachedCert) {
 		return normalized.Event{}, fmt.Errorf("missing Zeek %s fields", opts.LogKind)
 	}
 	if dstIP == "" {
@@ -401,6 +402,13 @@ func protocolEventFromFields(raw []byte, fields map[string]string, lineOffset in
 			copyPayload(payload, fields, pair[0], pair[1])
 		}
 	}
+	// Zeek populates subject from cert_chain[0].x509. Only with that leaf
+	// present is the first parsed server fingerprint a reference to the leaf.
+	if (kind == "ssl" || kind == "tls") && first(fields, "subject") != "" && first(fields, "id.resp_h", "dst_ip", "resp_h") != "" {
+		if leaf, _, _ := strings.Cut(first(fields, "cert_chain_fps"), ","); leaf != "" {
+			payload["certificate_fingerprint"] = leaf
+		}
+	}
 	// A host-scoped certificate observation has an explicit owner. Keep that
 	// ownership in the standard event instead of guessing from a missing peer.
 	if kind == "x509" && first(fields, "id.orig_h", "src_ip") == "" && first(fields, "host") != "" {
@@ -408,6 +416,12 @@ func protocolEventFromFields(raw []byte, fields map[string]string, lineOffset in
 	}
 	copyPayload(payload, fields, "vlan", "vlan")
 	event := zeekNetworkEvent(raw, fields, lineOffset, opts, eventType, kind, timestamp, srcIP, dstIP, zeekFlow(fields, srcIP, dstIP), payload)
+	if detachedCert {
+		event.Subject = map[string]any{}
+		event.Flow = map[string]any{}
+	} else if (kind == "x509" || kind == "ssl" || kind == "tls") && first(fields, "id.resp_h", "dst_ip", "resp_h") == "" && payload["certificate_owner_ip"] == nil {
+		delete(event.Flow, "dst_ip")
+	}
 	if kind == "http-device" {
 		event.Subject = map[string]any{"ip": dstIP}
 		// orig_l2_addr belongs to the requester; a routed resp_l2_addr is not

@@ -75,14 +75,41 @@ func extractPassiveBehavior(event normalized.Event, scope passiveDiscoveryScope)
 	case "dns":
 		add(source, "vendor_domain", discovery.PassiveBehaviorDomain(passiveString(event.Payload, "query")))
 	case "tls", "ssl", "quic":
-		if ip := passiveString(event.Subject, "ip"); ip != "" && ip != source {
-			break
-		}
 		for _, key := range []string{"vlan", "vrf"} {
 			p, subject := passiveString(event.Payload, key), passiveString(event.Subject, key)
 			if p != "" && subject != "" && p != subject {
 				return nil
 			}
+		}
+		// JA3S and the leaf certificate concern the responder. The request
+		// subject and its MAC may belong to a completely different device.
+		if event.SourceEventType != "quic" && event.Payload["tls_stack_scope_invalid"] != true {
+			outer := base.VLAN
+			if tags := passiveString(event.Payload, "tls_stack_vlan"); tags != "" {
+				base.VLAN = tags
+			}
+			dst := passiveString(event.Flow, "dst_ip")
+			if hash := passiveString(event.Payload, "ja3s"); len(hash) == 32 {
+				if _, err := hex.DecodeString(hash); err == nil {
+					add(dst, "ja3s", strings.ToLower(hash))
+				}
+			}
+			kind, hash := "certificate_fingerprint", passiveString(event.Payload, "certificate_fingerprint")
+			if hash == "" && event.SourceEventType == "ssl" {
+				// Without an explicit leaf only claim membership of the
+				// responder's presented chain. Retain one reference per event.
+				hash, _, _ = strings.Cut(passiveString(event.Payload, "certificate_chain_fps"), ",")
+				kind = "certificate_chain_fingerprint"
+			}
+			if len(hash) == 40 || len(hash) == 64 {
+				if _, err := hex.DecodeString(hash); err == nil {
+					add(dst, kind, strings.ToLower(hash))
+				}
+			}
+			base.VLAN = outer
+		}
+		if ip := passiveString(event.Subject, "ip"); ip != "" && ip != source {
+			break
 		}
 		add(source, discovery.DeviceSNIKind, discovery.PassiveDeviceSNI(passiveString(event.Payload, "sni")))
 	case "conn", "syn_attempt", "syn_ack_observed":
@@ -105,15 +132,25 @@ func extractPassiveBehavior(event normalized.Event, scope passiveDiscoveryScope)
 		} else if event.SourceEventType == "syn_ack_observed" {
 			add(source, "port_reply_seen", service)
 		}
-	case "ttl", "hop_limit":
+	case "ttl", "hop_limit", "tcp_syn":
 		if source == "" {
 			source = passiveString(event.Subject, "ip")
 		}
 		ttl, _ := passiveInt(event.Payload, event.SourceEventType)
-		window, _ := passiveInt(event.Payload, "tcp_window")
+		if event.SourceEventType == "tcp_syn" {
+			ttl, _ = passiveInt(event.Payload, "ttl")
+			if ttl == 0 {
+				ttl, _ = passiveInt(event.Payload, "hop_limit")
+			}
+		}
+		window, hasWindow := passiveInt(event.Payload, "tcp_window")
 		stack := passiveString(event.Payload, "tcp_stack")
-		if ttl > 0 && ttl <= 255 && window > 0 && window <= 65535 && stack != "" {
-			add(source, "tcp_stack", fmt.Sprintf("TTL %d · Window %d", ttl, window))
+		if ttl > 0 && ttl <= 255 && hasWindow && (window > 0 || event.SourceEventType == "tcp_syn" && window == 0) && window <= 65535 && stack != "" {
+			value := fmt.Sprintf("TTL %d · Window %d", ttl, window)
+			if event.SourceEventType == "tcp_syn" && len(stack) <= 192 {
+				value += " · " + stack
+			}
+			add(source, "tcp_stack", value)
 			switch {
 			case ttl >= 100 && ttl <= 128 && window == 64240 && strings.Contains(stack, "ts=false"):
 				add(source, "tcp_os_clue", "Windows")
@@ -142,20 +179,23 @@ func (s *DBStore) stagePassiveBehavior(ctx context.Context, batch ingest.Batch, 
 	if err != nil {
 		return err
 	}
-	var items, deviceSNI []passiveBehaviorInput
+	var items, deviceSNI, stack []passiveBehaviorInput
 	for _, event := range events {
 		for _, item := range extractPassiveBehavior(event, scope) {
 			if item.Sensor != batch.SensorID {
 				continue
 			}
-			if item.Kind == discovery.DeviceSNIKind {
+			switch {
+			case item.Kind == discovery.DeviceSNIKind:
 				deviceSNI = append(deviceSNI, item)
-			} else {
+			case event.SourceEventType == "tcp_syn" || item.Kind == "ja3s" || item.Kind == "certificate_fingerprint" || item.Kind == "certificate_chain_fingerprint":
+				stack = append(stack, item)
+			default:
 				items = append(items, item)
 			}
 		}
 	}
-	if len(items)+len(deviceSNI) == 0 {
+	if len(items)+len(deviceSNI)+len(stack) == 0 {
 		return nil
 	}
 	tx, err := s.pg.db.BeginTx(ctx, nil)
@@ -163,18 +203,23 @@ func (s *DBStore) stagePassiveBehavior(ctx context.Context, batch ingest.Batch, 
 		return err
 	}
 	defer tx.Rollback()
-	if err := stagePassiveBehaviorSegments(ctx, tx, batch, items, false); err != nil {
+	if err := stagePassiveBehaviorSegments(ctx, tx, batch, items, 0); err != nil {
 		return err
 	}
 	// Keep the original segment IDs and checksums stable when an earlier
 	// version staged this ingest batch before a restart or upgrade.
-	if err := stagePassiveBehaviorSegments(ctx, tx, batch, deviceSNI, true); err != nil {
+	if err := stagePassiveBehaviorSegments(ctx, tx, batch, deviceSNI, -1); err != nil {
+		return err
+	}
+	// A replay of an older ingest batch must retain both original segment
+	// sequences and their checksums. Stack clues occupy the upper int32 range.
+	if err := stagePassiveBehaviorSegments(ctx, tx, batch, stack, 1<<30); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func stagePassiveBehaviorSegments(ctx context.Context, tx *sql.Tx, batch ingest.Batch, items []passiveBehaviorInput, deviceSNI bool) error {
+func stagePassiveBehaviorSegments(ctx context.Context, tx *sql.Tx, batch ingest.Batch, items []passiveBehaviorInput, base int) error {
 	for start := 0; start < len(items); start += passiveBehaviorSegmentSize {
 		selected := items[start:min(start+passiveBehaviorSegmentSize, len(items))]
 		var through time.Time
@@ -193,8 +238,10 @@ func stagePassiveBehaviorSegments(ctx context.Context, tx *sql.Tx, batch ingest.
 		digest := sha256.Sum256(data)
 		checksum := hex.EncodeToString(digest[:])
 		segment := start / passiveBehaviorSegmentSize
-		if deviceSNI {
-			segment = -segment - 1
+		if base < 0 {
+			segment = base - segment
+		} else {
+			segment += base
 		}
 		result, err := tx.ExecContext(ctx, `INSERT INTO passive_behavior_batch_work(batch_id,segment,sensor_id,payload,byte_size,payload_sha256,source_through)
  VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(batch_id,segment) DO NOTHING`, batch.BatchID, segment, batch.SensorID, string(data), len(data), checksum, through)
