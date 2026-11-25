@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -58,7 +59,7 @@ func TestPassiveArchiveReceiptAndRestore(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "discovery.log")
 	line := []byte("retained product evidence")
-	data := append(append([]byte(nil), line...), '\r', '\n')
+	data := append(append([]byte(nil), line...), []byte("\r\ncompanion\n")...)
 	if e = os.WriteFile(path, data, 0600); e != nil {
 		t.Fatal(e)
 	}
@@ -84,13 +85,34 @@ func TestPassiveArchiveReceiptAndRestore(t *testing.T) {
 			t.Fatal(did, e)
 		}
 	}
+	// The wanted row is present with the same inode, but the companion changed:
+	// neither the PG receipt nor the CH row may be written on this hash alone.
+	wrong := bytes.Replace(data, []byte("companion"), []byte("different"), 1)
+	if e = os.WriteFile(path, wrong, 0600); e != nil {
+		t.Fatal(e)
+	}
 	process()
 	var verified, waiting, members int
-	if e = db.QueryRow("SELECT count(*) FILTER(WHERE verified_at IS NOT NULL AND accepted_at=$1),count(*) FILTER(WHERE verified_at IS NULL AND attempts=1),(SELECT count(*) FROM passive_archive_members) FROM passive_archive_rows", accepted).Scan(&verified, &waiting, &members); e != nil || verified != 1 || waiting != 1 || members != 4 {
+	if e = db.QueryRow("SELECT count(*) FILTER(WHERE verified_at IS NOT NULL),count(*) FILTER(WHERE verified_at IS NULL AND attempts=1) FROM passive_archive_rows").Scan(&verified, &waiting); e != nil || verified != 0 || waiting != 2 {
+		t.Fatal(verified, waiting, e)
+	}
+	provisional, e := ch.query(ctx, "SELECT count() FROM passive_discovery_raw_archive WHERE batch_id="+chQuote(batch)+" FORMAT TabSeparated")
+	if e != nil || strings.TrimSpace(string(provisional)) != "0" {
+		t.Fatal(string(provisional), e)
+	}
+	if e = os.WriteFile(path+".1", data, 0600); e != nil {
+		t.Fatal(e)
+	}
+	exec("UPDATE passive_archive_rows SET next_attempt=now() WHERE verified_at IS NULL")
+	process()
+	if e = db.QueryRow("SELECT count(*) FILTER(WHERE verified_at IS NOT NULL AND accepted_at=$1),count(*) FILTER(WHERE verified_at IS NULL AND attempts=2),(SELECT count(*) FROM passive_archive_members) FROM passive_archive_rows", accepted).Scan(&verified, &waiting, &members); e != nil || verified != 1 || waiting != 1 || members != 4 {
 		t.Fatal(verified, waiting, members, e)
 	}
 	// Simulate losing the PG commit after a successful CH insert and source rotation.
 	exec("UPDATE passive_archive_rows SET verified_at=NULL WHERE verified_at IS NOT NULL")
+	if e = os.Remove(path + ".1"); e != nil {
+		t.Fatal(e)
+	}
 	if e = os.Remove(path); e != nil {
 		t.Fatal(e)
 	}

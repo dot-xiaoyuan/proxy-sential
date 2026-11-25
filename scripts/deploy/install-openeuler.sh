@@ -50,6 +50,27 @@ ingest_enabled="${PROXY_SENTINEL_INGEST_ENABLED:-true}"
 eve_path="${PROXY_SENTINEL_EVE_PATH:-/var/log/suricata/eve.json}"
 zeek_log_dir="${PROXY_SENTINEL_ZEEK_LOG_DIR:-$root/data/zeek/logs/current}"
 device_signal_path="${PROXY_SENTINEL_DEVICE_SIGNAL_PATH:-$root/data/device-signals/ttl.jsonl}"
+# Keep a site's existing private TTL rule outside the system cron include
+# directory across full installs. The private file is installed at cutover.
+signal_rotation_dir=/etc/logrotate.d
+if [[ -f "$root/config/logrotate/proxy-sentinel-device-signals" ]]; then
+  signal_rotation_dir="$root/config/logrotate"
+fi
+device_rotation_rule="$signal_rotation_dir/proxy-sentinel-device-signals"
+router_rotation_rule="$signal_rotation_dir/proxy-sentinel-router-signals"
+hourly_device_rule=" $device_rotation_rule"
+shared_router_rules=" $router_rotation_rule"
+if [[ "$signal_rotation_dir" != /etc/logrotate.d ]]; then
+  if [[ "$manage_device_signals" == true ]]; then
+    if [[ "$device_signal_path" == "$root/data/device-signals/ttl.jsonl" ]]; then
+      shared_router_rules=""
+    fi
+    # A site can manage the device collector without the Suricata timer.
+    if [[ "$manage_suricata" != true ]]; then shared_router_rules+=" $device_rotation_rule"; fi
+  else
+    hourly_device_rule=""
+  fi
+fi
 device_signal_bucket="${PROXY_SENTINEL_DEVICE_SIGNAL_BUCKET:-30s}"
 capture_scope_path="${PROXY_SENTINEL_CAPTURE_SCOPE_CONFIG:-}"
 collector_instance_id="${PROXY_SENTINEL_COLLECTOR_INSTANCE_ID:-}"
@@ -679,7 +700,7 @@ EOF
 Description=Rotate Proxy Sentinel Suricata EVE log
 [Service]
 Type=oneshot
-ExecStart=/usr/sbin/logrotate --state $root/data/logrotate.state /etc/logrotate.d/proxy-sentinel-suricata /etc/logrotate.d/proxy-sentinel-device-signals
+ExecStart=/usr/sbin/logrotate --state $root/data/logrotate.state /etc/logrotate.d/proxy-sentinel-suricata$hourly_device_rule
 EOF
   cat > /etc/systemd/system/proxy-sentinel-logrotate.timer <<EOF
 # Managed by proxy-sentinel install-openeuler.sh
@@ -697,11 +718,17 @@ fi
 # Signal sidecars reopen their output path for every bucket, so plain rename
 # rotation is safe. Ship their configs and the timer that drives them.
 for config in proxy-sentinel-shared-signals proxy-sentinel-router-signals proxy-sentinel-flow-syn-signals; do
-  sed "s#/opt/proxy-sentinel#$root#g" "$release_dir/deploy/logrotate/$config" > "/etc/logrotate.d/$config"
-  chmod 0644 "/etc/logrotate.d/$config"
+  config_path="/etc/logrotate.d/$config"
+  if [[ "$config" == proxy-sentinel-router-signals ]]; then
+    [[ "$shared_router_rules" == *" $router_rotation_rule"* ]] || continue
+    config_path="$router_rotation_rule"
+  fi
+  sed "s#/opt/proxy-sentinel#$root#g" "$release_dir/deploy/logrotate/$config" > "$config_path"
+  chmod 0644 "$config_path"
 done
 for unit in proxy-sentinel-shared-logrotate.service proxy-sentinel-shared-logrotate.timer; do
-  sed "s#/opt/proxy-sentinel#$root#g" "$release_dir/deploy/systemd/$unit" > "/etc/systemd/system/$unit"
+  sed -e "s#/opt/proxy-sentinel#$root#g" -e "s# /etc/logrotate.d/proxy-sentinel-router-signals#$shared_router_rules#" \
+    "$release_dir/deploy/systemd/$unit" > "/etc/systemd/system/$unit"
 done
 systemctl daemon-reload
 systemctl enable proxy-sentinel-shared-logrotate.timer >/dev/null 2>&1 || true
@@ -714,7 +741,7 @@ if [[ "$manage_device_signals" == true ]]; then
   mkdir -p "$(dirname "$device_signal_path")"
   touch "$device_signal_path"
   chmod 0640 "$device_signal_path"
-  cat > /etc/logrotate.d/proxy-sentinel-device-signals <<EOF
+  cat > "$device_rotation_rule" <<EOF
 $device_signal_path {
   hourly
   size ${PROXY_SENTINEL_DEVICE_SIGNAL_ROTATE_SIZE:-256M}

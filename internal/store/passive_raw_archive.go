@@ -10,12 +10,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -30,56 +27,6 @@ type passiveArchiveSource struct {
 func passiveRawDigest(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
-}
-
-// The path and inode come from the committed ingest ledger. OpenRoot keeps
-// symlink resolution inside the two capture directories.
-func readPassiveArchiveRows(source passiveArchiveSource, roots []string, wanted map[string]bool) (map[string][]byte, error) {
-	size := source.End - source.Start
-	if source.Start < 0 || size <= 0 || size > passiveArchiveBatchBytes {
-		return nil, fmt.Errorf("source byte range outside archive budget")
-	}
-	for _, root := range roots {
-		rel, err := filepath.Rel(root, source.Path)
-		if err != nil || !filepath.IsLocal(rel) {
-			continue
-		}
-		dir, err := os.OpenRoot(root)
-		if err != nil {
-			return nil, err
-		}
-		defer dir.Close()
-		f, err := dir.Open(rel)
-		if err != nil {
-			return nil, err
-		}
-		defer f.Close()
-		st, err := f.Stat()
-		if err != nil {
-			return nil, err
-		}
-		inode, ok := st.Sys().(*syscall.Stat_t)
-		if !ok || !st.Mode().IsRegular() || fmt.Sprintf("%s:%d:%d", source.Path, inode.Dev, inode.Ino) != source.FileID {
-			return nil, fmt.Errorf("source file generation changed")
-		}
-		data := make([]byte, size)
-		if _, err = io.ReadFull(io.NewSectionReader(f, source.Start, size), data); err != nil {
-			return nil, err
-		}
-		if passiveRawDigest(data) != source.Digest {
-			return nil, fmt.Errorf("batch digest mismatch")
-		}
-		found := map[string][]byte{}
-		for line := range bytes.SplitSeq(data, []byte("\n")) {
-			line = bytes.TrimSuffix(line, []byte("\r"))
-			digest := passiveRawDigest(line)
-			if wanted[digest] {
-				found[digest] = line
-			}
-		}
-		return found, nil
-	}
-	return nil, fmt.Errorf("source outside archive capture directories")
 }
 
 func (s *DBStore) archivePassiveBatch(ctx context.Context, roots []string) (bool, error) {
@@ -124,7 +71,9 @@ func (s *DBStore) archivePassiveBatch(ctx context.Context, roots []string) (bool
 	}
 	var src passiveArchiveSource
 	err = tx.QueryRowContext(ctx, `SELECT source_path,file_id,start_offset,end_offset,checksum,committed_at FROM ingest_batches WHERE batch_id=$1 AND status='committed' AND committed_at IS NOT NULL`, batch).Scan(&src.Path, &src.FileID, &src.Start, &src.End, &src.Digest, &src.Accepted)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) {
+		err = errors.New("no committed ingest ledger entry for this batch")
+	} else if err != nil {
 		return true, err
 	}
 	var verified map[string]bool
@@ -199,7 +148,7 @@ func (s *DBStore) verifyPassiveArchive(ctx context.Context, batch string, src pa
 	if err != nil || len(known) == len(wanted) {
 		return known, err
 	}
-	found, err := readPassiveArchiveRows(src, roots, wanted)
+	found, err := readPassiveArchiveRows(ctx, src, roots, os.Getenv("PROXY_SENTINEL_PASSIVE_ARCHIVE_ROTATION_DIR"), wanted)
 	if err != nil {
 		return known, err
 	}
