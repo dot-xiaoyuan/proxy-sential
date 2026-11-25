@@ -45,3 +45,43 @@ func TestDHCPMessagePrefersHeaderWithoutTruncatingClientID(t *testing.T) {
 		}
 	}
 }
+
+func TestDHCPMessageHeaderAndOpaqueClientIDLengths(t *testing.T) {
+	const mac = "02:00:00:00:00:10"
+	cases := []struct {
+		name, htype, hlen, header, clientID, wantMAC string
+	}{
+		{"six_byte_header_with_short_id", "1", "6", mac, "aa:bb:cc", mac},
+		{"six_byte_header_with_conflicting_long_id", "1", "6", mac, "02:ff:ff:ff:ff:ff:42:56", mac},
+		{"eight_byte_header_and_id", "1", "8", mac + ":42:56", mac + ":42:56", ""},
+		{"short_header_and_long_id", "1", "5", "02:00:00:00:10", mac + ":42:56:aa", ""},
+		{"non_ethernet_eight_byte_header", "6", "8", mac + ":42:56", mac + ":42:56", ""},
+		{"absent_header_with_opaque_six_byte_id", "", "", "", mac, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fields := map[string]string{
+				"ts": "1789537676.8", "msg_types": "REQUEST", "capture_vlan": "998",
+				"htype": tc.htype, "hlen": tc.hlen, "client_chaddr": tc.header,
+				"client_id_hwaddr": tc.clientID, "requested_options": "1,3,138",
+			}
+			event, err := dhcpEventFromFields([]byte(tc.name), fields, 0, Options{LogKind: "dhcp-message"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if event.Payload["client_id_hwaddr"] != tc.clientID {
+				t.Fatalf("lost original client identifier: %v", event.Payload["client_id_hwaddr"])
+			}
+			if tc.header != "" && (event.Payload["client_chaddr"] != tc.header || event.Payload["htype"] != tc.htype || event.Payload["hlen"] != tc.hlen) {
+				t.Fatalf("changed source header fields: %+v", event.Payload)
+			}
+			got, _ := event.Subject["mac"].(string)
+			if got != tc.wantMAC || event.Subject["ip"] != nil {
+				t.Fatalf("unexpected request identity: %+v", event.Subject)
+			}
+			if tc.wantMAC == "" && event.Type != "dhcp_message" || tc.wantMAC != "" && (event.Type != "device" || event.Payload["request_only"] != true) {
+				t.Fatalf("unexpected request classification: type=%s request_only=%v", event.Type, event.Payload["request_only"])
+			}
+		})
+	}
+}
