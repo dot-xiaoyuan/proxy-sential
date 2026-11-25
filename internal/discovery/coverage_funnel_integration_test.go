@@ -21,7 +21,8 @@ func TestMirrorFunnelCountsOnlyCurrentlyValidBindings(t *testing.T) {
 	}
 	db.SetMaxOpenConns(1)
 	defer db.Close()
-	_, err = db.Exec(`CREATE TEMP TABLE passive_census_runtime (sensor_id text,last_source_at timestamptz,available_from timestamptz,last_success_at timestamptz,oldest_pending_at timestamptz);
+	_, err = db.Exec(`CREATE TEMP TABLE discovery_observation_latest (origin text,observed_at timestamptz,valid_until timestamptz,withdrawn boolean,data jsonb);
+CREATE TEMP TABLE passive_census_runtime (sensor_id text,last_source_at timestamptz,available_from timestamptz,last_success_at timestamptz,oldest_pending_at timestamptz);
 CREATE TEMP TABLE passive_census_identifier_current (sensor_id text,scope_key text,kind text,value text,ip_family int,last_seen timestamptz);
 CREATE TEMP TABLE passive_census_binding_current (scope_key text,ip text,mac text,observed_at timestamptz,valid_until timestamptz,withdrawn boolean,conflict boolean);
 CREATE TEMP TABLE passive_hardware_current (identity_key text,scope_key text,mac text,sensor_id text,first_seen timestamptz,last_seen timestamptz,hardware_type text,hardware_type_status text)`)
@@ -77,7 +78,9 @@ CREATE TEMP TABLE passive_hardware_current (identity_key text,scope_key text,mac
 	if _, err = db.Exec(`UPDATE passive_census_binding_current SET withdrawn=true WHERE ip='10.0.0.5'`); err != nil {
 		t.Fatal(err)
 	}
-	got, err := mirrorFunnelCounts(context.Background(), db, "campus-204", 24*time.Hour)
+	var report CoverageReport
+	err = coverageAddressAndMirrorCounts(context.Background(), db, "campus-204", 24*time.Hour, now, &report)
+	got := report.MirrorFunnel
 	if err != nil {
 		t.Fatal(err)
 	}

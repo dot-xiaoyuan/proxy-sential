@@ -117,30 +117,10 @@ func (r Repository) DiscoveryCoverageReport(ctx context.Context, sensor string, 
 		return nil
 	})
 	group.Go(func() error {
-		// Count only device-side bindings for MAC and IP/MAC. Other protocol
-		// endpoints can expose a routed next-hop MAC.
-		from := at.Add(-window)
-		if err := coverageAddressCounts(readCtx, r.DB, sensor, from, at, &out); err != nil {
-			return fmt.Errorf("coverage address counts: %w", err)
-		}
-		var err error
-		out.MirrorFunnel, err = mirrorFunnelCounts(readCtx, r.DB, sensor, window)
-		return err
+		return coverageAddressAndMirrorCounts(readCtx, r.DB, sensor, window, at, &out)
 	})
 	if err := group.Wait(); err != nil {
 		return CoverageReport{}, err
-	}
-	if out.MirrorFunnel.AsOf != nil {
-		mirrorUntil := *out.MirrorFunnel.AsOf
-		overlap, err := coverageMirrorOverlap(ctx, r.DB, sensor, at.Add(-window), at, mirrorUntil.Add(-window), mirrorUntil)
-		if ctx.Err() != nil {
-			return CoverageReport{}, ctx.Err()
-		}
-		// The overlap only adds a union total. A failed read leaves it absent
-		// so the published address and mirror counts remain available.
-		if err == nil {
-			out.IPv4MirrorOverlap = &overlap
-		}
 	}
 	out.Window = indexedWindowLabel(window)
 	if out.IdentityAsOf != nil {
@@ -234,8 +214,9 @@ func coveragePerIPSQL(sensor, from, until, profileJoin, hasProfile string) strin
 `, sensor, from, until, profileJoin, hasProfile, observations)
 }
 
-func coverageAddressCounts(ctx context.Context, db *sql.DB, sensor string, from, until time.Time, out *CoverageReport) error {
-	const statement = `WITH observed AS MATERIALIZED (
+// Device observations use the same half-open window as the IPv4 type buckets.
+// Only device-side bindings contribute to MAC and IP/MAC counts.
+const coverageAddressSetsSQL = `observed AS MATERIALIZED (
  SELECT l.data->>'ip' ip,lower(coalesce(l.data->>'mac','')) mac,l.valid_until,l.observed_at,l.withdrawn,
   coalesce(l.data->>'node','') sensor,coalesce(l.data->>'site','') site,
   coalesce(l.data->>'domain','') domain,coalesce(l.data->>'vlan','') vlan,
@@ -247,7 +228,7 @@ func coverageAddressCounts(ctx context.Context, db *sql.DB, sensor string, from,
    (l.origin='sadp' AND l.data->'evidence'->'payload'->>'identity_status' IN ('direct_l2','arp_binding')) OR
    (l.origin='dns_sd' AND l.data->'evidence'->'payload'->>'l2_source_mac_direct'='true')) binding
  FROM discovery_observation_latest l
- WHERE l.observed_at>=$2 AND l.observed_at<=$3
+ WHERE l.observed_at>=$2 AND l.observed_at<$3
   AND l.data->>'node'=$1
 ), addresses AS (
  SELECT *,ip ~ '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' v4,
@@ -290,8 +271,9 @@ func coverageAddressCounts(ctx context.Context, db *sql.DB, sensor string, from,
   count(*) FILTER(WHERE i.v6 AND f.freshness='uncertain') uncertain_v6,
   count(*) FILTER(WHERE i.v6 AND f.ip IS NULL) no_binding_v6
  FROM observed_ips i LEFT JOIN ip_freshness f USING(ip)
-)
-SELECT (SELECT count(DISTINCT split_part(ip,'.',1)||'.'||split_part(ip,'.',2)||'.'||split_part(ip,'.',3)) FROM observed_ips WHERE v4),
+)`
+
+const coverageAddressTotalsSQL = `SELECT (SELECT count(DISTINCT split_part(ip,'.',1)||'.'||split_part(ip,'.',2)||'.'||split_part(ip,'.',3)) FROM observed_ips WHERE v4),
  (SELECT count(*) FROM observed_ips WHERE v4), (SELECT count(*) FROM observed_ips WHERE v6),
  (SELECT count(DISTINCT mac) FROM scoped),
  (SELECT count(*) FROM scoped),
@@ -304,34 +286,21 @@ SELECT (SELECT count(DISTINCT split_part(ip,'.',1)||'.'||split_part(ip,'.',2)||'
  (SELECT count(*) FROM ipv4_pairs WHERE blank_vlan AND filled_vlan),
  current_v4,expired_v4,uncertain_v4,no_binding_v4,current_v6,expired_v6,uncertain_v6,no_binding_v6
 FROM freshness_counts`
-	var v4, v6 CoverageBindingFreshness
-	err := db.QueryRowContext(ctx, statement, sensor, from, until).Scan(
+
+func coverageAddressDestinations(out *CoverageReport) []any {
+	out.IPv4BindingFreshness = &CoverageBindingFreshness{}
+	out.IPv6BindingFreshness = &CoverageBindingFreshness{}
+	v4, v6 := out.IPv4BindingFreshness, out.IPv6BindingFreshness
+	return []any{
 		&out.Subnet24, &out.IPv4, &out.IPv6, &out.MAC, &out.IPMACPairs, &out.ScopedMAC,
 		&out.IPv4WithMAC, &out.IPMACUniquePairs, &out.IPMACValidScopedPairs,
 		&out.MultiMACIPv4, &out.MultiScopeIPMACPairs, &out.BlankAndFilledVLANPairs,
 		&v4.Current, &v4.Expired, &v4.Uncertain, &v4.NoBinding,
 		&v6.Current, &v6.Expired, &v6.Uncertain, &v6.NoBinding,
-	)
-	if err == nil {
-		out.IPv4BindingFreshness, out.IPv6BindingFreshness = &v4, &v6
 	}
-	return err
 }
 
-// coverageMirrorOverlap uses the same address sets as coverageAddressCounts
-// (observed IPv4 in the device window) and mirrorFunnelCounts (IPv4 census
-// identifiers in the mirror window), so the reported union is exact.
-func coverageMirrorOverlap(ctx context.Context, db *sql.DB, sensor string, from, until, mirrorFrom, mirrorUntil time.Time) (int64, error) {
-	const statement = `WITH device AS MATERIALIZED (
- SELECT DISTINCT l.data->>'ip' ip FROM discovery_observation_latest l
- WHERE l.observed_at>=$2 AND l.observed_at<=$3 AND l.data->>'node'=$1 AND NOT l.withdrawn
-  AND l.data->>'ip' ~ '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'
-), mirror AS MATERIALIZED (
- SELECT DISTINCT value ip FROM passive_census_identifier_current
- WHERE sensor_id=$1 AND kind='ip' AND ip_family=4 AND last_seen>=$4 AND last_seen<=$5
-)
-SELECT count(*) FROM device JOIN mirror USING(ip)`
-	var overlap int64
-	err := db.QueryRowContext(ctx, statement, sensor, from, until, mirrorFrom, mirrorUntil).Scan(&overlap)
-	return overlap, err
+func coverageAddressCounts(ctx context.Context, db coverageQueryRower, sensor string, from, until time.Time, out *CoverageReport) error {
+	return db.QueryRowContext(ctx, "WITH "+coverageAddressSetsSQL+" "+coverageAddressTotalsSQL, sensor, from, until).
+		Scan(coverageAddressDestinations(out)...)
 }
