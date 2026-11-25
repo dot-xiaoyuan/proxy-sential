@@ -348,7 +348,7 @@ func (s *DBStore) reconcileDomainCursor(ctx context.Context, library *fingerprin
 		return nil
 	}
 	defer conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock(hashtext($1))`, lock)
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Microsecond)
 	since := now.Add(-fingerprint.BrandEvidenceWindow)
 	_, err = s.pg.db.ExecContext(ctx, `INSERT INTO domain_reconcile_cursors(sensor_id,rule_version,kind,cursor_timestamp) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, s.pg.sensorID, library.Version(), kind, since)
 	if err != nil {
@@ -364,36 +364,36 @@ func (s *DBStore) reconcileDomainCursor(ctx context.Context, library *fingerprin
 	if completed.Valid && kind == "daily" && now.Sub(completed.Time) < 24*time.Hour {
 		return nil
 	}
-	// The overlap rewind applies to reads only. Persisting it on an empty pass moved the
-	// stored cursor back ten minutes per pass until it hit the seven-day floor, and every
-	// pass then rescanned days of normalized_events (field: cursor frozen at 10-11).
+	// Incremental completion must never move its high watermark backwards
+	// after the overlap. Daily runs resume the new sweep at each committed page.
 	highCursor, highID := cursor, cursorID
 	cursor, cursorID = domainReconcileStart(kind, completed.Valid, cursor, cursorID, since)
-	for {
-		until := cursor.Add(15 * time.Minute)
-		events, err := s.ch.ListDomainEventsAfter(ctx, s.pg.sensorID, since.Format(time.RFC3339Nano), until.Format(time.RFC3339Nano), cursor.Format(time.RFC3339Nano), cursorID, 10000)
+	// Limit each maintenance turn to eight reads per lane, including empty
+	// slices, so a quiet week cannot consume the entire maintenance interval.
+	for range 8 {
+		if !cursor.Before(now) {
+			break
+		}
+		events, nextCursor, nextID, err := s.ch.domainHistoryPage(ctx, s.pg.sensorID, cursor, cursorID, now, 10000)
 		if err != nil {
 			return err
 		}
-		if len(events) == 0 {
-			keepAt, keepID := domainReconcileHighWater(cursor, cursorID, highCursor, highID)
-			_, err = s.pg.db.ExecContext(ctx, `UPDATE domain_reconcile_cursors SET cursor_timestamp=$4,cursor_event_id=$5,completed_at=now() WHERE sensor_id=$1 AND rule_version=$2 AND kind=$3`, s.pg.sensorID, library.Version(), kind, keepAt, keepID)
-			return err
+		if len(events) > 0 {
+			if err := s.processDomainBatch(ctx, domainBatch{events: events, library: library}); err != nil {
+				return err
+			}
 		}
-		if err := s.processDomainBatch(ctx, domainBatch{events: events, library: library}); err != nil {
-			return err
+		cursor, cursorID = nextCursor, nextID
+		done := !cursor.Before(now)
+		if done && kind == "incremental" {
+			cursor, cursorID = domainReconcileHighWater(cursor, cursorID, highCursor, highID)
 		}
-		last := events[len(events)-1]
-		cursor, err = time.Parse(time.RFC3339Nano, last.Timestamp)
-		if err != nil {
-			return err
-		}
-		cursorID = last.EventID
-		_, err = s.pg.db.ExecContext(ctx, `UPDATE domain_reconcile_cursors SET cursor_timestamp=$4,cursor_event_id=$5,completed_at=NULL WHERE sensor_id=$1 AND rule_version=$2 AND kind=$3`, s.pg.sensorID, library.Version(), kind, cursor, cursorID)
+		_, err = s.pg.db.ExecContext(ctx, `UPDATE domain_reconcile_cursors SET cursor_timestamp=$4,cursor_event_id=$5,completed_at=CASE WHEN $6 THEN now() END WHERE sensor_id=$1 AND rule_version=$2 AND kind=$3`, s.pg.sensorID, library.Version(), kind, cursor, cursorID, done)
 		if err != nil {
 			return err
 		}
 	}
+	return nil
 }
 
 // flushDomainDropped persists batches dropped since the last flush. A failed write keeps

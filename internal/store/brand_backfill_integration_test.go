@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -56,23 +57,50 @@ func TestDBBrandBackfillActivationSummaryAndRollback(t *testing.T) {
 		_ = db.ch.exec(context.Background(), "ALTER TABLE normalized_events DELETE WHERE sensor_id="+chQuote(id))
 		_ = db.ch.exec(context.Background(), "ALTER TABLE domain_ecosystem_observations DELETE WHERE sensor_id="+chQuote(id))
 	}()
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Microsecond)
 	identity := normalized.Event{EventID: id + "-identity", Type: "identity", Timestamp: now.Add(-time.Hour).Format(time.RFC3339Nano), Subject: map[string]any{"endpoint_id": id, "mac": "02:00:00:00:90:09", "entity_role": "endpoint"}, Payload: map[string]any{}, Flow: map[string]any{}}
 	if err := db.pg.WriteIdentityEvents(ctx, []normalized.Event{identity}); err != nil {
 		t.Fatal(err)
 	}
 	events := brandReplay(t)
+	minutes := []int{-45, -15, -15, -15, -2, -1}
+	if len(events) != len(minutes) {
+		t.Fatalf("unexpected replay size: %d", len(events))
+	}
 	for i := range events {
 		events[i].EventID = id + events[i].EventID
 		events[i].Subject["endpoint_id"] = id
 		events[i].Observer["sensor_id"] = id
-		events[i].Timestamp = now.Add(time.Duration(i-20) * time.Minute).Format(time.RFC3339Nano)
+		events[i].Timestamp = now.Add(time.Duration(minutes[i]) * time.Minute).Format(time.RFC3339Nano)
 	}
-	if err := db.ch.WriteNormalizedEvents(ctx, events); err != nil {
+	outside := events[0]
+	outside.EventID, outside.Timestamp = id+"-outside", now.Format(time.RFC3339Nano)
+	if err := db.ch.WriteNormalizedEvents(ctx, append(events, outside)); err != nil {
 		t.Fatal(err)
 	}
-	result, err := db.RebuildDomainEvidenceVersion(ctx, id, 7*24*time.Hour, 2, nil)
-	if err != nil || result.Status != "completed" || result.Matched != 4 || result.Attributed != 4 {
+	// The old worker could mark a seven-day job completed at its first empty
+	// 15-minute slice. A retry must resume from its durable cursor, even if
+	// the caller supplies a different window or stops after a sparse slice.
+	if _, err = db.pg.db.ExecContext(ctx, `INSERT INTO domain_evidence_backfill_jobs
+		(version,status,started_at,cursor_timestamp) VALUES($1,'completed',$2,$3)`, id, now, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	first, cancelFirst := context.WithCancel(ctx)
+	defer cancelFirst()
+	_, err = db.RebuildDomainEvidenceVersion(first, id, 7*24*time.Hour, 2, func(p DomainBackfillProgress) {
+		if p.Processed == 1 {
+			cancelFirst()
+		}
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected interrupted backfill, got %v", err)
+	}
+	checkpoint, err := db.pg.loadDomainBackfillProgress(ctx, id)
+	if err != nil || checkpoint.Status != "failed" || checkpoint.Processed != 1 || checkpoint.CursorTimestamp != now.Add(-30*time.Minute).Format(time.RFC3339Nano) || checkpoint.CursorEventID != "" {
+		t.Fatalf("sparse slice checkpoint: %+v %v", checkpoint, err)
+	}
+	result, err := db.RebuildDomainEvidenceVersion(ctx, id, time.Minute, 2, nil)
+	if err != nil || result.Status != "completed" || result.Processed != len(events) || result.Matched != 4 || result.Attributed != 4 || result.CursorTimestamp != now.Format(time.RFC3339Nano) {
 		t.Fatalf("backfill %+v %v", result, err)
 	}
 	again, err := db.RebuildDomainEvidenceVersion(ctx, id, 7*24*time.Hour, 2, nil)

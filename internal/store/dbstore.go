@@ -674,8 +674,9 @@ func (s *DBStore) RebuildDomainEvidenceVersion(ctx context.Context, version stri
 		return result, err
 	}
 
-	since := time.Now().UTC().Add(-window)
-	_, err = s.pg.db.ExecContext(ctx, `INSERT INTO domain_evidence_backfill_jobs(version,status,cursor_timestamp,started_at,updated_at) VALUES($1,'pending',$2,now(),now()) ON CONFLICT(version) DO NOTHING`, version, since)
+	horizon := time.Now().UTC().Truncate(time.Microsecond)
+	since := horizon.Add(-window).Truncate(time.Microsecond)
+	_, err = s.pg.db.ExecContext(ctx, `INSERT INTO domain_evidence_backfill_jobs(version,status,cursor_timestamp,started_at,updated_at) VALUES($1,'pending',$2,$3,now()) ON CONFLICT(version) DO NOTHING`, version, since, horizon)
 	if err != nil {
 		return result, err
 	}
@@ -683,7 +684,20 @@ func (s *DBStore) RebuildDomainEvidenceVersion(ctx context.Context, version stri
 	if err != nil {
 		return result, err
 	}
-	if result.Status == "completed" {
+	if err = s.pg.db.QueryRowContext(ctx, `SELECT COALESCE(started_at,updated_at) FROM domain_evidence_backfill_jobs WHERE version=$1`, version).Scan(&horizon); err != nil {
+		return result, err
+	}
+	horizon = horizon.UTC()
+	cursor := horizon.Add(-window)
+	if result.CursorTimestamp != "" {
+		cursor, err = time.Parse(time.RFC3339Nano, result.CursorTimestamp)
+		if err != nil {
+			return result, err
+		}
+	}
+	// Older jobs could report completion after just the first sparse slice.
+	// A repeat request resumes their unchecked tail against the original cutoff.
+	if result.Status == "completed" && (!cursor.Before(horizon) || library.DomainRuleCount() == 0) {
 		if err := s.activateDomainVersion(ctx, version); err != nil {
 			return result, err
 		}
@@ -692,11 +706,12 @@ func (s *DBStore) RebuildDomainEvidenceVersion(ctx context.Context, version stri
 		}
 		return result, nil
 	}
-	_, err = s.pg.db.ExecContext(ctx, `UPDATE domain_evidence_backfill_jobs SET status='running',last_error=NULL,started_at=COALESCE(started_at,now()),finished_at=NULL,updated_at=now() WHERE version=$1`, version)
+	_, err = s.pg.db.ExecContext(ctx, `UPDATE domain_evidence_backfill_jobs SET status='running',last_error=NULL,started_at=COALESCE(started_at,$2),finished_at=NULL,updated_at=now() WHERE version=$1`, version, horizon)
 	if err != nil {
 		return result, err
 	}
 	result.Status = "running"
+	result.LastError = ""
 	if progress != nil {
 		progress(result)
 	}
@@ -710,45 +725,35 @@ func (s *DBStore) RebuildDomainEvidenceVersion(ctx context.Context, version stri
 			}
 		}
 	}()
-	for library.DomainRuleCount() > 0 {
+	for library.DomainRuleCount() > 0 && cursor.Before(horizon) {
 		if fingerprint.Default().Version() != version {
 			return result, fmt.Errorf("domain version %s was superseded", version)
 		}
-		lower := since
-		if result.CursorTimestamp != "" {
-			if parsed, parseErr := time.Parse(time.RFC3339Nano, result.CursorTimestamp); parseErr == nil {
-				lower = parsed
-			}
-		}
-		events, queryErr := s.ch.ListDomainEventsAfter(ctx, s.pg.sensorID, since.Format(time.RFC3339Nano), lower.Add(15*time.Minute).Format(time.RFC3339Nano), result.CursorTimestamp, result.CursorEventID, batchSize)
+		events, nextCursor, nextID, queryErr := s.ch.domainHistoryPage(ctx, s.pg.sensorID, cursor, result.CursorEventID, horizon, batchSize)
 		if queryErr != nil {
 			return result, queryErr
 		}
-		if len(events) == 0 {
-			break
+		next := result
+		if len(events) > 0 {
+			batchResult, processErr := s.pg.ProcessDomainEvents(ctx, events, library)
+			if processErr != nil {
+				return result, processErr
+			}
+			if writeErr := s.ch.WriteDomainEcosystemObservations(ctx, batchResult.Observations); writeErr != nil {
+				return result, writeErr
+			}
+			next.Processed += batchResult.Processed
+			next.Matched += batchResult.Matched
+			next.Attributed += batchResult.Attributed
 		}
-		batchResult, processErr := s.pg.ProcessDomainEvents(ctx, events, library)
-		if processErr != nil {
-			return result, processErr
-		}
-		if writeErr := s.ch.WriteDomainEcosystemObservations(ctx, batchResult.Observations); writeErr != nil {
-			return result, writeErr
-		}
-		last := events[len(events)-1]
-		result.Processed += batchResult.Processed
-		result.Matched += batchResult.Matched
-		result.Attributed += batchResult.Attributed
-		result.CursorTimestamp = last.Timestamp
-		result.CursorEventID = last.EventID
-		_, updateErr := s.pg.db.ExecContext(ctx, `UPDATE domain_evidence_backfill_jobs SET cursor_timestamp=$2,cursor_event_id=$3,processed=$4,attributed=$5,matched=$6,updated_at=now() WHERE version=$1`, version, last.Timestamp, last.EventID, result.Processed, result.Attributed, result.Matched)
+		next.CursorTimestamp, next.CursorEventID = nextCursor.Format(time.RFC3339Nano), nextID
+		_, updateErr := s.pg.db.ExecContext(ctx, `UPDATE domain_evidence_backfill_jobs SET cursor_timestamp=$2,cursor_event_id=$3,processed=$4,attributed=$5,matched=$6,updated_at=now() WHERE version=$1`, version, nextCursor, nextID, next.Processed, next.Attributed, next.Matched)
 		if updateErr != nil {
 			return result, updateErr
 		}
+		cursor, result = nextCursor, next
 		if progress != nil {
 			progress(result)
-		}
-		if len(events) < batchSize {
-			break
 		}
 	}
 	_, err = s.pg.db.ExecContext(ctx, `UPDATE domain_evidence_backfill_jobs SET status='completed',last_error=NULL,finished_at=now(),updated_at=now() WHERE version=$1`, version)

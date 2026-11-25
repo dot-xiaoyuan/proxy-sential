@@ -15,6 +15,36 @@ import (
 // MaxDomainBatchSize bounds memory while amortizing historical ClickHouse scans.
 const MaxDomainBatchSize = 100000
 
+// A short page covers the whole half-open time slice. A full page can end
+// among events with the same timestamp and must retain its final event ID.
+func (s *ClickHouseStore) domainHistoryPage(ctx context.Context, sensor string, cursor time.Time, cursorID string, horizon time.Time, limit int) ([]normalized.Event, time.Time, string, error) {
+	end := cursor.Add(15 * time.Minute)
+	if end.After(horizon) {
+		end = horizon
+	}
+	from := cursor.UTC().Format(time.RFC3339Nano)
+	after := ""
+	if cursorID != "" {
+		after = from
+	}
+	events, err := s.ListDomainEventsAfter(ctx, sensor, from, end.UTC().Format(time.RFC3339Nano), after, cursorID, limit)
+	if err != nil {
+		return nil, cursor, cursorID, err
+	}
+	if len(events) < limit {
+		return events, end, "", nil
+	}
+	last := events[len(events)-1]
+	stamp, err := time.Parse(time.RFC3339Nano, last.Timestamp)
+	if err != nil {
+		return nil, cursor, cursorID, err
+	}
+	if last.EventID == "" || stamp.Before(cursor) || (stamp.Equal(cursor) && last.EventID <= cursorID) {
+		return nil, cursor, cursorID, fmt.Errorf("domain history page has no advancing event key")
+	}
+	return events, stamp, last.EventID, nil
+}
+
 func (s *ClickHouseStore) ListDomainEventsAfter(ctx context.Context, sensorID, since, until, cursorTimestamp, cursorEventID string, limit int) ([]normalized.Event, error) {
 	if strings.TrimSpace(until) == "" {
 		return nil, fmt.Errorf("domain history requires an upper bound")
