@@ -79,6 +79,14 @@ func (r Repository) DevicesIndexed(ctx context.Context, query DeviceQuery) (map[
 }
 
 func (r Repository) DevicesIndexedSnapshot(ctx context.Context, tx *sql.Tx, query DeviceQuery) (map[string]any, error) {
+	query.structured = r.HardwareV2 && structuredReadEnabled("list")
+	if orderedPageEnabled(query) {
+		var isolation string
+		if err := tx.QueryRowContext(ctx, "SHOW transaction_isolation").Scan(&isolation); err != nil {
+			return nil, err
+		}
+		query.orderedPageDisabled = isolation != "repeatable read" && isolation != "serializable"
+	}
 	return r.devicesIndexed(ctx, tx, query, false)
 }
 
@@ -89,6 +97,29 @@ type indexedQueryer interface {
 func (r Repository) devicesIndexed(ctx context.Context, db indexedQueryer, query DeviceQuery, includeFreshness bool) (map[string]any, error) {
 	query.HardwareV2 = r.HardwareV2
 	query.structured = r.HardwareV2 && structuredReadEnabled("list")
+	if orderedPageEnabled(query) {
+		if pool, ok := db.(*sql.DB); ok {
+			tx, err := pool.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+			if err != nil {
+				return nil, err
+			}
+			defer tx.Rollback()
+			page, err := r.devicesIndexed(ctx, tx, query, false)
+			if err != nil {
+				return nil, err
+			}
+			if err = tx.Commit(); err != nil {
+				return nil, err
+			}
+			if includeFreshness {
+				r.attachListFreshness(ctx, page)
+			}
+			return page, nil
+		}
+		if query.SnapshotAt.IsZero() {
+			query.SnapshotAt = time.Now().UTC()
+		}
+	}
 	if query.structured {
 		if err := checkStructuredRead(ctx, db); err != nil {
 			return nil, err
@@ -102,6 +133,22 @@ func (r Repository) devicesIndexed(ctx context.Context, db indexedQueryer, query
 	position, err := decodeIndexedDeviceCursor(query)
 	if err != nil {
 		return nil, err
+	}
+	orderedHasMore := false
+	if orderedPageEnabled(query) {
+		query.pageKeys, err = orderedDeviceKeys(ctx, db, query, position)
+		if err != nil {
+			return nil, err
+		}
+		// The scalar lookahead supplies has_more. Never hydrate its evidence.
+		orderedHasMore = len(query.pageKeys) > query.Limit
+		if orderedHasMore {
+			query.pageKeys = query.pageKeys[:query.Limit]
+		}
+		selection, err = buildIndexedDeviceSelection(query)
+		if err != nil {
+			return nil, err
+		}
 	}
 	args := selection.Args
 	positionWhere := ""
@@ -224,7 +271,10 @@ ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
 		}
 		return items[i].LastSeen.After(items[j].LastSeen)
 	})
-	hasMore := len(items) > query.Limit
+	if orderedHasMore && len(items) != query.Limit {
+		return nil, fmt.Errorf("ordered discovery page lost an admitted identity")
+	}
+	hasMore := orderedHasMore || len(items) > query.Limit
 	nextCursor := ""
 	if hasMore {
 		items = items[:query.Limit]
@@ -252,14 +302,18 @@ ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
 		page["classification_version"] = "passive-hardware/v2"
 	}
 	if includeFreshness {
-		if r.HardwareV2 {
-			page["hardware_freshness"] = r.HardwareFreshness(ctx)
-		}
-		if fresh := r.PassiveDiscoveryFreshness(ctx); fresh != nil {
-			page["freshness"] = fresh
-		}
+		r.attachListFreshness(ctx, page)
 	}
 	return page, nil
+}
+
+func (r Repository) attachListFreshness(ctx context.Context, page map[string]any) {
+	if r.HardwareV2 {
+		page["hardware_freshness"] = r.HardwareFreshness(ctx)
+	}
+	if fresh := r.PassiveDiscoveryFreshness(ctx); fresh != nil {
+		page["freshness"] = fresh
+	}
 }
 
 func aggregateIndexedDeviceRows(rows []deviceObservationRow, now time.Time) ([]DeviceView, error) {

@@ -17,7 +17,12 @@ func structuredReadEnabled(surface string) bool {
 	return false
 }
 
-func structuredSourceSQL(query DeviceQuery, baseWhere []string) string {
+func structuredSourceSQL(query DeviceQuery, baseWhere []string, pageSource string) string {
+	source, locator := "discovery_list_observation l", "l.ctid"
+	if pageSource != "" {
+		source = "(" + pageSource + ") candidates CROSS JOIN LATERAL (SELECT f.*,f.ctid page_tid FROM discovery_list_observation f WHERE f.ctid=candidates.t OFFSET 0) l"
+		locator = "l.page_tid"
+	}
 	// Only the observation-level filters run before grouping.
 	predicates := strings.NewReplacer(
 		"NOT l.withdrawn", "true",
@@ -34,7 +39,7 @@ func structuredSourceSQL(query DeviceQuery, baseWhere []string) string {
 	if query.DeviceType != "" || query.includeCandidateTypes || query.View == "iot" || query.Capability == "dumb" {
 		dhcp = "CASE WHEN l.valid_until>now() AND l.origin IN ('dhcp_client','dhcp') THEN l.dhcp_type ELSE '' END"
 	}
-	return ` SELECT l.ctid observation_tid,l.id,l.device_key,l.origin,l.observed_at,l.valid_until,l.sensor_id,l.site_id,l.access_domain,l.vlan,l.vrf,l.raw_mac,l.raw_ip,
+	return ` SELECT ` + locator + ` observation_tid,l.id,l.device_key,l.origin,l.observed_at,l.valid_until,l.sensor_id,l.site_id,l.access_domain,l.vlan,l.vrf,l.raw_mac,l.raw_ip,
  l.scope_valid capture_scope_valid,l.source_campus,lower(l.raw_ip) search_ip,lower(l.raw_mac) search_mac,
  lower(l.name) search_name,lower(l.device_type) search_device_type,lower(l.manufacturer) search_manufacturer,lower(l.model) search_model,
  ` + caps + ` observation_capabilities,
@@ -42,13 +47,13 @@ func structuredSourceSQL(query DeviceQuery, baseWhere []string) string {
  (l.valid_until>now() AND l.product_status IN ('identified','no_type_match','conflict')) product_evidence,
  ` + dhcp + ` dhcp_candidate_type,
  (l.valid_until>now() AND l.strong_service AND l.scope_valid) service_clue_valid,l.base_identity
- FROM discovery_list_observation l WHERE ` + predicates
+ FROM ` + source + ` WHERE ` + predicates
 }
 
 // The default views can use per-identity window summaries. User-defined
 // combinations still run their predicates over the same structured facts.
 func cachedGroupWindow(q DeviceQuery) int {
-	if !q.structured || q.Mode != "passive" || q.groupPageRows || q.View != "" || q.Search != "" || q.Protocol != "" || q.State != "" || q.Domain != "" || q.VLAN != "" || q.DeviceType != "" || q.ReviewReason != "" || q.Category != "" || q.OSFamily != "" || q.Capability != "" || q.RandomMAC || q.Subnet != "" || q.FirstSeenWithin != 0 || !q.LastSeenFrom.IsZero() || !q.LastSeenTo.IsZero() {
+	if q.pageKeys != nil || !q.structured || q.Mode != "passive" || q.groupPageRows || q.View != "" || q.Search != "" || q.Protocol != "" || q.State != "" || q.Domain != "" || q.VLAN != "" || q.DeviceType != "" || q.ReviewReason != "" || q.Category != "" || q.OSFamily != "" || q.Capability != "" || q.RandomMAC || q.Subnet != "" || q.FirstSeenWithin != 0 || !q.LastSeenFrom.IsZero() || !q.LastSeenTo.IsZero() {
 		return 0
 	}
 	switch q.Window.Hours() {

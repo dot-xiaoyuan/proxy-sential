@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -40,6 +41,7 @@ func TestStructuredDiscoveryPostgresParity(t *testing.T) {
 		t.Fatal(err)
 	}
 	run(string(raw))
+	applyDiscoveryTestSQL(t, db, "256_discovery_page_indexes.sql")
 	var ready bool
 	if err := db.QueryRow("SELECT discovery_address_links_ready()").Scan(&ready); err != nil || ready {
 		t.Fatal(ready, err)
@@ -69,6 +71,14 @@ func TestStructuredDiscoveryPostgresParity(t *testing.T) {
 	put("product", "", "10.0.0.9", "10", "snmp", at.Add(-time.Minute))
 	put("address", "", "10.0.0.10", "10", "ssdp", at.Add(-time.Minute))
 	run("INSERT INTO endpoint_recognition_summary VALUES('mac:00:12:34:00:00:04','desktop','Windows','{}',0.8,false,$1)", at)
+	put("binding-arp", "00:12:34:00:00:f0", "10.0.0.80", "30", "arp", at.Add(-2*time.Hour))
+	put("binding-sadp", "", "10.0.0.80", "30", "sadp", at.Add(-time.Hour))
+	run(`UPDATE discovery_observation_latest SET data=data||jsonb_build_object('evidence',jsonb_build_object('payload',jsonb_build_object('claimed_mac','00:12:34:00:00:f0','claimed_ip','10.0.0.80','identity_status','l2_mismatch'))) WHERE id='binding-sadp'`)
+	put("noncanonical-lease", "ff:00:00:00:00:f0", "10.0.0.100", "30", "arp", at.Add(-2*time.Hour))
+	run("INSERT INTO device_address_leases VALUES('noncanonical-lease','ack','sensor','10.0.0.100','','mac:ff:00:00:00:00:f0')")
+	put("uppercase-profile", "00:12:34:00:00:ea", "10.0.0.102", "33", "arp", at.Add(-2*time.Hour))
+	run("INSERT INTO discovery_identity_links VALUES('uppercase-profile','MAC:00:12:34:00:00:EA','{}')")
+	run("INSERT INTO endpoint_recognition_summary VALUES('MAC:00:12:34:00:00:EA','printer','','{}',0.8,false,$1)", at)
 	run("ALTER TABLE discovery_observation_latest ENABLE TRIGGER discovery_list_sync; ALTER TABLE discovery_observation_latest ENABLE TRIGGER discovery_list_truncate")
 	for done := false; !done; {
 		if err := db.QueryRow("SELECT discovery_list_adopt(3)").Scan(&done); err != nil {
@@ -89,6 +99,10 @@ func TestStructuredDiscoveryPostgresParity(t *testing.T) {
 		t.Fatal("projection did not drain")
 	}
 	refresh()
+	run(`INSERT INTO passive_hardware_current(identity_key,scope_key,device_key,sensor_id,campus_id,access_domain,mac,hardware_type,hardware_type_status,first_seen,last_seen,active_until,data)
+      SELECT base_identity,'scope',device_key,sensor_id,site_id,access_domain,raw_mac,'printer',status,observed_at,observed_at,valid_until,
+        jsonb_build_object('hardware_type','printer','hardware_type_status',status,'first_seen',observed_at,'last_seen',observed_at)
+      FROM discovery_list_observation CROSS JOIN LATERAL (SELECT CASE id WHEN 'arp1' THEN 'identified' ELSE 'revoked' END status) s WHERE id IN ('arp1','arp7')`)
 	var groups int
 	if err := db.QueryRow("SELECT count(*) FROM discovery_list_group_current WHERE hours=24").Scan(&groups); err != nil || groups < 26 {
 		t.Fatal(groups, err)
@@ -179,6 +193,12 @@ func TestStructuredDiscoveryPostgresParity(t *testing.T) {
 				t.Fatalf("page %t rows %d != %d", page, len(a), len(b))
 			}
 		}
+		q.Limit = 7
+		q.structured = true
+		t.Setenv("PROXY_SENTINEL_DISCOVERY_STRUCTURED_READS", "list,address_links,ordered_pages")
+		if orderedPageEnabled(q) {
+			compareOrderedPages(t, tx, q)
+		}
 		coverage := func(surface string) string {
 			t.Helper()
 			t.Setenv("PROXY_SENTINEL_DISCOVERY_STRUCTURED_READS", surface)
@@ -196,6 +216,9 @@ func TestStructuredDiscoveryPostgresParity(t *testing.T) {
 	for _, scope := range []string{"", "devices", "address_clues"} {
 		compare(DeviceQuery{Window: 24 * time.Hour, IdentityScope: scope})
 	}
+	for _, kind := range []string{"mobile", "desktop", "switch", "switch,desktop", "printer"} {
+		compare(DeviceQuery{Window: 24 * time.Hour, DeviceType: kind, IdentityScope: "devices"})
+	}
 	compare(DeviceQuery{Window: 7 * 24 * time.Hour, Search: "test", VLAN: "10", Protocol: "arp"})
 	// Link and profile updates can change identity and classification without
 	// changing the latest observation. The projected reader sees both at once.
@@ -210,6 +233,7 @@ func TestStructuredDiscoveryPostgresParity(t *testing.T) {
 	compare(DeviceQuery{Window: 24 * time.Hour, IdentityScope: "devices"})
 	run("UPDATE discovery_identity_links SET endpoint_id='mac:00:12:34:00:00:05' WHERE observation_id='product'")
 	compare(DeviceQuery{Window: 24 * time.Hour, IdentityScope: "devices"})
+	compare(DeviceQuery{Window: 24 * time.Hour, DeviceType: "switch", IdentityScope: "devices"})
 	run("DELETE FROM discovery_identity_links")
 	compare(DeviceQuery{Window: 24 * time.Hour, IdentityScope: "devices"})
 	run("UPDATE discovery_list_group_current SET next_change=now()-interval '1 second' WHERE hours=24")
@@ -225,6 +249,61 @@ func TestStructuredDiscoveryPostgresParity(t *testing.T) {
 	var sizes string
 	if err := db.QueryRow("SELECT concat_ws(',',(SELECT count(*) FROM discovery_list_observation),(SELECT count(*) FROM discovery_list_group_current),(SELECT count(*) FROM discovery_list_ip_current))").Scan(&sizes); err != nil || strings.TrimSpace(sizes) != "0,0,0" {
 		t.Fatal(sizes, err)
+	}
+}
+
+// Compare the serialized response, including display enrichment, cursors and
+// page-level facets, and compare every admitted identity with the statistics.
+func compareOrderedPages(t *testing.T, tx *sql.Tx, q DeviceQuery) {
+	t.Helper()
+	q.includeOverview = false
+	q.includeCandidateTypes = true
+	s, err := buildIndexedDeviceSelection(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var expected int
+	if err := tx.QueryRow(s.CTE+" SELECT count(*) FROM matched", s.Args...).Scan(&expected); err != nil {
+		t.Fatal(err)
+	}
+	q.includeCandidateTypes = false
+	repo := Repository{HardwareV2: true}
+	count := 0
+	combined := sha256.New()
+	for {
+		pages := [][]byte{}
+		var cursor string
+		for _, flag := range []string{"list,address_links", "list,address_links,ordered_pages"} {
+			t.Setenv("PROXY_SENTINEL_DISCOVERY_STRUCTURED_READS", flag)
+			p, err := repo.devicesIndexed(context.Background(), tx, q, false)
+			if err != nil {
+				t.Fatalf("%s: %v", flag, err)
+			}
+			encoded, err := json.Marshal(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pages = append(pages, encoded)
+			cursor = p["next_cursor"].(string)
+			if flag == "list,address_links,ordered_pages" {
+				count += len(p["items"].([]DeviceView))
+			}
+		}
+		if sha256.Sum256(pages[0]) != sha256.Sum256(pages[1]) {
+			t.Fatalf("page digest mismatch for scope %s type %s after %s: %x %x", q.IdentityScope, q.DeviceType, q.Cursor, sha256.Sum256(pages[0]), sha256.Sum256(pages[1]))
+		}
+		combined.Write(pages[0])
+		if cursor == "" {
+			break
+		}
+		if cursor == q.Cursor || count > expected {
+			t.Fatalf("nonadvancing page: %s", cursor)
+		}
+		q.Cursor = cursor
+	}
+	t.Logf("ordered parity scope=%q type=%q hours=%g rows=%d complete_page_sha256=%x", q.IdentityScope, q.DeviceType, q.Window.Hours(), count, combined.Sum(nil))
+	if count != expected {
+		t.Fatalf("scope %s type %s: got %d rows, statistics %d", q.IdentityScope, q.DeviceType, count, expected)
 	}
 }
 

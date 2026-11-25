@@ -1,6 +1,9 @@
 package discovery
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 func hardwareProfileCandidateSQL(role, confidence, conflict, seen string) string {
 	return "CASE WHEN l.profile_identity_verified AND l.valid_until>now() AND " + seen + ">=$1 AND " +
@@ -14,7 +17,7 @@ func hardwareProfileCandidateSQL(role, confidence, conflict, seen string) string
 // separately for every scope, search and evidence field.
 // Point-lookups keep the historical identity and lease tables out of the
 // candidate scan. The observation index still determines the query window.
-// No ctid is persisted, exported, or used across statements/snapshots.
+// All tuple locators live within the reader's MVCC snapshot.
 func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []string, candidateHaving, matchedWhere string) indexedDeviceSelection {
 	searchIP, searchName, searchType, searchManufacturer, searchModel := "''::text", "''::text", "''::text", "''::text", "''::text"
 	dhcpType := "''::text"
@@ -108,6 +111,7 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
   WHERE i.observation_id=l.id AND l.raw_mac='' LIMIT 1
  ) i ON true`
 	extraCTE, groupedUnion := "", ""
+	pageSource := ""
 	if query.structured {
 		if hours := cachedGroupWindow(query); hours > 0 {
 			extraCTE = cachedGroupCTE(hours)
@@ -117,14 +121,37 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 		if query.groupPageRows {
 			baseWhere = append(baseWhere, "l.base_identity IN (SELECT c.identity_key FROM candidates c JOIN cache_groups g USING(identity_key))")
 		}
-		if structuredReadEnabled("address_links") {
+		if query.pageKeys != nil {
+			args = append(args, query.pageKeys)
+			keys := fmt.Sprintf("$%d::text[]", len(args))
+			if query.pageKeySource == pageTupleLocators {
+				pageSource = "SELECT unnest(" + keys + ")::tid t"
+			} else if query.pageKeySource == pageBaseIdentityKeys {
+				baseWhere = append(baseWhere, "l.base_identity=ANY("+keys+")")
+			} else {
+				pageSource = "SELECT DISTINCT t FROM discovery_list_page_sources(" + keys + ") t"
+				if matchedWhere == "" {
+					matchedWhere = " WHERE true"
+				}
+				matchedWhere += " AND identity_key COLLATE \"C\"=ANY(" + keys + ")"
+			}
+		} else if structuredReadEnabled("address_links") {
 			extraCTE = liveAddressLinksCTE + strings.Replace(extraCTE, "JOIN discovery_identity_links i ON i.observation_id=f.id", "JOIN live_address_links i ON i.observation_id=f.id", 1)
 			addressJoin = "LEFT JOIN live_address_links i ON i.observation_id=l.id AND l.raw_mac=''"
 		}
-		sourceRows = structuredSourceSQL(query, baseWhere)
+		sourceRows = structuredSourceSQL(query, baseWhere, pageSource)
 		identitySQL = "CASE WHEN coalesce(l.display_endpoint,'')='' THEN l.base_identity ELSE " + identitySQL + " END"
 	}
-	statement := `WITH trusted_address AS MATERIALIZED (
+	// SADP can change the identity of a returned fact. Resolve its binding
+	// against all authoritative observations for that IP and scope, but only
+	// request the trust check for SADP observations in the candidate slice.
+	sources := "source_rows AS MATERIALIZED (\n " + sourceRows + "\n)"
+	beforeTrust, afterTrust, trustFilter := "", ", "+sources, ""
+	if query.pageKeys != nil {
+		beforeTrust, afterTrust = sources+", ", ""
+		trustFilter = " AND m.id IN (SELECT id FROM source_rows WHERE origin='sadp')"
+	}
+	statement := `WITH ` + beforeTrust + `trusted_address AS MATERIALIZED (
  SELECT m.id observation_id,t.mac FROM discovery_observation_latest m
  JOIN LATERAL (
   SELECT min(lower(v.data->>'mac')) mac FROM discovery_observation_latest v
@@ -139,13 +166,11 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
   HAVING count(DISTINCT lower(v.data->>'mac'))=1
    AND bool_or(v.origin='arp' OR (v.origin='sadp' AND v.data->'evidence'->'payload'->>'identity_status' IN ('direct_l2','arp_binding')))
  ) t ON lower(coalesce(m.data->'evidence'->'payload'->>'claimed_mac',''))=t.mac
- WHERE m.origin='sadp' AND NOT m.withdrawn AND m.observed_at<=now() AND m.observed_at>=now()-interval '30 days'
+ WHERE m.origin='sadp'` + trustFilter + ` AND NOT m.withdrawn AND m.observed_at<=now() AND m.observed_at>=now()-interval '30 days'
   AND coalesce(m.data->>'node','')<>'' AND coalesce(m.data->>'site','')<>'' AND coalesce(m.data->>'domain','')<>''
   AND coalesce(m.data->>'mac','')='' AND m.data->'evidence'->'payload'->>'identity_status'='l2_mismatch'
   AND m.data->'evidence'->'payload'->>'claimed_ip'=m.data->>'ip'
-)` + extraCTE + `, source_rows AS MATERIALIZED (
- ` + sourceRows + `
-), candidate_links AS NOT MATERIALIZED (
+)` + extraCTE + afterTrust + `, candidate_links AS NOT MATERIALIZED (
  SELECT l.*,coalesce(i.endpoint_id,ix.endpoint_id,dl.endpoint_id) linked_endpoint,
   CASE WHEN ` + usableSourceMAC + ` AND i.endpoint_id IS NULL AND ix.endpoint_id IS NULL
    THEN l.source_campus END lease_campus
@@ -235,6 +260,11 @@ func buildHardwareIndexedPage(selection indexedDeviceSelection, positionWhere, l
 	if selection.Query.structured {
 		pageSource = `JOIN discovery_list_observation f ON f.ctid=l.observation_tid
 JOIN discovery_observation_latest page_o ON (page_o.device_key,page_o.source_id,page_o.origin,page_o.service_type,page_o.port)=(f.device_key,f.source_id,f.origin,f.service_type,f.port)`
+	}
+	if selection.Query.pageKeys != nil {
+		pageSource = `CROSS JOIN LATERAL (SELECT f.* FROM discovery_list_observation f WHERE f.ctid=l.observation_tid OFFSET 0) f
+CROSS JOIN LATERAL (SELECT o.data,o.observed_at,o.device_key,o.source_id,o.origin,o.service_type,o.port FROM discovery_observation_latest o
+ WHERE (o.device_key,o.source_id,o.origin,o.service_type,o.port)=(f.device_key,f.source_id,f.origin,f.service_type,f.port) OFFSET 0) page_o`
 	}
 	statement := selection.CTE
 	pageRows := "candidate_rows"

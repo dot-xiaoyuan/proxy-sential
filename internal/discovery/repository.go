@@ -235,6 +235,9 @@ func (r Repository) Finish(ctx context.Context, t Task, s Snapshot, runErr error
 type DeviceQuery struct {
 	HardwareV2                    bool
 	groupPageRows                 bool
+	pageKeys                      []string
+	pageKeySource                 pageKeySource
+	orderedPageDisabled           bool
 	structured                    bool
 	includeCandidateTypes         bool
 	Protocol, State, Domain, VLAN string
