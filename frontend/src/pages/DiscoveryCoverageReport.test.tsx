@@ -47,6 +47,14 @@ it('leads with one funnel whose layers are subsets of the previous one', () => {
   expect(document.body).not.toHaveTextContent('未识别')
 })
 
+it.each([
+  ['15m0s', '近 15 分钟'], ['24h0m0s', '近 24 小时'],
+  ['168h0m0s', '近 7 天'], ['720h0m0s', '近 30 天'],
+])('labels published duration %s in the overview', (window, label) => {
+  render(<DiscoveryCoverageReport report={{...field, window}} />)
+  expect(screen.getByText(/共发现/, {selector:'p'})).toHaveTextContent(label + '共发现')
+})
+
 it('explains every unconfirmed address with mutually exclusive reasons', () => {
   render(<DiscoveryCoverageReport report={field} />)
   const reasons = screen.getByRole('region', {name:'还没确认类型的原因'})

@@ -312,7 +312,9 @@ export function DiscoveryCoverageReport({ report, composition, compositionFeedba
   const review = report.ipv4_type_review
   const lagMinutes = report.identity_as_of ? Math.round((Date.parse(report.as_of) - Date.parse(report.identity_as_of)) / 60_000) : 0
   const funnel = report.mirror_funnel
-  const windowLabel = windowLabels[report.window] ?? '所选时间范围'
+  // Go reports retain zero-valued minutes and seconds in their duration strings.
+  const windowKey = report.window.replace(/^(\d+h)0m0s$/, '$1').replace(/^(\d+m)0s$/, '$1')
+  const windowLabel = windowLabels[windowKey] ?? '所选时间范围'
   return <section className="coverage-content" aria-label="设备发现覆盖报表">
     <div className="coverage-timestamps" aria-label="数据时效">
       {report.identity_as_of ? <span>设备数据截至 {observedTimeTitle(report.identity_as_of)}</span>
