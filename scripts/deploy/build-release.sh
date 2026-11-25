@@ -78,6 +78,7 @@ JS
   cp deploy/logrotate/proxy-sentinel-flow-syn-signals "$release_dir/deploy/logrotate/proxy-sentinel-flow-syn-signals"
   cp -R deploy/systemd "$release_dir/deploy/systemd"
   cp scripts/deploy/proxy-sentinelctl "$release_dir/scripts/proxy-sentinelctl"
+  cp scripts/maintenance/passive_health.py "$release_dir/scripts/passive_health.py"
   cp scripts/eventbus-184-health.sh "$release_dir/scripts/eventbus-184-health.sh"
   cp scripts/deploy/refresh-proxy-sources.py "$release_dir/scripts/refresh-proxy-sources.py"
   cp scripts/deploy/activate-zeek-socks-stream.py "$release_dir/scripts/activate-zeek-socks-stream.py"

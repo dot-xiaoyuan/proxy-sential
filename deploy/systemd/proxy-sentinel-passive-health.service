@@ -1,0 +1,14 @@
+[Unit]
+Description=Read-only health of the passive discovery site
+After=docker.service proxy-sentinel-control-plane.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/proxy-sentinel/current/scripts/passive_health.py --journal
+TimeoutStartSec=100s
+Nice=10
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true

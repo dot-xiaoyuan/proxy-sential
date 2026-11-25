@@ -189,3 +189,13 @@ SELECT count(*) AS missing_reference_members FROM passive_archive_members WHERE 
 ```
 
 隔离恢复时按已核验的 batch_id、row_hash 取出 raw_b64，Base64 解码后的字节应与原始记录（不含行结束符）逐字节相同。重复处理同一批次后复查原文数和 accepted_at。必要证据热查 30 天，保留至首次成功入库满一年；当前版本保留现有热数据，归档没有自动清理规则。存量尚未核验、案件引用未排除或容量尚未实测的区间继续保留。
+
+### 204 只读巡检与容量采样
+
+204 应用包内的 `scripts/passive_health.py` 使用现场已有的 PostgreSQL、ClickHouse 容器和本机控制面生成一行 JSON。204 发布人员核对 `current` 后单独安装包内的 `proxy-sentinel-passive-health.service`、`proxy-sentinel-passive-health.timer`，执行 `systemctl daemon-reload` 和 `systemctl enable --now proxy-sentinel-passive-health.timer`。每轮巡检结束十分钟后再次采样。读取 `journalctl -u proxy-sentinel-passive-health.service` 查看采样，读取 `journalctl -t proxy-sentinel-passive-health -p warning` 查看告警。回退前先停用现场新增加的 timer。
+
+巡检按图表表统计最近一小时成功新增 part 和合并次数。至少两次新增、零次合并且同一分区有多个活跃 part 时告警，运维人员结合连续样本、合并策略与负载判断。单分区活跃 part 达到该表有效 `parts_to_delay_insert` 的 80%、近一小时出现 DelayedInserts 或解析输入错误、硬件队列出错、归档重试耗尽、readyz 非 200、存在失败单元、数据盘可用低于 20% 均会进入告警。采样失败记录指标名称并返回非零。累计错误和各来源处理水位保留在 JSON 中。
+
+从工作区执行 `python3 scripts/maintenance/capacity_204.py collect artifacts/204-operations-20261125`。脚本通过 SSH 在 204 执行只读查询，在本地按北京时间保存 `capacity-YYYY-MM-DD.json`，同日复跑保留第一份成功样本。每天在同一时段采集，使用 `python3 scripts/maintenance/capacity_204.py report artifacts/204-operations-20261125` 查看逐日差量。跳过缺日区间，WAL 字节差按实时间隔折算速率。统计重置或表 OID 变化时重新累计 HOT 比例。连续七个采样日后按表估算净增长，分别列出热历史 30 天与归档 365 天的增量，扣除数据盘 20% 余量。当前态、其他业务和有 TTL 的流量表单列日增长。整机容量结论还需核对这些业务的留存策略及数据库之外的空间变化。
+
+7 天和 30 天覆盖报表从同一份硬件身份投影和类型变更账本读取趋势。后台发布时按传感器计数，随已有报表一起更新。首次观测按身份的最早观测时间计入。类型变更只统计确认类型变为另一确认类型的身份，同一身份同一窗口只计一次。仅上期有观测表示末次观测落在上一个等长时段。迟到证据可改变后续发布结果。页面给出投影的最早留存观测、账本起点和最近成功时间。区间超出留存边界时显示缺口，无支撑记录的项目显示覆盖待核查。流量汇总表的 8 天及 31 天 TTL 与这些硬件身份证据各自独立。

@@ -1,0 +1,10 @@
+[Unit]
+Description=Check passive discovery site health every ten minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=10min
+Unit=proxy-sentinel-passive-health.service
+
+[Install]
+WantedBy=timers.target
