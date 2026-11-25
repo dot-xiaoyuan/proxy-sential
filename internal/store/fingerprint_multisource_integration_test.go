@@ -10,9 +10,10 @@ import (
 )
 
 func TestFingerprintCoverageAndRebuildLanesPostgres(t *testing.T) {
+	t.Setenv("PROXY_SENTINEL_FINGERPRINT_HISTORY_BACKFILL", "true")
 	s := recognitionLeasePrivatePostgres(t)
 	ctx := context.Background()
-	for _, name := range []string{"100_recognition_queue_coalescing.sql", "101_fingerprint_rebuild_lane.sql"} {
+	for _, name := range []string{"100_recognition_queue_coalescing.sql", "101_fingerprint_rebuild_lane.sql", "232_job_enqueue_outbox.sql"} {
 		data, e := os.ReadFile("../../migrations/postgres/" + name)
 		if e != nil {
 			t.Fatal(e)

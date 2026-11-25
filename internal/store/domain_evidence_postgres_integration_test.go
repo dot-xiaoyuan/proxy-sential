@@ -11,7 +11,7 @@ import (
 	"proxy-sentinel/internal/normalized"
 )
 
-func TestPostgresDomainEvidenceIsIdempotentAndSessionScoped(t *testing.T) {
+func TestPostgresDomainEvidenceRequiresScopedLeaseAndDeduplicates(t *testing.T) {
 	dsn := os.Getenv("PROXY_SENTINEL_TEST_POSTGRES_DSN")
 	if dsn == "" {
 		t.Skip("PROXY_SENTINEL_TEST_POSTGRES_DSN is not set")
@@ -25,7 +25,7 @@ func TestPostgresDomainEvidenceIsIdempotentAndSessionScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer postgres.Close()
+	t.Cleanup(func() { postgres.Close() })
 	testNamespace := fmt.Sprintf("domain-integration-%d", time.Now().UnixNano())
 	uniqueIP := fmt.Sprintf("198.18.%d.%d", time.Now().UnixNano()%200+1, time.Now().UnixNano()/200%200+1)
 	endpointID := "mac:02:00:00:00:09:12-" + testNamespace
@@ -33,6 +33,7 @@ func TestPostgresDomainEvidenceIsIdempotentAndSessionScoped(t *testing.T) {
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
+		_, _ = postgres.db.ExecContext(cleanupCtx, `DELETE FROM device_address_leases WHERE sensor_id=$1`, testNamespace)
 		_, _ = postgres.db.ExecContext(cleanupCtx, `DELETE FROM endpoint_domain_evidence_events WHERE endpoint_id=$1`, endpointID)
 		_, _ = postgres.db.ExecContext(cleanupCtx, `DELETE FROM endpoint_domain_evidence WHERE endpoint_id=$1`, endpointID)
 		_, _ = postgres.db.ExecContext(cleanupCtx, `DELETE FROM identity_access_history WHERE event_id LIKE $1`, testNamespace+"%")
@@ -49,13 +50,23 @@ func TestPostgresDomainEvidenceIsIdempotentAndSessionScoped(t *testing.T) {
 		t.Fatal(err)
 	}
 	event := normalized.Event{SchemaVersion: "v1", EventID: testNamespace + "-evidence-1", Source: "suricata", Type: "tls", Timestamp: "2026-09-02T10:05:00Z", Subject: map[string]any{"ip": uniqueIP}, Flow: map[string]any{}, Payload: map[string]any{"sni": "push.apple.test"}, Confidence: 1}
+	// An authenticated session by itself cannot attribute a routed device service.
+	if result, err := postgres.ProcessDomainEvents(ctx, []normalized.Event{event}, library); err != nil || result.Matched != 1 || result.Attributed != 0 {
+		t.Fatalf("unscoped service attribution: %+v err=%v", result, err)
+	}
+	event.Observer = map[string]any{"sensor_id": testNamespace}
+	event.Subject["campus_id"] = "test-campus"
+	if _, err := postgres.db.ExecContext(ctx, `INSERT INTO device_address_leases(sensor_id,campus_id,event_id,ip,endpoint_id,observed_at,valid_until,action)
+	  VALUES ($1,'test-campus',$2,$3::inet,$4,'2026-09-02 10:00Z','2026-09-02 10:10Z','ack')`, testNamespace, testNamespace+"-ack", uniqueIP, endpointID); err != nil {
+		t.Fatal(err)
+	}
 	for range 2 {
 		if _, err := postgres.ProcessDomainEvents(ctx, []normalized.Event{event}, library); err != nil {
 			t.Fatal(err)
 		}
 	}
 	items, err := postgres.windowDomainEvidence(ctx, endpointID, testNamespace, time.Date(2026, 9, 2, 11, 0, 0, 0, time.UTC))
-	if err != nil || len(items) != 1 || items[0].Count != 1 || items[0].AttributionMethod != "active_auth_session" {
+	if err != nil || len(items) != 1 || items[0].Count != 1 || items[0].AttributionMethod != "dhcp_lease" {
 		t.Fatalf("idempotent evidence failed: %+v err=%v", items, err)
 	}
 	ended := identity
@@ -69,6 +80,6 @@ func TestPostgresDomainEvidenceIsIdempotentAndSessionScoped(t *testing.T) {
 	event.Timestamp = "2026-09-02T10:11:00Z"
 	result, err := postgres.ProcessDomainEvents(ctx, []normalized.Event{event}, library)
 	if err != nil || result.Attributed != 0 {
-		t.Fatalf("ended session must not receive evidence: %+v err=%v", result, err)
+		t.Fatalf("expired scoped lease must not receive evidence: %+v err=%v", result, err)
 	}
 }
