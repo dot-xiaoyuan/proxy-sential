@@ -112,16 +112,21 @@ export function DiscoveryCoveragePage() {
       return next
     })
   }
-  function feedback(label: string) {
-    if (activeQuery.isFetching && !activeQuery.data) return <AppLoadingState label={`正在读取${label}…`} rows={4} />
-    if (activeQuery.error instanceof ApiError && activeQuery.error.status === 503 && activeQuery.error.message.includes('discovery_report_preparing')) {
+  const isFetching = activeQuery.isFetching || (section === 'overview' && distribution.isFetching)
+  function refresh() {
+    void activeQuery.refetch()
+    if (section === 'overview') void distribution.refetch()
+  }
+  function feedback(label: string, query = activeQuery) {
+    if (query.isFetching && !query.data) return <AppLoadingState label={`正在读取${label}…`} rows={4} />
+    if (query.error instanceof ApiError && query.error.status === 503 && query.error.message.includes('discovery_report_preparing')) {
       return <p className="coverage-empty" role="status">正在生成首份统计报表。</p>
     }
-    if (activeQuery.isError) return <p role="alert" className="coverage-empty">
-      {label}{activeQuery.error instanceof ApiError && activeQuery.error.status === 504 ? '读取超时。' : '读取失败。'}
-      {activeQuery.data ? '当前显示上次成功读取的数据。' : '可用顶部的刷新按钮重试。'}
+    if (query.isError) return <p role="alert" className="coverage-empty">
+      {label}{query.error instanceof ApiError && query.error.status === 504 ? '读取超时。' : '读取失败。'}
+      {query.data ? '当前显示上次成功读取的数据。' : '可用顶部的刷新按钮重试。'}
     </p>
-    const publication = activeQuery.data?.publication
+    const publication = query.data?.publication
     if (publication) return <p className="coverage-timestamps">报表发布于 {observedTimeTitle(publication.published_at)}{publication.delayed && ' · 更新延迟，显示最近一次发布结果'}</p>
     return null
   }
@@ -131,14 +136,15 @@ export function DiscoveryCoveragePage() {
       <Typography.Title level={3}>设备发现覆盖报表</Typography.Title>
       {section !== 'history' && section !== 'review' && <div className="discovery-report-page-actions">
         <Select aria-label="统计时间范围" value={window} options={windows} onChange={value => changeParam('window', value)} />
-        <Button icon={<ReloadOutlined aria-hidden="true"/>} onClick={() => void activeQuery.refetch()} loading={activeQuery.isFetching}>刷新</Button>
+        <Button icon={<ReloadOutlined aria-hidden="true"/>} onClick={refresh} loading={isFetching}>刷新</Button>
       </div>}
     </header>
-    <Tabs className="coverage-tabs" aria-busy={section !== 'history' && section !== 'review' && activeQuery.isFetching} activeKey={section} onChange={value => changeParam('section', value)} items={sections.map(item => ({
+    <Tabs className="coverage-tabs" aria-busy={section !== 'history' && section !== 'review' && isFetching} activeKey={section} onChange={value => changeParam('section', value)} items={sections.map(item => ({
       ...item,
       children: item.key === 'overview' ? <>
         {section === 'overview' && feedback('覆盖总览')}
-        {coverage.data && <DiscoveryCoverageReport report={coverage.data} composition={distribution.data} />}
+        {coverage.data && <DiscoveryCoverageReport report={coverage.data} composition={distribution.data}
+          compositionFeedback={distribution.isError ? feedback('类型构成', distribution) : undefined} />}
       </> : item.key === 'networks' ? <>
         {section === 'networks' && feedback('网段和 VLAN')}
         {distribution.data && <CoverageNetworks data={distribution.data} window={window} />}

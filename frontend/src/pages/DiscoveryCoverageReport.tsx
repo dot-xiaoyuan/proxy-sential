@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import type { components } from '../shared/api/generated'
 import { observedTimeTitle } from '../shared/ui/observedTime'
 import { deviceTypeLabel } from '../entities/device/DeviceInventoryCells'
@@ -258,7 +259,7 @@ function TypeGroups({ label, rows, tone }: { label: string; rows?: TypeRow[]; to
   </section>
 }
 
-function CoverageComposition({ composition }: { composition?: CoverageComposition }) {
+function CoverageComposition({ composition, feedback }: { composition?: CoverageComposition; feedback?: ReactNode }) {
   const hasConfirmed = (composition?.types ?? []).some(row => row.count > 0)
   const hasInferred = (composition?.candidate_types ?? []).some(row => row.count > 0)
   return <section className="coverage-panel" aria-labelledby="coverage-types-heading">
@@ -266,7 +267,8 @@ function CoverageComposition({ composition }: { composition?: CoverageCompositio
       <h4 id="coverage-types-heading">识别出了什么</h4>
       <p>按设备记录计数，同一设备在不同 VLAN 会分别计数</p>
     </div></header>
-    {!composition ? <p className="coverage-empty">正在读取类型构成…</p>
+    {feedback}
+    {!composition ? (!feedback && <p className="coverage-empty">正在读取类型构成…</p>)
       : !hasConfirmed && !hasInferred ? <p className="coverage-empty">选定范围内暂无类型结论。</p>
         : <>
           <TypeGroups label="已确认类型" rows={composition.types} tone="teal" />
@@ -302,7 +304,9 @@ function CoverageReasons({ summary }: { summary: CoverageSummary }) {
   </section>
 }
 
-export function DiscoveryCoverageReport({ report, composition }: { report: CoverageReport; composition?: CoverageComposition }) {
+export function DiscoveryCoverageReport({ report, composition, compositionFeedback }: {
+  report: CoverageReport; composition?: CoverageComposition; compositionFeedback?: ReactNode
+}) {
   const summary = buildCoverageSummary(report)
   const { device, confirmed, inferred, total, deviceOutsideMirror } = summary
   const review = report.ipv4_type_review
@@ -329,7 +333,7 @@ export function DiscoveryCoverageReport({ report, composition }: { report: Cover
     </p>}
     <CoverageFunnel summary={summary} />
     <div className="coverage-panels">
-      <CoverageComposition composition={composition} />
+      <CoverageComposition composition={composition} feedback={compositionFeedback} />
       <CoverageReasons summary={summary} />
     </div>
     {report.hardware_trend && <HardwareTrendPanel trend={report.hardware_trend} />}

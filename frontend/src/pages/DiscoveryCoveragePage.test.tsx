@@ -33,3 +33,30 @@ it('loads the report as an independent page using the selected window', async ()
   fireEvent.click(screen.getByRole('tab',{name:'网段与 VLAN'}))
   await waitFor(() => expect(request).toHaveBeenCalledWith('/discovery/devices/metadata?mode=passive&identity_scope=devices&window=168h', expect.anything()))
 })
+
+it('shows a metadata error, retries both overview queries and retains the last successful composition', async () => {
+  let attempts = 0
+  request.mockImplementation(async (path: string) => {
+    if (path.includes('/metadata?')) {
+      attempts++
+      if (attempts !== 2) throw new Error('metadata unavailable')
+      return {types:[{device_type:'printer',count:7}]}
+    }
+    return {as_of:'2026-11-15T11:00:00Z',window:'24h',ipv4:5,ipv6:0}
+  })
+  const client = new QueryClient({defaultOptions:{queries:{retry:false}}})
+  render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/devices/coverage']}><DiscoveryCoveragePage/></MemoryRouter></QueryClientProvider>)
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('类型构成读取失败。可用顶部的刷新按钮重试。')
+  expect(screen.queryByText('正在读取类型构成…')).not.toBeInTheDocument()
+  expect(screen.getByRole('region',{name:'发现与识别'})).toBeVisible()
+  fireEvent.click(screen.getByRole('button',{name:'刷新'}))
+  expect(await screen.findByRole('region',{name:'已确认类型'})).toHaveTextContent('7 个设备记录')
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button',{name:'刷新'}))
+  expect(await screen.findByRole('alert')).toHaveTextContent('类型构成读取失败。当前显示上次成功读取的数据。')
+  expect(screen.getByRole('region',{name:'已确认类型'})).toHaveTextContent('7 个设备记录')
+  expect(attempts).toBe(3)
+  expect(request.mock.calls.filter(([path])=>path.includes('/coverage-report?'))).toHaveLength(3)
+})
