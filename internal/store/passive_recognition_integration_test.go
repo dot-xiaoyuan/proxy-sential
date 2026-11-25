@@ -3,43 +3,29 @@ package store
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 )
 
 func TestPassiveDiscoveryRecognitionHintsPostgres(t *testing.T) {
-	dsn := os.Getenv("PROXY_SENTINEL_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("isolated PostgreSQL required")
-	}
 	ctx := context.Background()
-	if _, err := ApplyPostgresMigrations(ctx, dsn, "../../migrations/postgres"); err != nil {
-		t.Fatal(err)
-	}
-	s, err := NewPostgresStore(PostgresOptions{DSN: dsn})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-
+	s := privateMigratedTestPostgres(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	suffix := fmt.Sprint(now.UnixNano())
 	endpointID := "passive-recognition-" + suffix
 	nameID := "passive-observation-name-" + suffix
 	ssdpID := "passive-observation-ssdp-" + suffix
 	snmpID := "passive-observation-snmp-" + suffix
-	observations := []string{nameID, ssdpID, snmpID}
-	t.Cleanup(func() {
-		for _, id := range observations {
-			_, _ = s.db.ExecContext(ctx, `DELETE FROM discovery_identity_links WHERE observation_id=$1`, id)
-			_, _ = s.db.ExecContext(ctx, `DELETE FROM discovery_observations WHERE id=$1`, id)
-		}
-		_, _ = s.db.ExecContext(ctx, `DELETE FROM endpoint_recognition_summary WHERE endpoint_id=$1`, endpointID)
-		_, _ = s.db.ExecContext(ctx, `DELETE FROM endpoint_recognition_jobs WHERE endpoint_id=$1`, endpointID)
-		_, _ = s.db.ExecContext(ctx, `DELETE FROM endpoint_entities WHERE endpoint_id=$1`, endpointID)
-	})
-	if _, err = s.db.ExecContext(ctx, `INSERT INTO endpoint_entities(endpoint_id,primary_mac,entity_role,first_seen,last_seen,attributes) VALUES($1,'00:11:22:33:44:55','endpoint',$2,$2,'{}')`, endpointID, now); err != nil {
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO endpoint_entities(endpoint_id,primary_mac,entity_role,first_seen,last_seen,attributes) VALUES($1,'00:11:22:33:44:55','endpoint',$2,$2,'{}')`, endpointID, now); err != nil {
+		t.Fatal(err)
+	}
+	// First consume the entity insert. Any later generation must come from
+	// the discovery links, whose outbox marks coalesce within one dispatch.
+	if _, err := (&DBStore{pg: s}).flushRecognitionDirtyLog(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var before int64
+	if err := s.db.QueryRowContext(ctx, `UPDATE endpoint_recognition_jobs SET processed_generation=dirty_generation WHERE endpoint_id=$1 RETURNING dirty_generation`, endpointID).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
 	insert := func(id, origin string, observedAt time.Time, document string) {
@@ -88,7 +74,7 @@ func TestPassiveDiscoveryRecognitionHintsPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	var generation int64
-	if err = s.db.QueryRowContext(ctx, `SELECT dirty_generation FROM endpoint_recognition_jobs WHERE endpoint_id=$1`, endpointID).Scan(&generation); err != nil || generation < 2 {
+	if err = s.db.QueryRowContext(ctx, `SELECT dirty_generation FROM endpoint_recognition_jobs WHERE endpoint_id=$1`, endpointID).Scan(&generation); err != nil || generation != before+1 {
 		t.Fatalf("discovery link did not enqueue recognition: generation=%d err=%v", generation, err)
 	}
 }

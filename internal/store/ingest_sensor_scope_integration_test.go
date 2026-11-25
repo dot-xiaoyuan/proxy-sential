@@ -30,10 +30,10 @@ func TestIngestStatusDoesNotBorrowOtherSensorRun(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	for _, q := range []string{
-		`CREATE TEMP TABLE sensors(sensor_id text PRIMARY KEY)`,
+		`CREATE TEMP TABLE sensors(sensor_id text PRIMARY KEY,display_name text DEFAULT '',collector_kind text DEFAULT '',collector_version text,interface_name text)`,
 		`CREATE TEMP TABLE collector_runs(run_id text PRIMARY KEY,sensor_id text REFERENCES sensors(sensor_id),started_at timestamptz,finished_at timestamptz,previous_offset bigint DEFAULT 0,new_offset bigint DEFAULT 0,truncated bool DEFAULT false,normalized_read bigint DEFAULT 0,normalized_emitted bigint DEFAULT 0,normalized_skipped bigint DEFAULT 0,normalized_malformed bigint DEFAULT 0,evidence_count bigint DEFAULT 0,risk_count bigint DEFAULT 0,risk_list_count bigint DEFAULT 0,summary jsonb DEFAULT '{}')`,
 		`CREATE INDEX ON collector_runs(sensor_id,started_at DESC)`,
-		`INSERT INTO sensors VALUES('local'),('other'),('quiet')`,
+		`INSERT INTO sensors(sensor_id) VALUES('local'),('other'),('quiet')`,
 		`INSERT INTO collector_runs(run_id,sensor_id,started_at,finished_at,normalized_read,normalized_malformed,summary) VALUES('local-run','local',now()-interval '1 hour',now()-interval '1 hour',3,1,'{"normalized":{"by_type":{"dns":3}},"zeek_status":"ready"}'),('other-run','other',now(),now(),99,0,'{}')`,
 	} {
 		if _, err = db.ExecContext(ctx, q); err != nil {

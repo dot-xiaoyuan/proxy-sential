@@ -22,7 +22,8 @@ func touchPassiveLatest(ctx context.Context, db passiveDiscoveryDB, rows []map[s
 SET observed_at=r.observed_at,
     valid_until=CASE WHEN r.valid_until<l.valid_until THEN r.valid_until ELSE GREATEST(l.valid_until, r.valid_until) END
 FROM jsonb_to_recordset($1::jsonb) AS r(id text, observed_at timestamptz, valid_until timestamptz)
-WHERE l.id=r.id AND (r.observed_at>=l.observed_at+interval '60 seconds' OR r.valid_until<l.valid_until)`, string(payload))
+WHERE l.id=r.id AND r.observed_at>=l.observed_at
+ AND (r.observed_at>=l.observed_at+interval '60 seconds' OR r.valid_until<l.valid_until)`, string(payload))
 	return err
 }
 
