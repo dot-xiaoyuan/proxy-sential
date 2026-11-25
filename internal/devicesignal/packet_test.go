@@ -283,13 +283,14 @@ func TestDiscoverySYNFilterAndScopedStackEvent(t *testing.T) {
 	frame[22+20+13] = 2
 	bucket := newCaptureBucket()
 	bucket.discoveryNetworks = []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
-	scope := &normalized.CaptureScope{UserCIDRs: []string{"10.0.0.0/8"}}
+	at := time.Now().UTC()
+	scope := &normalized.CaptureScope{UserCIDRs: []string{"10.0.0.0/8"}, SensorID: "sensor", CollectorInstanceID: "instance", InterfaceName: "mirror", CampusID: "campus", AccessDomain: "domain", ValidFrom: at.Add(-time.Hour), ValidUntil: at.Add(time.Hour)}
 	bucket.addFrame(frame, scope)
 	if len(bucket.packets) != 1 {
 		t.Fatalf("missing scoped SYN: %+v", bucket)
 	}
 	file := filepath.Join(t.TempDir(), "events")
-	if err := writePacketBucketWithScope(file, "sensor", "mirror", "instance", nil, time.Now().UTC(), bucket.packets); err != nil {
+	if err := writePacketBucketWithScope(file, "sensor", "mirror", "instance", scope, at, bucket.packets); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(file)
@@ -299,5 +300,45 @@ func TestDiscoverySYNFilterAndScopedStackEvent(t *testing.T) {
 	}
 	if e.Type != "device" || e.SourceEventType != "tcp_syn" || e.Subject["ip"] != "10.202.4.8" || e.Subject["mac"] != nil || e.Payload["neighbor_mac"] != nil || e.Payload["vlan"] != "4005/19" || e.Payload["tcp_window"] != float64(0) {
 		t.Fatalf("unsafe stack attribution %+v", e)
+	}
+}
+
+func TestDiscoverySYNOnlyWritesInsideCollectorScope(t *testing.T) {
+	at := time.Now().UTC()
+	scope := &normalized.CaptureScope{UserCIDRs: []string{"10.0.0.0/8"}, SensorID: "sensor", CollectorInstanceID: "collector", InterfaceName: "mirror", ValidFrom: at.Add(-time.Hour), ValidUntil: at.Add(time.Hour)}
+	values := map[bucketKey]int{{DiscoverySYN: true, IP: "10.10.1.1", Version: 4, TTL: 64}: 1, {IP: "10.10.2.2", Version: 4, TTL: 64}: 1}
+	for _, tc := range []struct {
+		name, sensor, instance, iface string
+		scope                         *normalized.CaptureScope
+		at                            time.Time
+	}{
+		{"expired", "sensor", "collector", "mirror", scope, scope.ValidUntil},
+		{"future", "sensor", "collector", "mirror", scope, scope.ValidFrom.Add(-time.Second)},
+		{"missing", "sensor", "collector", "mirror", nil, at},
+		{"wrong sensor", "other", "collector", "mirror", scope, at},
+		{"wrong interface", "sensor", "collector", "other", scope, at},
+		{"wrong instance", "sensor", "other", "mirror", scope, at},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "events")
+			if err := writeBucketWithScope(file, tc.sensor, tc.iface, tc.instance, tc.scope, tc.at, values); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var event normalized.Event
+			if err := json.Unmarshal(raw, &event); err != nil || event.SourceEventType != "ttl" {
+				t.Fatalf("want only previous protocol output, got %s", raw)
+			}
+		})
+	}
+	scope.ValidUntil = at.Add(-time.Second)
+	bucket := newCaptureBucket()
+	bucket.discoveryNetworks = []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+	bucket.addFrame(flowSYNFrame(false, 2), scope)
+	if len(bucket.packets) != 0 {
+		t.Fatal("accepted SYN from a capture burst after scope expiry")
 	}
 }

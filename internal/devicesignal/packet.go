@@ -203,6 +203,13 @@ func parseTCPFingerprint(frame []byte, offset int, df bool) tcpFingerprint {
 	return result
 }
 
+// A discovery SYN adds a new collection purpose to the router socket. Original
+// protocol observations retain their existing scope-issue reporting behavior.
+func discoverySYNScopeValid(scope *normalized.CaptureScope, sensor, iface, instance string, at time.Time) bool {
+	return scope != nil && len(scope.UserCIDRs) > 0 && scope.SensorID == sensor && scope.CollectorInstanceID == instance &&
+		(scope.InterfaceName == "" || scope.InterfaceName == iface) && !at.Before(scope.ValidFrom) && at.Before(scope.ValidUntil)
+}
+
 func writePacketBucketWithScope(path, sensorID, interfaceName, instance string, scope *normalized.CaptureScope, bucket time.Time, values map[packetBucketKey]int) error {
 	return writePacketBucketWithSource(path, sensorID, interfaceName, instance, "packet-sidecar", scope, bucket, values)
 }
@@ -240,7 +247,11 @@ func writeBucketWithSource(path, sensorID, interfaceName, instance, source strin
 	}
 	sort.Slice(keys, func(i, j int) bool { return fmt.Sprint(keys[i]) < fmt.Sprint(keys[j]) })
 	encoder := json.NewEncoder(file)
+	synAllowed := discoverySYNScopeValid(scope, sensorID, interfaceName, instance, bucket)
 	for _, key := range keys {
+		if key.DiscoverySYN && !synAllowed {
+			continue
+		}
 		identity := fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%d\x00%s\x00%s\x00%s", sensorID, key.IP, key.Direction, key.Version, key.TTL, key.TCPStack, bucket.UTC().Format(time.RFC3339), key.TrafficScope)
 		if key.TCPWindow > 0 || key.DiscoverySYN {
 			identity += fmt.Sprintf("\x00window=%d\x00vlan=%s", key.TCPWindow, key.VLAN)

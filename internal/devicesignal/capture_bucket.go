@@ -44,10 +44,10 @@ func (b *captureBucket) addFrame(frame []byte, scope *normalized.CaptureScope) {
 		b.addHandshake(frame)
 	}
 	if value, ok := parsePacketFrame(frame); ok && value.TTL > 0 {
-		if len(b.discoveryNetworks) > 0 && value.directTCP {
+		if b.discoveryNetworks != nil && value.directTCP {
 			// This collector receives a bounded slice of an initial SYN. Save
 			// only the sender's stack and VLAN, never the forwarding MAC.
-			if !value.TCP.present() {
+			if !value.TCP.present() || scope == nil || !time.Now().Before(scope.ValidUntil) {
 				return
 			}
 			if !flowSourceAllowed(value.IP, b.discoveryNetworks) {

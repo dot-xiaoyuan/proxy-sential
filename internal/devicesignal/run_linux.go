@@ -107,7 +107,7 @@ func Run(ctx context.Context, opts Options) error {
 	if err := syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_RCVBUF, 32<<20); err != nil {
 		return fmt.Errorf("set capture receive buffer: %w", err)
 	}
-	discoverySYN := opts.RouterProtocolsOnly && os.Getenv("PROXY_SENTINEL_PASSIVE_BEHAVIOR_WRITE") == "true" && opts.CaptureScope != nil && len(opts.CaptureScope.UserCIDRs) > 0
+	discoverySYN := opts.RouterProtocolsOnly && os.Getenv("PROXY_SENTINEL_PASSIVE_BEHAVIOR_WRITE") == "true" && discoverySYNScopeValid(opts.CaptureScope, opts.SensorID, opts.Interface, opts.CollectorInstanceID, time.Now())
 	if discoverySYN {
 		if err := attachDiscoverySYNFilter(fd); err != nil {
 			return fmt.Errorf("attach discovery protocol and SYN BPF: %w", err)
@@ -218,6 +218,15 @@ func Run(ctx context.Context, opts Options) error {
 	restoredBuffer := make([]byte, len(buffer)+4)
 	droppedScopeFrames := 0
 	for {
+		if discoverySYN && !time.Now().Before(opts.CaptureScope.ValidUntil) {
+			if err := attachRouterProtocolFilter(fd); err != nil {
+				return fmt.Errorf("restore router protocol filter after discovery scope expired: %w", err)
+			}
+			discoverySYN = false
+			// A socket can still hold SYNs queued under the previous filter.
+			// No source matches the drained interval, including as a legacy TTL.
+			state.discoveryNetworks = []netip.Prefix{}
+		}
 		processed := 0
 		// A saturated mirror interface may always have another frame ready.
 		// Bound each receive burst so the bucket ticker cannot be starved and
