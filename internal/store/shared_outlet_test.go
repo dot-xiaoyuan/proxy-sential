@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/DATA-DOG/go-sqlmock"
+	"proxy-sentinel/internal/evidence"
 	"proxy-sentinel/internal/policy"
 	"proxy-sentinel/internal/sharedaccess"
 	"slices"
@@ -128,5 +129,53 @@ func TestRouterRoleReviewDistinguishesDHCPInput(t *testing.T) {
 		if got := routerRoleReviewReason(role); got != test.want {
 			t.Errorf("%s/%s: got %q want %q", test.source, test.input, got, test.want)
 		}
+	}
+}
+
+func TestOutletRequiresExplicitRouterRolePostgres(t *testing.T) {
+	s := routerProjectionPrivatePostgres(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	w := sharedaccess.Window{SensorID: "mirror", To: now}
+	for i, test := range []struct {
+		family, input, reason string
+		explicit              bool
+	}{
+		{"dhcp", "hostname", "型号仅来自 DHCP 主机名，缺少独立路由器角色证据", false},
+		{"dhcp", "", "DHCP 型号记录缺少匹配字段，无法确认路由器角色", false},
+		{"http_management", "user_agent", "路由器角色证据不足", false},
+		{"dhcp", "vendor_class", "", true},
+		{"ssdp", "http_server", "", true},
+		{"cdp", "software", "", true},
+		{"lldp", "lldp_system_description", "", true},
+		{"cdp", "cdp_platform", "", true},
+	} {
+		t.Run(test.family+"/"+test.input, func(t *testing.T) {
+			fact := routerProjectionFact(now)
+			fact.AssessmentID = fmt.Sprintf("profile-%d", i)
+			fact.MAC = fmt.Sprintf("02:00:00:00:00:%02x", i+1)
+			fact.EndpointID = "mac:" + fact.MAC
+			fact.EvidenceID = fact.AssessmentID + "-model"
+			fact.SensorID, fact.SourceFamily, fact.Input = w.SensorID, test.family, test.input
+			fact.EventIDs = []string{fact.EvidenceID + "-raw"}
+			// A second non-role clue can raise profile confidence. It cannot turn
+			// the first (higher-scoring) clue into explicit role evidence.
+			clue := fact
+			clue.EvidenceID, clue.SourceFamily, clue.Input, clue.Score = fact.AssessmentID+"-vendor", "oui", "oui_vendor", 20
+			clue.EventIDs = []string{clue.EvidenceID + "-raw"}
+			if err := s.WriteRouterObservations(ctx, evidence.RouterResult{RuleVersion: fact.RuleVersion, Evidence: []evidence.RouterEvidence{fact, clue}}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.pg.db.Exec("UPDATE router_assessments SET status='confirmed' WHERE assessment_id=$1", fact.AssessmentID); err != nil {
+				t.Fatal(err)
+			}
+			role, err := s.outletRouter(ctx, w, outletLocator{mac: fact.MAC})
+			if err != nil || role.RoleEventID != fact.EventIDs[0] || (role.RoleEvidenceID != "") != test.explicit {
+				t.Fatalf("role %+v, want explicit=%v: %v", role, test.explicit, err)
+			}
+			if !test.explicit && routerRoleReviewReason(role) != test.reason {
+				t.Fatalf("review reason %q, want %q", routerRoleReviewReason(role), test.reason)
+			}
+		})
 	}
 }

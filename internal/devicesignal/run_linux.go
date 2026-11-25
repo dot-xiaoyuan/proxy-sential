@@ -20,7 +20,7 @@ import (
 )
 
 type Options struct {
-	AuthenticatedRouters func() map[sharedaccess.OutletKey]struct{}
+	AuthenticatedRouters func() RouterSamplingSnapshot
 	CollectorInstanceID  string
 	CaptureScope         *normalized.CaptureScope
 	Interface            string
@@ -151,6 +151,14 @@ func Run(ctx context.Context, opts Options) error {
 	state := newCaptureBucket()
 	state.handshakeEnabled = opts.HandshakeOnly
 	state.handshakeCaptureV2 = handshakeCaptureV2
+	var routerSnapshot RouterSamplingSnapshot
+	startHandshakeBucket := func() {
+		if opts.AuthenticatedRouters != nil {
+			routerSnapshot = opts.AuthenticatedRouters()
+			state.authenticatedRouters = routerSnapshot.Keys
+		}
+	}
+	startHandshakeBucket()
 	packetSource := "packet-sidecar"
 	if opts.SharedSignalsOnly {
 		packetSource = "shared-syn-sidecar"
@@ -170,9 +178,6 @@ func Run(ctx context.Context, opts Options) error {
 			received, drops, known := packetCaptureStats(fd)
 			coverage := sharedaccess.CoverageV2{SchemaVersion: "capture-coverage/v2", From: coverageFrom, To: end, KernelStatsKnown: known, Received: uint64(received), Dropped: uint64(drops), KeyDrops: state.droppedPacketKeys, ParseUnknown: state.handshakeParseFailures, Stopped: ctx.Err() != nil}
 			coverage.ExcludedFrames = state.handshakeExcludedFrames
-			if opts.AuthenticatedRouters != nil {
-				state.authenticatedRouters = opts.AuthenticatedRouters()
-			}
 			keys := state.selectHandshakes(handshakeBucketLimit(), at, priorityCIDRs)
 			for _, summary := range state.handshakes {
 				summary.coverage = coverage
@@ -190,18 +195,16 @@ func Run(ctx context.Context, opts Options) error {
 			if err := writeHandshakeBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, at, state.handshakes, keys); err != nil {
 				return err
 			}
-			if err := writeHandshakeCoverage(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, coverage); err != nil {
+			doc := captureCoverageDocument{CoverageV2: coverage}
+			if opts.AuthenticatedRouters != nil {
+				stats := state.routerSamplingCoverage(keys, routerSnapshot)
+				doc.RouterSampling = &stats
+				log.Printf("handshake_sampling authenticated_router_keys=%d retained_router_activity=%d summaries=%d omitted=%d missing_counts=%v lookup_failed=%t reused_previous_list=%t", stats.Keys, stats.RetainedActivity, len(keys), coverage.Omitted, stats.Reasons, stats.LookupFailed, stats.ReusedPreviousList)
+			}
+			if err := writeCaptureCoverageDocument(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, "handshake-sidecar", opts.CaptureScope, doc); err != nil {
 				return err
 			}
-			if len(state.authenticatedRouters) > 0 {
-				retained := 0
-				for _, key := range keys {
-					if _, ok := state.authenticatedRouters[key]; ok && state.handshakes[key].activity != nil {
-						retained++
-					}
-				}
-				log.Printf("handshake_sampling authenticated_router_keys=%d retained_router_activity=%d summaries=%d omitted=%d", len(state.authenticatedRouters), retained, len(keys), coverage.Omitted)
-			}
+			startHandshakeBucket()
 			coverageFrom = end
 		}
 		selected := selectControls(controlTracker, at, controls)
@@ -224,7 +227,7 @@ func Run(ctx context.Context, opts Options) error {
 			if err := writeControlBucket(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, opts.CaptureScope, at, selected); err != nil {
 				return err
 			}
-			if err := writeCaptureCoverageDocument(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, "packet-sidecar", opts.CaptureScope, coverage, &state.ieee1905); err != nil {
+			if err := writeCaptureCoverageDocument(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, "packet-sidecar", opts.CaptureScope, captureCoverageDocument{CoverageV2: coverage, IEEE1905: &state.ieee1905}); err != nil {
 				return err
 			}
 			coverageFrom = end

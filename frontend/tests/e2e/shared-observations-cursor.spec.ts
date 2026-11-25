@@ -25,7 +25,8 @@ for (const [width, height] of [[390, 844], [1280, 800], [1440, 900]]) {
           sensor_id: 'sensor-test', campus_id: 'campus-test', access_domain: 'mirror',
           ip: cursor ? '192.0.2.2' : '192.0.2.1', status: 'candidate', confidence: 59,
           account_id: cursor ? undefined : 'mirror-account-' + 'a'.repeat(55),
-          signal_groups: cursor ? ['ieee1905_association'] : ['ua_os', 'tls_stack'],
+          signal_groups: ['router_identity', 'tls_stack'],
+          review_reason: cursor ? 'DHCP 型号记录缺少匹配字段，无法确认路由器角色' : '型号仅来自 DHCP 主机名，缺少独立路由器角色证据',
           reasons: [], conflicts: [], coverage_state: 'partial',
           rule_version: 'shared-behavior/v13', current: true,
           first_seen: '2026-11-12T03:50:00Z', last_seen: '2026-11-12T04:00:00Z',
@@ -42,6 +43,7 @@ for (const [width, height] of [[390, 844], [1280, 800], [1440, 900]]) {
     await expect(page.getByText('多种 TLS 指纹', { exact: true })).toBeVisible()
     await expect(page.getByText('共享行为待核验', { exact: true })).toBeVisible()
     await expect(page.getByText('本页 1 条', { exact: true })).toBeVisible()
+    await expect(page.getByText('型号仅来自 DHCP 主机名，缺少独立路由器角色证据', { exact: true })).toBeVisible()
     const probe = await page.evaluate(() => {
       const account = document.querySelector('.shared-behavior-account')!
       const tab = document.querySelector('[role="tab"][aria-selected="true"]')!
@@ -78,6 +80,7 @@ for (const [width, height] of [[390, 844], [1280, 800], [1440, 900]]) {
     await page.screenshot({ path: path.join(dir, `page-${width}.png`), fullPage: true, animations: 'disabled' })
     await page.getByRole('button', { name: '下一页' }).click()
     await expect(page.getByText('192.0.2.2')).toBeVisible()
+    await expect(page.getByText('DHCP 型号记录缺少匹配字段，无法确认路由器角色', { exact: true })).toBeVisible()
     expect(await page.evaluate(() => (window as typeof window & { __testCursors?: string[] }).__testCursors)).toContain('cursor-2')
   })
 }

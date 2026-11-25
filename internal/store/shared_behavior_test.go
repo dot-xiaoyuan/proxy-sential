@@ -18,10 +18,10 @@ func TestSharedBehaviorReportUsesCurrentTrafficAndVerifiedEvidence(t *testing.T)
 	defer db.Close()
 	now := time.Now().UTC()
 	from := now.Add(-time.Hour)
-	mock.ExpectQuery("FROM shared_access_findings f LEFT JOIN risk_cases").WithArgs(from, now).
-		WillReturnRows(sqlmock.NewRows(strings.Fields("outlets accounts unattributed pending exempt confirmed routers multiple cases actions reviews")).AddRow(8, 6, 2, 1, 1, 2, 2, 0, 1, 1, 5))
+	mock.ExpectQuery("FROM findings f LEFT JOIN risk_cases").WithArgs(from, now).
+		WillReturnRows(sqlmock.NewRows(strings.Fields("outlets accounts unattributed pending exempt confirmed routers multiple cases actions reviews coverage missing mismatch")).AddRow(8, 6, 2, 1, 1, 2, 2, 0, 1, 1, 5, 1, 1, 0))
 	report, err := (&PostgresStore{db: db}).sharedFindingReport(context.Background(), from, now)
-	if err != nil || report.AsOf != now || report.Confirmed != 2 || report.Exempt != 1 || report.Actions != 1 || report.PendingReview != 5 {
+	if err != nil || report.AsOf != now || report.Confirmed != 2 || report.Exempt != 1 || report.Actions != 1 || report.PendingReview != 5 || report.CoverageGapOutlets != 1 || report.MissingBindingOutlets != 1 || report.MirrorMismatchOutlets != 0 {
 		t.Fatalf("report=%+v err=%v", report, err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

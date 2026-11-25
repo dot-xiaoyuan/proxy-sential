@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"net/netip"
 	"proxy-sentinel/internal/normalized"
-	"proxy-sentinel/internal/sharedaccess"
+
 	"time"
 )
 
 type Options struct {
-	AuthenticatedRouters        func() map[sharedaccess.OutletKey]struct{}
+	AuthenticatedRouters        func() RouterSamplingSnapshot
 	CollectorInstanceID         string
 	CaptureScope                *normalized.CaptureScope
 	Interface, Output, SensorID string

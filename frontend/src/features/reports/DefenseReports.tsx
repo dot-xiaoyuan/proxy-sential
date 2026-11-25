@@ -146,14 +146,23 @@ export function SharedBehaviorReport() {
   return <ReportPanel title="当前镜像共享行为" query={query} extra={<Select aria-label="共享统计时段" value={window} onChange={setWindow} options={[...windowOptions,{value:'today',label:'今日'}]} />}>
     {report => {
       const rows = [
-        ['outlets','候选出口',report.outlets],['accounts','已归属账号',report.accounts],['unattributed','缺少归属的出口',report.unattributed],
+        ['outlets','候选出口',report.outlets],['accounts','已归属账号',report.accounts],['unattributed','曾缺少归属的出口',report.unattributed],
         ['router_pending','路由器待核验账号',report.router_pending],['exempt','白名单豁免账号',report.exempt],
         ['confirmed','确认共享账号',report.confirmed],['router','路由器共享账号',report.router],['multiple','多终端共享账号',report.multiple],
         ['cases','共享案件',report.cases],['actions','仅记录处置',report.actions],
       ] as const
+      const unattributedReasons = [
+        ['认证覆盖缺口', report.coverage_gap_outlets],
+        ['缺少同窗绑定', report.missing_binding_outlets],
+        ['镜像 MAC 或 VLAN 不符', report.mirror_mismatch_outlets],
+      ] as const
       const link=(outcome:string)=>'/shared-access?'+new URLSearchParams({tab:'associations',from:report.from??'',to:report.as_of,outcome})
       return <><div className="report-total"><strong>{report.confirmed}</strong><span>个账号确认共享</span></div>
         <dl className="sharing-report-counts">{rows.map(([key,label,count])=><div key={key}><dt><Link to={link(key)}>{label}</Link></dt><dd>{count?.toLocaleString('zh-CN')}</dd></div>)}</dl>
+        <h3>时段内始终未归属的出口</h3>
+        <p className="report-meta">每项按出口去重，同一出口可有多种原因。</p>
+        <dl className="sharing-report-counts sharing-report-reasons">{unattributedReasons.map(([label, count]) =>
+          <div key={label}><dt>{label}</dt><dd>{count?.toLocaleString('zh-CN')}</dd></div>)}</dl>
         <footer className="report-panel-footer"><span className="report-meta">{formatDateTime(report.from)} 至 {formatDateTime(report.as_of)}</span><Link to={link('outlets')}>查看共享行为明细</Link></footer></>
     }}
   </ReportPanel>

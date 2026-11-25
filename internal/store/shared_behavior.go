@@ -180,16 +180,19 @@ func sharedBehaviorWhere(query SharedBehaviorQuery) (string, []any, error) {
 }
 
 type SharedBehaviorReport struct {
-	From          time.Time `json:"from"`
-	Outlets       int64     `json:"outlets"`
-	Accounts      int64     `json:"accounts"`
-	Unattributed  int64     `json:"unattributed"`
-	RouterPending int64     `json:"router_pending"`
-	Exempt        int64     `json:"exempt"`
-	Router        int64     `json:"router"`
-	Multiple      int64     `json:"multiple"`
-	Cases         int64     `json:"cases"`
-	Actions       int64     `json:"actions"`
+	From                  time.Time `json:"from"`
+	Outlets               int64     `json:"outlets"`
+	Accounts              int64     `json:"accounts"`
+	Unattributed          int64     `json:"unattributed"`
+	CoverageGapOutlets    int64     `json:"coverage_gap_outlets"`
+	MissingBindingOutlets int64     `json:"missing_binding_outlets"`
+	MirrorMismatchOutlets int64     `json:"mirror_mismatch_outlets"`
+	RouterPending         int64     `json:"router_pending"`
+	Exempt                int64     `json:"exempt"`
+	Router                int64     `json:"router"`
+	Multiple              int64     `json:"multiple"`
+	Cases                 int64     `json:"cases"`
+	Actions               int64     `json:"actions"`
 
 	AsOf          time.Time `json:"as_of"`
 	PendingReview int64     `json:"pending_review"`

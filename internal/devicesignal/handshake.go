@@ -60,22 +60,26 @@ func classifyHandshakeFrame(frame []byte) (handshakeObservation, handshakeFrameD
 		return handshakeObservation{}, handshakeUnlocated
 	}
 	ip := ethernet.payload
-	if len(ip) < 20 || ip[0]>>4 != 4 || ip[9] != 6 {
+	if len(ip) < 16 || ip[0]>>4 != 4 {
 		return handshakeObservation{}, handshakeUnlocated
+	}
+	subject := handshakeObservation{IP: netip.AddrFrom4([4]byte(ip[12:16])), MAC: ethernet.source}
+	if len(ip) < 20 || ip[9] != 6 {
+		return subject, handshakeUnlocated
 	}
 	ihl := int(ip[0]&0xf) * 4
 	total := int(binary.BigEndian.Uint16(ip[2:4]))
 	if ihl < 20 || min(total, len(ip)) < ihl+20 || binary.BigEndian.Uint16(ip[6:8])&0x1fff != 0 {
-		return handshakeObservation{}, handshakeUnlocated
+		return subject, handshakeUnlocated
 	}
 	tcp := ip[ihl:min(total, len(ip))]
 	port := binary.BigEndian.Uint16(tcp[2:4])
 	if port != 443 && port != 80 {
-		return handshakeObservation{}, handshakeExcluded
+		return subject, handshakeExcluded
 	}
-	var source [4]byte
-	copy(source[:], ip[12:16])
-	partial := handshakeObservation{IP: netip.AddrFrom4(source), MAC: ethernet.source, DestinationPort: port, Truncated: true}
+	partial := subject
+	partial.DestinationPort = port
+	partial.Truncated = true
 	if partial.IP.IsUnspecified() || partial.IP.IsMulticast() || partial.MAC == [6]byte{} || partial.MAC[0]&1 != 0 {
 		return handshakeObservation{}, handshakeUnlocated
 	}
@@ -85,10 +89,10 @@ func classifyHandshakeFrame(frame []byte) (handshakeObservation, handshakeFrameD
 	}
 	payload := tcp[header:]
 	if port == 443 && (payload[0] != 22 || len(payload) >= 2 && payload[1] != 3 || len(payload) >= 6 && payload[5] != 1) {
-		return handshakeObservation{}, handshakeExcluded
+		return subject, handshakeExcluded
 	}
 	if port == 80 && len(payload) >= 4 && !hasHTTPRequestMethod(payload) {
-		return handshakeObservation{}, handshakeExcluded
+		return subject, handshakeExcluded
 	}
 	if observed, ok := parseHandshakeFrame(frame); ok {
 		return observed, handshakeObserved

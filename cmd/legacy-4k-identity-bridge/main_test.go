@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"proxy-sentinel/internal/legacy4k"
 )
 
 func TestRealtimeRecoveryDoesNotHideSnapshotFailure(t *testing.T) {
@@ -33,5 +35,13 @@ func TestSnapshotFreshnessHasIndependentHealthBoundary(t *testing.T) {
 	state.snapshotConsecutiveFailures = 5
 	if got := deriveOverallState(state, 30*time.Minute); got != "degraded" {
 		t.Fatalf("snapshot failure counter state=%s", got)
+	}
+}
+
+func TestQuarantineRecordsMissingUsableAddress(t *testing.T) {
+	raw := `{"action":1,"session_id":"session","user_name":"account","ip":"0.0.0.0","ip6":"::"}`
+	records, err := legacy4k.DecodeRecordsForInstance(raw, "source", time.Now())
+	if len(records) != 0 || errorType(err) != "no_usable_identity_address" {
+		t.Fatalf("records=%v error=%v category=%s", records, err, errorType(err))
 	}
 }

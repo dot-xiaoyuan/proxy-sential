@@ -7917,6 +7917,12 @@ export interface components {
             outlets?: number;
             accounts?: number;
             unattributed?: number;
+            /** @description 时段内始终未归属且出现认证覆盖缺口的出口数 */
+            coverage_gap_outlets?: number;
+            /** @description 时段内始终未归属且缺少有效同窗绑定的出口数 */
+            missing_binding_outlets?: number;
+            /** @description 时段内始终未归属且镜像 MAC 或 VLAN 不符的出口数 */
+            mirror_mismatch_outlets?: number;
             router_pending?: number;
             exempt?: number;
             router?: number;

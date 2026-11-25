@@ -65,7 +65,7 @@ export function ActionHistory(){
                             : "blue"
                       }
                     >
-                      {value==='recorded'?'已记录，未执行':statusText(value)}
+                      {statusText(value)}
                     </Tag>
                   ),
                 },

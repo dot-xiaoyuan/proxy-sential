@@ -52,6 +52,9 @@ for (const [width, height] of [[390, 844], [1280, 800], [1440, 900]]) {
     const shared = page.getByRole('region', { name: '当前镜像共享行为' })
     await expect(shared.locator('.report-total strong')).toHaveText('2')
     await expect(shared.getByRole('link',{name:'确认共享账号'})).toBeVisible()
+    for (const [reason, count] of [['认证覆盖缺口', '1'], ['缺少同窗绑定', '1'], ['镜像 MAC 或 VLAN 不符', '0']]) {
+      await expect(shared.locator('dl > div').filter({ has: page.getByText(reason, { exact: true }) }).locator('dd')).toHaveText(count)
+    }
     const coverage = page.getByRole('region', { name: '共享识别卡点' })
     await expect(coverage.getByText('握手采集')).toBeVisible()
     await expect(coverage.getByText('覆盖不足', { exact: true }).first()).toBeVisible()
@@ -97,6 +100,8 @@ for (const [width, height] of [[390, 844], [1280, 800], [1440, 900]]) {
     expect(errors).toEqual([])
     expect(unexpectedResponses).toEqual([])
     await page.screenshot({ path: testInfo.outputPath('防代理报表.png'), fullPage: true, animations: 'disabled' })
+    await shared.getByRole('heading', { name: '时段内始终未归属的出口' }).scrollIntoViewIfNeeded()
+    await page.screenshot({ path: testInfo.outputPath('未归属出口原因.png'), animations: 'disabled' })
     await testInfo.attach('DOM 布局检查', { body: JSON.stringify(probe), contentType: 'application/json' })
   })
 }

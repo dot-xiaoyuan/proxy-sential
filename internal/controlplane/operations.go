@@ -453,6 +453,13 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 	// those cases look stale, and rewriting it could collide with another open
 	// case during the same synchronization transaction.
 	activeCaseIDs := map[string]bool{}
+	pendingTargets := map[string]string{}
+	openKeys := map[string]string{}
+	for id, c := range s.operations.doc.Cases {
+		if c.Status != "closed" && c.Status != "resolved" {
+			openKeys[c.DedupeKey] = id
+		}
+	}
 	for _, item := range items {
 		kind := caseRiskKind(item)
 		if kind == "" {
@@ -473,6 +480,9 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 			continue
 		}
 		dedupeKey := strings.ReplaceAll(kind, "_", "-") + ":" + item.CaseID
+		if item.SharedAccess != nil && item.SharedAccess.SessionCaseKey != "" {
+			dedupeKey = item.SharedAccess.SessionCaseKey
+		}
 		caseID := item.CaseID
 		existing, found := s.operations.doc.Cases[caseID]
 		// Prefer an active exact source case ID. A second open case for the
@@ -480,7 +490,15 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 		// letting an arbitrary map iteration replace this exact match moved the
 		// incoming dedupe key onto the other case and hit the partial unique
 		// index in PostgreSQL.
-		if found && !activeCaseMatches(existing, item, dedupeKey) {
+		terminalSessionCase := found && item.SharedAccess != nil && item.SharedAccess.SessionGeneration != "" && (existing.Status == "closed" || existing.Status == "resolved")
+		if terminalSessionCase {
+			// Already-acknowledged decisions cannot reopen a closed case. A
+			// decision assigned before closure can still have its original
+			// snapshot waiting for protection.
+			if _, queued := pending[item.SharedAccess.ObservationID]; !queued {
+				continue
+			}
+		} else if found && !activeCaseMatches(existing, item, dedupeKey) && !(item.SharedAccess != nil && item.SharedAccess.SessionGeneration != "" && existing.CaseID == item.CaseID) {
 			found = false
 		}
 		if !found {
@@ -491,10 +509,16 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 				}
 			}
 		}
-		if found && (existing.Status == "closed" || existing.Status == "resolved") {
+		if found && !terminalSessionCase && (existing.Status == "closed" || existing.Status == "resolved") {
 			caseID, found = item.CaseID+"-"+shortToken(6), false
 		}
 		activeCaseIDs[caseID] = true
+		if item.SharedAccess != nil {
+			if _, ok := pending[item.SharedAccess.ObservationID]; ok {
+				pendingTargets[item.SharedAccess.ObservationID] = caseID
+			}
+			item.CaseID = caseID
+		}
 		priorCase := existing
 		level, rulesetVersion := caseAssessmentLevel(item), caseRulesetVersion(item)
 		slaLevel, priority := "medium", "medium"
@@ -522,8 +546,9 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 		// Keep the existing durable key when evidence is merged into a case.
 		// The source assessment ID is allowed to change; the investigation key
 		// must remain stable and unique among open cases.
-		if !found || existing.DedupeKey == "" {
+		if !found || existing.DedupeKey == "" || !terminalSessionCase && item.SharedAccess != nil && item.SharedAccess.SessionCaseKey != "" && openKeys[dedupeKey] == "" {
 			existing.DedupeKey = dedupeKey
+			openKeys[dedupeKey] = caseID
 		}
 		// Shared exits and router observations are IP/device investigations in
 		// this phase. Stale account-session blockers from the retired generic
@@ -541,6 +566,12 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 			}
 		}
 		if !snapshotExists {
+			if proof := item.SharedAccess; proof != nil && proof.SessionCaseKey != "" && s.operations.tx != nil {
+				if err := retainSharedCaseSession(ctx, s.operations.tx, proof); err != nil {
+					return err
+				}
+				snapshot.Evidence = item
+			}
 			if item.SharedAccess != nil && item.SharedAccess.GenerationID != "" {
 				refReader, ok := s.reader.(interface {
 					ReadStreamSharedCaseRefs(context.Context, string, string) ([]store.StreamBodyRef, error)
@@ -560,10 +591,17 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 				existing.Timeline = append(existing.Timeline, CaseTimeline{EventID: "timeline-" + shortToken(8), ActorID: "system", Type: "case.evidence_appended", Before: map[string]any{"risk_score": previousScore}, After: map[string]any{"risk_score": item.RiskScore, "snapshot_id": snapshot.SnapshotID}, CreatedAt: now.Format(time.RFC3339Nano)})
 			}
 		}
+		if terminalSessionCase {
+			priorCase.EvidenceHistory = existing.EvidenceHistory
+			s.operations.doc.Cases[caseID] = priorCase
+			continue
+		}
 		if snapshotExists && found && item.SharedAccess != nil && priorCase.EvidenceSnapshot.SharedAccess != nil &&
 			item.SharedAccess.ObservationID == priorCase.EvidenceSnapshot.SharedAccess.ObservationID &&
 			item.SharedAccess.GenerationID == priorCase.EvidenceSnapshot.SharedAccess.GenerationID {
 			item.StreamSharedEvidenceRefs = append([]store.StreamBodyRef(nil), priorCase.EvidenceSnapshot.StreamSharedEvidenceRefs...)
+			item.SharedAccess.SessionRefs = priorCase.EvidenceSnapshot.SharedAccess.SessionRefs
+			item.SharedAccess.EvidenceExpiresAt = priorCase.EvidenceSnapshot.SharedAccess.EvidenceExpiresAt
 		}
 		existing.EvidenceSnapshot = item
 		if found {
@@ -577,9 +615,16 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 		}
 		s.operations.doc.Cases[existing.CaseID] = existing
 	}
+	live, err := liveSharedCases(ctx, s.operations.tx, s.operations.doc.Cases, activeCaseIDs)
+	if err != nil {
+		return err
+	}
 	for caseID, existing := range s.operations.doc.Cases {
 		kind := riskKindForRuleset(existing.RulesetVersion)
 		if !closableKinds[kind] || existing.Status == "closed" || existing.Status == "resolved" || activeCaseIDs[caseID] {
+			continue
+		}
+		if live[caseID] {
 			continue
 		}
 		before := existing.Status
@@ -590,11 +635,9 @@ func (s *Server) syncCasesContext(ctx context.Context, sensorID, window string) 
 		s.operations.doc.Cases[caseID] = existing
 	}
 	if s.operations.tx != nil {
-		for obs, id := range pending {
-			if activeCaseIDs[id] {
-				if _, err := s.operations.tx.ExecContext(ctx, `UPDATE shared_access_findings SET case_pending=false WHERE observation_id=$1 AND case_id=$2`, obs, id); err != nil {
-					return err
-				}
+		for obs, id := range pendingTargets {
+			if _, err := s.operations.tx.ExecContext(ctx, `UPDATE shared_access_findings SET case_pending=false,case_id=$3 WHERE observation_id=$1 AND case_id=$2 AND case_pending`, obs, pending[obs], id); err != nil {
+				return err
 			}
 		}
 	}
@@ -699,6 +742,9 @@ func newCaseEvidenceSnapshot(caseID, rulesetVersion string, evidence store.Proxy
 		// cannot alter the identity of the assessment that selected them.
 		withoutRefs := evidence
 		withoutRefs.StreamSharedEvidenceRefs = nil
+		proof := *evidence.SharedAccess
+		proof.SessionCaseKey, proof.SessionRefs, proof.EvidenceExpiresAt = "", nil, ""
+		withoutRefs.SharedAccess = &proof
 		identity = withoutRefs
 	}
 	raw, _ := json.Marshal(identity)
@@ -782,8 +828,10 @@ func riskKindForRuleset(rulesetVersion string) string {
 }
 
 func proxyReviewCaseForSharedAssessment(assessment sharedaccess.BehaviorAssessment) store.ProxyReviewCase {
+	sessionCaseKey := ""
 	scope := strings.Join([]string{assessment.SensorID, assessment.CampusID, assessment.AccessDomain, assessment.IP}, "\x00")
 	if assessment.SessionGeneration != "" {
+		sessionCaseKey = sharedSessionCaseKey(assessment.SensorID, assessment.CampusID, assessment.AccessDomain, assessment.AccountID, assessment.IP, assessment.SessionGeneration)
 		scope += "\x00" + assessment.AccountID + "\x00" + assessment.SessionGeneration
 	}
 	sum := sha256.Sum256([]byte("shared-access-case\x00" + scope))
@@ -800,7 +848,7 @@ func proxyReviewCaseForSharedAssessment(assessment sharedaccess.BehaviorAssessme
 		AccountID: assessment.AccountID, CaseID: caseID, IP: assessment.IP, EndpointID: assessment.EndpointID,
 		AccessIDs: []string{}, Destinations: []store.ActivityCount{}, DestinationIPs: []store.ActivityCount{}, DestinationDomains: []store.ActivityCount{}, TLSFingerprints: []store.ActivityCount{}, Protocols: []store.ActivityCount{}, RuleMatches: []store.ProxyRuleMatch{},
 		EventCount: len(assessment.EventIDs), ConfidenceLevel: "high", FirstSeen: assessment.FirstSeen.UTC().Format(time.RFC3339Nano), LastSeen: assessment.LastSeen.UTC().Format(time.RFC3339Nano), DurationSeconds: int64(assessment.WindowEnd.Sub(assessment.WindowStart).Seconds()), EvidenceIDs: []string{assessment.ObservationID}, RiskScore: assessment.Confidence, RiskLevel: "confirmed", ReviewStatus: "unreviewed",
-		SharedAccess: &store.SharedAccessCaseEvidence{SessionGeneration: assessment.SessionGeneration, DecisionID: assessment.DecisionID, RoleEvidenceID: assessment.Router.RoleEvidenceID, RoleSource: assessment.Router.RoleSource, RoleInput: assessment.Router.RoleInput, RoleEventID: assessment.Router.RoleEventID, RoleValueExcerpt: assessment.Router.RoleValueExcerpt, RoleRuleVersion: assessment.Router.RoleRuleVersion, RoleRule: assessment.Router.RoleRule, ConfirmationBasis: assessment.ConfirmationBasis, ObservationID: assessment.ObservationID, GenerationID: assessment.GenerationID, Status: assessment.Status, Confidence: assessment.Confidence, StrongAnchor: assessment.StrongAnchor, DeviceLowerBound: assessment.DeviceLowerBound, CoverageState: assessment.CoverageState, WindowStart: assessment.WindowStart.UTC().Format(time.RFC3339Nano), WindowEnd: assessment.WindowEnd.UTC().Format(time.RFC3339Nano), SignalGroups: append([]string{}, assessment.SignalGroups...), Reasons: append([]string{}, assessment.Reasons...), SourceEventIDs: append([]string{}, assessment.EventIDs...), AnchorIdentities: anchorIdentities, ReferenceDeviceCount24h: assessment.ReferenceDeviceCount24h, RouterBrand: assessment.Router.Brand, RouterModel: assessment.Router.Model, RouterConfidence: assessment.Router.Confidence},
+		SharedAccess: &store.SharedAccessCaseEvidence{SessionCaseKey: sessionCaseKey, SessionGeneration: assessment.SessionGeneration, DecisionID: assessment.DecisionID, RoleEvidenceID: assessment.Router.RoleEvidenceID, RoleSource: assessment.Router.RoleSource, RoleInput: assessment.Router.RoleInput, RoleEventID: assessment.Router.RoleEventID, RoleValueExcerpt: assessment.Router.RoleValueExcerpt, RoleRuleVersion: assessment.Router.RoleRuleVersion, RoleRule: assessment.Router.RoleRule, ConfirmationBasis: assessment.ConfirmationBasis, ObservationID: assessment.ObservationID, GenerationID: assessment.GenerationID, Status: assessment.Status, Confidence: assessment.Confidence, StrongAnchor: assessment.StrongAnchor, DeviceLowerBound: assessment.DeviceLowerBound, CoverageState: assessment.CoverageState, WindowStart: assessment.WindowStart.UTC().Format(time.RFC3339Nano), WindowEnd: assessment.WindowEnd.UTC().Format(time.RFC3339Nano), SignalGroups: append([]string{}, assessment.SignalGroups...), Reasons: append([]string{}, assessment.Reasons...), SourceEventIDs: append([]string{}, assessment.EventIDs...), AnchorIdentities: anchorIdentities, ReferenceDeviceCount24h: assessment.ReferenceDeviceCount24h, RouterBrand: assessment.Router.Brand, RouterModel: assessment.Router.Model, RouterConfidence: assessment.Router.Confidence},
 	}
 }
 
@@ -1015,6 +1063,20 @@ func (s *Server) mutateCase(w http.ResponseWriter, r *http.Request, id, operatio
 	default:
 		writeError(w, 404, "case_operation_not_found", "case operation not found")
 		return
+	}
+	if strings.HasPrefix(item.DedupeKey, "shared-session:") {
+		key := strings.Join(strings.SplitN(item.DedupeKey, ":", 3)[:2], ":")
+		if item.Status == "resolved" || item.Status == "closed" {
+			item.DedupeKey = key + ":" + item.CaseID
+		} else if item.Status == "reopened" {
+			for _, other := range s.operations.doc.Cases {
+				if other.CaseID != item.CaseID && other.DedupeKey == key && other.Status != "closed" && other.Status != "resolved" {
+					writeError(w, 409, "shared_session_case_open", "该认证会话已有未关闭案件")
+					return
+				}
+			}
+			item.DedupeKey = key
+		}
 	}
 	item.UpdatedAt = now
 	item.Timeline = append(item.Timeline, CaseTimeline{EventID: "timeline-" + shortToken(8), ActorID: actor, Type: eventType, Before: before, After: map[string]any{"status": item.Status, "assignee_id": item.AssigneeID, "disposition": item.Disposition, "priority": item.Priority}, CreatedAt: now})

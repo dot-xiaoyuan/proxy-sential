@@ -51,34 +51,46 @@ func TestSharedEpisodeClosesOnlyOnExplicitSessionEnd(t *testing.T) {
 	}
 }
 
-func TestMatchedSharedEpisodeContinuationOnlyAppendsDecision(t *testing.T) {
+func TestMatchedSharedEpisodeContinuationRecordsReportForDecision(t *testing.T) {
 	previousBypass := legacyTransportTestBypass.Swap(false)
 	defer legacyTransportTestBypass.Store(previousBypass)
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	at := time.Now().UTC()
-	d := matchedEpisodeDecision("decision-2", "evidence-2", at)
-	mock.ExpectBegin()
-	mock.ExpectExec("SELECT pg_advisory_xact_lock").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery("SELECT e.execution_id FROM shared_observation_episode_index").WillReturnRows(sqlmock.NewRows([]string{"execution_id"}).AddRow("existing-episode"))
-	mock.ExpectExec("UPDATE shared_observation_executions SET evidence_version").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("INSERT INTO policy_decision_records").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectCommit()
-	tx, err := db.Begin()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := persistSharedObservationDecision(context.Background(), tx, &d); err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatal(err)
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatal(err)
+	for name, inserted := range map[string]int64{"fresh decision": 1, "decision already committed": 0} {
+		t.Run(name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			at := time.Now().UTC()
+			d := matchedEpisodeDecision("decision-2", "evidence-2", at)
+			mock.ExpectBegin()
+			mock.ExpectExec("SELECT pg_advisory_xact_lock").WillReturnResult(sqlmock.NewResult(0, 0))
+			if inserted == 0 {
+				mock.ExpectQuery("SELECT execution_id,coalesce").WillReturnRows(sqlmock.NewRows([]string{"execution_id", "case_id"}).AddRow("existing-episode", "existing-case"))
+			} else {
+				mock.ExpectQuery("SELECT execution_id,coalesce").WillReturnError(sql.ErrNoRows)
+				mock.ExpectQuery("SELECT e.execution_id,coalesce").WillReturnRows(sqlmock.NewRows([]string{"execution_id", "case_id", "fresh", "closed"}).AddRow("existing-episode", "existing-case", true, false))
+				mock.ExpectExec("UPDATE shared_observation_executions SET evidence_version").WillReturnResult(sqlmock.NewResult(0, 1))
+			}
+			mock.ExpectExec("INSERT INTO policy_decision_records").WillReturnResult(sqlmock.NewResult(0, inserted))
+			if inserted != 0 {
+				mock.ExpectExec("INSERT INTO behavior_report_outbox").WillReturnResult(sqlmock.NewResult(0, 1))
+			}
+			mock.ExpectCommit()
+			tx, err := db.Begin()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := persistSharedObservationDecision(context.Background(), tx, &d); err != nil {
+				t.Fatal(err)
+			}
+			if err := tx.Commit(); err != nil {
+				t.Fatal(err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
@@ -93,8 +105,9 @@ func TestMatchedSharedEpisodeFirstDecisionCreatesOneAction(t *testing.T) {
 	d := matchedEpisodeDecision("decision-1", "evidence-1", time.Now().UTC())
 	mock.ExpectBegin()
 	mock.ExpectExec("SELECT pg_advisory_xact_lock").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery("SELECT e.execution_id FROM shared_observation_episode_index").WillReturnError(sql.ErrNoRows)
-	mock.ExpectQuery("SELECT e.execution_id FROM shared_observation_episode_index").WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT execution_id,coalesce").WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT e.execution_id,coalesce").WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT case_id FROM risk_cases WHERE dedupe_key").WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec("INSERT INTO shared_observation_executions").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO shared_observation_episode_index").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO policy_decision_records").WillReturnResult(sqlmock.NewResult(0, 1))
@@ -126,9 +139,10 @@ func TestSharedEpisodeRestartWithSameEvidenceGetsNewExecutionID(t *testing.T) {
 	firstID := "shared-observe-episode-" + policy.StableID(sharedObservationEpisodeScope(d), d.DecisionID, "")
 	mock.ExpectBegin()
 	mock.ExpectExec("SELECT pg_advisory_xact_lock").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery("SELECT e.execution_id FROM shared_observation_episode_index").WillReturnError(sql.ErrNoRows)
-	mock.ExpectQuery("SELECT e.execution_id FROM shared_observation_episode_index").WillReturnRows(
-		sqlmock.NewRows([]string{"execution_id"}).AddRow(firstID))
+	mock.ExpectQuery("SELECT execution_id,coalesce").WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT e.execution_id,coalesce").WillReturnRows(
+		sqlmock.NewRows([]string{"execution_id", "case_id", "fresh", "closed"}).AddRow(firstID, "closed-case", false, true))
+	mock.ExpectQuery("SELECT case_id FROM risk_cases WHERE dedupe_key").WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec("INSERT INTO shared_observation_executions").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO shared_observation_episode_index").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()

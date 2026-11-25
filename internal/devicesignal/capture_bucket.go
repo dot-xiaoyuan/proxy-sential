@@ -12,6 +12,7 @@ import (
 // ownership from transit traffic. Control and IP packet eligibility are separate.
 type captureBucket struct {
 	authenticatedRouters map[handshakeKey]struct{}
+	routerFrameReasons   map[handshakeKey]string
 	packets              map[packetBucketKey]int
 	controls             map[string]controlSignal
 	droppedPacketKeys    int
@@ -144,9 +145,11 @@ func (b *captureBucket) addHandshake(frame []byte) {
 		observation, disposition = classifyHandshakeFrame(frame)
 		switch disposition {
 		case handshakeExcluded:
+			b.noteUnretainedRouter(handshakeKey{IP: observation.IP, MAC: observation.MAC}, routerNoUsableActivity)
 			b.handshakeExcludedFrames++
 			return
 		case handshakeUnlocated:
+			b.noteUnretainedRouter(handshakeKey{IP: observation.IP, MAC: observation.MAC}, routerParseIncomplete)
 			b.handshakeParseFailures++
 			return
 		}
@@ -166,6 +169,7 @@ func (b *captureBucket) recordHandshake(observation handshakeObservation) {
 	summary := b.handshakes[key]
 	if summary == nil {
 		if len(b.handshakes) >= maxPacketBucketKeys {
+			b.noteUnretainedRouter(key, routerKeyLimit)
 			b.droppedPacketKeys++
 			return
 		}
@@ -214,11 +218,11 @@ func (b *captureBucket) selectHandshakes(limit int, bucket time.Time, priorityCI
 	return keys
 }
 
-// Reserve at most a quarter of an oversubscribed bucket for observed activity
+// Reserve slots in an oversubscribed bucket for observed activity
 // at authenticated router outlets. Other devices keep their existing weighted
 // and rotating slots. An address or MAC on its own never receives priority.
 func (b *captureBucket) selectHandshakeOutlets(limit int, at time.Time, cidrs []netip.Prefix) []handshakeKey {
-	if limit < 4 || len(b.handshakes) <= limit || len(b.authenticatedRouters) == 0 {
+	if limit <= 0 || len(b.handshakes) <= limit || len(b.authenticatedRouters) == 0 {
 		return selectHandshakeKeys(b.handshakes, limit, at, cidrs)
 	}
 	var routers []handshakeKey
@@ -230,7 +234,10 @@ func (b *captureBucket) selectHandshakeOutlets(limit int, at time.Time, cidrs []
 	if len(routers) == 0 {
 		return selectHandshakeKeys(b.handshakes, limit, at, cidrs)
 	}
-	selected := selectHandshakePool(routers, b.handshakes, limit/4, at)
+	selected := selectHandshakePool(routers, b.handshakes, limit, at)
+	if len(selected) == limit {
+		return selected
+	}
 	remaining := make(map[handshakeKey]*handshakeSummary, len(b.handshakes))
 	for key, summary := range b.handshakes {
 		remaining[key] = summary
@@ -242,6 +249,7 @@ func (b *captureBucket) selectHandshakeOutlets(limit int, at time.Time, cidrs []
 }
 
 func (b *captureBucket) resetHandshakes() {
+	clear(b.routerFrameReasons)
 	b.handshakes = make(map[handshakeKey]*handshakeSummary)
 	b.handshakeParseFailures = 0
 	b.handshakeExcludedFrames = 0

@@ -10,6 +10,7 @@ import (
 	"os"
 	"proxy-sentinel/internal/evidence"
 	"proxy-sentinel/internal/normalized"
+	"proxy-sentinel/internal/policy"
 	"proxy-sentinel/internal/sharedaccess"
 	"proxy-sentinel/internal/store"
 	"proxy-sentinel/internal/streamlog"
@@ -22,11 +23,19 @@ import (
 // Explicit opt-in and isolated DSNs are required. This never starts a database.
 func TestSharedObservationIsolatedEndToEnd(t *testing.T) {
 	for _, basis := range []string{"ieee1905_association", sharedaccess.AuthenticatedRouter} {
-		t.Run(basis, func(t *testing.T) { runSharedObservationReplay(t, basis) })
+		t.Run(basis, func(t *testing.T) { runSharedObservationReplay(t, basis, "matched") })
 	}
 }
 
-func runSharedObservationReplay(t *testing.T, basis string) {
+func TestSharedObservationIsolatedWhitelist(t *testing.T) {
+	runSharedObservationReplay(t, sharedaccess.AuthenticatedRouter, "whitelist_suppressed")
+}
+
+func TestSharedObservationIsolatedRegisteredInfrastructure(t *testing.T) {
+	runSharedObservationReplay(t, sharedaccess.AuthenticatedRouter, "infrastructure_ownership")
+}
+
+func runSharedObservationReplay(t *testing.T, basis, outcome string) {
 	pgDSN, chDSN := os.Getenv("PROXY_SENTINEL_TEST_POSTGRES_DSN"), os.Getenv("PROXY_SENTINEL_TEST_CLICKHOUSE_DSN")
 	if os.Getenv("PROXY_SENTINEL_SHARED_TEST_ISOLATED") != "true" || pgDSN == "" || chDSN == "" {
 		t.Skip("isolated PostgreSQL + ClickHouse and explicit shared-test opt-in required")
@@ -82,6 +91,15 @@ func runSharedObservationReplay(t *testing.T, basis string) {
 		if _, err := db.ExecContext(ctx, query, args...); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if outcome == "whitelist_suppressed" {
+		expires := now.Add(time.Hour)
+		manager := newWhitelistManager(db, "")
+		entry, e := manager.save(ctx, policy.WhitelistEntry{Type: "username_contains", Value: strings.TrimPrefix(sensor, "shared-"), Reason: "教学共享回放", CampusID: "lab", Enabled: true, ValidFrom: now.Add(-time.Hour), ExpiresAt: &expires}, "", "create", "replay")
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer manager.save(ctx, entry, entry.ID, "disable", "replay")
 	}
 	packetPath, handshakePath := "/"+sensor+"/ttl.jsonl", "/"+sensor+"/handshake.jsonl"
 	packetEpoch, handshakeEpoch, generation := sensor+"-packet", sensor+"-handshake", sensor+"-generation"
@@ -268,12 +286,56 @@ func runSharedObservationReplay(t *testing.T, basis string) {
 			if e != nil || !slices.Contains(window.Conflicts, "infrastructure_ownership") || window.HasRouterProof() {
 				t.Fatalf("registered infrastructure was eligible: router=%t conflicts=%v err=%v", window.HasRouterProof(), window.Conflicts, e)
 			}
-			exec(`DELETE FROM endpoint_entities WHERE endpoint_id=$1`, sensor)
+			if outcome != "infrastructure_ownership" {
+				exec(`DELETE FROM endpoint_entities WHERE endpoint_id=$1`, sensor)
+			}
 		}
 		did, e := s.processSharedObservation(ctx, now)
 		if e != nil || did != (attempt == 0) {
 			t.Fatalf("process: %v %v", did, e)
 		}
+	}
+	if outcome != "matched" {
+		// Flush the regular case synchronizer even for suppressed observations.
+		// Then check for side effects against the durable tables.
+		s.exceptions = newExceptionManager(db)
+		s.operations.streamSharedEvidenceLoader = backend.ReadStreamSharedCaseEvidence
+		if err := s.syncAutomaticCasesContext(ctx, sensor, "10m"); err != nil {
+			t.Fatal(err)
+		}
+		if outcome == "infrastructure_ownership" {
+			var excluded bool
+			err := db.QueryRowContext(ctx, `SELECT bool_and(result <> 'matched' AND document->'evidence'->'conflicts' ? 'infrastructure_ownership')
+ FROM policy_decision_records WHERE document->'evidence'->>'sensor_id'=$1`, sensor).Scan(&excluded)
+			if err != nil || !excluded {
+				t.Fatalf("registered infrastructure produced no exclusion: excluded=%t err=%v", excluded, err)
+			}
+		} else {
+			var verified string
+			if err := db.QueryRowContext(ctx, `SELECT d.document->'evidence'->'outlet_activity'->>'event_id' FROM policy_decision_records d
+ JOIN shared_access_findings f USING(observation_id) JOIN shared_behavior_observations o USING(observation_id)
+ WHERE d.account_id=$1 AND d.result='whitelist_suppressed' AND f.outcome='exempt' AND f.case_id='' AND f.action_id=''
+ AND o.observation->'whitelist_match'->>'entry_id'=d.document->'whitelist_match'->>'entry_id'`, sensor).Scan(&verified); err != nil {
+				t.Fatal(err)
+			}
+			scope := store.SharedObservationScope{SensorID: sensor, CampusID: "lab", AccessDomain: "mirror", IP: ip}
+			rows, err := archive.ListStreamSharedCaseSignalRefs(ctx, scope, scopeID, event.Source, epoch, ip, now.Add(-time.Minute), now, []string{verified})
+			if err != nil || len(rows) != 1 {
+				t.Fatalf("exempt observation no longer locates its original %q: %v %v", verified, rows, err)
+			}
+			refs := append(slices.Clone(roleRefs), rows[0].Body)
+			originals, err := archive.GetStreamEventsByRefs(ctx, refs)
+			if err != nil || len(originals) != len(refs) || originals[rows[0].Body].EventID != verified {
+				t.Fatalf("exempt originals did not verify: %d/%d %v", len(originals), len(refs), err)
+			}
+		}
+		for _, table := range []string{"risk_cases", "enforcement_actions", "behavior_report_outbox"} {
+			var n int
+			if err := db.QueryRowContext(ctx, "SELECT count(*) FROM "+table+" WHERE account_id=$1", sensor).Scan(&n); err != nil || n != 0 {
+				t.Fatalf("exempt account %s count=%d err=%v", table, n, err)
+			}
+		}
+		return
 	}
 	var n int
 	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM policy_decision_records WHERE account_id=$1 AND result='matched' AND document->>'mode'='manual' AND document->>'delivery_status'='record_only'`, sensor).Scan(&n); err != nil || n != 1 {
@@ -281,7 +343,7 @@ func runSharedObservationReplay(t *testing.T, basis string) {
 		_ = db.QueryRowContext(ctx, `SELECT coalesce(string_agg(result||' '||coalesce((document->'reasons')::text,''),','),'no decisions') FROM policy_decision_records WHERE document->'evidence'->>'sensor_id'=$1`, sensor).Scan(&detail)
 		t.Fatalf("exactly one hit: %d %v, decisions: %s", n, err, detail)
 	}
-	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM enforcement_actions WHERE account_id=$1 AND status='recorded' AND mode='record_only'`, sensor).Scan(&n); err != nil || n != 1 {
+	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM enforcement_actions WHERE account_id=$1 AND status='recorded' AND mode='record_only' AND coalesce(connector_id,'')='' AND coalesce(remote_action_id,'')=''`, sensor).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("exactly one record-only action: %d %v", n, err)
 	}
 	if err = db.QueryRowContext(ctx, `SELECT count(*) FROM behavior_report_outbox WHERE account_id=$1 AND channel_id=$1
@@ -377,4 +439,43 @@ func runSharedObservationReplay(t *testing.T, basis string) {
 			t.Fatalf("period lookup of an expired account: count=%d err=%v", len(page.Items), err)
 		}
 	})
+	if basis == sharedaccess.AuthenticatedRouter {
+		t.Run("two hits on one session have two local reports", func(t *testing.T) {
+			nextAt := now.Add(-time.Second)
+			event.EventID = sensor + "-second-syn"
+			event.Timestamp = nextAt.Format(time.RFC3339Nano)
+			event.Payload["outlet_activity"] = sharedaccess.OutletActivity{MAC: gatewayMAC, EventID: event.EventID, At: nextAt}
+			segment.StartOffset, segment.EndOffset = segment.EndOffset, segment.EndOffset+1
+			segment.AcceptedAt = time.Now().UTC()
+			segment.Events = []normalized.Event{event}
+			id := streamlog.SourceSegmentID(segment)
+			if err := archive.WriteStreamBody(ctx, id, segment); err != nil {
+				t.Fatal(err)
+			}
+			if err := archive.WriteStreamSearch(ctx, id, segment); err != nil {
+				t.Fatal(err)
+			}
+			exec(`UPDATE stream_shared_source_runtime SET accepted_segment=$3,archived_segment=$3,accepted_at=$4,archived_at=$4 WHERE sensor_id=$1 AND epoch=$2`, sensor, epoch, id, segment.AcceptedAt)
+			for attempt := 0; attempt < 2; attempt++ {
+				if err := queue.MarkStreamSharedJobs(ctx, id, segment); err != nil {
+					t.Fatal(err)
+				}
+				did, err := s.processSharedObservation(ctx, time.Now().UTC())
+				if err != nil || did != (attempt == 0) {
+					t.Fatalf("process second segment attempt %d: did=%v err=%v", attempt, did, err)
+				}
+			}
+			var hits, episodes, reports, reportedHits int
+			if err := db.QueryRowContext(ctx, `SELECT count(*),count(DISTINCT execution_id) FROM policy_decision_records WHERE account_id=$1 AND result='matched'`, sensor).Scan(&hits, &episodes); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.QueryRowContext(ctx, `SELECT count(*),count(DISTINCT d.decision_id) FROM behavior_report_outbox o JOIN policy_decision_records d ON d.decision_id=o.payload->>'policy_decision_id' WHERE o.account_id=$1 AND o.channel_id=$1 AND o.status='recorded' AND o.payload->>'external_request_sent'='false'`, sensor).Scan(&reports, &reportedHits); err != nil {
+				t.Fatal(err)
+			}
+			if hits != 2 || episodes != 1 || reports != 2 || reportedHits != 2 {
+				t.Fatalf("wanted two distinct hits and reports on one execution, got hits=%d executions=%d reports=%d reported hits=%d", hits, episodes, reports, reportedHits)
+			}
+		})
+	}
+
 }

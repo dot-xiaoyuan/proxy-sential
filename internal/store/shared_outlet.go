@@ -141,10 +141,9 @@ func (s *DBStore) outletRouter(ctx context.Context, w sharedaccess.Window, l out
 		at = w.Activity.At
 	}
 	err := s.pg.db.QueryRowContext(ctx, `SELECT r.assessment_id,r.role,r.status,r.confidence,r.brand,r.model,
- CASE WHEN f.explicit_role OR (r.status='confirmed' AND f.independent_families>=2) THEN f.evidence_id ELSE '' END,f.rule_id,f.source_family,f.input,f.event_id,f.value_excerpt,f.rule_version
+ CASE WHEN f.explicit_role THEN f.evidence_id ELSE '' END,f.rule_id,f.source_family,f.input,f.event_id,f.value_excerpt,f.rule_version
  FROM router_assessments r JOIN LATERAL (
  SELECT f.evidence_id,f.rule_id,f.rule_version,left(coalesce(f.data->>'raw_value',''),512) AS value_excerpt,f.source_family,coalesce(f.data->>'model','') AS model,coalesce(f.data->>'input','') AS input,coalesce(f.data->'event_ids'->>0,'') AS event_id,
- dense_rank() OVER (ORDER BY f.source_family) + dense_rank() OVER (ORDER BY f.source_family DESC) - 1 AS independent_families,
  (f.rule_id IN ('ssdp-advertised-internet-gateway','first-hop-redundancy-router-role') OR
  (f.data->>'strength'='strong' AND coalesce(f.data->>'model','')<>'' AND
  (f.source_family='dhcp' AND f.data->>'input'='vendor_class' OR f.source_family IN ('lldp','cdp','snmp_management','ssdp') AND f.data->>'input' IN ('lldp_system_description','cdp_platform','cdp_software','http_server','software')))) IS TRUE AS explicit_role
@@ -158,11 +157,37 @@ func (s *DBStore) outletRouter(ctx context.Context, w sharedaccess.Window, l out
  AND NOT r.ambiguous AND NOT r.brand_reference_only AND NOT r.infrastructure AND r.expires_at>$2 AND r.first_seen<=$2
  AND NOT EXISTS (SELECT 1 FROM router_evidence_facts x WHERE x.assessment_id=r.assessment_id AND (x.conflict OR x.exclusion)
  AND coalesce(x.data->>'conflict_code','')<>'ordinary_endpoint' AND x.first_seen<=$2 AND x.expires_at>$2)
- ORDER BY (r.status='confirmed' OR f.explicit_role) DESC,r.status_rank DESC,r.confidence DESC,r.assessment_id LIMIT 1`, l.mac, at, w.SensorID, l.vlan, strconv.Itoa(int(w.ClientVLAN))).Scan(&r.AssessmentID, &r.Role, &r.Status, &r.Confidence, &r.Brand, &r.Model, &r.RoleEvidenceID, &r.RoleRule, &r.RoleSource, &r.RoleInput, &r.RoleEventID, &r.RoleValueExcerpt, &r.RoleRuleVersion)
+ ORDER BY f.explicit_role DESC,r.status_rank DESC,r.confidence DESC,r.assessment_id LIMIT 1`, l.mac, at, w.SensorID, l.vlan, strconv.Itoa(int(w.ClientVLAN))).Scan(&r.AssessmentID, &r.Role, &r.Status, &r.Confidence, &r.Brand, &r.Model, &r.RoleEvidenceID, &r.RoleRule, &r.RoleSource, &r.RoleInput, &r.RoleEventID, &r.RoleValueExcerpt, &r.RoleRuleVersion)
 	if err == sql.ErrNoRows {
 		return r, nil
 	}
 	return r, err
+}
+
+const (
+	outletMissingBinding  = "缺少同窗认证绑定"
+	outletBindingConflict = "认证绑定冲突或无效"
+	outletMirrorMismatch  = "镜像 MAC 或 VLAN 与认证出口不符"
+	outletUncovered       = "认证源记录未覆盖镜像证据时段"
+	outletChangesPending  = "证据时段内的认证变更待处理"
+	outletIndexPending    = "证据时段内的认证快照索引待完成"
+)
+
+func outletBindingReviewReason(issue string) string {
+	switch issue {
+	case "identity_source_interrupted", "identity_window_uncovered":
+		return outletUncovered
+	case "identity_processing_pending":
+		return outletChangesPending
+	case "identity_snapshot_index_pending":
+		return outletIndexPending
+	case "identity_snapshot_capture_conflict":
+		return outletBindingConflict
+	case "":
+		return outletMissingBinding
+	default:
+		return "认证会话未覆盖证据时窗或身份源有缺口"
+	}
 }
 
 func (s *DBStore) assessOutlet(ctx context.Context, cfg sharedaccess.Config, window *sharedaccess.Window, item sharedaccess.BehaviorAssessment) (sharedaccess.BehaviorAssessment, error) {
@@ -199,14 +224,14 @@ func (s *DBStore) assessOutlet(ctx context.Context, cfg sharedaccess.Config, win
 		return item, nil
 	}
 	if l.ip == "" {
-		item.ReviewReason = "缺少同窗认证绑定"
+		item.ReviewReason = outletMissingBinding
 		if exists {
-			item.ReviewReason = "认证绑定冲突或无效"
+			item.ReviewReason = outletBindingConflict
 		}
 		return item, nil
 	}
 	if w.MixedClientVLAN || !outletVLANMatches(m.Source, l.vlan, w.ClientOuterVLAN, w.ClientVLAN) || w.GatewayMAC != "" && w.GatewayMAC != l.mac || w.Activity != nil && w.Activity.MAC != l.mac {
-		item.ReviewReason = "镜像 MAC 或 VLAN 与认证出口不符"
+		item.ReviewReason = outletMirrorMismatch
 		return item, nil
 	}
 	identityWindow := w
@@ -215,13 +240,7 @@ func (s *DBStore) assessOutlet(ctx context.Context, cfg sharedaccess.Config, win
 	}
 	b, issue, err := s.verifyOutlet(ctx, cfg, identityWindow, m, l)
 	if err != nil || b == nil {
-		item.ReviewReason = "认证会话未覆盖证据时窗或身份源有缺口"
-		switch issue {
-		case "identity_source_interrupted", "identity_window_uncovered":
-			item.ReviewReason = "认证源记录未覆盖镜像证据时段"
-		case "identity_processing_pending", "identity_snapshot_index_pending":
-			item.ReviewReason = "证据时段内的认证变更待处理"
-		}
+		item.ReviewReason = outletBindingReviewReason(issue)
 		return item, err
 	}
 	item.AccountID = b.Account

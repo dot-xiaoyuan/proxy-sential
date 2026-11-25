@@ -31,7 +31,7 @@ func recordSharedFinding(ctx context.Context, tx *sql.Tx, item sharedaccess.Beha
 	}
 	caseID, actionID := "", ""
 	if outcome == "confirmed" {
-		caseID = "shared-" + d.ExecutionID
+		caseID = d.CaseID
 		if violationObservationOnly() {
 			actionID = "shared-record:" + d.ExecutionID
 		}

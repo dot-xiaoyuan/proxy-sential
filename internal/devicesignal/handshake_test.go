@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/netip"
 	"os"
+	"slices"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -252,5 +254,48 @@ func TestAuthenticatedRouterGetsActivitySlotUnderPressure(t *testing.T) {
 	}
 	if bucket.handshakes[router].featureQueued || len(bucket.handshakes[router].samples) != 0 {
 		t.Fatal("ordinary activity acquired invented fingerprints")
+	}
+}
+
+func TestAuthenticatedRouterSelectionAtFieldLimit(t *testing.T) {
+	for _, count := range []int{36, 120} {
+		t.Run(strconv.Itoa(count), func(t *testing.T) { checkPriorityRetention(t, count) })
+	}
+}
+
+func checkPriorityRetention(t *testing.T, count int) {
+	at := time.Unix(9120, 0)
+	b := newCaptureBucket()
+	b.authenticatedRouters = make(map[handshakeKey]struct{})
+	var active []handshakeKey
+	for i := 0; i < 700; i++ {
+		key := handshakeKey{IP: netip.AddrFrom4([4]byte{192, 0, byte(i / 256), byte(i)}), MAC: [6]byte{2, 0, 0, 0, byte(i / 256), byte(i)}}
+		if i < count+34 {
+			b.authenticatedRouters[key] = struct{}{}
+			if i >= count {
+				b.recordHandshake(handshakeObservation{IP: key.IP, MAC: key.MAC, Truncated: true})
+				continue
+			}
+			active = append(active, key)
+		}
+		b.recordHandshake(handshakeObservation{IP: key.IP, MAC: key.MAC, ObservedAt: at})
+		if i >= count+34 {
+			b.handshakes[key].count = 100
+		}
+	}
+	kept := b.selectHandshakes(300, at, nil)
+	if len(kept) != 300 {
+		t.Fatalf("bucket kept %d summaries", len(kept))
+	}
+	for _, key := range active {
+		if !slices.Contains(kept, key) {
+			t.Errorf("missing active priority outlet %+v", key)
+		}
+		delete(b.handshakes, key)
+	}
+	// Inactive priority keys compete only for the general rotation budget.
+	wantGeneral := selectHandshakeKeys(b.handshakes, 300-count, at, nil)
+	if !slices.Equal(kept[count:], wantGeneral) {
+		t.Fatal("inactive outlets changed general rotation")
 	}
 }

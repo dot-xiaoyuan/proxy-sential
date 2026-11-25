@@ -198,6 +198,17 @@ func TestAuthenticatedRouterWithoutDownstreamClients(t *testing.T) {
 		Activity: &OutletActivity{MAC: mac, EventID: "syn", At: now}, RouterProof: &RouterProof{AssessmentID: "router", RoleEvidenceID: "role", RuleID: "ssdp-advertised-internet-gateway", Account: "student", Session: "login", MAC: mac}}
 	cfg := Config{Version: "test", Sources: []Source{{"mirror", "handshake-sidecar", "ncu", "capture"}}, IdentityMappings: []IdentityMapping{{SensorID: "mirror", CampusID: "ncu", AccessDomain: "capture", Source: "auth", IdentitySensorID: "auth", IdentityCampusID: "ncu", IdentityAccessDomain: "access", ValidFrom: now.Add(-time.Hour), ValidUntil: now.Add(time.Hour)}}}
 	sessions := []policy.Session{{ID: "login", AccountID: "student", Source: "auth", SensorID: "auth", CampusID: "ncu", AccessDomain: "access", IP: w.IP, MAC: mac, StartedAt: now.Add(-time.Hour), ConfirmedAt: now, HeartbeatSeconds: 60}}
+	t.Run("later window evidence cannot renew expired outlet activity", func(t *testing.T) {
+		later := w
+		later.To = now.Add(cfg.Freshness())
+		later.LastObservedAt = later.To
+		evaluated := EvaluateObservation(later, cfg, sessions, later.To)
+		decision := NewObservationDecision(later, evaluated, cfg, later.To)
+		if decision.Result != "expired" || decision.ExecutionID != "" || !decision.EvidenceExpiresAt.Equal(later.Activity.At.Add(cfg.Freshness())) {
+			t.Fatalf("stale outlet activity: result=%s expires=%v", decision.Result, decision.EvidenceExpiresAt)
+		}
+	})
+
 	for _, test := range []struct {
 		name   string
 		change func(*Window)

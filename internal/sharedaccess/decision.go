@@ -8,6 +8,7 @@ import (
 )
 
 type ObservationDecision struct {
+	CaseID            string                 `json:"case_id,omitempty"`
 	Exemption         *policy.WhitelistEntry `json:"whitelist_match,omitempty"`
 	IdentityEvidence  []policy.Session       `json:"identity_evidence,omitempty"`
 	DecisionID        string                 `json:"decision_id"`
@@ -36,6 +37,14 @@ type ObservationDecision struct {
 	Attribution       Result                 `json:"attribution"`
 }
 
+// ObservationExpiresAt anchors a router window to the packet proving outlet activity.
+func (w Window) ObservationExpiresAt(cfg Config) time.Time {
+	if w.HasRouterProof() {
+		return w.Activity.At.Add(cfg.Freshness())
+	}
+	return w.LastObservedAt.Add(cfg.Freshness())
+}
+
 func NewObservationDecision(w Window, r Result, cfg Config, now time.Time) ObservationDecision {
 	p := ObservationPolicy()
 	state := "insufficient"
@@ -50,10 +59,7 @@ func NewObservationDecision(w Window, r Result, cfg Config, now time.Time) Obser
 		r.State = "insufficient"
 		r.Reasons = append(r.Reasons, "confirmed_shared_observation_required")
 	}
-	expires := w.LastObservedAt.Add(cfg.Freshness())
-	if router {
-		expires = w.Activity.At.Add(cfg.Freshness())
-	}
+	expires := w.ObservationExpiresAt(cfg)
 	if w.LastObservedAt.IsZero() || !now.Before(expires) {
 		state = "expired"
 		r.Reasons = []string{"shared_evidence_expired"}

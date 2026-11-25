@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"proxy-sentinel/internal/discovery"
 	"proxy-sentinel/internal/fingerprint"
@@ -494,33 +495,36 @@ type ProxyReviewCase struct {
 // shared-access case. Generic traffic counters are deliberately kept out of
 // this decision basis.
 type SharedAccessCaseEvidence struct {
-	RoleValueExcerpt        string   `json:"role_value_excerpt,omitempty"`
-	RoleRuleVersion         string   `json:"role_rule_version,omitempty"`
-	RoleSource              string   `json:"role_source,omitempty"`
-	RoleInput               string   `json:"role_input,omitempty"`
-	RoleEventID             string   `json:"role_event_id,omitempty"`
-	RoleRule                string   `json:"role_rule,omitempty"`
-	SessionGeneration       string   `json:"session_generation,omitempty"`
-	DecisionID              string   `json:"decision_id,omitempty"`
-	RoleEvidenceID          string   `json:"role_evidence_id,omitempty"`
-	ConfirmationBasis       string   `json:"confirmation_basis,omitempty"`
-	ObservationID           string   `json:"observation_id"`
-	GenerationID            string   `json:"generation_id"`
-	Status                  string   `json:"status"`
-	Confidence              int      `json:"confidence"`
-	StrongAnchor            string   `json:"strong_anchor"`
-	DeviceLowerBound        int      `json:"device_lower_bound"`
-	CoverageState           string   `json:"coverage_state"`
-	WindowStart             string   `json:"window_start"`
-	WindowEnd               string   `json:"window_end"`
-	SignalGroups            []string `json:"signal_groups"`
-	Reasons                 []string `json:"reasons"`
-	SourceEventIDs          []string `json:"source_event_ids"`
-	AnchorIdentities        []string `json:"anchor_identities"`
-	ReferenceDeviceCount24h int      `json:"reference_device_count_24h,omitempty"`
-	RouterBrand             string   `json:"router_brand,omitempty"`
-	RouterModel             string   `json:"router_model,omitempty"`
-	RouterConfidence        int      `json:"router_confidence,omitempty"`
+	SessionCaseKey          string          `json:"session_case_key,omitempty"`
+	EvidenceExpiresAt       string          `json:"evidence_expires_at,omitempty"`
+	SessionRefs             json.RawMessage `json:"session_refs,omitempty"`
+	RoleValueExcerpt        string          `json:"role_value_excerpt,omitempty"`
+	RoleRuleVersion         string          `json:"role_rule_version,omitempty"`
+	RoleSource              string          `json:"role_source,omitempty"`
+	RoleInput               string          `json:"role_input,omitempty"`
+	RoleEventID             string          `json:"role_event_id,omitempty"`
+	RoleRule                string          `json:"role_rule,omitempty"`
+	SessionGeneration       string          `json:"session_generation,omitempty"`
+	DecisionID              string          `json:"decision_id,omitempty"`
+	RoleEvidenceID          string          `json:"role_evidence_id,omitempty"`
+	ConfirmationBasis       string          `json:"confirmation_basis,omitempty"`
+	ObservationID           string          `json:"observation_id"`
+	GenerationID            string          `json:"generation_id"`
+	Status                  string          `json:"status"`
+	Confidence              int             `json:"confidence"`
+	StrongAnchor            string          `json:"strong_anchor"`
+	DeviceLowerBound        int             `json:"device_lower_bound"`
+	CoverageState           string          `json:"coverage_state"`
+	WindowStart             string          `json:"window_start"`
+	WindowEnd               string          `json:"window_end"`
+	SignalGroups            []string        `json:"signal_groups"`
+	Reasons                 []string        `json:"reasons"`
+	SourceEventIDs          []string        `json:"source_event_ids"`
+	AnchorIdentities        []string        `json:"anchor_identities"`
+	ReferenceDeviceCount24h int             `json:"reference_device_count_24h,omitempty"`
+	RouterBrand             string          `json:"router_brand,omitempty"`
+	RouterModel             string          `json:"router_model,omitempty"`
+	RouterConfidence        int             `json:"router_confidence,omitempty"`
 }
 
 type ProxyRuleMatch struct {

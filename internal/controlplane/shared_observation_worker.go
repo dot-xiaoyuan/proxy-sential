@@ -337,7 +337,7 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 		// A legacy non-matched result can still have a five-second retry due
 		// when the wake mode changes to async. Do not retire its current
 		// observation until the stored evidence has actually expired.
-		expiresAt := w.LastObservedAt.Add(s.sharedConfig.Freshness())
+		expiresAt := w.ObservationExpiresAt(s.sharedConfig)
 		if !w.LastObservedAt.IsZero() && now.Before(expiresAt) {
 			_, err = s.operations.db.ExecContext(ctx, `UPDATE shared_observation_jobs SET next_attempt_at=GREATEST($5,now()+interval '1 second'),lease_token='',lease_until=NULL
  WHERE job_id=$1 AND lease_token=$2 AND revision=$3 AND completed_revision=$3 AND generation_id=$4 AND canceled_epoch='' AND NOT expired`, id, token, revision, generation, expiresAt)
@@ -596,9 +596,33 @@ func (s *Server) processSharedObservationWithLimit(ctx context.Context, now time
 		if newTask {
 			sharedDecisionLatencies.record(time.Now(), latency)
 		}
-		log.Printf("shared_observation_decision job_id=%s revision=%d lane=%s result=%s new_dependency=%t dependency_at=%s latency_ms=%d claim_ms=%d read_ms=%d identity_ms=%d persist_ms=%d persist_before_commit_ms=%d commit_ms=%d", id, revision, lane, decision.Result, newTask, dependencyAt.UTC().Format(time.RFC3339Nano), latency.Milliseconds(), claimDuration.Milliseconds(), readDuration.Milliseconds(), identityDuration.Milliseconds(), time.Since(persistStarted).Milliseconds(), commitStarted.Sub(persistStarted).Milliseconds(), time.Since(commitStarted).Milliseconds())
+		activityAt, expiryReason := sharedObservationExpiryTiming(decision, s.sharedConfig.Freshness(), dependencyAt, newTask)
+		activityTime := ""
+		if !activityAt.IsZero() {
+			activityTime = activityAt.UTC().Format(time.RFC3339Nano)
+		}
+		log.Printf("shared_observation_decision job_id=%s revision=%d lane=%s result=%s new_dependency=%t dependency_at=%s evidence_activity_at=%s processing_started_at=%s evaluated_at=%s expiry_reason=%s latency_ms=%d claim_ms=%d read_ms=%d identity_ms=%d persist_ms=%d persist_before_commit_ms=%d commit_ms=%d", id, revision, lane, decision.Result, newTask, dependencyAt.UTC().Format(time.RFC3339Nano), activityTime, now.UTC().Format(time.RFC3339Nano), decision.EvaluatedAt.UTC().Format(time.RFC3339Nano), expiryReason, latency.Milliseconds(), claimDuration.Milliseconds(), readDuration.Milliseconds(), identityDuration.Milliseconds(), time.Since(persistStarted).Milliseconds(), commitStarted.Sub(persistStarted).Milliseconds(), time.Since(commitStarted).Milliseconds())
 	}
 	return true, nil
+}
+
+// Use the deadline selected by the decision itself. Router activity and the
+// latest observation in the surrounding window can have different times.
+func sharedObservationExpiryTiming(d sharedaccess.ObservationDecision, freshness time.Duration, dependencyAt time.Time, newDependency bool) (time.Time, string) {
+	activity := d.EvidenceExpiresAt.Add(-freshness)
+	if d.Result != "expired" {
+		return activity, ""
+	}
+	if !newDependency {
+		return activity, "scheduled_recheck"
+	}
+	if activity.IsZero() || d.Evidence.LastObservedAt.IsZero() {
+		return time.Time{}, "missing_activity"
+	}
+	if dependencyAt.Before(d.EvidenceExpiresAt) {
+		return activity, "expired_after_enqueue"
+	}
+	return activity, "expired_at_enqueue"
 }
 
 func sharedObservationClaimOrder(lane string) (string, string) {
@@ -677,24 +701,32 @@ func persistSharedObservationDecision(ctx context.Context, tx *sql.Tx, d *shared
 			return err
 		}
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO policy_decision_records(decision_id,execution_id,policy_id,policy_revision,account_id,known,violated,evaluated_at,document,trigger_type,subject_ip,result,observation_id,evidence_version)
+	inserted, err := tx.ExecContext(ctx, `INSERT INTO policy_decision_records(decision_id,execution_id,policy_id,policy_revision,account_id,known,violated,evaluated_at,document,trigger_type,subject_ip,result,observation_id,evidence_version)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'shared_access',$10::inet,$11,$12,$13) ON CONFLICT(decision_id) DO NOTHING`, d.DecisionID, d.ExecutionID, d.PolicyID, d.PolicyRevision, d.AccountID, d.Known, d.Violated, d.EvaluatedAt, raw, d.IP, d.Result, d.ObservationID, d.EvidenceVersion)
-	if err != nil || !newEpisode || !violationObservationOnly() {
+	if err != nil || d.Result != "matched" || !violationObservationOnly() {
 		return err
 	}
-	// A terminal record-only action is visible in the ordinary action ledger.
-	// Workers claim only pending actions; this row can never be delivered.
-	_, err = tx.ExecContext(ctx, `INSERT INTO enforcement_actions(action_id,idempotency_key,action_type,subject_type,subject_id,account_id,ip,campus_id,status,mode,evidence_ids,ruleset_version,policy_parameters,created_by,created_at)
+	// A committed decision already recorded the channels enabled at that time.
+	// This also preserves legacy reports keyed by episode across a retry.
+	n, err := inserted.RowsAffected()
+	if err != nil || n == 0 {
+		return err
+	}
+	if newEpisode {
+		// A terminal record-only action is visible in the ordinary action ledger.
+		// Workers claim only pending actions; this row can never be delivered.
+		_, err = tx.ExecContext(ctx, `INSERT INTO enforcement_actions(action_id,idempotency_key,action_type,subject_type,subject_id,account_id,ip,campus_id,status,mode,evidence_ids,ruleset_version,policy_parameters,created_by,created_at)
 		VALUES($1,$1,'disconnect','account',$2,$2,$3::inet,NULLIF($4,''),'recorded','record_only',jsonb_build_array($5::text),$6,
 		jsonb_build_object('execution_id',$7::text,'episode_id',$7::text,'policy_id',$8::text,'decision_id',$9::text,'policy_revision',$10::bigint,'evidence_version',$11::text,'observation_id',$5::text),
 		'shared_observation', $12) ON CONFLICT(idempotency_key) DO NOTHING`, "shared-record:"+d.ExecutionID, d.AccountID, d.IP, d.CampusID, d.ObservationID, d.EvidenceVersion, d.ExecutionID, d.PolicyID, d.DecisionID, d.PolicyRevision, d.EvidenceVersion, d.EvaluatedAt)
-	if err != nil {
-		return err
+		if err != nil {
+			return err
+		}
 	}
 	// Enabled reporting channels receive a terminal record in the normal report
 	// ledger. The delivery worker claims queued/sending rows only.
 	_, err = tx.ExecContext(ctx, `INSERT INTO behavior_report_outbox(report_id,idempotency_key,channel_id,event_type,subject_type,subject_id,account_id,ip,occurred_at,payload,status)
-		SELECT 'shared-record:'||$11||':'||channel_id,'shared-record:'||$11||':'||channel_id,channel_id,'proxy_behavior','account',$2,$2,$3,$4,
+		SELECT 'shared-match:'||$1||':'||channel_id,'shared-match:'||$1||':'||channel_id,channel_id,'proxy_behavior','account',$2,$2,$3,$4,
 		jsonb_build_object('policy_decision_id',$1::text,'episode_id',$11::text,'policy_id',$5::text,'policy_revision',$6::bigint,'observation_id',$7::text,
 		'evidence_version',$8::text,'campus_id',$9::text,'access_domain',$10::text,'execution_mode','record_only','external_request_sent',false),
 		'recorded' FROM behavior_report_channels WHERE enabled=true

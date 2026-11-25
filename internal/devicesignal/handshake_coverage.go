@@ -10,23 +10,21 @@ import (
 	"time"
 )
 
-func writeHandshakeCoverage(path, sensor, iface, instance string, scope *normalized.CaptureScope, coverage sharedaccess.CoverageV2) error {
-	return writeCaptureCoverage(path, sensor, iface, instance, "handshake-sidecar", scope, coverage)
+// Diagnostics are serialized once per heartbeat. Per-device coverage proofs
+// consumed by policy retain their original shape.
+type captureCoverageDocument struct {
+	sharedaccess.CoverageV2
+	IEEE1905       *ieee1905CaptureStats   `json:"ieee1905,omitempty"`
+	RouterSampling *routerSamplingCoverage `json:"authenticated_router_sampling,omitempty"`
 }
 
 func writeCaptureCoverage(path, sensor, iface, instance, source string, scope *normalized.CaptureScope, coverage sharedaccess.CoverageV2) error {
-	return writeCaptureCoverageDocument(path, sensor, iface, instance, source, scope, coverage, nil)
+	return writeCaptureCoverageDocument(path, sensor, iface, instance, source, scope, captureCoverageDocument{CoverageV2: coverage})
 }
 
-func writeCaptureCoverageDocument(path, sensor, iface, instance, source string, scope *normalized.CaptureScope, coverage sharedaccess.CoverageV2, stats *ieee1905CaptureStats) error {
-	sum := sha256.Sum256([]byte(source + "/" + sensor + "/" + instance + "/" + coverage.From.Format(time.RFC3339Nano)))
-	// Input diagnostics live only on the capture heartbeat. The coverage proof
-	// attached to a device record and used by policy keeps its original shape.
-	document := struct {
-		sharedaccess.CoverageV2
-		IEEE1905 *ieee1905CaptureStats `json:"ieee1905,omitempty"`
-	}{coverage, stats}
-	event := scope.Apply(normalized.Event{SchemaVersion: "v1", EventID: "coverage-" + hex.EncodeToString(sum[:16]), Source: source, SourceEventType: "capture_coverage", Type: "device", Timestamp: coverage.To.Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": sensor, "interface": iface, "collector_instance_id": instance}, Subject: map[string]any{}, Payload: map[string]any{"capture_coverage": document}})
+func writeCaptureCoverageDocument(path, sensor, iface, instance, source string, scope *normalized.CaptureScope, document captureCoverageDocument) error {
+	sum := sha256.Sum256([]byte(source + "/" + sensor + "/" + instance + "/" + document.From.Format(time.RFC3339Nano)))
+	event := scope.Apply(normalized.Event{SchemaVersion: "v1", EventID: "coverage-" + hex.EncodeToString(sum[:16]), Source: source, SourceEventType: "capture_coverage", Type: "device", Timestamp: document.To.Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": sensor, "interface": iface, "collector_instance_id": instance}, Subject: map[string]any{}, Payload: map[string]any{"capture_coverage": document}})
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640)
 	if err != nil {
 		return err

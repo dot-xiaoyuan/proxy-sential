@@ -849,6 +849,9 @@ func errorType(err error) string {
 	if err == nil {
 		return ""
 	}
+	if errors.Is(err, legacy4k.ErrNoUsableIdentityAddress) {
+		return "no_usable_identity_address"
+	}
 	if errors.Is(err, legacy4k.ErrOnlineInventoryChanged) {
 		return "online_inventory_changed"
 	}

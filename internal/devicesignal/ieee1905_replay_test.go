@@ -34,7 +34,7 @@ func TestIEEE1905CoverageRecordsMemberSnapshotAvailability(t *testing.T) {
 	at := time.Unix(100, 0).UTC()
 	coverage := sharedaccess.CoverageV2{SchemaVersion: "capture-coverage/v2", From: at, To: at.Add(30 * time.Second), KernelStatsKnown: true}
 	output := filepath.Join(t.TempDir(), "packet.jsonl")
-	if err := writeCaptureCoverageDocument(output, "sensor", "bond0", "instance", "packet-sidecar", nil, coverage, &bucket.ieee1905); err != nil {
+	if err := writeCaptureCoverageDocument(output, "sensor", "bond0", "instance", "packet-sidecar", nil, captureCoverageDocument{CoverageV2: coverage, IEEE1905: &bucket.ieee1905}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(output)

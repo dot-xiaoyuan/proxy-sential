@@ -92,17 +92,26 @@ func (r sharedReplayReader) SharedIdentitySessions(context.Context, sharedaccess
 	return r.sessions, nil
 }
 
-type attributedTrafficDocument string
+type attributedTrafficDocument struct {
+	account, reason string
+}
 
 func (t attributedTrafficDocument) Match(value driver.Value) bool {
 	raw, ok := value.([]byte)
 	var document sharedObservationDocument
 	return ok && json.Unmarshal(raw, &document) == nil &&
-		document.Assessment.AccountID == string(t) && document.Assessment.Status == "candidate" &&
+		document.Assessment.ReviewReason == t.reason && document.Assessment.AccountID == t.account && document.Assessment.Status == "candidate" &&
 		document.Window.StrongAnchor == "" && document.Result.State == "insufficient" && document.Result.AccountID == ""
 }
 
 func TestSharedObservationPersistsAttributedMirrorTrafficWithoutRecordingAction(t *testing.T) {
+	for _, signal := range []string{"protocol_differences", "hostname_only"} {
+		t.Run(signal, func(t *testing.T) { replayAttributedTrafficWithoutAction(t, signal) })
+	}
+}
+
+func replayAttributedTrafficWithoutAction(t *testing.T, signal string) {
+	t.Helper()
 	t.Setenv("PROXY_SENTINEL_STREAM_SHARED_REQUIRED", "false")
 	now := time.Date(2026, 11, 21, 1, 0, 0, 0, time.UTC)
 	window := sharedaccess.Window{ID: "mirror-evidence", RuleVersion: sharedaccess.RuleVersion, SensorID: "mirror", CampusID: "ncu", AccessDomain: "capture", IP: "192.0.2.4", From: now.Add(-time.Minute), To: now.Add(-time.Second), LastObservedAt: now.Add(-time.Second), Sources: []string{"handshake-sidecar"}, EventIDs: []string{"realistic-handshake"}, Conflicts: []string{"capture_interval_incomplete:handshake-sidecar"}}
@@ -110,6 +119,15 @@ func TestSharedObservationPersistsAttributedMirrorTrafficWithoutRecordingAction(
 	cfg := sharedaccess.Config{Version: "v1", FreshnessSeconds: 180, IdentityMappings: []sharedaccess.IdentityMapping{mapping}}
 	item := sharedaccess.BehaviorAssessment{Current: true, ObservationID: window.ID, SensorID: window.SensorID, CampusID: window.CampusID, AccessDomain: window.AccessDomain, IP: window.IP, Status: "candidate", CoverageState: "partial", SignalGroups: []string{"tls_stack", "ttl_path"}, LastSeen: window.LastObservedAt}
 	item.AccountID = "alice"
+	outcome := "candidate"
+	if signal == "hostname_only" {
+		outcome = "router_pending"
+		item.SignalGroups = []string{"router_identity"}
+		item.Router = sharedaccess.BehaviorRouterContext{AssessmentID: "dhcp-profile", RoleSource: "dhcp", RoleInput: "hostname", Model: "RD03"}
+		item.ReviewReason = "型号仅来自 DHCP 主机名，缺少独立路由器角色证据"
+		window.Activity = &sharedaccess.OutletActivity{MAC: "02:00:00:00:00:01", At: window.LastObservedAt, EventID: window.EventIDs[0]}
+		window.Records = []sharedaccess.RecordRef{{EventID: window.EventIDs[0], Source: "handshake-sidecar", InstanceID: "test"}}
+	}
 	db, mock, err := sqlmock.New(sqlmock.ValueConverterOption(sharedTestConverter{}))
 	if err != nil {
 		t.Fatal(err)
@@ -128,10 +146,12 @@ func TestSharedObservationPersistsAttributedMirrorTrafficWithoutRecordingAction(
 	mock.ExpectExec("INSERT INTO shared_behavior_observations").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO shared_device_profile_jobs").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO policy_decision_records").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("INSERT INTO shared_access_findings").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO shared_access_findings").
+		WithArgs(item.ObservationID, item.SensorID, item.CampusID, item.AccessDomain, item.IP, item.LastSeen, "alice", outcome, "", item.ReviewReason, "", "").
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("(?s)SELECT j.revision,j.lease_token.*FOR UPDATE OF j").WillReturnRows(sqlmock.NewRows([]string{"revision", "lease_token", "generation", "canceled", "mode"}).AddRow(1, "traffic-lease", "", "", "async"))
 	mock.ExpectExec("UPDATE shared_observation_jobs SET completed_revision").
-		WithArgs("job", 1, sqlmock.AnyArg(), false, attributedTrafficDocument("alice"), "insufficient", "partial", "resolved", now, true).
+		WithArgs("job", 1, sqlmock.AnyArg(), false, attributedTrafficDocument{account: "alice", reason: item.ReviewReason}, "insufficient", "partial", "resolved", now, true).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	s := &Server{sharedConfig: cfg, operations: &operationsState{db: db}, reader: sharedReplayReader{window: window, item: item}, identitySources: []identitySourceRegistration{{IdentityScope: store.IdentityScope{Source: "auth", SensorID: "auth", CampusID: "ncu", AccessDomain: "auth"}, IntervalSeconds: 60}}}
@@ -183,8 +203,9 @@ func TestSharedObservationCommitsOnlyRecordsAndRetriesFailedTransaction(t *testi
 			mock.ExpectExec("INSERT INTO shared_device_profile_jobs").WillReturnResult(sqlmock.NewResult(0, 1))
 		}
 		mock.ExpectExec("SELECT pg_advisory_xact_lock").WillReturnResult(sqlmock.NewResult(0, 0))
-		mock.ExpectQuery("SELECT e.execution_id FROM shared_observation_episode_index").WillReturnError(sql.ErrNoRows)
-		mock.ExpectQuery("SELECT e.execution_id FROM shared_observation_episode_index").WillReturnError(sql.ErrNoRows)
+		mock.ExpectQuery("SELECT execution_id,coalesce").WillReturnError(sql.ErrNoRows)
+		mock.ExpectQuery("SELECT e.execution_id,coalesce").WillReturnError(sql.ErrNoRows)
+		mock.ExpectQuery("SELECT case_id FROM risk_cases WHERE dedupe_key").WillReturnError(sql.ErrNoRows)
 		mock.ExpectExec("INSERT INTO shared_observation_executions").WillReturnResult(sqlmock.NewResult(0, 1))
 		mock.ExpectExec("INSERT INTO shared_observation_episode_index").WillReturnResult(sqlmock.NewResult(0, 1))
 		expectation := mock.ExpectExec("INSERT INTO policy_decision_records")
@@ -582,5 +603,35 @@ func TestSharedWhitelistSuppressesBothPaths(t *testing.T) {
 		if d.Result != "whitelist_suppressed" || d.ExecutionID != "" || d.Violated || item.Status == "confirmed" || item.Exemption.ID != "school" {
 			t.Fatal(d, item)
 		}
+	}
+}
+
+func TestSharedObservationExpiryAtEnqueue(t *testing.T) {
+	activity := time.Date(2026, 11, 25, 0, 0, 0, 0, time.UTC)
+	cfg := sharedaccess.Config{FreshnessSeconds: 180}
+	window := sharedaccess.Window{LastObservedAt: activity}
+	for _, tc := range []struct {
+		name   string
+		age    time.Duration
+		reason string
+	}{
+		{"already stale", 180 * time.Second, "expired_at_enqueue"},
+		{"fresh on arrival", 179 * time.Second, "expired_after_enqueue"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			decision := sharedaccess.NewObservationDecision(window, sharedaccess.Result{}, cfg, activity.Add(200*time.Second))
+			at, reason := sharedObservationExpiryTiming(decision, cfg.Freshness(), activity.Add(tc.age), true)
+			if decision.Result != "expired" || !at.Equal(activity) || reason != tc.reason || decision.ExecutionID != "" {
+				t.Fatalf("activity=%v reason=%s result=%s", at, reason, decision.Result)
+			}
+		})
+	}
+	missing := sharedaccess.NewObservationDecision(sharedaccess.Window{}, sharedaccess.Result{}, cfg, activity)
+	if at, reason := sharedObservationExpiryTiming(missing, cfg.Freshness(), activity, true); !at.IsZero() || reason != "missing_activity" {
+		t.Fatalf("missing activity %v %s", at, reason)
+	}
+	dec := sharedaccess.NewObservationDecision(window, sharedaccess.Result{}, cfg, activity.Add(200*time.Second))
+	if _, reason := sharedObservationExpiryTiming(dec, cfg.Freshness(), activity, false); reason != "scheduled_recheck" {
+		t.Fatalf("recheck %s", reason)
 	}
 }

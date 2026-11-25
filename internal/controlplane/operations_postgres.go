@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -524,13 +523,6 @@ func (s *operationsState) savePostgres(tx *sql.Tx) error {
 			return fmt.Errorf("case %s changed concurrently; retry the operation", item.CaseID)
 		}
 
-		if strings.HasPrefix(item.CaseID, "shared-shared-observe-") {
-			actionID := "shared-record:" + strings.TrimPrefix(item.CaseID, "shared-")
-			if _, err := tx.ExecContext(ctx, `UPDATE enforcement_actions SET case_id=$2 WHERE action_id=$1 AND case_id IS NULL AND mode='record_only' AND status='recorded'`, actionID, item.CaseID); err != nil {
-				return fmt.Errorf("link record-only action to case %s: %w", item.CaseID, err)
-			}
-		}
-
 		for _, comment := range item.Comments {
 			if s.persistedHistory[[2]string{"comment", comment.CommentID}] {
 				continue
@@ -556,6 +548,12 @@ func (s *operationsState) savePostgres(tx *sql.Tx) error {
 		for _, snapshot := range item.EvidenceHistory {
 			if s.persistedHistory[[2]string{"snapshot", snapshot.SnapshotID}] {
 				continue
+			}
+			if proof := snapshot.Evidence.SharedAccess; proof != nil && proof.DecisionID != "" {
+				if _, err := tx.ExecContext(ctx, `UPDATE enforcement_actions a SET case_id=$2 FROM policy_decision_records d
+ WHERE d.decision_id=$1 AND a.action_id='shared-record:'||d.execution_id AND a.mode='record_only' AND a.status='recorded' AND a.case_id IS NULL`, proof.DecisionID, item.CaseID); err != nil {
+					return fmt.Errorf("link recorded sharing action to case: %w", err)
+				}
 			}
 			evidence, _ := json.Marshal(snapshot.Evidence)
 			if err = s.protectDiscoveryEvidence(ctx, tx, item.CaseID, evidence); err != nil {

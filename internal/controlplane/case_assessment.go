@@ -56,7 +56,11 @@ func projectCaseAssessment(item RiskCase, snapshot *risk.Snapshot, now time.Time
 // Bound cases require the corresponding subject snapshot. The IP table does
 // not carry account/endpoint ownership, so it cannot renew a bound case. These
 // are primary-key lookups in the same transaction, without history aggregation.
-const caseAssessmentProjection = `to_jsonb(c)||jsonb_build_object('ip',coalesce(host(c.ip),''),'nas_ip',coalesce(host(c.nas_ip),''),'_current_risk',CASE
+const caseAssessmentProjection = `to_jsonb(c)||jsonb_build_object('ip',coalesce(host(c.ip),''),'nas_ip',coalesce(host(c.nas_ip),''),'_shared_current', CASE WHEN starts_with(c.dedupe_key,'shared-session:') THEN EXISTS(
+ SELECT 1 FROM shared_access_findings f JOIN shared_behavior_observations o USING(observation_id)
+ JOIN policy_decision_records d ON d.decision_id=o.observation->>'decision_id'
+ WHERE f.observed_at=c.last_seen AND f.case_id=c.case_id AND f.outcome='confirmed'
+ AND o.current AND d.result='matched' AND (d.document->>'evidence_expires_at')::timestamptz>now()) END,'_current_risk',CASE
  WHEN c.subject_type IN ('account','endpoint') THEN (SELECT to_jsonb(rs)||jsonb_build_object('ip',coalesce(host(rs.ip),'')) FROM subject_risk_snapshots rs WHERE rs.subject_type=c.subject_type AND rs.subject_id=c.subject_id)
  WHEN coalesce(c.endpoint_id,'')<>'' THEN (SELECT to_jsonb(rs)||jsonb_build_object('ip',coalesce(host(rs.ip),'')) FROM subject_risk_snapshots rs WHERE rs.subject_type='endpoint' AND rs.subject_id=c.endpoint_id)
  WHEN coalesce(c.account_id,'')<>'' THEN (SELECT to_jsonb(rs)||jsonb_build_object('ip',coalesce(host(rs.ip),'')) FROM subject_risk_snapshots rs WHERE rs.subject_type='account' AND rs.subject_id=c.account_id)
@@ -65,14 +69,15 @@ const caseAssessmentProjection = `to_jsonb(c)||jsonb_build_object('ip',coalesce(
 func decodeCaseAssessment(raw []byte) (RiskCase, error) {
 	var doc struct {
 		RiskCase
-		CurrentRisk *risk.Snapshot `json:"_current_risk"`
+		SharedCurrent *bool          `json:"_shared_current"`
+		CurrentRisk   *risk.Snapshot `json:"_current_risk"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return RiskCase{}, err
 	}
 	if kind := riskKindForRuleset(doc.RulesetVersion); kind != "" {
 		doc.RiskKind = kind
-		doc.AssessmentCurrent = doc.Status != "closed" && doc.Status != "resolved"
+		doc.AssessmentCurrent = doc.Status != "closed" && doc.Status != "resolved" && (doc.SharedCurrent == nil || *doc.SharedCurrent)
 		doc.AssessmentUpdatedAt = doc.LastSeen
 		return doc.RiskCase, nil
 	}

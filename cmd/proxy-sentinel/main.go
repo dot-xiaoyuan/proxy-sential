@@ -628,7 +628,7 @@ func runDeviceSignal(args []string) error {
 				return err
 			}
 			defer pg.Close()
-			opts.AuthenticatedRouters = handshakeRouterPriority(ctx, captureScope, pg.AuthenticatedRouterSamplingKeys)
+			opts.AuthenticatedRouters = handshakeRouterPriority(ctx, captureScope, 30*time.Second, pg.AuthenticatedRouterSamplingKeys)
 		}
 	}
 	return devicesignal.Run(ctx, opts)

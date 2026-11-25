@@ -28,7 +28,7 @@ func runRouterCaptureLoop(ctx context.Context, opts Options, fd int, boundAt tim
 	tracker := newStateChangeTracker[packetBucketKey](opts.StateLiveness)
 	controlTracker := newStateChangeTracker[string](opts.StateLiveness)
 	writeCoverage := func(coverage sharedaccess.CoverageV2, stats *ieee1905CaptureStats) error {
-		if err := writeCaptureCoverageDocument(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, "packet-sidecar", opts.CaptureScope, coverage, stats); err != nil {
+		if err := writeCaptureCoverageDocument(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, "packet-sidecar", opts.CaptureScope, captureCoverageDocument{CoverageV2: coverage, IEEE1905: stats}); err != nil {
 			return err
 		}
 		return saveCaptureCoverageCheckpoint(opts.Output, opts.SensorID, opts.CollectorInstanceID, coverage)

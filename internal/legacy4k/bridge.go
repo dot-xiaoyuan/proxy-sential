@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,8 @@ import (
 	"strings"
 	"time"
 )
+
+var ErrNoUsableIdentityAddress = errors.New("legacy event has no usable identity address")
 
 type Event struct {
 	Action          int    `json:"action"`
@@ -247,7 +250,7 @@ func DecodeRecordsForInstance(raw, instanceID string, now time.Time) ([]map[stri
 		out = append(out, record)
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("legacy event has no usable identity address")
+		return nil, ErrNoUsableIdentityAddress
 	}
 	return out, nil
 }
