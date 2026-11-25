@@ -85,3 +85,53 @@ func TestDHCPMessageHeaderAndOpaqueClientIDLengths(t *testing.T) {
 		})
 	}
 }
+
+func TestDHCPExplicitHeaderConflictNeedsIndependentEthernetIdentity(t *testing.T) {
+	const header = "02:00:00:00:00:10"
+	const other = "02:00:00:00:00:20"
+	for _, kind := range []string{"dhcp-message", "dhcp-binding", "dhcp"} {
+		directOption := ""
+		if kind == "dhcp-message" {
+			directOption = other
+		}
+		for _, tc := range []struct {
+			name, htype, hlen, logged, optionType, option, want string
+		}{
+			{"non_ethernet_without_alias", "6", "6", "", "", "", ""},
+			{"short_text_disagrees_with_hlen", "1", "8", header, "", "", ""},
+			{"htype_alone_rules_out_ethernet", "6", "", header, "", "", ""},
+			{"hlen_alone_rules_out_six_bytes", "", "5", header, "", "", ""},
+			{"opaque_option_cannot_corroborate_alias", "6", "6", other, "0", other, ""},
+			{"ethernet_option_corroborates_alias", "6", "6", other, "1", other, other},
+			{"option_disagrees_with_logged_key", "6", "6", header, "1", other, directOption},
+			{"typed_option_without_logged_key", "1", "8", "", "1", other, directOption},
+			{"ethernet_option_independently_agrees_with_header", "1", "8", header, "1", header, header},
+			{"eight_byte_option_remains_opaque", "1", "8", other, "1", other + ":42:56", ""},
+			{"historical_record_without_header_metadata", "", "", header, "", "", header},
+		} {
+			t.Run(kind+"/"+tc.name, func(t *testing.T) {
+				fields := map[string]string{"ts": "1789537676.8", "msg_types": "ACK", "assigned_addr": "192.168.1.12",
+					"htype": tc.htype, "hlen": tc.hlen, "client_chaddr": header, "mac": tc.logged, "client_id_hwtype": tc.optionType, "client_id_hwaddr": tc.option}
+				e, err := dhcpEventFromFields([]byte(tc.name), fields, 0, Options{LogKind: kind})
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, _ := e.Subject["mac"].(string)
+				if got != tc.want {
+					t.Fatalf("normalized MAC = %q, want %q", got, tc.want)
+				}
+				if tc.want == "" && e.Type != "dhcp_message" {
+					t.Fatalf("unverified MAC entered device identity stream as %s", e.Type)
+				}
+				if (e.Payload["dhcp_header_mac_conflict"] == true) != (tc.htype != "" && tc.htype != "1" || tc.hlen != "" && tc.hlen != "6") {
+					t.Fatalf("unexpected header conflict status: %v", e.Payload)
+				}
+				for _, key := range []string{"htype", "hlen", "client_chaddr", "mac", "client_id_hwtype", "client_id_hwaddr"} {
+					if fields[key] != "" && e.Payload[key] != fields[key] {
+						t.Errorf("lost %s: %v", key, e.Payload[key])
+					}
+				}
+			})
+		}
+	}
+}

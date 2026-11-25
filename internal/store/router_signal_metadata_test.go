@@ -1,12 +1,16 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"proxy-sentinel/internal/adapter/zeek"
+	"proxy-sentinel/internal/normalized"
 )
 
 func TestRouterSignalBatchPreservesCursorOnInvalidMetadata(t *testing.T) {
@@ -61,5 +65,66 @@ func TestRouterSignalBatchPreservesCursorOnInvalidMetadata(t *testing.T) {
 				t.Fatalf("lost instance attribution: %+v", events[1].Observer)
 			}
 		})
+	}
+}
+
+func TestDHCPHeaderConflictSurvivesDeviceAndRouterProjection(t *testing.T) {
+	const rejected = "02:00:00:00:00:11"
+	const verified = "02:00:00:00:00:22"
+	var input, events bytes.Buffer
+	for _, option := range []string{"", verified} {
+		row := map[string]any{"ts": 1789537676.8, "msg_types": "ACK", "assigned_addr": "192.0.2.10",
+			"htype": 6, "hlen": 6, "mac": rejected, "client_chaddr": rejected}
+		if option != "" {
+			row["client_id_hwtype"], row["client_id_hwaddr"] = 1, option
+		}
+		if err := json.NewEncoder(&input).Encode(row); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stats, err := zeek.Convert(&input, &events, zeek.Options{LogKind: "dhcp-message", SensorID: "office"})
+	if err != nil || stats.Emitted != 2 {
+		t.Fatalf("converted %v, %v", stats, err)
+	}
+	var rows []routerSignalRow
+	decoder := json.NewDecoder(&events)
+	for _, want := range []string{"", verified} {
+		var event normalized.Event
+		if err := decoder.Decode(&event); err != nil {
+			t.Fatal(err)
+		}
+		var signal string
+		for _, draft := range signalDrafts(event) {
+			if draft.kind == "mac" {
+				signal = draft.value
+			}
+		}
+		if signal != want {
+			t.Fatalf("inventory MAC = %q, want %q", signal, want)
+		}
+		raw, err := json.Marshal(event.Payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mac, _ := event.Subject["mac"].(string)
+		rows = append(rows, routerSignalRow{Timestamp: event.Timestamp, EventID: event.EventID, SensorID: "office", Source: event.Source,
+			SourceEventType: event.SourceEventType, Type: event.Type, SubjectMAC: mac, PayloadJSON: string(raw)})
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, row := range rows {
+			json.NewEncoder(w).Encode(row)
+		}
+	}))
+	defer server.Close()
+	ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	published, _, err := (&DBStore{ch: ch}).routerSignalBatch(context.Background(), "office", routerRecognitionCursor{}, 10)
+	if err != nil || len(published) != 2 {
+		t.Fatalf("router input count=%d err=%v", len(published), err)
+	}
+	if published[0].Subject["mac"] != nil || published[1].Subject["mac"] != verified || published[0].Payload["client_chaddr"] != rejected {
+		t.Fatalf("router replaced the selected identity or lost original evidence: %+v", published)
 	}
 }

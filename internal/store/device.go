@@ -340,7 +340,7 @@ func signalDrafts(event normalized.Event) []deviceSignalDraft {
 			source = "device"
 		}
 		mac := firstMapString(event.Payload, "mac", "client_mac", "mac_address")
-		if mac == "" {
+		if mac == "" || (event.SourceEventType == "dhcp" && event.Payload["dhcp_header_mac_conflict"] == true) {
 			mac = firstMapString(event.Subject, "mac")
 		}
 		add(source, "mac", mac, "strong", 0.92, 90)

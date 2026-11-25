@@ -189,7 +189,7 @@ func (s *DBStore) routerSignalBatch(ctx context.Context, sensorID string, cursor
 				return nil, cursor, err
 			}
 		}
-		if _, ok := event.Subject["mac"]; !ok {
+		if _, ok := event.Subject["mac"]; !ok && !(event.SourceEventType == "dhcp" && event.Payload["dhcp_header_mac_conflict"] == true) {
 			if mac := firstNonEmpty(stringFromMap(event.Payload, "mac"), stringFromMap(event.Payload, "client_mac"), stringFromMap(event.Payload, "client_chaddr")); mac != "" {
 				event.Subject["mac"] = mac
 			}

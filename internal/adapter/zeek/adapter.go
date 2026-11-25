@@ -619,20 +619,12 @@ func dhcpEventFromFields(raw []byte, fields map[string]string, lineOffset int, o
 	}
 
 	subjectIP := first(fields, "assigned_addr", "requested_addr", "client_addr")
-	clientMAC := first(fields, "mac", "client_mac", "client_chaddr")
+	clientMAC, headerConflict := dhcpClientMAC(fields, opts.LogKind)
 	messageLog := opts.LogKind == "dhcp-message"
-	if messageLog || opts.LogKind == "dhcp-binding" {
-		// The client identifier may be opaque or eight bytes long. An
-		// explicitly logged six-byte BOOTP hardware address has priority.
-		if headerMAC := validDHCPMessageMAC(first(fields, "client_chaddr")); headerMAC != "" {
-			clientMAC = headerMAC
-		}
-		clientMAC = validDHCPMessageMAC(clientMAC)
-	}
 	if subjectIP == "0.0.0.0" {
 		subjectIP = ""
 	}
-	if !messageLog && subjectIP == "" && clientMAC == "" {
+	if !messageLog && subjectIP == "" && clientMAC == "" && !headerConflict {
 		return normalized.Event{}, fmt.Errorf("missing DHCP client address and MAC")
 	}
 	if messageLog {
@@ -653,6 +645,9 @@ func dhcpEventFromFields(raw []byte, fields map[string]string, lineOffset int, o
 
 	payload := dhcpPayload(fields)
 	payload["dhcp_log_kind"] = opts.LogKind
+	if headerConflict {
+		payload["dhcp_header_mac_conflict"] = true
+	}
 	messageType := strings.ToUpper(first(fields, "msg_types"))
 	clientMessage := messageType == "REQUEST" || messageType == "DISCOVER" || messageType == "INFORM"
 	if messageLog && clientMessage && clientMAC != "" {
@@ -679,7 +674,7 @@ func dhcpEventFromFields(raw []byte, fields map[string]string, lineOffset int, o
 		}
 	}
 	eventType := "device"
-	if messageLog && !(messageType == "ACK" && validDHCPMessageIP(first(fields, "assigned_addr")) && clientMAC != "" || clientMessage && clientMAC != "") {
+	if (headerConflict && clientMAC == "") || messageLog && !(messageType == "ACK" && validDHCPMessageIP(first(fields, "assigned_addr")) && clientMAC != "" || clientMessage && clientMAC != "") {
 		// OFFER and incomplete messages are retained as standard
 		// events but cannot become device or address-binding facts.
 		eventType = "dhcp_message"
@@ -728,6 +723,28 @@ func dhcpEventFromFields(raw []byte, fields map[string]string, lineOffset int, o
 			"line_offset": lineOffset,
 		},
 	}, nil
+}
+
+func dhcpClientMAC(fields map[string]string, kind string) (string, bool) {
+	htype, hlen := first(fields, "htype"), first(fields, "hlen")
+	if (htype != "" && htype != "1") || (hlen != "" && hlen != "6") {
+		// Zeek's logged mac can be a copy of the disputed chaddr. Option 61
+		// identifies an Ethernet client only when it declares type 1. On a
+		// binding the option belongs to the request and must match the join key.
+		optionMAC := validDHCPMessageMAC(first(fields, "client_id_hwaddr"))
+		if first(fields, "client_id_hwtype") == "1" && optionMAC != "" &&
+			(kind == "dhcp-message" || validDHCPMessageMAC(first(fields, "mac", "client_mac")) == optionMAC) {
+			return optionMAC, true
+		}
+		return "", true
+	}
+	if kind == "dhcp-message" || kind == "dhcp-binding" {
+		if headerMAC := validDHCPMessageMAC(first(fields, "client_chaddr")); headerMAC != "" {
+			return headerMAC, false
+		}
+		return validDHCPMessageMAC(first(fields, "mac", "client_mac")), false
+	}
+	return first(fields, "mac", "client_mac", "client_chaddr"), false
 }
 
 func validDHCPMessageMAC(value string) string {
