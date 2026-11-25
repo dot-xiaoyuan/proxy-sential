@@ -34,9 +34,11 @@ export function buildCoverageSummary(report: CoverageReport): CoverageSummary {
   const funnel = report.mirror_funnel
   const mirror = funnel && funnel.status !== 'initializing' && funnel.as_of ? funnel.ipv4_total : undefined
   const overlap = report.ipv4_mirror_overlap
-  const overlapValid = mirror !== undefined && overlap !== undefined && overlap <= mirror && overlap <= report.ipv4
-  const union = overlapValid ? report.ipv4 + mirror - overlap : undefined
-  const total = union !== undefined && union >= device ? union : undefined
+  // Older published snapshots may count the address rows and their type
+  // partition at different moments. Only combine counts with one denominator.
+  const overlapValid = device === report.ipv4 && mirror !== undefined && overlap !== undefined
+    && overlap >= 0 && overlap <= mirror && overlap <= device
+  const total = overlapValid ? device + mirror - overlap : undefined
   let reasons: Reason[] = []
   if (rows) {
     const open = [byStatus('without_profile'), byStatus('unlinked')]
@@ -65,4 +67,3 @@ export function buildCoverageSummary(report: CoverageReport): CoverageSummary {
     reasons: reasons.filter(reason => reason.value > 0),
   }
 }
-

@@ -335,7 +335,7 @@ export function DiscoveryCoverageReport({ report, composition }: { report: Cover
     {report.hardware_trend && <HardwareTrendPanel trend={report.hardware_trend} />}
     <ul className="coverage-scope-notes" aria-label="统计口径">
       <li>地址数不等于设备台数：同一设备可能使用多个地址，同一地址也可能被不同设备先后使用。</li>
-      {deviceOutsideMirror !== undefined && deviceOutsideMirror > 0 && <li>有 {count(deviceOutsideMirror)} 个有设备层报文的地址不在站点网段的流量统计范围内，已计入共发现总数。</li>}
+      {deviceOutsideMirror !== undefined && deviceOutsideMirror > 0 && <li>有 {count(deviceOutsideMirror)} 个有设备层报文的地址未出现在本窗口的镜像统计中，已计入共发现总数。</li>}
       {report.ipv6 > 0 && <li>另有 IPv6 地址 {count(report.ipv6)} 个，未计入以上数字。</li>}
       {review && review.confirmed_inactive > 0 && <li>已确认类型中有 {count(review.confirmed_inactive)} 个地址的设备活动线索已到期，仍按已确认计入。</li>}
     </ul>

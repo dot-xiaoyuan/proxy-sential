@@ -42,7 +42,7 @@ it('leads with one funnel whose layers are subsets of the previous one', () => {
   expect(funnel).toHaveTextContent('4,137 个只在流量中出现，没有设备层报文，无法判断类型')
   expect(funnel).toHaveTextContent('1,683 个有设备层报文，类型待确认')
   expect(within(funnel).getByRole('img', {name:'识别出类型 1,755 个，其中已确认 347 个，推测 1,408 个'})).toBeVisible()
-  expect(screen.getByRole('list', {name:'统计口径'})).toHaveTextContent('有 1,522 个有设备层报文的地址不在站点网段的流量统计范围内')
+  expect(screen.getByRole('list', {name:'统计口径'})).toHaveTextContent('有 1,522 个有设备层报文的地址未出现在本窗口的镜像统计中')
   expect(screen.getByRole('list', {name:'统计口径'})).toHaveTextContent('另有 IPv6 地址 3,022 个，未计入以上数字')
   expect(document.body).not.toHaveTextContent('未识别')
 })
@@ -59,6 +59,16 @@ it('explains every unconfirmed address with mutually exclusive reasons', () => {
     '有 DHCP 报文，特征不足1444.7%',
     '证据冲突或确认被撤回20.1%',
   ])
+})
+
+it.each([3437, 3439])('keeps separate address counts when the published device partition differs from %i', ipv4 => {
+  render(<DiscoveryCoverageReport report={{...field, ipv4}} />)
+  const funnel = screen.getByRole('region', {name:'发现与识别'})
+  expect(funnel).toHaveTextContent('合并总数暂不可用')
+  expect(within(funnel).getByRole('img', {name:'有设备层报文 3,438 个'})).toBeVisible()
+  expect(funnel).not.toHaveTextContent('共发现 IPv4 地址')
+  expect(funnel).not.toHaveTextContent('个只在流量中出现')
+  expect(screen.getByRole('list', {name:'统计口径'})).not.toHaveTextContent('未出现在本窗口的镜像统计中')
 })
 
 it('falls back to device counts when the overlap or profile evidence is unavailable', () => {
