@@ -4,26 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
 	"testing"
 	"time"
-
-	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 // These cases need a migrated PostgreSQL. They assert the queue state that
 // SQL mocks cannot model: no rewrite for a waiting realtime job, lane takeover
 // for a historical job, and a bounded future run for completed/leased jobs.
 func TestStreamRecognitionDeferredQueuePostgres(t *testing.T) {
-	dsn := os.Getenv("PROXY_SENTINEL_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("PROXY_SENTINEL_TEST_POSTGRES_DSN is not set")
-	}
-	db, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db := deferredRecognitionTestDB(t)
+	var err error
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -45,33 +35,24 @@ func TestStreamRecognitionDeferredQueuePostgres(t *testing.T) {
 		{"completed", "02:00:00:00:0a:03", 1, 1, 0, base.Add(-time.Minute), time.Time{}, base.Add(-time.Hour)},
 		{"leased", "02:00:00:00:0a:04", 0, 1, 0, base.Add(-time.Minute), base.Add(time.Minute), base.Add(-time.Hour)},
 	}
-	ids := make([]string, 0, len(scenarios))
+
 	for _, s := range scenarios {
 		id := "recog-deferred-" + suffix + "-" + s.name
-		ids = append(ids, id)
 		if _, err = db.ExecContext(ctx, `INSERT INTO endpoint_entities(endpoint_id,primary_mac,entity_role,first_seen,last_seen,attributes) VALUES($1,$2,'endpoint',$3,$3,'{}')`, id, s.mac, base); err != nil {
 			t.Fatalf("insert endpoint %s: %v", s.name, err)
 		}
-		// The endpoint trigger already created this job; configure that row
-		// instead of inserting it a second time.
-		result, err := db.ExecContext(ctx, `UPDATE endpoint_recognition_jobs SET dirty_generation=$2,processed_generation=$3,lane=$4,not_before=$5,lease_until=$6,updated_at=$7 WHERE endpoint_id=$1`,
-			id, s.dirty, s.processed, s.lane, s.notBefore, s.leaseUntil, s.updatedAt)
+		// The dispatcher creates jobs asynchronously from the recognition outbox.
+		// Seed the queue state this test exercises before the deferred update.
+		_, err = db.ExecContext(ctx, `INSERT INTO endpoint_recognition_jobs
+		  (endpoint_id,dirty_generation,processed_generation,lane,not_before,lease_until,updated_at)
+		  VALUES ($1,$2,$3,$4,$5,$6,$7)`, id, s.dirty, s.processed, s.lane, s.notBefore, s.leaseUntil, s.updatedAt)
 		if err != nil {
 			t.Fatalf("configure job %s: %v", s.name, err)
 		}
-		if affected, _ := result.RowsAffected(); affected != 1 {
-			t.Fatalf("configure job %s: trigger-created row not found (affected=%d)", s.name, affected)
-		}
 	}
-	t.Cleanup(func() {
-		for _, id := range ids {
-			_, _ = db.ExecContext(context.Background(), `DELETE FROM endpoint_recognition_jobs WHERE endpoint_id=$1`, id)
-			_, _ = db.ExecContext(context.Background(), `DELETE FROM endpoint_entities WHERE endpoint_id=$1`, id)
-		}
-	})
 
-	for index, s := range scenarios {
-		id := ids[index]
+	for _, s := range scenarios {
+		id := "recog-deferred-" + suffix + "-" + s.name
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -124,15 +105,8 @@ func TestStreamRecognitionDeferredQueuePostgres(t *testing.T) {
 // observation deferred; the existing dirty function skips pending, unclaimed
 // realtime rows, so promotion has to move not_before explicitly.
 func TestStreamRecognitionDeferredPromotionPostgres(t *testing.T) {
-	dsn := os.Getenv("PROXY_SENTINEL_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("PROXY_SENTINEL_TEST_POSTGRES_DSN is not set")
-	}
-	db, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db := deferredRecognitionTestDB(t)
+	var err error
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -143,13 +117,7 @@ func TestStreamRecognitionDeferredPromotionPostgres(t *testing.T) {
 	if _, err = db.ExecContext(ctx, `INSERT INTO endpoint_entities(endpoint_id,primary_mac,entity_role,first_seen,last_seen,attributes) VALUES($1,$2,'endpoint',$3,$3,'{}')`, id, mac, base); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_, _ = db.ExecContext(context.Background(), `DELETE FROM endpoint_recognition_jobs WHERE endpoint_id=$1`, id)
-		_, _ = db.ExecContext(context.Background(), `DELETE FROM endpoint_entities WHERE endpoint_id=$1`, id)
-	})
-	// Start from a completed job so the deferred mark opens a new generation
-	// instead of leaving the trigger-created ready job untouched.
-	if _, err = db.ExecContext(ctx, `UPDATE endpoint_recognition_jobs SET dirty_generation=1,processed_generation=1,lane=0,not_before=now(),lease_until='-infinity',updated_at=now() WHERE endpoint_id=$1`, id); err != nil {
+	if _, err = db.ExecContext(ctx, `INSERT INTO endpoint_recognition_jobs(endpoint_id,dirty_generation,processed_generation) VALUES ($1,1,1)`, id); err != nil {
 		t.Fatal(err)
 	}
 
@@ -207,15 +175,8 @@ func TestStreamRecognitionDeferredPromotionPostgres(t *testing.T) {
 // visible change arrives; promotion is only for jobs delayed by coalescing,
 // not for ones waiting out a failure.
 func TestStreamRecognitionBackoffNotPromotedPostgres(t *testing.T) {
-	dsn := os.Getenv("PROXY_SENTINEL_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("PROXY_SENTINEL_TEST_POSTGRES_DSN is not set")
-	}
-	db, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db := deferredRecognitionTestDB(t)
+	var err error
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -226,11 +187,7 @@ func TestStreamRecognitionBackoffNotPromotedPostgres(t *testing.T) {
 	if _, err = db.ExecContext(ctx, `INSERT INTO endpoint_entities(endpoint_id,primary_mac,entity_role,first_seen,last_seen,attributes) VALUES($1,$2,'endpoint',$3,$3,'{}')`, id, mac, base); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_, _ = db.ExecContext(context.Background(), `DELETE FROM endpoint_recognition_jobs WHERE endpoint_id=$1`, id)
-		_, _ = db.ExecContext(context.Background(), `DELETE FROM endpoint_entities WHERE endpoint_id=$1`, id)
-	})
-	if _, err = db.ExecContext(ctx, `UPDATE endpoint_recognition_jobs SET dirty_generation=2,processed_generation=1,attempts=1,last_error='recognition failed',not_before=now()+interval '5 minutes',lane=0,lease_until='-infinity',updated_at=now() WHERE endpoint_id=$1`, id); err != nil {
+	if _, err = db.ExecContext(ctx, `INSERT INTO endpoint_recognition_jobs(endpoint_id,dirty_generation,processed_generation,attempts,last_error,not_before) VALUES($1,2,1,1,'recognition failed',now()+interval '5 minutes')`, id); err != nil {
 		t.Fatal(err)
 	}
 

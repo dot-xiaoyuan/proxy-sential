@@ -2,40 +2,16 @@ package discovery
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	_ "github.com/jackc/pgx/v5/stdlib"
-	"os"
 	"proxy-sentinel/internal/normalized"
 	"testing"
 	"time"
 )
 
 func TestPostgresDiscoveryReplay(t *testing.T) {
-	dsn := os.Getenv("PROXY_SENTINEL_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("isolated PostgreSQL required")
-	}
-	db, e := sql.Open("pgx", dsn)
-	if e != nil {
-		t.Fatal(e)
-	}
-	defer db.Close()
 	ctx := context.Background()
-	ddl, e := os.ReadFile("../../migrations/postgres/058_network_discovery.sql")
-	if e != nil {
-		t.Fatal(e)
-	}
-	if _, e = db.ExecContext(ctx, string(ddl)); e != nil {
-		t.Fatal(e)
-	}
-	ddl, e = os.ReadFile("../../migrations/postgres/083_discovery_latest.sql")
-	if e != nil {
-		t.Fatal(e)
-	}
-	if _, e = db.ExecContext(ctx, string(ddl)); e != nil {
-		t.Fatal(e)
-	}
+	var e error
+	db := legacyDiscoveryReplayDB(t)
 	r := Repository{DB: db}
 	s := Source{ID: "replay", Node: "test", Site: "s", Domain: "d", ConfigVersion: 1, IntervalSeconds: 300}
 	b, _ := json.Marshal(s)

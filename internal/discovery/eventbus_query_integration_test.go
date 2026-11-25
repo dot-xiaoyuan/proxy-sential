@@ -2,24 +2,17 @@ package discovery
 
 import (
 	"context"
-	"database/sql"
-	"os"
 	"testing"
 	"time"
-
-	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 func TestDevicesEventBusIntegration(t *testing.T) {
-	dsn := os.Getenv("PROXY_SENTINEL_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("PROXY_SENTINEL_TEST_POSTGRES_DSN is not set")
-	}
-	db, err := sql.Open("pgx", dsn)
-	if err != nil {
+	db := discoveryTestSchema(t)
+	if _, err := db.Exec(`CREATE TABLE discovery_device_current_shadow (LIKE public.discovery_device_current_shadow INCLUDING ALL);
+	 INSERT INTO discovery_device_current_shadow(device_key,last_seen,fact_count,facts,document)
+	 SELECT 'page-'||n,now(),0,'{}','{"current":true}' FROM generate_series(1,6) n`); err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	repo := Repository{DB: db}
@@ -28,7 +21,7 @@ func TestDevicesEventBusIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	items, _ := page["items"].([]map[string]any)
-	if len(items) == 0 || len(items) > 5 {
+	if len(items) != 5 {
 		t.Fatalf("unexpected items: %d", len(items))
 	}
 	if cursor, _ := page["next_cursor"].(string); cursor == "" {
@@ -39,10 +32,7 @@ func TestDevicesEventBusIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	nextItems, _ := next["items"].([]map[string]any)
-	first := items[len(items)-1]["id"]
-	for _, item := range nextItems {
-		if item["id"] == first {
-			t.Fatalf("cursor repeated last device %v", first)
-		}
+	if len(nextItems) != 1 || nextItems[0]["id"] != "page-6" || next["next_cursor"] != "" {
+		t.Fatalf("unexpected next page: %+v", next)
 	}
 }

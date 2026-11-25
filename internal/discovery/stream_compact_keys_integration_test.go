@@ -6,46 +6,16 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"net"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 )
 
-// Exercises the actual migration and case trigger only on an explicitly
-// configured dedicated remote test instance. Local stacks and 184 are excluded.
+// Run this replay in a private schema on the explicitly designated test instance.
 func TestCompactEventKeyMigrationRejectsSplitLedgerCaseEvidence(t *testing.T) {
-	dsn := os.Getenv("PROXY_SENTINEL_TEST_IDENTITY_READY_DSN")
-	if dsn == "" {
-		t.Skip("dedicated remote PostgreSQL test instance required")
-	}
-	cfg, err := pgx.ParseConfig(dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	host := strings.ToLower(cfg.Host)
-	ip := net.ParseIP(host)
-	if host == "" || host == "localhost" || host == "222.204.3.184" || host == "192.168.0.30" || strings.HasPrefix(host, "/") || (ip != nil && ip.IsLoopback()) {
-		t.Fatal("compact migration replay requires a dedicated remote test host")
-	}
-	resolved, err := net.LookupIP(host)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, address := range resolved {
-		if address.IsLoopback() || address.Equal(net.ParseIP("222.204.3.184")) || address.Equal(net.ParseIP("192.168.0.30")) {
-			t.Fatal("compact migration replay resolves to a protected host")
-		}
-	}
-	for _, fallback := range cfg.Fallbacks {
-		if fallback.Host != cfg.Host {
-			t.Fatal("compact migration replay DSN must not contain fallback hosts")
-		}
-	}
+	cfg := discoveryAcceptancePG(t)
 	admin := stdlib.OpenDB(*cfg)
 	defer admin.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -68,7 +38,7 @@ func TestCompactEventKeyMigrationRejectsSplitLedgerCaseEvidence(t *testing.T) {
 	isolated.RuntimeParams["search_path"] = schema
 	db := stdlib.OpenDB(*isolated)
 	defer db.Close()
-	_, err = db.ExecContext(ctx, `CREATE TABLE stream_discovery_event_keys (
+	_, err := db.ExecContext(ctx, `CREATE TABLE stream_discovery_event_keys (
  epoch text NOT NULL,scope_id text NOT NULL,event_key text NOT NULL,content_sha256 text NOT NULL,
  accepted_month date NOT NULL,first_accepted_at timestamptz NOT NULL,PRIMARY KEY(epoch,scope_id,event_key));
  CREATE TABLE stream_discovery_receipts (
