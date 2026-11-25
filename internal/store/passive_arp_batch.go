@@ -99,13 +99,11 @@ WHERE discovery_identity_links.endpoint_id IS DISTINCT FROM EXCLUDED.endpoint_id
 	if err != nil {
 		return nil, err
 	}
-	latest := make([]map[string]any, 0, len(observations))
 	pending := make(map[string]discovery.Observation, len(observations))
 	for _, o := range observations {
-		latest = append(latest, map[string]any{"id": o.ID, "observed_at": o.ObservedAt, "valid_until": o.ValidUntil})
 		pending[o.ID] = o
 	}
-	if err = touchPassiveLatest(ctx, db, latest); err != nil {
+	if err = touchPassiveLatest(ctx, db, observations); err != nil {
 		return nil, err
 	}
 	if err = upsertPassiveDeviceCurrent(ctx, db, pending); err != nil {

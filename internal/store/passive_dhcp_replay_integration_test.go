@@ -3,10 +3,12 @@ package store
 import (
 	"context"
 	"database/sql"
-	"proxy-sentinel/internal/normalized"
 	"strings"
 	"testing"
 	"time"
+
+	"proxy-sentinel/internal/discovery"
+	"proxy-sentinel/internal/normalized"
 )
 
 func verifiedOriginalReplayDB(t *testing.T) *sql.DB {
@@ -80,7 +82,7 @@ func TestDHCPOriginalReplayPostgresRollbackResumeAndConcurrentLatest(t *testing.
 	if saved != event.EventID || claimedIP != "" || !observed.Equal(at.Add(2*time.Minute)) || !valid.Equal(at.Add(12*time.Minute)) {
 		t.Fatalf("replay lost compact evidence or moved its clock backwards: event=%s ip=%s observed=%v valid=%v", saved, claimedIP, observed, valid)
 	}
-	if err := touchPassiveLatest(ctx, db, []map[string]any{{"id": id, "observed_at": observed, "valid_until": observed}}); err != nil {
+	if err := touchPassiveLatest(ctx, db, []discovery.Observation{{ID: id, ObservedAt: observed, ValidUntil: observed}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.QueryRow(`SELECT valid_until FROM discovery_observation_latest WHERE id=$1`, id).Scan(&valid); err != nil || !valid.Equal(observed) {

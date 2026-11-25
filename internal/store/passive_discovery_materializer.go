@@ -1417,7 +1417,7 @@ ON CONFLICT(id) DO UPDATE SET device_key=EXCLUDED.device_key,source_id=EXCLUDED.
    OR EXCLUDED.valid_until<discovery_observations.valid_until)`, string(payload)); err != nil {
 		return nil, err
 	}
-	if err := touchPassiveLatest(ctx, db, rows); err != nil {
+	if err := touchPassiveLatest(ctx, db, hardwareObservations); err != nil {
 		return nil, err
 	}
 	if err := upsertPassiveDeviceCurrent(ctx, db, resolved); err != nil {
@@ -1473,7 +1473,7 @@ ORDER BY observed_at DESC,id DESC LIMIT 1`, o.Node, o.IP, o.ObservedAt).Scan(&ma
    OR EXCLUDED.valid_until<discovery_observations.valid_until)`, o.ID, o.Key(), o.SourceID, o.Origin, o.ObservedAt, o.ValidUntil, o.Withdrawn, raw, serviceInstance); err != nil {
 		return nil, err
 	}
-	if err := touchPassiveLatest(ctx, db, []map[string]any{{"id": o.ID, "observed_at": o.ObservedAt, "valid_until": o.ValidUntil}}); err != nil {
+	if err := touchPassiveLatest(ctx, db, []discovery.Observation{o}); err != nil {
 		return nil, err
 	}
 	if err := upsertPassiveDeviceCurrent(ctx, db, map[string]discovery.Observation{o.ID: o}); err != nil {

@@ -10,11 +10,27 @@ import (
 	"proxy-sentinel/internal/discovery"
 )
 
-func touchPassiveLatest(ctx context.Context, db passiveDiscoveryDB, rows []map[string]any) error {
-	if len(rows) == 0 {
+// The latest table can retain one event under several composite keys. Send
+// its ID and clocks, in input order, and let SQL admit each matching row.
+func marshalPassiveLatestTouches(observations []discovery.Observation) ([]byte, error) {
+	type touch struct {
+		ID         string    `json:"id"`
+		ObservedAt time.Time `json:"observed_at"`
+		ValidUntil time.Time `json:"valid_until"`
+	}
+	rows := make([]touch, len(observations))
+	for i := range observations {
+		o := &observations[i]
+		rows[i] = touch{ID: o.ID, ObservedAt: o.ObservedAt, ValidUntil: o.ValidUntil}
+	}
+	return json.Marshal(rows)
+}
+
+func touchPassiveLatest(ctx context.Context, db passiveDiscoveryDB, observations []discovery.Observation) error {
+	if len(observations) == 0 {
 		return nil
 	}
-	payload, err := json.Marshal(rows)
+	payload, err := marshalPassiveLatestTouches(observations)
 	if err != nil {
 		return err
 	}
