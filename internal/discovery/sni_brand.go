@@ -9,7 +9,7 @@ import (
 )
 
 const DeviceSNIKind = "device_sni"
-const deviceSNIRuleVersion = "sni-device-services/2026-11-23.1"
+const deviceSNIRuleVersion = "sni-device-services/2026-11-25.1"
 
 //go:embed sni_brand_rules.json
 var deviceSNIRules []byte

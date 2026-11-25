@@ -58,6 +58,9 @@ func TestPassiveSNIBrandNeedsScopedCorroboration(t *testing.T) {
 		conflict         bool
 	}{
 		{"single service and bucket", []PassiveBehaviorEvidence{update, otherUpdate, update}, true, "", "", false},
+		{"device diagnostics aliases are one service", []PassiveBehaviorEvidence{evidence("diagassets.apple.com", 1), evidence("metrics.icloud.com", 2)}, true, "", "", false},
+		{"device diagnostics plus update", []PassiveBehaviorEvidence{evidence("diagassets.apple.com", 1), update}, true, "", "Apple", false},
+		{"generic app telemetry excluded", []PassiveBehaviorEvidence{evidence("books-analytics-events.apple.com", 1), update}, true, "", "", false},
 		{"two device services", []PassiveBehaviorEvidence{update, enroll}, true, "", "Apple", false},
 		{"repeated device service", hikvision, true, "", "Hikvision", false},
 		{"IP without trusted ownership", []PassiveBehaviorEvidence{update, enroll}, false, "", "", false},
