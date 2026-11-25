@@ -85,7 +85,19 @@ func (s *PostgresStore) claimIdentityExportFragment(ctx context.Context) (fragme
 	}
 	defer tx.Rollback()
 	query, args := identityExportCandidateQuery(s.sensorID, s.identityDerivedAfter)
-	err = tx.QueryRowContext(ctx, query, args...).Scan(&fragment.BatchID, &fragment.Scope, &fragment.Source, &fragment.Epoch, &fragment.Month, &fragment.Hash, &fragment.KeyScheme, &fragment.First, &fragment.Count, &fragment.Accepted, &fragment.Payload, &fragment.BodyState, &fragment.SearchState)
+	claim := func(candidate string) error {
+		return tx.QueryRowContext(ctx, candidate, args...).Scan(&fragment.BatchID, &fragment.Scope, &fragment.Source, &fragment.Epoch, &fragment.Month, &fragment.Hash, &fragment.KeyScheme, &fragment.First, &fragment.Count, &fragment.Accepted, &fragment.Payload, &fragment.BodyState, &fragment.SearchState)
+	}
+	if !s.identityDerivedAfter.IsZero() {
+		// Completing the second archive receipt frees durable inbox capacity.
+		// The recent window keeps the extra indexed probe bounded even when no
+		// in-flight search fragment exists; older work remains in the fallback.
+		search := strings.Replace(query, "AND (f.body_state<>'completed' OR f.search_state<>'completed')", "AND f.body_state='completed' AND f.search_state<>'completed' AND b.accepted_at>=now()-interval '15 minutes'", 1)
+		err = claim(search)
+	}
+	if s.identityDerivedAfter.IsZero() || errors.Is(err, sql.ErrNoRows) {
+		err = claim(query)
+	}
 	if err != nil {
 		return fragment, err
 	}
@@ -104,6 +116,10 @@ func identityExportCandidateQuery(sensor string, after time.Time) (string, []any
 	args := []any{sensor}
 	if !after.IsZero() {
 		query = strings.Replace(query, "b.sensor_id=$1", "b.sensor_id=$1 AND b.accepted_at >= $2", 1)
+		// A settled but unconfirmed older fragment must not stop archival of
+		// fresh, durably accepted identity input. The existing (sensor, time)
+		// export index supports this reverse walk without a table scan.
+		query = strings.Replace(query, "ORDER BY b.accepted_at,f.batch_id,f.first_ordinal", "ORDER BY b.accepted_at DESC,f.batch_id DESC,f.first_ordinal", 1)
 		args = append(args, after)
 	}
 	return query, args

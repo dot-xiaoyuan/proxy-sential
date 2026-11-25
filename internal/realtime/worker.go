@@ -532,7 +532,7 @@ func readSourceChunk(path string, checkpoint ingest.Checkpoint, found bool, maxB
 				}
 				return sourceChunk{}, err
 			}
-			if !info.Mode().IsRegular() || fileIdentity(path, info) != checkpoint.FileID {
+			if !info.Mode().IsRegular() || fileIdentityAt(path, archivePath, info) != checkpoint.FileID {
 				continue
 			}
 			archive, err := os.Open(archivePath)
@@ -544,8 +544,8 @@ func readSourceChunk(path string, checkpoint ingest.Checkpoint, found bool, maxB
 			if err != nil {
 				return sourceChunk{}, err
 			}
-			if fileIdentity(path, info) == checkpoint.FileID && info.Size() > checkpoint.Offset {
-				read, err := readFileChunk(archive, path, info, checkpoint, true, maxBytes, withHeader)
+			if fileIdentityAt(path, archivePath, info) == checkpoint.FileID && info.Size() > checkpoint.Offset {
+				read, err := readFileChunk(archive, path, info, checkpoint, true, maxBytes, withHeader, archivePath)
 				read.archive = true
 				// An incomplete archive tail may still be completed by the producer.
 				// Leave the checkpoint in place instead of silently dropping that tail.
@@ -562,8 +562,12 @@ func readSourceChunk(path string, checkpoint ingest.Checkpoint, found bool, maxB
 	return readFileChunk(current, path, currentInfo, checkpoint, found, maxBytes, withHeader)
 }
 
-func readFileChunk(file *os.File, path string, info os.FileInfo, checkpoint ingest.Checkpoint, found bool, maxBytes int64, withHeader bool) (sourceChunk, error) {
-	read := sourceChunk{fileID: fileIdentity(path, info), start: checkpoint.Offset}
+func readFileChunk(file *os.File, path string, info os.FileInfo, checkpoint ingest.Checkpoint, found bool, maxBytes int64, withHeader bool, physicalPath ...string) (sourceChunk, error) {
+	actualPath := path
+	if len(physicalPath) > 0 {
+		actualPath = physicalPath[0]
+	}
+	read := sourceChunk{fileID: fileIdentityAt(path, actualPath, info), start: checkpoint.Offset}
 	if found && ((checkpoint.FileID != "" && checkpoint.FileID != read.fileID) || read.start > info.Size()) {
 		read.start, read.truncated = 0, true
 	}
@@ -623,10 +627,45 @@ func zeekHeader(file *os.File) ([]byte, error) {
 }
 
 func fileIdentity(path string, info os.FileInfo) string {
+	return fileIdentityAt(path, path, info)
+}
+
+// Keep the configured source path in the durable ID, but obtain its birth
+// marker from the physical file carrying the bytes after rotation.
+func fileIdentityAt(sourcePath, physicalPath string, info os.FileInfo) string {
 	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-		return fmt.Sprintf("%s:%d:%d", filepath.Clean(path), uint64(stat.Dev), uint64(stat.Ino))
+		if os.Getenv("PROXY_SENTINEL_STREAM_FILE_BIRTH_ID") == "true" {
+			return fileIdentityBirthAt(sourcePath, physicalPath, info)
+		}
+		return fmt.Sprintf("%s:%d:%d", filepath.Clean(sourcePath), uint64(stat.Dev), uint64(stat.Ino))
 	}
-	return fmt.Sprintf("%s:%d", filepath.Clean(path), info.ModTime().UnixNano())
+	if os.Getenv("PROXY_SENTINEL_STREAM_FILE_BIRTH_ID") == "true" {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d", filepath.Clean(sourcePath), info.ModTime().UnixNano())
+}
+
+func formatFileIdentity(path string, device, inode uint64, birth string) string {
+	if birth == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d:%d:birth:%s", filepath.Clean(path), device, inode, birth)
+}
+
+// FileIdentityBirth is the durable identity for a newly audited source. It is
+// empty when the filesystem cannot prove a creation time or the file changed
+// between stat calls. Existing cursors retain their legacy identity until an
+// explicit audited cutover.
+func FileIdentityBirth(path string, info os.FileInfo) string {
+	return fileIdentityBirthAt(path, path, info)
+}
+
+func fileIdentityBirthAt(sourcePath, physicalPath string, info os.FileInfo) string {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return ""
+	}
+	return formatFileIdentity(sourcePath, uint64(stat.Dev), uint64(stat.Ino), fileBirthMarker(physicalPath, info))
 }
 
 // FileIdentity is shared by the legacy checkpoint and the audited fresh file
@@ -661,7 +700,7 @@ func sourceLag(path, fileID string, offset int64) int64 {
 		lag = current.Size()
 	}
 	archive, err := os.Stat(path + ".1")
-	if err == nil && fileIdentity(path, archive) == fileID && archive.Size() > offset {
+	if err == nil && fileIdentityAt(path, path+".1", archive) == fileID && archive.Size() > offset {
 		lag += archive.Size() - offset
 	}
 	return lag

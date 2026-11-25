@@ -24,6 +24,7 @@ import (
 // an event, re-enqueued, or copied. The original files and journal stay in place.
 type cancelledSourceFiles struct {
 	FileID         string             `json:"file_id"`
+	BirthFileID    string             `json:"birth_file_id,omitempty"`
 	Offset         int64              `json:"offset"`
 	TailBytes      int                `json:"tail_bytes"`
 	TailSHA256     string             `json:"tail_sha256"`
@@ -292,6 +293,12 @@ func snapshotCancelledSourceFiles(cursor streamlog.SourceCursor, maxDecoded int6
 		}
 		if i == len(paths)-1 {
 			result.FileID, result.Offset = fileID, offset
+			if cursor.Source == "device-signals" {
+				result.BirthFileID = realtime.FileIdentityBirth(cursor.Path, before)
+				if result.BirthFileID == "" {
+					return nil, errors.New("source cancellation requires a stable file creation time")
+				}
+			}
 			if offset > 0 {
 				result.TailBytes = int(min(offset, int64(streamlog.SourceTailProofBytes)))
 				tail := make([]byte, result.TailBytes)
@@ -380,7 +387,8 @@ func validateRetainedCancellationFiles(cursor streamlog.SourceCursor, audit *can
 		if err != nil {
 			return err
 		}
-		if !info.Mode().IsRegular() || realtime.FileIdentity(path, info) != audit.FileIdentities[i] || info.Size() < audit.FileSizes[i] || i < n-1 && info.Size() != audit.FileSizes[i] {
+		if !info.Mode().IsRegular() || realtime.FileIdentity(path, info) != audit.FileIdentities[i] || info.Size() < audit.FileSizes[i] || i < n-1 && info.Size() != audit.FileSizes[i] ||
+			i == n-1 && cursor.Source == "device-signals" && realtime.FileIdentityBirth(cursor.Path, info) != audit.BirthFileID {
 			return streamlog.ErrContentConflict
 		}
 		f, r, closeReader, err := openCancellationFile(protected)
@@ -492,7 +500,8 @@ func scanCancelledSourceRanges(r io.Reader, from int64, fileID string, zeek, cur
 }
 
 func validateCancellationBoundary(cursor streamlog.SourceCursor, audit *cancelledSourceFiles) error {
-	if audit == nil || audit.Offset < 0 || audit.FileID == "" || audit.TailBytes != int(min(audit.Offset, int64(streamlog.SourceTailProofBytes))) {
+	if audit == nil || audit.Offset < 0 || audit.FileID == "" || audit.TailBytes != int(min(audit.Offset, int64(streamlog.SourceTailProofBytes))) ||
+		cursor.Source == "device-signals" && audit.BirthFileID == "" {
 		return streamlog.ErrContentConflict
 	}
 	f, e := os.Open(cursor.Path)
@@ -504,7 +513,8 @@ func validateCancellationBoundary(cursor streamlog.SourceCursor, audit *cancelle
 	if e != nil {
 		return e
 	}
-	if realtime.FileIdentity(cursor.Path, info) != audit.FileID || info.Size() < audit.Offset {
+	if realtime.FileIdentity(cursor.Path, info) != audit.FileID || info.Size() < audit.Offset ||
+		cursor.Source == "device-signals" && realtime.FileIdentityBirth(cursor.Path, info) != audit.BirthFileID {
 		return streamlog.ErrContentConflict
 	}
 	if audit.TailBytes > 0 {

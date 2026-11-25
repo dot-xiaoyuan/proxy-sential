@@ -27,7 +27,7 @@ const streamReadLimit = 1 << 20
 const streamLineLimit = streamlog.MaxSegmentEvents
 const discoveryStreamLineLimit = 50
 const dhcpBindingStreamLineLimit = 100
-const deviceSignalProjectionLineLimit = 500
+const deviceSignalProjectionLineLimit = streamlog.MaxSegmentEvents
 
 // CaptureStreamOnce only advances a pre-established fresh source cursor after
 // its exact raw bytes and normalized events are fsynced in an immutable segment.
@@ -71,6 +71,11 @@ func captureStreamOnceWithReady(ctx context.Context, journal *streamlog.Journal,
 	}
 	if err != nil {
 		return "", false, err
+	}
+	if source.Kind == "device-signals" || source.Kind == "shared-device-signals" {
+		if err := verifyDeviceSignalCursorTail(source.Path, cursor); err != nil {
+			return "", false, err
+		}
 	}
 	if err := validateStreamRead(source.Path, cursor.FileID, cursor.Offset, read, cursor.KeyScheme == "generation-v2"); err != nil {
 		return "", false, err
@@ -121,7 +126,8 @@ func captureStreamOnceWithReady(ctx context.Context, journal *streamlog.Journal,
 		if source.Kind == "device-signals" {
 			// Selected packet-sidecar discovery records need a PostgreSQL
 			// projection, but 50 records per segment cannot keep pace with the
-			// verified source. Keep a separate event bound and the byte ceiling.
+			// verified source. Keep the global event and byte ceilings while
+			// amortizing the durable journal barriers over a larger batch.
 			projectionLimit = deviceSignalProjectionLineLimit
 		} else if source.Kind == "zeek-dhcp-binding" {
 			projectionLimit = dhcpBindingStreamLineLimit
@@ -441,11 +447,46 @@ func validateStreamRead(path, oldFileID string, oldOffset int64, read sourceChun
 		if err != nil {
 			continue
 		}
-		if fileIdentity(path, info) == oldFileID {
+		if fileIdentityAt(path, candidate, info) == oldFileID {
 			if info.Size() == oldOffset {
 				return nil
 			}
 			return ErrStreamSourceGap
+		}
+	}
+	return ErrStreamSourceGap
+}
+
+// The inode alone can be recycled after a rotated signal log is compressed or
+// removed. Prove the committed tail before reading more bytes with that ID.
+func verifyDeviceSignalCursorTail(path string, cursor streamlog.SourceCursor) error {
+	if cursor.Offset == 0 {
+		return nil
+	}
+	if cursor.TailBytes <= 0 || cursor.TailBytes > streamlog.SourceTailProofBytes ||
+		int64(cursor.TailBytes) > cursor.Offset || len(cursor.TailSHA256) != 64 {
+		return ErrStreamSourceGap
+	}
+	for _, candidate := range append([]string{path}, rotatedSourceCandidates(path)...) {
+		file, err := os.Open(candidate)
+		if err != nil {
+			continue
+		}
+		info, err := file.Stat()
+		if err != nil || !info.Mode().IsRegular() ||
+			fileIdentityAt(path, candidate, info) != cursor.FileID || info.Size() < cursor.Offset {
+			file.Close()
+			continue
+		}
+		tail := make([]byte, cursor.TailBytes)
+		_, err = file.ReadAt(tail, cursor.Offset-int64(cursor.TailBytes))
+		file.Close()
+		if err != nil {
+			continue
+		}
+		sum := sha256.Sum256(tail)
+		if hex.EncodeToString(sum[:]) == cursor.TailSHA256 {
+			return nil
 		}
 	}
 	return ErrStreamSourceGap

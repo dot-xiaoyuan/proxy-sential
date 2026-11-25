@@ -859,12 +859,11 @@ LibreNMS 三个硬件抽取器为 Comware、NetBotz、Vertiv，先满足完整�
 - 被动消费采用 5 分钟读取延迟，普通晚到风险已有缓解；超过窗口的晚到仍缺少按首次入库进度的持续对账与补偿。当前列表来自已生成索引，但多次请求并非冻结的数据库快照，持续观测会改变排序和统计。没有新增长期结果副本、索引或迁移，也没有做长期容量验收。
 - ARP 地址候选不能单凭地址推断设备用途、位置和责任人。随机 MAC、冲突、静默设备、未镜像网段和缺少类型线索仍需真实人工登记或其他授权数据源补足；现场发现身份、终端账与流量 IP 不能直接相减作为漏识别设备数。
 
-## 192.168.0.30 开发节点（2026-11-09）
+## 192.168.0.30 开发节点（2026-11-12）
 
-- **磁盘满与 PostgreSQL 恢复**：根分区 217G 当时已 100% 占用，PostgreSQL 因 `could not extend file "base/16384/124483": No space left on device` 进入 recovery，认证与全部读取不可用。只读盘点后清理：删除 2026-10-09 布局变更后遗留的 **14G** 旧 `data/db/postgres/pgdata`（现行 PGDATA 为 `data/pgdata`，旧目录无 2026-10-10 之后写入）、约 **3G** 轮转 `messages`/`suricata` 日志与 journal、**23 个**旧发布目录（约 1.4G）、`data/release-backups` **2.0G**、`packages` **326M**，并回收 4 周前停止的容器。未删除 PostgreSQL/ClickHouse 数据、案件证据、配置或当前/上一版本。清理后 PG 完成 end-of-recovery checkpoint 并接受连接，根分区可用 **22G**（90%）。
-- **应用发布**：完整安装 `2026.11.09-b6957022`（包 SHA256 `1fc4e4c4a9fe73fed848ae7cb7a5dc744bd14b74a8a34948adb7884c4b44bbe3`），`--skip-backup`；PostgreSQL 迁移 **168→233**、ClickHouse **51→69**（账本现 71 条，含此前遗留条目，候选 69 条校验一致）。`/readyz=200`，16 个 `proxy-sentinel*` 单元运行，全部活动进程与站点自建 `handshake-signal`、`router-prober` 单元均指向新发布目录。现场 PG/ClickHouse 容器由 `docker run` 创建，安装器 Compose 分支会重复创建并卡在 `Recreate`（产生 `fafb0e…_proxy-sentinel-postgres` 空容器），改用安装器自带单机 Docker 分支（`has_compose` 返回失败）后保留原容器完成迁移。
-- **验证与遗留**：首页引用 `index-wO7G5nnJ.js`，`DeviceCenterPage-BuaB4Zhh.js` 含搜索加载反馈；`application_read_model` 仍报“refresh older than one minute”（readyz 仍 200）；`proxy-sentinel-device-retention` 在 13:02 因 DB recovery 失败一次，已 `reset-failed` 并手动运行成功；`NetworkManager-wait-online` 为既有失败。发现页当前观测为 0：.30 从未安装 passive-discovery 消费器，如需展示设备需另行启用 Zeek 被动发现采集。`previous` 暂留 `2026.10.23-office30-latest2` 供回退。
-- **补列与被动发现启用（2026-11-09 14:20）**：启用 `proxy-sentinel-passive-discovery.service` 后发现写入失败，根因是 `discovery_observations.service_instance` 在 204 为手工加列、未进入迁移；新增迁移 `234_discovery_observations_service_instance.sql`（`ADD COLUMN IF NOT EXISTS` + 回填）并重建发布 `2026.11.09-54ef7062`（包 SHA256 `303aa0c8cd11e1305c71ece0dd0cf4ec864c9621bc301e55e0851a1ccb92f575`）。第二次完整安装应用迁移 234（账本 234 条），`/readyz=200`；被动发现 worker 以 2 分钟 holdback 运行，`discovery_observations` 从 0 增至 368、`discovery_observation_latest` 106、游标滞后约 2 分钟，无写入错误；站点自建 discovery/handshake-signal 单元已重启到新版本。旧发布、`frontend-previous` 与未引用的 `2026.10.23-identity-delta2` 已清理，`previous` 为 `2026.11.09-b6957022`。204 已于同日对齐到 `2026.11.09-54ef7062`（见 204 节）。
+- **登录恢复与空间**：根分区再次写满，PostgreSQL 在 WAL 恢复时因 `No space left on device` 停机，导致管理员登录不可用。删除无活动引用的旧程序和 ClickHouse 九张 10 月 23 日前的旧版 `system.*_0` 诊断日志表后，数据库恢复，登录及会话接口均返回 200。当前系统日志配置为保留 7 天；未删除业务事件、案件证据或数据库原文。发布清理后根盘可用约 43 GB（81% 使用），需继续观察增长速度。
+- **当前发布**：从干净的本地 `main` 提交 `b33d3186` 完整安装 `2026.11.12-b33d3186`，发布包 SHA256 为 `b361ccb05827156ba743427205e948eac59675734ff3d5a37d60a706473733c6`。现场原有单机 Docker 数据库容器保持运行，安装器走单机 Docker 分支并传 `--skip-backup`；PostgreSQL 迁移账本为 244 项、ClickHouse 为 76 项，其中候选包的 244/74 项均与账本校验一致。`current` 和全部活动应用进程均指向新版本，`/readyz=200`。验收后只保留一个发布目录和一个 `proxy-sentinel-current.tar.gz` 包，`previous`、`frontend-previous`、旧发布及部署暂存已清理。
+- **验收与遗留**：使用现场管理员账号验证登录和会话均为 200；运营工作台、发现设备在 390×844、1280×800、1440×900 截图和 DOM 样式检查中无全局横向溢出，登录后的页面无控制台异常或 4xx/5xx。设备保留任务此前因数据库停机失败，恢复后手动执行成功且无符合清理条件的数据；`NetworkManager-wait-online` 仍为既有失败。代码验证中相关 Go 测试、`go build`、`go vet`、前端类型检查和构建通过；前端全量 Vitest 有 1 项组织页面用例偶发失败，单文件重跑 4/4 通过，尚未做独立数据库回放与持续容量验收。
 
 ## 唯一运行版本
 

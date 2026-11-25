@@ -271,7 +271,7 @@ func readFirstZeekArchiveChunk(sourcePath, archivePath string, maxBytes int64) (
 		return sourceChunk{}, ErrStreamArchivePending
 	}
 	data := buf[:last+1]
-	return sourceChunk{data: data, fileID: fileIdentity(sourcePath, before), start: 0, end: int64(len(data)), archive: true, verifiedRotation: true}, nil
+	return sourceChunk{data: data, fileID: fileIdentityAt(sourcePath, archivePath, before), start: 0, end: int64(len(data)), archive: true, verifiedRotation: true}, nil
 }
 
 func zeekArchiveMatchesCursor(path string, cursor streamlog.SourceCursor) (bool, error) {
