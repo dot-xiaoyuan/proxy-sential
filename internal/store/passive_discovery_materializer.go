@@ -214,13 +214,9 @@ LIMIT 1`, sensorID, sources).Scan(&cursor.Source, &cursor.Timestamp, &cursor.Eve
 	return cursor, true, tx.Commit()
 }
 
-func (s *DBStore) passiveDiscoveryEvents(ctx context.Context, sensorID string, cursor passiveDiscoveryCursor, limit int) ([]normalized.Event, passiveDiscoveryCursor, bool, error) {
+func (s *DBStore) passiveDiscoveryEvents(ctx context.Context, sensorID string, cursor passiveDiscoveryCursor, cutoff time.Time, limit int) ([]normalized.Event, passiveDiscoveryCursor, bool, error) {
 	if limit <= 0 || limit > 5000 {
 		limit = 2000
-	}
-	cutoff, err := passiveDiscoveryReadCutoff(time.Now())
-	if err != nil {
-		return nil, cursor, false, err
 	}
 	stamp := "parseDateTime64BestEffort(" + chQuote(cursor.Timestamp.UTC().Format(time.RFC3339Nano)) + ",6)"
 	upper := "parseDateTime64BestEffort(" + chQuote(cutoff.UTC().Format(time.RFC3339Nano)) + ",6)"
@@ -1908,26 +1904,44 @@ func (s *DBStore) processPassiveDiscoveryBatch(ctx context.Context, events []nor
 	return stats, err
 }
 
-func (s *DBStore) finishPassiveDiscovery(ctx context.Context, sensorID string, cursor passiveDiscoveryCursor, stats passiveDiscoveryBatchStats, runErr error) error {
+func (s *DBStore) finishPassiveDiscovery(ctx context.Context, sensorID string, cursor passiveDiscoveryCursor, stats passiveDiscoveryBatchStats, runErr error) (time.Time, error) {
 	if runErr != nil {
 		_, err := s.pg.db.ExecContext(ctx, `UPDATE passive_discovery_state SET lease_owner='',lease_until='-infinity',last_error=$3,updated_at=now() WHERE sensor_id=$1 AND lease_owner=$2`, sensorID, cursor.Owner, runErr.Error())
-		return err
+		return time.Time{}, err
 	}
 	protocols, _ := json.Marshal(stats.Protocols)
 	reasons, _ := json.Marshal(stats.Reasons)
-	if cursor.Source != "" {
-		if _, err := s.pg.db.ExecContext(ctx, `UPDATE passive_discovery_source_cursors SET cursor_timestamp=$3,cursor_event_id=$4,updated_at=now() WHERE sensor_id=$1 AND source_event_type=$2`, sensorID, cursor.Source, cursor.Timestamp, cursor.EventID); err != nil {
-			return err
-		}
+	// Keep the source checkpoint and the sensor counters in the same commit.
+	// Lock the lease before moving a source so a replaced worker cannot publish.
+	tx, err := s.pg.db.BeginTx(ctx, nil)
+	if err != nil {
+		return time.Time{}, err
 	}
-	_, err := s.pg.db.ExecContext(ctx, `UPDATE passive_discovery_state SET cursor_timestamp=slow.cursor_timestamp,cursor_event_id=slow.cursor_event_id,processed_events=processed_events+$3,emitted_observations=emitted_observations+$4,skipped_events=skipped_events+$5,
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE passive_discovery_source_cursors c
+SET cursor_timestamp=$3,cursor_event_id=$4,updated_at=now()
+FROM (SELECT sensor_id FROM passive_discovery_state WHERE sensor_id=$1 AND lease_owner=$5 FOR UPDATE) owned
+WHERE c.sensor_id=owned.sensor_id AND c.source_event_type=$2`, sensorID, cursor.Source, cursor.Timestamp, cursor.EventID, cursor.Owner)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return time.Time{}, err
+	} else if affected != 1 {
+		return time.Time{}, fmt.Errorf("passive discovery source checkpoint or lease missing")
+	}
+	var slowest time.Time
+	err = tx.QueryRowContext(ctx, `UPDATE passive_discovery_state SET cursor_timestamp=slow.cursor_timestamp,cursor_event_id=slow.cursor_event_id,processed_events=processed_events+$3,emitted_observations=emitted_observations+$4,skipped_events=skipped_events+$5,
 protocol_counts=coalesce((SELECT jsonb_object_agg(key,total) FROM (SELECT key,sum(value::bigint) total FROM (SELECT * FROM jsonb_each_text(protocol_counts) UNION ALL SELECT * FROM jsonb_each_text($6::jsonb)) counts GROUP BY key) totals),'{}'::jsonb),
 skip_counts=coalesce((SELECT jsonb_object_agg(key,total) FROM (SELECT key,sum(value::bigint) total FROM (SELECT * FROM jsonb_each_text(skip_counts) UNION ALL SELECT * FROM jsonb_each_text($7::jsonb)) counts GROUP BY key) totals),'{}'::jsonb),
 lease_owner='',lease_until='-infinity',last_success_at=now(),last_error='',updated_at=now()
 FROM (SELECT cursor_timestamp,cursor_event_id FROM passive_discovery_source_cursors WHERE sensor_id=$1 ORDER BY cursor_timestamp,cursor_event_id LIMIT 1) slow
-WHERE passive_discovery_state.sensor_id=$1 AND lease_owner=$2`, sensorID, cursor.Owner, stats.Processed, stats.Emitted, stats.Skipped, protocols, reasons)
+WHERE passive_discovery_state.sensor_id=$1 AND lease_owner=$2 RETURNING slow.cursor_timestamp`, sensorID, cursor.Owner, stats.Processed, stats.Emitted, stats.Skipped, protocols, reasons).Scan(&slowest)
 	if err != nil {
-		return err
+		return time.Time{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return time.Time{}, err
 	}
 	// The cursor has advanced. The runtime beacon is only a status hint, so a
 	// slow beacon must not turn a committed batch into a reported failure and
@@ -1936,7 +1950,23 @@ WHERE passive_discovery_state.sensor_id=$1 AND lease_owner=$2`, sensorID, cursor
 	if _, beaconErr := s.pg.db.ExecContext(ctx, `INSERT INTO read_model_runtime_state(name,state,updated_at) VALUES('passive-discovery',$1,now()) ON CONFLICT(name) DO UPDATE SET state=EXCLUDED.state,updated_at=now()`, state); beaconErr != nil {
 		fmt.Fprintf(os.Stderr, "passive discovery beacon: %v\n", beaconErr)
 	}
-	return nil
+	return slowest, nil
+}
+
+// Around the read cutoff a normal poll gives each of the 21 sources a turn.
+// Allow 30 seconds for that rotation before accelerating short and empty claims.
+func passiveDiscoverySuccessfulPollDelay(cursor, next passiveDiscoveryCursor, cutoff, slowest time.Time, full bool) time.Duration {
+	advanced := next.Timestamp.After(cursor.Timestamp) || (next.Timestamp.Equal(cursor.Timestamp) && next.EventID > cursor.EventID)
+	if !advanced {
+		return time.Second
+	}
+	// The sensor watermark may include an inactive source (DHCP-only mode).
+	// Also require the claimed active source to have started behind.
+	catchupBoundary := cutoff.Add(-30 * time.Second)
+	if full || (cursor.Timestamp.Before(catchupBoundary) && slowest.Before(catchupBoundary)) {
+		return 0
+	}
+	return time.Second
 }
 
 func (s *DBStore) runPassiveDiscoveryMaterializer(ctx context.Context, sensorID string) {
@@ -1979,9 +2009,13 @@ func (s *DBStore) runPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 		workCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		requestedLimit := batchTuner.limit
 		scope, err := parsePassiveDiscoveryScope(os.Getenv("PROXY_SENTINEL_DISCOVERY_CIDRS"))
+		var cutoff time.Time
+		if err == nil {
+			cutoff, err = passiveDiscoveryReadCutoff(time.Now())
+		}
 		claimed := false
-		batchEvents := 0
-		batchTruncated := false
+		fullBatch := false
+		delay := 5 * time.Second
 		processedEvents := 0
 		stageStarted := time.Now()
 		if err == nil {
@@ -1990,27 +2024,26 @@ func (s *DBStore) runPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 			if err == nil && claimed {
 				var events []normalized.Event
 				var next passiveDiscoveryCursor
-				events, next, batchTruncated, err = s.passiveDiscoveryEvents(workCtx, sensorID, cursor, requestedLimit)
+				var batchTruncated bool
+				events, next, batchTruncated, err = s.passiveDiscoveryEvents(workCtx, sensorID, cursor, cutoff, requestedLimit)
 				discovery.ObserveStage(workCtx, "dhcp_read", stageStarted, err)
 				stageStarted = time.Now()
-				batchEvents = len(events)
+				fullBatch = len(events) >= requestedLimit || batchTruncated
 				stats := passiveDiscoveryBatchStats{Protocols: map[string]int{}, Reasons: map[string]int{}}
 				if err == nil && len(events) > 0 {
 					passiveBatchMu.Lock()
 					stats, err = s.processPassiveDiscoveryBatch(workCtx, events, scope)
 					passiveBatchMu.Unlock()
 				}
-				if err == nil {
-					cursor = next
-				}
 				finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(workCtx), 8*time.Second)
-				finishErr := s.finishPassiveDiscovery(finishCtx, sensorID, cursor, stats, err)
+				slowest, finishErr := s.finishPassiveDiscovery(finishCtx, sensorID, next, stats, err)
 				finishCancel()
 				if err == nil {
 					err = finishErr
 				}
 				if err == nil {
 					processedEvents = stats.Processed
+					delay = passiveDiscoverySuccessfulPollDelay(cursor, next, cutoff, slowest, fullBatch)
 				}
 				discovery.ObserveStage(workCtx, "dhcp_publish", stageStarted, err)
 			}
@@ -2024,15 +2057,8 @@ func (s *DBStore) runPassiveDiscoveryMaterializer(ctx context.Context, sensorID 
 			reportCancel()
 		}
 		cancel()
-		fullBatch := batchEvents >= requestedLimit || batchTruncated
 		if claimed {
 			batchTuner.observe(fullBatch, err)
-		}
-		delay := 5 * time.Second
-		if claimed && err == nil && fullBatch {
-			delay = 0
-		} else if claimed && err == nil {
-			delay = time.Second
 		}
 		timer := time.NewTimer(delay)
 		select {
