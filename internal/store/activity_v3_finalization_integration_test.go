@@ -64,7 +64,7 @@ func TestActivityV3FinalizationRepairBoundedPostgres(t *testing.T) {
 	if _, err = db.Exec(`UPDATE read_model_jobs SET status='pending',dirty_generation=3 WHERE sensor_id='live'`); err != nil {
 		t.Fatal(err)
 	}
-	job, ok, err := s.claimReadModelJob(ctx, []string{activityV3FiveMinuteModel}, "priority-test")
+	job, ok, err := s.claimReadModelJob(ctx, []string{activityV3FiveMinuteModel}, "priority-test", false)
 	if err != nil || !ok || job.SensorID != "live" {
 		t.Fatalf("repair displaced realtime: job=%+v ok=%v err=%v", job, ok, err)
 	}

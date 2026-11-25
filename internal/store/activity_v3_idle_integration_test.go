@@ -70,7 +70,7 @@ func TestActivityV3RepeatedReceiptsRespectClaimAndRetryDeadlines(t *testing.T) {
 	enqueue(closeAt.Add(-time.Minute))
 	enqueue(closeAt.Add(time.Second))
 	assert(closeAt, 1, "pending")
-	job, ok, err := s.claimReadModelJob(ctx, []string{activityV3FiveMinuteModel}, "worker")
+	job, ok, err := s.claimReadModelJob(ctx, []string{activityV3FiveMinuteModel}, "worker", false)
 	if err != nil || !ok {
 		t.Fatalf("bucket missed its first deadline: %+v %t %v", job, ok, err)
 	}
@@ -89,7 +89,7 @@ func TestActivityV3RepeatedReceiptsRespectClaimAndRetryDeadlines(t *testing.T) {
 	if _, err := s.pg.db.Exec(`UPDATE read_model_jobs SET not_before=$1`, closeAt); err != nil {
 		t.Fatal(err)
 	}
-	retry, ok, err := s.claimReadModelJob(ctx, []string{activityV3FiveMinuteModel}, "worker")
+	retry, ok, err := s.claimReadModelJob(ctx, []string{activityV3FiveMinuteModel}, "worker", false)
 	if err != nil || !ok || retry.DirtyGeneration != 3 {
 		t.Fatalf("retry did not claim the current generation: %+v %t %v", retry, ok, err)
 	}
@@ -311,5 +311,25 @@ func TestActivityCoarsePendingParentKeepsFirstDeadline(t *testing.T) {
 	var generation int
 	if e := s.pg.db.QueryRow("SELECT dirty_generation FROM read_model_jobs").Scan(&generation); e != nil || generation <= 3 {
 		t.Fatal("running child receipt lost", generation, e)
+	}
+}
+
+func TestActivityV3CoarseBacklogCanClaimOverdueDayBeforeNewHours(t *testing.T) {
+	s := activityV3PrivatePostgres(t)
+	ctx := context.Background()
+	if _, err := s.pg.db.Exec(`INSERT INTO read_model_jobs(model,bucket_start,not_before) VALUES
+		('activity-day-v3', current_date - interval '2 days', now()-interval '80 minutes'),
+		('activity-hour-v3', '2026-11-24 08:00:00+00', now()-interval '10 seconds'),
+		('activity-hour-v3', '2026-11-24 07:00:00+00', now()-interval '20 minutes')`); err != nil {
+		t.Fatal(err)
+	}
+	models := []string{activityV3HourModel, activityV3DayModel}
+	oldest, found, err := s.claimReadModelJob(ctx, models, "coarse", true)
+	if err != nil || !found || oldest.Model != activityV3DayModel {
+		t.Fatalf("overdue day lost to another hour job: job=%+v found=%t err=%v", oldest, found, err)
+	}
+	fresh, found, err := s.claimReadModelJob(ctx, models, "coarse", false)
+	if err != nil || !found || fresh.Model != activityV3HourModel || !fresh.BucketStart.Equal(time.Date(2026, 11, 24, 8, 0, 0, 0, time.UTC)) {
+		t.Fatalf("fresh hour unavailable: job=%+v found=%t err=%v", fresh, found, err)
 	}
 }

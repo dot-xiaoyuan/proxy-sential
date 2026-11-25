@@ -204,22 +204,22 @@ WHERE read_model_jobs.processed_generation=read_model_jobs.dirty_generation
 	return err
 }
 
-// claimReadModelJob takes the most recent five-minute bucket first, and the most
-// recent hour/day bucket first, so fresh chart data appears before the backlog
-// fills in. Hourly catch-up spends up to a couple of minutes per legacy bucket,
-// so newest-first is what makes 24h and 7d readable while history is rebuilt.
-func (s *DBStore) claimReadModelJob(ctx context.Context, models []string, worker string) (readModelJob, bool, error) {
+// Live claims take the most recent five-minute bucket first. Coarse claims
+// alternate the oldest eligibility deadline with the freshest hour/day order
+// so that new hourly receipts cannot indefinitely displace an eligible day.
+func (s *DBStore) claimReadModelJob(ctx context.Context, models []string, worker string, oldestDueFirst bool) (readModelJob, bool, error) {
 	row := s.pg.db.QueryRowContext(ctx, `WITH picked AS (
  SELECT model,bucket_start,sensor_id,campus_id FROM read_model_jobs
  WHERE model=ANY($1::text[]) AND processed_generation<dirty_generation AND not_before<=now()
  AND (status<>'running' OR lease_until<now())
- ORDER BY CASE model WHEN 'activity-5m-v3' THEN 0 WHEN 'activity-hour-v3' THEN 1 ELSE 2 END,
+ ORDER BY CASE WHEN $3::boolean THEN not_before END ASC,
+ CASE model WHEN 'activity-5m-v3' THEN 0 WHEN 'activity-hour-v3' THEN 1 ELSE 2 END,
  CASE WHEN model='activity-5m-v3' THEN bucket_start END DESC,
  CASE WHEN model<>'activity-5m-v3' THEN bucket_start END DESC
  FOR UPDATE SKIP LOCKED LIMIT 1)
 UPDATE read_model_jobs j SET status='running',lease_owner=$2,lease_until=now()+interval '2 minutes',updated_at=now()
 FROM picked p WHERE j.model=p.model AND j.bucket_start=p.bucket_start AND j.sensor_id=p.sensor_id AND j.campus_id=p.campus_id
-RETURNING j.model,j.bucket_start,j.sensor_id,j.campus_id,j.dirty_generation,j.attempts`, models, worker)
+RETURNING j.model,j.bucket_start,j.sensor_id,j.campus_id,j.dirty_generation,j.attempts`, models, worker, oldestDueFirst)
 	var job readModelJob
 	if err := row.Scan(&job.Model, &job.BucketStart, &job.SensorID, &job.CampusID, &job.DirtyGeneration, &job.Attempts); err != nil {
 		if err == sql.ErrNoRows {
@@ -673,7 +673,7 @@ func (s *DBStore) RunActivityV3Realtime(ctx context.Context) {
 		if dispatchErr != nil {
 			fmt.Fprintf(os.Stderr, "activity v3 dispatch failed: %v\n", dispatchErr)
 		}
-		job, found, claimErr := s.claimReadModelJob(workCtx, []string{activityV3FiveMinuteModel}, worker)
+		job, found, claimErr := s.claimReadModelJob(workCtx, []string{activityV3FiveMinuteModel}, worker, false)
 		if claimErr != nil {
 			fmt.Fprintf(os.Stderr, "activity v3 realtime claim failed: %v\n", claimErr)
 		}
@@ -766,6 +766,7 @@ func (s *DBStore) activityV3RealtimeLag(ctx context.Context, now time.Time) (flo
 func (s *DBStore) RunActivityV3Coarse(ctx context.Context) {
 	worker := fmt.Sprintf("coarse-%d", os.Getpid())
 	lastSuccess := time.Time{}
+	oldestDueFirst := true
 	lastReason := ""
 	for ctx.Err() == nil {
 		// Realtime lag pauses all coarse work without consuming a job lease. The
@@ -788,11 +789,12 @@ func (s *DBStore) RunActivityV3Coarse(ctx context.Context) {
 		} else {
 			lastReason = ""
 			workCtx, cancel := context.WithTimeout(ctx, 180*time.Second)
-			job, found, err := s.claimReadModelJob(workCtx, []string{activityV3HourModel, activityV3DayModel}, worker)
+			job, found, err := s.claimReadModelJob(workCtx, []string{activityV3HourModel, activityV3DayModel}, worker, oldestDueFirst)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "activity v3 coarse claim failed: %v\n", err)
 			}
 			if err == nil && found {
+				oldestDueFirst = !oldestDueFirst
 				if expired, floorErr := s.activityFiveMinuteFloor(workCtx); floorErr == nil && activityCoarseSourceExpired(job.Model, job.BucketStart, expired) {
 					reason := fmt.Sprintf("five-minute facts for this hour expired before catch-up (retained from %s)", expired.UTC().Format(time.RFC3339))
 					fmt.Fprintf(os.Stderr, "activity v3 coarse cancelled %s/%s %s: %s\n", job.Model, job.SensorID, job.BucketStart.UTC().Format(time.RFC3339), reason)
