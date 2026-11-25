@@ -279,6 +279,14 @@ func TestDiscoveryRecoveryLegacyProductReceipt(t *testing.T) {
 	if err = r.AcceptDiscoveryBatch(ctx, prefix+"-original", []normalized.Event{event}); err != nil {
 		t.Fatal(err)
 	}
+	// Before migration 172 the worker kept the original events in the work
+	// row. Only receipts from that layout used the enriched product hash.
+	if _, err = pg.db.ExecContext(ctx, `WITH original AS (
+		DELETE FROM discovery_batch_segments WHERE batch_id=$1 RETURNING batch_id,events
+	) UPDATE discovery_batch_work w SET events=o.events,selected_event_count=NULL,payload_sha256=NULL
+	  FROM original o WHERE w.batch_id=o.batch_id`, prefix+"-original"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = r.ProcessDiscoveryBatch(ctx); err != nil {
 		t.Fatal(err)
 	}

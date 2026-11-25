@@ -4,10 +4,38 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"testing"
 	"time"
 )
+
+// Tests that inspect an entire database or create an incompatible table need
+// their own namespace, including materialized views and deduplication indexes.
+func privateClickHouseTestDatabase(t *testing.T, dsn string) string {
+	t.Helper()
+	admin, err := NewClickHouseStore(ClickHouseOptions{DSN: dsn})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := fmt.Sprintf("sentinel_acceptance_%d", time.Now().UnixNano())
+	if err = admin.exec(context.Background(), "CREATE DATABASE "+name); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := admin.exec(context.Background(), "DROP DATABASE "+name+" SYNC"); err != nil {
+			t.Error(err)
+		}
+	})
+	params := u.Query()
+	params.Set("database", name)
+	u.RawQuery = params.Encode()
+	return u.String()
+}
 
 func TestClickHouseAggregatesOneHundredThousandEventsWithoutRawReads(t *testing.T) {
 	dsn := os.Getenv("PROXY_SENTINEL_TEST_CLICKHOUSE_DSN")

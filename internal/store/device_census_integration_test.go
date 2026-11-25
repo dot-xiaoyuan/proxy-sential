@@ -19,6 +19,7 @@ func TestDeviceCensusAcrossPostgresAndClickHouse(t *testing.T) {
 	if pgDSN == "" || chDSN == "" {
 		t.Skip("isolated postgres and clickhouse required")
 	}
+	chDSN = privateClickHouseTestDatabase(t, chDSN)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	if _, err := ApplyPostgresMigrations(ctx, pgDSN, "../../migrations/postgres"); err != nil {
@@ -32,16 +33,17 @@ func TestDeviceCensusAcrossPostgresAndClickHouse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer backend.Close()
+	t.Cleanup(func() { backend.Close() })
 	t.Cleanup(func() {
-		for _, table := range []string{"normalized_events", "identity_signal_events_v1"} {
-			_ = backend.ch.exec(ctx, "ALTER TABLE "+table+" DELETE WHERE sensor_id="+chQuote(sensor)+" SETTINGS mutations_sync=2")
-		}
+		cleanup, stop := context.WithTimeout(context.Background(), 15*time.Second)
+		defer stop()
 		for _, statement := range []string{
 			`DELETE FROM device_address_leases WHERE sensor_id=$1`,
 			`DELETE FROM sensors WHERE sensor_id=$1`,
 		} {
-			_, _ = backend.pg.db.ExecContext(ctx, statement, sensor)
+			if _, err := backend.pg.db.ExecContext(cleanup, statement, sensor); err != nil {
+				t.Error(err)
+			}
 		}
 	})
 	if _, err = backend.pg.db.ExecContext(ctx, `INSERT INTO sensors(sensor_id,display_name,collector_kind) VALUES($1,$1,'zeek') ON CONFLICT(sensor_id) DO NOTHING`, sensor); err != nil {

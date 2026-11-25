@@ -20,7 +20,7 @@ func TestClickHouseIngestTypesRespectSensorAndClosedTimeWindow(t *testing.T) {
 	if err != nil || !regexp.MustCompile(`^sentinel_acceptance_[0-9]+$`).MatchString(u.Query().Get("database")) {
 		t.Fatal("requires owned isolated ClickHouse database")
 	}
-	s, err := NewClickHouseStore(ClickHouseOptions{DSN: dsn, RequestTimeout: 10 * time.Second})
+	s, err := NewClickHouseStore(ClickHouseOptions{DSN: privateClickHouseTestDatabase(t, dsn), RequestTimeout: 10 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}

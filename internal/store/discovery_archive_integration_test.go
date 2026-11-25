@@ -14,6 +14,7 @@ func TestDiscoveryArchiveClickHouse(t *testing.T) {
 	if dsn == "" {
 		t.Skip("isolated ClickHouse required")
 	}
+	dsn = privateClickHouseTestDatabase(t, dsn)
 	ctx := context.Background()
 	if _, e := ApplyClickHouseMigrations(ctx, dsn, "../../migrations/clickhouse"); e != nil {
 		t.Fatal(e)
