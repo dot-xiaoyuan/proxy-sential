@@ -13,6 +13,7 @@ import (
 type captureBucket struct {
 	authenticatedRouters map[handshakeKey]struct{}
 	routerFrameReasons   map[handshakeKey]string
+	helloReassembly      helloReassembly
 	packets              map[packetBucketKey]int
 	controls             map[string]controlSignal
 	droppedPacketKeys    int
@@ -162,6 +163,12 @@ func (b *captureBucket) addHandshake(frame []byte) {
 		}
 	}
 	b.recordHandshake(observation)
+	if b.handshakeCaptureV2 && observation.Truncated && observation.DestinationPort == 443 {
+		key := handshakeKey{IP: observation.IP, MAC: observation.MAC}
+		if _, ok := b.authenticatedRouters[key]; ok && b.handshakes[key] != nil {
+			b.helloReassembly.anchor(frame, observation)
+		}
+	}
 }
 
 func (b *captureBucket) recordHandshake(observation handshakeObservation) {
@@ -202,7 +209,7 @@ func (b *captureBucket) recordHandshake(observation handshakeObservation) {
 
 func (b *captureBucket) selectHandshakes(limit int, bucket time.Time, priorityCIDRs []netip.Prefix) []handshakeKey {
 	keys := b.selectHandshakeOutlets(limit, bucket, priorityCIDRs)
-	if len(b.handshakeCandidates) == 0 {
+	if len(b.handshakeCandidates) == 0 && b.helloReassembly.stats.Started == 0 && len(b.helloReassembly.anchors) == 0 {
 		return keys
 	}
 	selected := make(map[*handshakeSummary]bool, len(keys))
@@ -215,6 +222,7 @@ func (b *captureBucket) selectHandshakes(limit int, bucket time.Time, priorityCI
 			budget -= candidate.summary.addFeature(candidate.feature, budget)
 		}
 	}
+	b.helloReassembly.apply(selected, b.handshakes, budget)
 	return keys
 }
 
@@ -249,6 +257,7 @@ func (b *captureBucket) selectHandshakeOutlets(limit int, at time.Time, cidrs []
 }
 
 func (b *captureBucket) resetHandshakes() {
+	b.helloReassembly = helloReassembly{}
 	clear(b.routerFrameReasons)
 	b.handshakes = make(map[handshakeKey]*handshakeSummary)
 	b.handshakeParseFailures = 0

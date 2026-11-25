@@ -296,3 +296,27 @@ func TestHandshakeRealFrameRetransmissionAndBucketBudget(t *testing.T) {
 		}
 	}
 }
+
+func TestPrioritySplitClientHelloProducesFingerprint(t *testing.T) {
+	hello := clientHello("router.example", "h2")
+	ip := [4]byte{192, 0, 2, 11}
+	mac := [6]byte{2, 0, 0, 0, 0, 11}
+	key := handshakeKey{IP: netip.AddrFrom4(ip), MAC: mac}
+	b := newCaptureBucket()
+	b.handshakeEnabled, b.handshakeCaptureV2 = true, true
+	b.authenticatedRouters = map[handshakeKey]struct{}{key: {}}
+	first := buildTCPFrame(mac, ip, 443, hello[:40])
+	last := buildTCPFrame(mac, ip, 443, hello[40:])
+	binary.BigEndian.PutUint32(first[38:], 123)
+	binary.BigEndian.PutUint32(last[38:], 163)
+	b.addFrame(first, nil)
+	if runClassicBPF(outletHandshakeProgram, last) > 0 {
+		t.Fatal("ordinary continuation escaped the original filter")
+	}
+	b.helloReassembly.consume(first, b.authenticatedRouters, time.Now())
+	b.helloReassembly.consume(last, b.authenticatedRouters, time.Now())
+	kept := b.selectHandshakes(300, time.Now(), nil)
+	if len(kept) != 1 || len(b.handshakes[key].samples) != 2 {
+		t.Fatal("priority split ClientHello has no JA3/JA4")
+	}
+}

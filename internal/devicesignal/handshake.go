@@ -321,6 +321,10 @@ func (o handshakeObservation) feature() (handshakeFeatureObservation, bool) {
 }
 
 func (s *handshakeSummary) addFeature(o handshakeFeatureObservation, sampleBudget int) int {
+	return s.storeFeature(o, sampleBudget, &s.overflow)
+}
+
+func (s *handshakeSummary) storeFeature(o handshakeFeatureObservation, sampleBudget int, omitted *int) int {
 	before := len(s.samples)
 	bucket := o.observedAt.Unix() / 5
 	for _, feature := range []struct{ family, value string }{{"user_agent", o.userAgent}, {"ja3", o.ja3}, {"ja4", o.ja4}} {
@@ -338,7 +342,7 @@ func (s *handshakeSummary) addFeature(o handshakeFeatureObservation, sampleBudge
 		}
 		// Repeated samples never use a slot or count as omitted.
 		if sampleBudget <= 0 || len(s.samples) >= 288 {
-			s.overflow++
+			(*omitted)++
 			continue
 		}
 		if s.samples == nil {

@@ -14,6 +14,7 @@ import (
 // consumed by policy retain their original shape.
 type captureCoverageDocument struct {
 	sharedaccess.CoverageV2
+	TLSReassembly  *helloReassemblyStats   `json:"priority_tls_reassembly,omitempty"`
 	IEEE1905       *ieee1905CaptureStats   `json:"ieee1905,omitempty"`
 	RouterSampling *routerSamplingCoverage `json:"authenticated_router_sampling,omitempty"`
 }

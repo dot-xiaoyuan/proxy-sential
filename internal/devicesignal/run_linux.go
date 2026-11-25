@@ -152,10 +152,13 @@ func Run(ctx context.Context, opts Options) error {
 	state.handshakeEnabled = opts.HandshakeOnly
 	state.handshakeCaptureV2 = handshakeCaptureV2
 	var routerSnapshot RouterSamplingSnapshot
+	var continuation continuationCapture
+	defer continuation.close()
 	startHandshakeBucket := func() {
 		if opts.AuthenticatedRouters != nil {
 			routerSnapshot = opts.AuthenticatedRouters()
 			state.authenticatedRouters = routerSnapshot.Keys
+			continuation.refresh(iface.Index, routerSnapshot.Keys)
 		}
 	}
 	startHandshakeBucket()
@@ -199,12 +202,16 @@ func Run(ctx context.Context, opts Options) error {
 			if opts.AuthenticatedRouters != nil {
 				stats := state.routerSamplingCoverage(keys, routerSnapshot)
 				doc.RouterSampling = &stats
+				continuation.coverage(&state.helloReassembly.stats, len(state.authenticatedRouters))
+				doc.TLSReassembly = &state.helloReassembly.stats
 				log.Printf("handshake_sampling authenticated_router_keys=%d retained_router_activity=%d summaries=%d omitted=%d missing_counts=%v lookup_failed=%t reused_previous_list=%t", stats.Keys, stats.RetainedActivity, len(keys), coverage.Omitted, stats.Reasons, stats.LookupFailed, stats.ReusedPreviousList)
 			}
 			if err := writeCaptureCoverageDocument(opts.Output, opts.SensorID, opts.Interface, opts.CollectorInstanceID, "handshake-sidecar", opts.CaptureScope, doc); err != nil {
 				return err
 			}
-			startHandshakeBucket()
+			if ctx.Err() == nil {
+				startHandshakeBucket()
+			}
 			coverageFrom = end
 		}
 		selected := selectControls(controlTracker, at, controls)
@@ -274,6 +281,7 @@ func Run(ctx context.Context, opts Options) error {
 			processed++
 			state.addFrame(frame, opts.CaptureScope)
 		}
+		processed += continuation.drain(state, buffer, control)
 		select {
 		case <-ctx.Done():
 			if state.droppedPacketKeys > 0 {
