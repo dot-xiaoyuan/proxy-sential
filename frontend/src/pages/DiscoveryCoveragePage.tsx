@@ -9,6 +9,7 @@ import { observedTimeTitle } from '../shared/ui/observedTime'
 import { AppLoadingState } from '../shared/ui'
 import { DiscoveryCoverageReport, DiscoveryMirrorCoverage, type CoverageReport } from './DiscoveryCoverageReport'
 import { DiscoveryCoverageDiagnostics } from './DiscoveryCoverageDiagnostics'
+import { TruthReviewPanel } from './TruthReviewPanel'
 import { CensusPanel } from './CensusPanel'
 
 const windows = [
@@ -22,6 +23,7 @@ const sections = [
   { key: 'networks', label: '网段与 VLAN' },
   { key: 'mirror', label: '镜像与配对' },
   { key: 'history', label: '历史核查' },
+  { key: 'review', label: '人工核实' },
 ] as const
 
 type Metadata = components['schemas']['DiscoveryDeviceMetadata']
@@ -127,12 +129,12 @@ export function DiscoveryCoveragePage() {
   return <main className="page device-center-page discovery-coverage-page">
     <header className="discovery-report-page-header">
       <Typography.Title level={3}>设备发现覆盖报表</Typography.Title>
-      {section !== 'history' && <div className="discovery-report-page-actions">
+      {section !== 'history' && section !== 'review' && <div className="discovery-report-page-actions">
         <Select aria-label="统计时间范围" value={window} options={windows} onChange={value => changeParam('window', value)} />
         <Button icon={<ReloadOutlined aria-hidden="true"/>} onClick={() => void activeQuery.refetch()} loading={activeQuery.isFetching}>刷新</Button>
       </div>}
     </header>
-    <Tabs className="coverage-tabs" aria-busy={section !== 'history' && activeQuery.isFetching} activeKey={section} onChange={value => changeParam('section', value)} items={sections.map(item => ({
+    <Tabs className="coverage-tabs" aria-busy={section !== 'history' && section !== 'review' && activeQuery.isFetching} activeKey={section} onChange={value => changeParam('section', value)} items={sections.map(item => ({
       ...item,
       children: item.key === 'overview' ? <>
         {section === 'overview' && feedback('覆盖总览')}
@@ -147,7 +149,7 @@ export function DiscoveryCoveragePage() {
           <summary>镜像明细与台账对照</summary>
           {censusOpened && <CensusPanel />}
         </details>
-      </> : <section className="coverage-content" aria-label="历史现场核查">
+      </> : item.key === 'review' ? <TruthReviewPanel /> : <section className="coverage-content" aria-label="历史现场核查">
         <p className="coverage-empty">这是 11 月 15 日的核查快照，日期和范围固定。</p>
         <DiscoveryCoverageDiagnostics />
       </section>,

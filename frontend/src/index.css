@@ -6466,3 +6466,12 @@ pre.wrap-code {
   .data-report-discovery-body { grid-template-columns: minmax(0, 1fr); }
   .data-report-discovery .data-report-ranking { padding: 12px 0 0; border: 0; border-top: 1px solid var(--data-report-border); }
 }
+
+/* Offline truth review */
+.offline-truth { font: 16px/1.6 system-ui, sans-serif; color: #1e293b; max-width: 1000px; margin: 24px auto; padding: 14px; }
+.offline-truth .truth-review { padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; }
+.truth-review input { max-width: 100%; }
+.truth-review dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 12px; }
+.truth-review dt { color: var(--ant-color-text-secondary, #475569); }
+.truth-review dd { margin: 4px 0; font-variant-numeric: tabular-nums; }
+/* End offline truth review */
