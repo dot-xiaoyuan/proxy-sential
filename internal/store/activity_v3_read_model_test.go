@@ -1,6 +1,10 @@
 package store
 
 import (
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -99,6 +103,27 @@ func TestActivityV3CoarseMaterializerPrunesSupersededRevisions(t *testing.T) {
 		if !strings.Contains(query, required) {
 			t.Fatalf("coarse materializer omitted %q: %s", required, query)
 		}
+	}
+}
+
+func TestActivityV3PublishesVersionWithTypedSelect(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		want := "SELECT '5m',parseDateTimeBestEffort('2026-11-25T05:30:00Z'),'sensor-a','campus-a',toUInt64(123),parseDateTime64BestEffort('2026-11-25T05:30:05.123456789Z',9),now64(9),toUInt8(1)"
+		if err != nil || !strings.HasSuffix(string(body), want) {
+			http.Error(w, "expected a typed SELECT for the version row", http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(server.Close)
+	ch, err := NewClickHouseStore(ClickHouseOptions{DSN: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &DBStore{ch: ch}
+	bucket := time.Date(2026, 11, 25, 5, 30, 0, 0, time.UTC)
+	source := bucket.Add(5*time.Second + 123456789*time.Nanosecond)
+	if err := store.publishActivityV3Version(context.Background(), "5m", bucket, "sensor-a", "campus-a", 123, source, true); err != nil {
+		t.Fatal(err)
 	}
 }
 

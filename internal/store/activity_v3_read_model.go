@@ -390,7 +390,8 @@ func (s *DBStore) publishActivityV3Version(ctx context.Context, granularity stri
 	if finalized {
 		final = 1
 	}
-	query := fmt.Sprintf(`INSERT INTO activity_chart_bucket_versions_v3(granularity,bucket_start,sensor_id,campus_id,revision,source_as_of,published_at,finalized) VALUES(%s,parseDateTimeBestEffort(%s),%s,%s,toUInt64(%d),parseDateTime64BestEffort(%s,9),now64(9),toUInt8(%d))`, chQuote(granularity), chQuote(bucket.UTC().Format(time.RFC3339Nano)), chQuote(sensorID), chQuote(campusID), revision, chQuote(sourceAsOf.UTC().Format(time.RFC3339Nano)), final)
+	// SELECT evaluates the typed expressions without invoking ClickHouse's VALUES parser first.
+	query := fmt.Sprintf(`INSERT INTO activity_chart_bucket_versions_v3(granularity,bucket_start,sensor_id,campus_id,revision,source_as_of,published_at,finalized) SELECT %s,parseDateTimeBestEffort(%s),%s,%s,toUInt64(%d),parseDateTime64BestEffort(%s,9),now64(9),toUInt8(%d)`, chQuote(granularity), chQuote(bucket.UTC().Format(time.RFC3339Nano)), chQuote(sensorID), chQuote(campusID), revision, chQuote(sourceAsOf.UTC().Format(time.RFC3339Nano)), final)
 	return s.ch.exec(ctx, query)
 }
 
