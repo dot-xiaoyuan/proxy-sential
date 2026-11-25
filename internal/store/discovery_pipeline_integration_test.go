@@ -188,10 +188,14 @@ func TestDiscoveryDurablePipelineRecoveryAndLifecycle(t *testing.T) {
 		segmentEvents[i] = event
 		segmentEvents[i].EventID = fmt.Sprintf("%s-segment-%03d", prefix, i)
 	}
+	segments, err := discovery.EncodeDiscoverySegments(segmentEvents)
+	if err != nil || len(segments) < 3 {
+		t.Fatalf("expected a multi-segment fixture: %d %v", len(segments), err)
+	}
 	archiveKeys := []string{}
 	failSegment := false
 	repo.ArchiveDiscovery = func(_ context.Context, key string, _ time.Time, part []normalized.Event) error {
-		if len(part) > 50 {
+		if len(part) > discovery.DiscoveryPublishMaxEvents {
 			t.Fatalf("unbounded archive slice: %d", len(part))
 		}
 		archiveKeys = append(archiveKeys, key)
@@ -212,22 +216,22 @@ func TestDiscoveryDurablePipelineRecoveryAndLifecycle(t *testing.T) {
 		t.Fatal("archive interruption ignored")
 	}
 	var progress int
-	if err = pg.db.QueryRowContext(ctx, `SELECT processed_offset,completed FROM discovery_batch_work WHERE batch_id=$1`, segmentedID).Scan(&progress, &completed); err != nil || progress != 50 || completed {
+	if err = pg.db.QueryRowContext(ctx, `SELECT processed_offset,completed FROM discovery_batch_work WHERE batch_id=$1`, segmentedID).Scan(&progress, &completed); err != nil || progress != segments[0].EventCount || completed {
 		t.Fatalf("lost partial progress %d %v %v", progress, completed, err)
 	}
 	failSegment = false
 	if _, err = pg.db.ExecContext(ctx, `UPDATE discovery_batch_work SET next_attempt_at=now() WHERE batch_id=$1`, segmentedID); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 2; i++ {
+	for range segments[1:] {
 		if _, err = repo.ProcessDiscoveryBatch(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if len(archiveKeys) != 4 || archiveKeys[1] != archiveKeys[2] {
+	if len(archiveKeys) != len(segments)+1 || archiveKeys[1] != archiveKeys[2] {
 		t.Fatalf("unstable archive retry: %v", archiveKeys)
 	}
-	if err = pg.db.QueryRowContext(ctx, `SELECT processed_offset,completed FROM discovery_batch_work WHERE batch_id=$1`, segmentedID).Scan(&progress, &completed); err != nil || progress != 121 || !completed {
+	if err = pg.db.QueryRowContext(ctx, `SELECT processed_offset,completed FROM discovery_batch_work WHERE batch_id=$1`, segmentedID).Scan(&progress, &completed); err != nil || progress != len(segmentEvents) || !completed {
 		t.Fatalf("incomplete batch %d %v %v", progress, completed, err)
 	}
 	fresh, err := repo.DiscoveryFreshness(ctx)
