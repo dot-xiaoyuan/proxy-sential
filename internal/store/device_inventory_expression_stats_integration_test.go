@@ -3,13 +3,13 @@ package store
 import (
 	"context"
 	"database/sql"
-	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"proxy-sentinel/internal/testpostgres"
 )
 
 func TestDeviceInventoryExpressionStatisticsMigration(t *testing.T) {
@@ -18,21 +18,9 @@ func TestDeviceInventoryExpressionStatisticsMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dsn := os.Getenv("PROXY_SENTINEL_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("owned isolated PostgreSQL required")
-	}
-	u, err := url.Parse(dsn)
-	if err != nil || !regexp.MustCompile(`^/sentinel_(ieee_lease|acceptance)_[0-9]+$`).MatchString(u.Path) {
-		t.Fatal("requires an owned isolated database")
-	}
+	db, dsn := testpostgres.PrivateSchema(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	db, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
 	for _, q := range []string{
 		`CREATE TABLE device_inventory_snapshots(run_id text PRIMARY KEY,inventory jsonb NOT NULL)`,
 		`INSERT INTO device_inventory_snapshots SELECT n::text,jsonb_build_object('devices',jsonb_build_array(jsonb_build_object('device_id','fixture-'||n,'raw',(SELECT string_agg(md5(i::text),'') FROM generate_series(1,2048) i)))) FROM generate_series(1,100) n`,
@@ -41,12 +29,12 @@ func TestDeviceInventoryExpressionStatisticsMigration(t *testing.T) {
 		// This instrumented immutable accessor is confined to the test database.
 		// Counting calls proves whether ANALYZE evaluates the expression before the
 		// wide-value guard; it is never installed in production.
-		`CREATE FUNCTION sentinel_test_stats_devices(j jsonb) RETURNS jsonb LANGUAGE plpgsql IMMUTABLE AS $$ BEGIN PERFORM nextval('public.sentinel_test_stats_calls'); RETURN j->'devices'; END $$`,
+		`CREATE FUNCTION sentinel_test_stats_devices(j jsonb) RETURNS jsonb LANGUAGE plpgsql IMMUTABLE SET search_path FROM CURRENT AS $$ BEGIN PERFORM nextval('sentinel_test_stats_calls'); RETURN j->'devices'; END $$`,
 		`CREATE INDEX sentinel_test_stats_probe ON device_inventory_snapshots USING gin(sentinel_test_stats_devices(inventory) jsonb_path_ops)`,
 		`SELECT setval('sentinel_test_stats_calls',1,false)`,
 		`ANALYZE device_inventory_snapshots`,
 	} {
-		if _, err = db.ExecContext(ctx, q); err != nil {
+		if _, err := db.ExecContext(ctx, q); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -123,7 +111,7 @@ func TestDeviceInventoryExpressionStatisticsMigration(t *testing.T) {
 	}
 	// Test the exact PostgreSQL skip mechanism on the instrumented accessor too.
 	for _, q := range []string{`ALTER INDEX sentinel_test_stats_probe ALTER COLUMN 1 SET STATISTICS 0`, `SELECT setval('sentinel_test_stats_calls',1,false)`, `ANALYZE device_inventory_snapshots`} {
-		if _, err = db.ExecContext(ctx, q); err != nil {
+		if _, err := db.ExecContext(ctx, q); err != nil {
 			t.Fatal(err)
 		}
 	}

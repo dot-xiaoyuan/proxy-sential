@@ -2,31 +2,17 @@ package store
 
 import (
 	"context"
-	"database/sql"
-	"net/url"
-	"os"
-	"regexp"
 	"testing"
 	"time"
+
+	"proxy-sentinel/internal/testpostgres"
 )
 
 func TestDeviceFactInventoryExcludesFutureObservations(t *testing.T) {
-	dsn := os.Getenv("PROXY_SENTINEL_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("owned isolated PostgreSQL required")
-	}
-	u, err := url.Parse(dsn)
-	if err != nil || !regexp.MustCompile(`^/sentinel_(ieee_lease|acceptance)_[0-9]+$`).MatchString(u.Path) {
-		t.Fatal("requires owned isolated database")
-	}
-	db, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	db, _ := testpostgres.PrivateSchema(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	_, err = db.ExecContext(ctx, `CREATE TABLE device_signal_facts(sensor_id text,signal_id text,ip inet,source text,kind text,value text,normalized_value text,strength text,confidence double precision,weight int,first_seen timestamptz,last_seen timestamptz,seen_count bigint,event_ids_sample jsonb)`)
+	_, err := db.ExecContext(ctx, `CREATE TABLE device_signal_facts(sensor_id text,signal_id text,ip inet,source text,kind text,value text,normalized_value text,strength text,confidence double precision,weight int,first_seen timestamptz,last_seen timestamptz,seen_count bigint,event_ids_sample jsonb)`)
 	if err != nil {
 		t.Fatal(err)
 	}

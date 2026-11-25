@@ -2,28 +2,14 @@ package store
 
 import (
 	"context"
-	"database/sql"
-	"net/url"
-	"os"
-	"regexp"
 	"testing"
 	"time"
+
+	"proxy-sentinel/internal/testpostgres"
 )
 
 func TestDeviceRetentionLockedCandidatesAreNotExhausted(t *testing.T) {
-	dsn := os.Getenv("PROXY_SENTINEL_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("owned isolated PostgreSQL required")
-	}
-	u, err := url.Parse(dsn)
-	if err != nil || !regexp.MustCompile(`^/sentinel_(ieee_lease|acceptance)_[0-9]+$`).MatchString(u.Path) {
-		t.Fatal("requires an owned isolated database")
-	}
-	db, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	db, _ := testpostgres.PrivateSchema(t)
 	db.SetMaxOpenConns(3)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -32,7 +18,7 @@ func TestDeviceRetentionLockedCandidatesAreNotExhausted(t *testing.T) {
 		`CREATE TABLE device_inventory_snapshots(run_id text,sensor_id text,"window" text,ip inet,created_at timestamptz,inventory jsonb NOT NULL DEFAULT '{}')`,
 		`INSERT INTO device_inventory_snapshots VALUES('old-a','s','1h','192.0.2.1',now()-interval '10 days','{}'),('old-b','s','1h','192.0.2.2',now()-interval '9 days','{}'),('new','s','1h','192.0.2.1',now(),'{}'),('new','s','1h','192.0.2.2',now(),'{}')`,
 	} {
-		if _, err = db.ExecContext(ctx, q); err != nil {
+		if _, err := db.ExecContext(ctx, q); err != nil {
 			t.Fatal(err)
 		}
 	}

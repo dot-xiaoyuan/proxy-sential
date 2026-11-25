@@ -3,32 +3,18 @@ package main
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
-	"net/url"
 	"os"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"proxy-sentinel/internal/store"
+	"proxy-sentinel/internal/testpostgres"
 )
 
 func TestRetentionBudgetPostgresCancelsSlowDelete(t *testing.T) {
-	dsn := os.Getenv("PROXY_SENTINEL_TEST_POSTGRES_DSN")
-	if dsn == "" {
-		t.Skip("dedicated PostgreSQL required")
-	}
-	u, err := url.Parse(dsn)
-	if err != nil || !regexp.MustCompile(`^/sentinel_(acceptance|ieee_lease)_[0-9]+$`).MatchString(u.Path) {
-		t.Fatal("this replay creates relations and requires an owned isolated database")
-	}
-	db, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	db, dsn := testpostgres.PrivateSchema(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
 	for _, q := range []string{
@@ -37,7 +23,7 @@ func TestRetentionBudgetPostgresCancelsSlowDelete(t *testing.T) {
 		`CREATE TABLE device_inventory_snapshots(run_id text,sensor_id text,"window" text,ip inet,created_at timestamptz,inventory jsonb NOT NULL DEFAULT '{}')`,
 		`INSERT INTO device_inventory_snapshots VALUES ('old','fixture','1h','192.0.2.200',now()-interval '10 days','{}'),('new','fixture','1h','192.0.2.200',now(),'{}')`,
 	} {
-		if _, err = db.ExecContext(ctx, q); err != nil {
+		if _, err := db.ExecContext(ctx, q); err != nil {
 			t.Fatal(err)
 		}
 	}
