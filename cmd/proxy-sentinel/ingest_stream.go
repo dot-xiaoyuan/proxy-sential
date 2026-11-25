@@ -163,7 +163,11 @@ func runIngestStream(args []string) error {
 	if *path != "" && *bindingPath != "" {
 		return errors.New("aggregate and verified DHCP bindings cannot be consumed together")
 	}
-	if *maxBytes <= 0 || *maxBytes > 1<<20 || *poll <= 0 || *storeTimeout <= 0 || *storeTimeout > 120*time.Second || *pending < 1 || *pending > 64 ||
+	maxBatchLimit := int64(1 << 20)
+	if *ttlPath != "" && *path == "" && *bindingPath == "" && *messagePath == "" && *handshakePath == "" && *routerProbePath == "" {
+		maxBatchLimit = realtime.DeviceSignalMaxBatchBytes
+	}
+	if *maxBytes <= 0 || *maxBytes > maxBatchLimit || *poll <= 0 || *storeTimeout <= 0 || *storeTimeout > 120*time.Second || *pending < 1 || *pending > 64 ||
 		*archiveWorkers < 0 || *archiveWorkers > 8 || *searchWorkers < 0 || *searchWorkers > 8 {
 		return errors.New("stream-run bounds are invalid")
 	}

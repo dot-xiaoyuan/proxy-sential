@@ -16,6 +16,29 @@ import (
 	"proxy-sentinel/internal/streamlog"
 )
 
+func TestStreamRunAllowsLargerBatchOnlyForDedicatedPacketSource(t *testing.T) {
+	// Stop at the post-flag runtime check without opening a journal or database.
+	t.Setenv("PROXY_SENTINEL_DEVICE_FINGERPRINT_DIR", "")
+	for _, tc := range []struct {
+		name  string
+		flags []string
+		want  string
+	}{
+		{"packet", []string{"--device-signals=ttl.jsonl", "--max-batch-bytes=2097152"}, "configured device fingerprint directory is empty"},
+		{"packet exceeds limit", []string{"--device-signals=ttl.jsonl", "--max-batch-bytes=2097153"}, "stream-run bounds are invalid"},
+		{"mixed", []string{"--device-signals=ttl.jsonl", "--handshake-signals=handshake.jsonl", "--max-batch-bytes=2097152"}, "stream-run bounds are invalid"},
+		{"handshake exceeds limit", []string{"--handshake-signals=handshake.jsonl", "--max-batch-bytes=2097152"}, "stream-run bounds are invalid"},
+		{"handshake default", []string{"--handshake-signals=handshake.jsonl"}, "configured device fingerprint directory is empty"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := []string{"--sensor-id=sensor", "--journal-dir=journal", "--capture-scope-config=scope", "--postgres-dsn=unused", "--clickhouse-dsn=unused"}
+			if err := runIngestStream(append(args, tc.flags...)); err == nil || err.Error() != tc.want {
+				t.Fatalf("runIngestStream error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestPreparedDeviceStreamCursorSealsAuditedTail(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ttl.jsonl")
 	original := bytes.Repeat([]byte("record\n"), 1000)

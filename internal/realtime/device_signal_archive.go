@@ -35,7 +35,7 @@ type signalFile struct {
 }
 
 func readDeviceSignalChunk(path string, cursor streamlog.SourceCursor, maxBytes int64) (sourceChunk, error) {
-	if maxBytes <= 0 || maxBytes > deviceSignalReadLimit {
+	if maxBytes <= 0 || maxBytes > DeviceSignalMaxBatchBytes {
 		return sourceChunk{}, fmt.Errorf("invalid device signal read bound")
 	}
 	files, err := deviceSignalFiles(path)
@@ -355,9 +355,14 @@ func (r *signalGzipReader) close() {
 	}
 }
 
+func (r *signalGzipReader) unchanged() bool {
+	info, err := r.file.Stat()
+	return err == nil && os.SameFile(r.info, info) && r.info.Size() == info.Size() && r.info.ModTime().Equal(info.ModTime())
+}
+
 // The source lease gives one capture writer per path. This cache only avoids
-// re-inflating a gigabyte archive for every one-megabyte durable segment. A
-// failed cursor commit makes the cached offset disagree and forces replay.
+// re-inflating an entire archive for each durable segment. The last window can
+// be reused if capture commits only its prefix or retries the same cursor.
 var signalGzipState = struct {
 	sync.Mutex
 	bySource map[string]*signalGzipReader
@@ -434,10 +439,13 @@ func readSignalGzip(source string, file signalFile, cursor streamlog.SourceCurso
 	signalGzipState.Lock()
 	defer signalGzipState.Unlock()
 	cache := signalGzipState.bySource[source]
+	evict := func() {
+		cache.close()
+		delete(signalGzipState.bySource, source)
+	}
 	if cache == nil || !os.SameFile(cache.info, file.info) || !cacheSupportsCursor(cache, cursor) {
 		if cache != nil {
-			cache.close()
-			delete(signalGzipState.bySource, source)
+			evict()
 		}
 		var err error
 		cache, err = openVerifiedSignalGzip(file, cursor)
@@ -446,18 +454,11 @@ func readSignalGzip(source string, file signalFile, cursor streamlog.SourceCurso
 		}
 		signalGzipState.bySource[source] = cache
 	}
-	after, err := cache.file.Stat()
-	if err != nil || !os.SameFile(cache.info, after) || cache.info.Size() != after.Size() || !cache.info.ModTime().Equal(after.ModTime()) {
-		cache.close()
-		delete(signalGzipState.bySource, source)
+	if !cache.unchanged() {
+		evict()
 		return sourceChunk{}, ErrStreamSourceGap
 	}
 	read := sourceChunk{fileID: cursor.FileID, start: cursor.Offset, end: cursor.Offset, archive: true}
-	if len(cache.lastData) > 0 && cursor.Offset < cache.offset {
-		read.data = cache.lastData[cursor.Offset-cache.lastStart:]
-		read.end = cache.offset
-		return read, nil
-	}
 	if cursor.Offset >= cache.length {
 		if cursor.Offset > cache.length {
 			return sourceChunk{}, ErrStreamSourceGap
@@ -465,22 +466,39 @@ func readSignalGzip(source string, file signalFile, cursor streamlog.SourceCurso
 		return read, nil
 	}
 	buf := make([]byte, maxBytes)
-	n := copy(buf, cache.pending)
-	cache.pending = nil
-	if n < len(buf) {
+	n := 0
+	if cursor.Offset < cache.offset {
+		n = copy(buf, cache.lastData[cursor.Offset-cache.lastStart:])
+	}
+	// The inflater has already passed both the last complete line and the
+	// partial line in pending. Fill the remaining window in that order.
+	n += copy(buf[n:], cache.pending)
+	extended := n < len(buf)
+	remaining := cache.length - cursor.Offset
+	if extended {
 		more, readErr := io.ReadFull(cache.reader, buf[n:])
 		n += more
-		if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+		if (readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF)) ||
+			int64(n) != min(maxBytes, remaining) || !cache.unchanged() {
+			evict()
 			return sourceChunk{}, ErrStreamSourceGap
 		}
 	}
-	last := bytes.LastIndexByte(buf[:n], '\n')
-	if last < 0 {
+	complete := bytes.LastIndexByte(buf[:n], '\n') + 1
+	if complete == 0 || int64(n) == remaining && complete != n {
+		if extended {
+			evict()
+		}
 		return sourceChunk{}, ErrStreamSourceGap
 	}
-	read.data = buf[:last+1]
-	read.end += int64(len(read.data))
-	cache.pending = append(cache.pending, buf[last+1:n]...)
+	read.data = buf[:complete:complete]
+	read.end += int64(complete)
+	if !extended {
+		// The request fit inside the cached bytes. Keep the full window and
+		// its original proof so a smaller request cannot discard leftovers.
+		return read, nil
+	}
+	cache.pending = buf[complete:n:n]
 	cache.lastStart, cache.lastData = read.start, read.data
 	cache.startTailBytes, cache.startTailHash = cursor.TailBytes, cursor.TailSHA256
 	cache.offset = read.end

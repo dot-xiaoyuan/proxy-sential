@@ -1,6 +1,7 @@
 package realtime
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -367,8 +369,10 @@ func TestDeviceSignalCompressedRotationReusesReaderAcrossProjectionSegments(t *t
 	t.Setenv("PROXY_SENTINEL_STREAM_FILE_BIRTH_ID", "true")
 	dir := t.TempDir()
 	path := filepath.Join(dir, "ttl.jsonl")
+	t.Cleanup(func() { clearSignalGzip(path) })
+	padding := strings.Repeat("x", 600)
 	line := func(id string) []byte {
-		return []byte(`{"schema_version":"v1","event_id":"` + id + `","type":"device","timestamp":"2026-11-13T00:00:00Z","subject":{"ip":"192.0.2.8"}}` + "\n")
+		return []byte(`{"schema_version":"v1","event_id":"` + id + `","type":"device","timestamp":"2026-11-13T00:00:00Z","subject":{"ip":"192.0.2.8"},"padding":"` + padding + `"}` + "\n")
 	}
 	first := line("first")
 	old := append([]byte{}, first...)
@@ -399,6 +403,7 @@ func TestDeviceSignalCompressedRotationReusesReaderAcrossProjectionSegments(t *t
 	}
 	source := Source{Kind: "device-signals", Path: path}
 	var firstInflater *signalGzipReader
+	previousEnd := int64(len(first))
 	for index, want := range []int{2000, 2000, 25} {
 		if index == 2 {
 			clearSignalGzip(path)
@@ -407,7 +412,7 @@ func TestDeviceSignalCompressedRotationReusesReaderAcrossProjectionSegments(t *t
 				t.Fatal(err)
 			}
 		}
-		id, captured, err := CaptureStreamOnce(context.Background(), j, Options{SensorID: "sensor-a", MaxBatchBytes: 1 << 20}, source)
+		id, captured, err := CaptureStreamOnce(context.Background(), j, Options{SensorID: "sensor-a", MaxBatchBytes: DeviceSignalMaxBatchBytes}, source)
 		if err != nil || !captured {
 			t.Fatalf("segment %d: %s %t %v", index, id, captured, err)
 		}
@@ -415,6 +420,14 @@ func TestDeviceSignalCompressedRotationReusesReaderAcrossProjectionSegments(t *t
 		if err != nil || len(state.Segment.Events) != want {
 			t.Fatalf("segment %d events=%d want=%d: %v", index, len(state.Segment.Events), want, err)
 		}
+		segment := state.Segment
+		if segment.Epoch != "existing-epoch" || segment.StartOffset != previousEnd || segment.EndOffset > int64(len(old)) || !bytes.Equal(segment.Raw, old[previousEnd:segment.EndOffset]) {
+			t.Fatalf("segment %d did not continue the compressed source from offset %d: [%d,%d)", index, previousEnd, segment.StartOffset, segment.EndOffset)
+		}
+		if index < 2 && len(segment.Raw) <= 1<<20 {
+			t.Fatalf("segment %d did not use the larger read bound: %d bytes", index, len(segment.Raw))
+		}
+		previousEnd = segment.EndOffset
 		signalGzipState.Lock()
 		inflater := signalGzipState.bySource[path]
 		signalGzipState.Unlock()
@@ -444,6 +457,43 @@ func TestDeviceSignalCompressedRotationReusesReaderAcrossProjectionSegments(t *t
 	cursor, err := j.LoadSource(source.Kind, path)
 	if err != nil || cursor.Offset != int64(len(old)) {
 		t.Fatalf("compressed source not fully consumed: %+v %v", cursor, err)
+	}
+}
+
+func TestDeviceSignalGzipReadHonorsBoundsAndRetriesAtProvedCursor(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ttl.jsonl")
+	archive := path + ".1.gz"
+	t.Cleanup(func() { clearSignalGzip(path) })
+	data := []byte("first\nsecond\nthird\nfourth\nfifth\n")
+	writeGzipFixture(t, archive, data)
+	info := mustStat(t, archive)
+	file := signalFile{path: archive, info: info, id: fileIdentityAt(path, archive, info)}
+	read := func(cursor streamlog.SourceCursor, limit int64, want string) sourceChunk {
+		t.Helper()
+		chunk, err := readSignalGzip(path, file, cursor, limit)
+		if err != nil || chunk.start != cursor.Offset || chunk.end != cursor.Offset+int64(len(want)) || string(chunk.data) != want {
+			t.Fatalf("offset %d limit %d produced [%d,%d) %q, want %q: %v", cursor.Offset, limit, chunk.start, chunk.end, chunk.data, want, err)
+		}
+		return chunk
+	}
+	cursor := streamlog.SourceCursor{FileID: file.id}
+	first := read(cursor, 20, "first\nsecond\nthird\n")
+	firstLine := []byte("first\n")
+	firstHash := sha256.Sum256(firstLine)
+	cursor.Offset, cursor.TailBytes, cursor.TailSHA256 = int64(len(firstLine)), len(firstLine), hex.EncodeToString(firstHash[:])
+	read(cursor, 9, "second\n") // The shorter request leaves the previous inflater position intact.
+	second := read(cursor, 21, "second\nthird\nfourth\n")
+	read(cursor, 21, "second\nthird\nfourth\n") // Retrying an uncommitted cursor returns identical bytes.
+	if !bytes.Equal(first.data, data[:first.end]) || !bytes.Equal(second.data, data[second.start:second.end]) {
+		t.Fatal("a later read changed an already returned window")
+	}
+	secondHash := sha256.Sum256(second.data)
+	cursor.Offset, cursor.TailBytes, cursor.TailSHA256 = second.end, len(second.data), hex.EncodeToString(secondHash[:])
+	read(cursor, 21, "fifth\n")
+	cursor.TailSHA256 = strings.Repeat("0", 64)
+	if _, err := readSignalGzip(path, file, cursor, 21); !errors.Is(err, ErrStreamSourceGap) {
+		t.Fatalf("unproven cursor was accepted from the cached inflater: %v", err)
 	}
 }
 

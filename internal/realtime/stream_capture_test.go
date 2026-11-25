@@ -798,8 +798,9 @@ func TestControlledDeviceSignalCaptureKeepsMechanicalDiskBatchAcrossRestart(t *t
 	}
 	scope := &normalized.CaptureScope{SchemaVersion: "capture-scope/v1", SensorID: "sensor-a", CollectorInstanceID: "signal-owner", CampusID: "campus-a", AccessDomain: "bond0", InterfaceName: "bond0", ValidFrom: time.Now().Add(-time.Hour), ValidUntil: time.Now().Add(time.Hour)}
 	var input bytes.Buffer
-	for i := 0; i < 2025; i++ {
-		event := normalized.Event{SchemaVersion: "v1", EventID: "signal-" + strconv.Itoa(i), Source: "device-signals", SourceEventType: "ssdp", Type: "device", Timestamp: time.Now().UTC().Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": "sensor-a", "collector_instance_id": "signal-owner", "interface": "bond0"}, Subject: map[string]any{"ip": "192.0.2.8"}, Payload: map[string]any{"origin": "ssdp"}}
+	const totalRecords = 4025
+	for i := 0; i < totalRecords; i++ {
+		event := normalized.Event{SchemaVersion: "v1", EventID: "signal-" + strconv.Itoa(i), Source: "device-signals", SourceEventType: "ssdp", Type: "device", Timestamp: time.Now().UTC().Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": "sensor-a", "collector_instance_id": "signal-owner", "interface": "bond0"}, Subject: map[string]any{"ip": "192.0.2.8"}, Payload: map[string]any{"origin": "ssdp", "server": strings.Repeat("x", 200)}}
 		if err := json.NewEncoder(&input).Encode(scope.Apply(event)); err != nil {
 			t.Fatal(err)
 		}
@@ -808,14 +809,25 @@ func TestControlledDeviceSignalCaptureKeepsMechanicalDiskBatchAcrossRestart(t *t
 		t.Fatal(err)
 	}
 	source := Source{Kind: "device-signals", Path: path, CaptureScope: scope, ControlledInterface: "bond0"}
-	for index, want := range []int{2000, 25} {
+	const originalByteLimit = 1 << 20
+	originalBatchEnd := bytes.LastIndexByte(input.Bytes()[:originalByteLimit], '\n') + 1
+	originalBatchRecords := bytes.Count(input.Bytes()[:originalBatchEnd], []byte{'\n'})
+	if originalBatchRecords >= 2000 {
+		t.Fatalf("fixture must reach the former byte limit before its event limit, got %d events", originalBatchRecords)
+	}
+	var previousEnd int64
+	for index, want := range []int{originalBatchRecords, 2000, totalRecords - originalBatchRecords - 2000} {
+		limit := int64(DeviceSignalMaxBatchBytes)
+		if index == 0 {
+			limit = originalByteLimit
+		}
 		if index == 1 {
 			journal, err = streamlog.Open(journal.Directory())
 			if err != nil {
 				t.Fatal(err)
 			}
 		}
-		id, captured, err := CaptureStreamOnce(context.Background(), journal, Options{SensorID: "sensor-a"}, source)
+		id, captured, err := CaptureStreamOnce(context.Background(), journal, Options{SensorID: "sensor-a", MaxBatchBytes: limit}, source)
 		if err != nil || !captured {
 			t.Fatalf("capture signal segment: id=%s captured=%t err=%v", id, captured, err)
 		}
@@ -823,6 +835,11 @@ func TestControlledDeviceSignalCaptureKeepsMechanicalDiskBatchAcrossRestart(t *t
 		if err != nil || len(state.Segment.Events) != want || !state.Segment.RawIsStandardEvents || state.Segment.BodyLayout != "" {
 			t.Fatalf("segment events=%d, standard-source=%t, want %d: %v", len(state.Segment.Events), state.Segment.RawIsStandardEvents, want, err)
 		}
+		segment := state.Segment
+		if segment.Epoch != "fresh-device" || segment.StartOffset != previousEnd || !bytes.Equal(segment.Raw, input.Bytes()[segment.StartOffset:segment.EndOffset]) {
+			t.Fatalf("segment %d did not continue the original source at offset %d", index, previousEnd)
+		}
+		previousEnd = segment.EndOffset
 	}
 	cursor, err := journal.LoadSource(source.Kind, source.Path)
 	if err != nil || cursor.Offset != int64(input.Len()) {

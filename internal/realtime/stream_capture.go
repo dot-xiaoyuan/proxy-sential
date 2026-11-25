@@ -28,11 +28,12 @@ const streamLineLimit = streamlog.MaxSegmentEvents
 const discoveryStreamLineLimit = 50
 const dhcpBindingStreamLineLimit = 100
 
+// DeviceSignalMaxBatchBytes bounds reads from the file-backed device signal source.
 // Packet jsonl on the 184 mechanical disk was fsync-bound at 1000 events:
 // capture kept pace with the writer and the unread tail did not shrink.
 // Two thousand events stays inside the 4 MiB segment ceiling and the
 // existing stream4 ordinal width.
-const deviceSignalReadLimit = 2 << 20
+const DeviceSignalMaxBatchBytes = 2 << 20
 const deviceSignalLineLimit = streamlog.MaxPassiveSegmentEvents
 
 // CaptureStreamOnce only advances a pre-established fresh source cursor after
@@ -67,7 +68,7 @@ func captureStreamOnceWithReady(ctx context.Context, journal *streamlog.Journal,
 	maxBytes := opts.MaxBatchBytes
 	readLimit := int64(streamReadLimit)
 	if source.Kind == "device-signals" {
-		readLimit = deviceSignalReadLimit
+		readLimit = DeviceSignalMaxBatchBytes
 	}
 	if maxBytes <= 0 || maxBytes > readLimit {
 		maxBytes = readLimit
