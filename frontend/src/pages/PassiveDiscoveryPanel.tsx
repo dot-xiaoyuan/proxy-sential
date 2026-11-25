@@ -484,12 +484,14 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
       : [...new Set(productClues.map(clue => clue.model).filter(Boolean))]
     const observedModel = observedModels.length === 1 ? observedModels[0] : undefined
     const model = item.hardware_type_status ? item.hardware_model || observedModel : item.model_name
-    const os = osFor(item).label
-    if (!(brandLabel || model || os)) return null
+    const os = osFor(item)
+    const signal = signalFor(item)
+    const osEvidence = signal?.dhcp_historical && signal.os_family ? '历史线索' : os.ipOnly ? 'IP 线索' : '线索'
+    if (!(brandLabel || model || os.label)) return null
     return <div className="terminal-vendor">
       {brandLabel&&<Typography.Text className="terminal-vendor-value" title={manufacturer}>{brandLabel}</Typography.Text>}
       {model&&<Typography.Text className="terminal-vendor-value" type="secondary" title={observedModel ? `自报型号 ${model}，归属待核实` : model}>{model}</Typography.Text>}
-      {os&&<Typography.Text className="terminal-vendor-value" type="secondary" title={os}>{os} · 线索</Typography.Text>}
+      {os.label&&<Typography.Text className="terminal-vendor-value" type="secondary" title={os.detail || os.label}>{os.label} · {osEvidence}</Typography.Text>}
     </div>
   }
   const location=(item:Device)=><Space orientation="vertical" size={0}><Typography.Text>{item.vlan?`VLAN ${item.vlan}`:item.domain}</Typography.Text><Typography.Text type="secondary">{item.vlan?[item.domain,item.sensor_id].filter(Boolean).join(' · '):item.sensor_id}</Typography.Text></Space>

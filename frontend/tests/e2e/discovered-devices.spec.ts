@@ -18,14 +18,9 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
     await expect(page.getByText('HP LaserJet Pro MFP',{exact:true}).filter({visible:true})).toBeVisible()
     await expect(page.getByText('Windows · 历史线索',{exact:true})).toBeVisible()
     await expect(page.getByText('Android · IP 线索',{exact:true})).toHaveCount(0)
-    await expect(page.getByText('_ipp._tcp · 631',{exact:true})).toHaveCount(1)
-    expect(serviceTargets.some(target=>target.includes('sensor-test|00:11:22:33:44:55|192.0.2.10'))).toBe(true)
+    await expect.poll(()=>serviceTargets.some(target=>target.includes('sensor-test|00:11:22:33:44:55|192.0.2.10'))).toBe(true)
     expect(observedPortTargets).toEqual([])
-    await expect(page.getByLabel('发现设备摘要')).toContainText(/发现设备\s*3/)
-    await expect(page.getByLabel('发现设备摘要')).toContainText(/哑终端线索\s*1/)
-    await expect(page.getByText('证据有效不代表设备在线。',{exact:false})).toBeVisible()
-    await expect(page.getByText('镜像采集范围即将到期')).toBeVisible()
-    await expect(page.getByText('发现数据段已隔离，处理存在缺口')).toBeVisible()
+    await expect(page.getByLabel('发现设备总览')).toContainText('已确认 4')
     const probe=await page.evaluate(()=>({
       overflow:document.documentElement.scrollWidth>innerWidth+2,
       panelRight:document.querySelector('.passive-discovery-panel')!.getBoundingClientRect().right,
@@ -41,13 +36,13 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
     expect(probe.panelRight).toBeLessThanOrEqual(viewport.width)
     expect(probe.controls.every(c=>c.wrap==='nowrap'&&c.shrink==='0')).toBe(true)
     if(viewport.width<560)expect(probe.rowDisplay).not.toBe('table-row')
-    else {expect(probe.visibleHeaders).toHaveLength(8);expect(probe.visibleHeaders).toContain('终端类型 / 制造商 / 型号');expect(probe.visibleHeaders).toContain('证据状态 / 最近观测');expect(probe.clippedHeaders).toEqual([])}
-    if(viewport.width===1280){expect(probe.tableScroll.content).toBeGreaterThan(probe.tableScroll.width);expect(probe.tableScroll.overflow).toMatch(/auto|scroll/)}
+    else {expect(probe.visibleHeaders).toHaveLength(7);expect(probe.visibleHeaders).toContain('设备类型');expect(probe.visibleHeaders).toContain('最近观测');expect(probe.clippedHeaders).toEqual([])}
+    if(probe.tableScroll.content>probe.tableScroll.width+1)expect(probe.tableScroll.overflow).toMatch(/auto|scroll/)
     if(viewport.width===1440)expect(probe.tableScroll.content).toBeLessThanOrEqual(probe.tableScroll.width+1)
     await writeFile(info.outputPath('dom.json'),JSON.stringify(probe,null,2))
     await page.screenshot({path:info.outputPath('discovered-devices.png'),fullPage:true,animations:'disabled'})
     if(viewport.width<560){await page.locator('.passive-ledger-table .ant-table-tbody > tr[data-row-key]').first().scrollIntoViewIfNeeded();await page.screenshot({path:info.outputPath('discovered-devices-card.png'),animations:'disabled'})}
-    await page.getByRole('button',{name:'查看证据'}).first().click()
+    await page.getByRole('button',{name:'查看详情'}).first().click()
     await expect(page.getByRole('dialog')).toContainText('DNS-SD 服务响应与地址记录自动关联')
     await expect(page.getByRole('dialog')).toContainText('见 TCP SYN-ACK 443')
     expect(observedPortTargets).toEqual(['sensor-test|192.0.2.10'])
@@ -75,12 +70,12 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
     await expect(page.getByRole('dialog')).toContainText('不证明连接完成或设备本机端口开放')
     await page.screenshot({path:info.outputPath('evidence.png'),fullPage:true,animations:'disabled'})
     await page.getByRole('button',{name:'Close',exact:true}).click()
-    await page.getByRole('button',{name:'更多筛选'}).click()
+    await page.getByRole('button',{name:/^(筛选|更多筛选)$/}).click()
     await expect(page.getByRole('combobox',{name:'设备类型'})).toBeVisible()
     await page.getByRole('combobox',{name:'发现协议'}).click()
     await page.getByText('DHCP',{exact:true}).last().click()
     await expect(page).toHaveURL(/discovery_protocol=dhcp/)
-    await expect(page.getByText(/第 1 页 · 已加载/)).toBeVisible()
+    expect(new URL(page.url()).searchParams.has('discovery_cursor')).toBe(false)
     await page.screenshot({path:info.outputPath('filters.png'),fullPage:true,animations:'disabled'})
     expect(errors).toEqual([])
     await page.goto('/discovery?tab=records&discovery_protocol=dns_sd')

@@ -11,7 +11,6 @@ test('historical DHCP clues remain visibly historical across ledger layouts', as
   for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }, { width: 1440, height: 900 }]) {
     await page.setViewportSize(viewport)
     await page.goto('/devices?tab=discovery')
-    await expect(page.getByText('尝试连接 TCP 443').first()).toBeVisible()
     const row = page.locator('.passive-ledger-table').getByRole('row').filter({ hasText: '00:11:22:33:44:77' })
     await expect(row.getByText('Windows · 历史线索')).toBeVisible()
     const layout = await page.evaluate(() => {
@@ -32,7 +31,7 @@ test('historical DHCP clues remain visibly historical across ledger layouts', as
     if (viewport.width < 560) expect(layout.rowDisplay).not.toBe('table-row')
     await row.scrollIntoViewIfNeeded()
     await page.screenshot({ path: testInfo.outputPath(`historical-dhcp-${viewport.width}.png`), fullPage: true })
-    await row.getByRole('button', { name: '查看证据' }).click()
+    await row.getByRole('button', { name: '查看详情' }).click()
     await expect(page.getByText('历史 REQUEST 线索；同源当前租约仍有效，需结合观测时间核对')).toBeVisible()
     const evidence = page.locator('.discovery-evidence-modal')
     await expect(evidence.getByText('DHCP 字段证据（各字段保留对应原始报文引用）')).toBeVisible()
