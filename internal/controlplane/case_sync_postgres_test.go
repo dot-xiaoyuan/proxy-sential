@@ -151,7 +151,9 @@ func TestPostgresSessionCaseAcrossEvidenceExpiry(t *testing.T) {
 	defer state.db.Close()
 	s.operations = state
 	at := time.Now().UTC().Truncate(time.Microsecond).Add(-5 * time.Minute)
-	uid := fmt.Sprintf("session-case-%d", time.Now().UnixNano())
+	stamp := time.Now().UnixNano()
+	uid := fmt.Sprintf("session-case-%d", stamp)
+	base.SensorID = uid
 	mapping := sharedaccess.IdentityMapping{SensorID: base.SensorID, CampusID: base.CampusID, AccessDomain: base.AccessDomain, Source: "source-" + uid, IdentitySensorID: "identity", IdentityCampusID: "auth", IdentityAccessDomain: "domain", ValidFrom: at.Add(-time.Hour), ValidUntil: at.Add(time.Hour)}
 	cfg := sharedaccess.Config{Version: "test", FreshnessSeconds: 180, IdentityMappings: []sharedaccess.IdentityMapping{mapping}, Sources: []sharedaccess.Source{{SensorID: base.SensorID, CampusID: base.CampusID, AccessDomain: base.AccessDomain, Source: "handshake-sidecar"}}}
 	s.sharedConfig = cfg
@@ -239,13 +241,16 @@ func TestPostgresSessionCaseAcrossEvidenceExpiry(t *testing.T) {
 	second := record(2, uid, base.IP, "login1", at.Add(200*time.Second), false)
 	// Fail after linking the second episode's action and before committing
 	// its snapshot. A retry must still own both pending operations.
-	_, err = state.db.Exec(`CREATE FUNCTION fail_session_case_snapshot() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'snapshot write failed'; END $$;
- CREATE TRIGGER fail_session_case_snapshot BEFORE INSERT ON risk_case_evidence_snapshots FOR EACH ROW EXECUTE FUNCTION fail_session_case_snapshot()`)
+	failureName := fmt.Sprintf("fail_session_case_snapshot_%d", stamp)
+	// The generated identifier and fixture ID contain only fixed text and
+	// the numeric run timestamp. Scope the failure to this observation.
+	_, err = state.db.Exec(fmt.Sprintf(`CREATE FUNCTION %[1]s() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'snapshot write failed'; END $$;
+ CREATE TRIGGER %[1]s BEFORE INSERT ON risk_case_evidence_snapshots FOR EACH ROW WHEN (NEW.evidence->'shared_access'->>'observation_id'='%[2]s') EXECUTE FUNCTION %[1]s()`, failureName, uid+"-2"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	cleanupFailure := func() {
-		_, _ = state.db.Exec("DROP TRIGGER IF EXISTS fail_session_case_snapshot ON risk_case_evidence_snapshots; DROP FUNCTION IF EXISTS fail_session_case_snapshot()")
+		_, _ = state.db.Exec(fmt.Sprintf("DROP TRIGGER IF EXISTS %[1]s ON risk_case_evidence_snapshots; DROP FUNCTION IF EXISTS %[1]s()", failureName))
 	}
 	defer cleanupFailure()
 	if e := s.syncAutomaticCasesContext(ctx, "test", "10m"); e == nil {
@@ -301,6 +306,6 @@ func TestPostgresSessionCaseAcrossEvidenceExpiry(t *testing.T) {
 	}
 	var status string
 	if err = state.db.QueryRow("SELECT status,(SELECT count(*) FROM risk_case_evidence_snapshots WHERE case_id=$1) FROM risk_cases WHERE case_id=$1", first).Scan(&status, &snaps); err != nil || status != "closed" || snaps != 3 {
-		t.Fatalf("closed case status %q: %v", status, err)
+		t.Fatalf("closed case status=%q snapshots=%d: %v", status, snaps, err)
 	}
 }
