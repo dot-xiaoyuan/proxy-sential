@@ -102,7 +102,7 @@ export function DiscoveryCoveragePage() {
   const distribution = useQuery({
     queryKey: ['discovery-coverage-distribution', window],
     queryFn: ({ signal }) => request<Metadata>(`/discovery/devices/metadata?mode=passive&identity_scope=devices&window=${window}`, { signal }),
-    enabled: section === 'networks', staleTime: 60_000, retry: false,
+    enabled: section === 'networks' || section === 'overview', staleTime: 60_000, retry: false,
   })
   const activeQuery = section === 'networks' ? distribution : coverage
   function changeParam(key: string, value: string) {
@@ -138,7 +138,7 @@ export function DiscoveryCoveragePage() {
       ...item,
       children: item.key === 'overview' ? <>
         {section === 'overview' && feedback('覆盖总览')}
-        {coverage.data && <DiscoveryCoverageReport report={coverage.data} />}
+        {coverage.data && <DiscoveryCoverageReport report={coverage.data} composition={distribution.data} />}
       </> : item.key === 'networks' ? <>
         {section === 'networks' && feedback('网段和 VLAN')}
         {distribution.data && <CoverageNetworks data={distribution.data} window={window} />}

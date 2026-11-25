@@ -1,7 +1,9 @@
 import type { components } from '../shared/api/generated'
 import { observedTimeTitle } from '../shared/ui/observedTime'
+import { deviceTypeLabel } from '../entities/device/DeviceInventoryCells'
 
 export type CoverageReport = components['schemas']['DiscoveryCoverageReport']
+export type CoverageComposition = { types?: { device_type: string; count: number }[]; candidate_types?: { device_type: string; count: number }[]; dumb_terminals?: number }
 type MirrorFunnel = NonNullable<CoverageReport['mirror_funnel']>
 type BindingFreshness = components['schemas']['DiscoveryBindingFreshness']
 type PendingRow = NonNullable<CoverageReport['ipv4_pending']>[number]
@@ -155,19 +157,75 @@ function HardwareTrendPanel({ trend }: { trend: NonNullable<CoverageReport['hard
     </section>
 }
 
-export function DiscoveryCoverageReport({ report }: { report: CoverageReport }) {
+type TypeRow = { device_type: string; count: number }
+
+function TypeComposition({ label, rows, limit }: { label: string; rows?: TypeRow[]; limit: number }) {
+  const sorted = (rows ?? []).filter(row => row.count > 0).sort((a, b) => b.count - a.count || a.device_type.localeCompare(b.device_type))
+  if (sorted.length === 0) return null
+  const rest = sorted.slice(limit).reduce((sum, row) => sum + row.count, 0)
+  return <p className="coverage-headline-composition">
+    <span>{label}</span>
+    {sorted.slice(0, limit).map(row => <span key={row.device_type}>{deviceTypeLabel(row.device_type)} {count(row.count)}</span>)}
+    {rest > 0 && <span>其他 {count(rest)}</span>}
+  </p>
+}
+
+// Headline: the four numbers leadership asks for, sharing one denominator.
+function CoverageHeadline({ report, composition }: { report: CoverageReport; composition?: CoverageComposition }) {
+  const typed = report.typed_ipv4
+  const unlinked = report.no_identity_ipv4
+  const discovered = typed !== undefined && report.identity_no_type_ipv4 !== undefined && unlinked !== undefined
+    ? typed + report.identity_no_type_ipv4 + unlinked : report.ipv4
+  const inferred = report.ipv4_pending?.filter(row => row.status === 'with_profile')
+    .reduce((sum, row) => sum + (row.network_only ?? 0) + (row.dhcp_only ?? 0) + (row.device_protocol ?? 0) + (row.other ?? 0), 0)
+  const pending = discovered !== undefined && typed !== undefined && inferred !== undefined ? discovered - typed - inferred : undefined
+  const share = (value?: number) => value !== undefined && discovered ? ` · ${percent(value, discovered)}` : ''
+  const lagMinutes = report.identity_as_of ? Math.round((Date.parse(report.as_of) - Date.parse(report.identity_as_of)) / 60_000) : 0
+  const segments = discovered && typed !== undefined && inferred !== undefined && pending !== undefined
+    ? [{ key: 'confirmed', color: 'teal', value: typed }, { key: 'inferred', color: 'blue', value: inferred }, { key: 'pending', color: 'slate', value: pending }]
+      .reduce<{ key: string; color: string; x: number; width: number }[]>((acc, seg) => {
+        const x = acc.reduce((sum, item) => sum + item.width, 0)
+        return [...acc, { key: seg.key, color: seg.color, x, width: 100 * seg.value / discovered }]
+      }, [])
+    : []
+  const cards = [
+    { key: 'discovered', label: '发现的 IPv4 地址', value: discovered, className: '', note: '窗口内有设备层观测，按地址去重' },
+    { key: 'confirmed', label: '已确认类型', value: typed, className: 'is-confirmed', note: `硬件结论${share(typed)}` },
+    { key: 'inferred', label: '推测类型', value: inferred, className: 'is-inferred', note: `画像线索，非确定结论${share(inferred)}` },
+    { key: 'pending', label: '类型待确认', value: pending, className: '', note: `含归属待核实 ${count(unlinked ?? 0)} 个${share(pending)}` },
+  ]
+  return <section className="coverage-headline" aria-label="覆盖概要">
+    <div className="coverage-headline-meta">
+      {lagMinutes > 5 && <span className="coverage-warning">发现处理滞后约 {lagMinutes} 分钟</span>}
+      {report.identity_as_of && <span>数字截至发现处理水位 {observedTimeTitle(report.identity_as_of)}</span>}
+      {report.subnet24 !== undefined && <span>/24 分组 {count(report.subnet24)} 组</span>}
+      {report.identity_total !== undefined && <span>窗口内发现身份 {count(report.identity_total)} 个</span>}
+    </div>
+    <dl className="coverage-headline-cards">
+      {cards.map(card => <div key={card.key} className={`coverage-headline-card ${card.className}`.trim()}>
+        <dt>{card.label}</dt>
+        <dd>{card.value !== undefined && <><strong>{count(card.value)}</strong> <span>个地址</span></>}</dd>
+        <small>{card.note}</small>
+      </div>)}
+    </dl>
+    {segments.length > 0 && <svg className="coverage-headline-bar" viewBox="0 0 100 12" preserveAspectRatio="none" role="img"
+      aria-label={`发现 IPv4 构成：已确认类型 ${count(typed ?? 0)} 个，推测类型 ${count(inferred ?? 0)} 个，类型待确认 ${count(pending ?? 0)} 个`}>
+      {segments.map(seg => <rect key={seg.key} className={`coverage-headline-seg coverage-chart-${seg.color}`} x={seg.x} y="0" width={seg.width} height="12" />)}
+    </svg>}
+    {composition && <>
+      <TypeComposition label="已确认类型（按发现身份）" rows={composition.types} limit={6} />
+      {composition.dumb_terminals !== undefined && <p className="coverage-headline-composition"><span>哑终端（按发现身份）</span><span>{count(composition.dumb_terminals)} 个，已包含在确认类型中</span></p>}
+      <TypeComposition label="推测类型（按发现身份）" rows={composition.candidate_types} limit={4} />
+    </>}
+    <p className="coverage-footnote">已确认类型来自硬件结论；推测类型仅来自画像线索。构成行按发现身份计数，与地址数不可直接相加。</p>
+  </section>
+}
+
+export function DiscoveryCoverageReport({ report, composition }: { report: CoverageReport; composition?: CoverageComposition }) {
   const { typed_ipv4: typed, identity_no_type_ipv4: needsType, no_identity_ipv4: unlinked } = report
   const review = report.ipv4_type_review
   const total = typed !== undefined && needsType !== undefined && unlinked !== undefined
     ? typed + needsType + unlinked : undefined
-  const lagMinutes = report.identity_as_of ? Math.round((Date.parse(report.as_of) - Date.parse(report.identity_as_of)) / 60_000) : 0
-  const metrics = [
-    { label: '有设备观测的 IPv4', value: total ?? report.ipv4, unit: '个地址' },
-    { label: '观测到的 /24 分组', value: report.subnet24, unit: '组 IPv4' },
-    { label: '已确认硬件类型', value: report.identified, unit: '个发现身份',
-      detail: report.identity_total !== undefined ? `窗口内共 ${count(report.identity_total)} 条发现记录` : undefined },
-    { label: '已确认的哑终端', value: report.dumb_terminals, unit: '个发现身份', detail: '已包含在确认数中' },
-  ]
   const breakdown = [
     { label: '仅网络层 · ARP、NDP 等', value: report.untyped_network_only_ipv4 },
     { label: '有 DHCP · 缺设备协议证据', value: report.untyped_dhcp_only_ipv4 },
@@ -180,16 +238,9 @@ export function DiscoveryCoverageReport({ report }: { report: CoverageReport }) 
       <span>{report.diagnostic_as_of
         ? `设备观测截至 ${observedTimeTitle(report.diagnostic_as_of)}`
         : `统计时间 ${observedTimeTitle(report.as_of)}`}</span>
-      {report.identity_as_of && <span>发现处理水位 {observedTimeTitle(report.identity_as_of)}</span>}
-      {lagMinutes > 5 && <span className="coverage-warning">相对统计时间滞后约 {lagMinutes} 分钟</span>}
     </div>
     {report.identity_status === 'timeout' && <p className="coverage-empty" role="status">身份统计读取超时。地址覆盖和镜像配对数据已加载，可刷新重试身份统计。</p>}
-    <dl className="coverage-metrics">
-      {metrics.map(({ label, value, unit, detail }) => <div className="coverage-metric" key={label}>
-        <dt>{label}</dt>{value !== undefined && <dd><strong>{count(value)}</strong> <span>{unit}</span></dd>}
-        {detail && <dd className="coverage-metric-detail">{detail}</dd>}
-      </div>)}
-    </dl>
+    <CoverageHeadline report={report} composition={composition} />
     {report.planned_ipv4 && <PlannedIPv4Panel report={report.planned_ipv4} />}
     {(report.ipv4_binding_freshness || report.ipv6_binding_freshness) &&
       <section className="coverage-panel" aria-labelledby="coverage-freshness-heading">

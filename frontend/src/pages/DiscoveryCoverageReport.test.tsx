@@ -113,3 +113,51 @@ it('shows the published deduplicated denominator separately from planning labels
   expect(within(panel).getByRole('status')).toHaveTextContent('读取失败')
   expect(panel).not.toHaveTextContent('0 个地址')
 })
+
+it('leads with discovered, confirmed, inferred and pending IPv4 on one denominator', () => {
+  render(<DiscoveryCoverageReport report={{...report, typed_ipv4:347, identity_no_type_ipv4:2430, no_identity_ipv4:661,
+    ipv4_pending:[
+      { status:'with_profile', network_only:35, dhcp_only:1316, device_protocol:57, other:0 },
+      { status:'without_profile', network_only:728, dhcp_only:144, device_protocol:148, other:0 },
+      { status:'withdrawn_confirmation', network_only:0, dhcp_only:0, device_protocol:1, other:0 },
+      { status:'conflict', network_only:0, dhcp_only:0, device_protocol:1, other:0 },
+      { status:'unlinked', network_only:534, dhcp_only:0, device_protocol:127, other:0 },
+    ]}} />)
+  const headline = screen.getByRole('region', {name:'覆盖概要'})
+  const card = (label: string) => within(headline).getByText(label).closest('div') as HTMLElement
+  expect(card('发现的 IPv4 地址')).toHaveTextContent('3,438')
+  expect(card('已确认类型')).toHaveTextContent('347')
+  expect(card('已确认类型')).toHaveTextContent('10.1%')
+  expect(card('推测类型')).toHaveTextContent('1,408')
+  expect(card('推测类型')).toHaveTextContent('41.0%')
+  expect(card('类型待确认')).toHaveTextContent('1,683')
+  expect(card('类型待确认')).toHaveTextContent('含归属待核实 661 个')
+  expect(within(headline).getByRole('img', {name:/已确认类型 347 个，推测类型 1,408 个，类型待确认 1,683 个/})).toBeVisible()
+  expect(headline).not.toHaveTextContent('未识别')
+})
+
+it('shows processing lag and type composition with explicit identity units', () => {
+  render(<DiscoveryCoverageReport report={report} composition={{
+    types:[{device_type:'access_point', count:240}, {device_type:'camera', count:34}, {device_type:'printer', count:33},
+      {device_type:'laptop', count:11}, {device_type:'router', count:10}, {device_type:'access_control', count:5},
+      {device_type:'recorder', count:4}],
+    candidate_types:[{device_type:'mobile', count:1098}, {device_type:'desktop', count:286}],
+    dumb_terminals:81,
+  }} />)
+  const headline = screen.getByRole('region', {name:'覆盖概要'})
+  expect(headline).toHaveTextContent('发现处理滞后约 22 分钟')
+  const confirmedRow = within(headline).getByText('已确认类型（按发现身份）').closest('p') as HTMLElement
+  expect(confirmedRow).toHaveTextContent('无线接入点 240')
+  expect(confirmedRow).toHaveTextContent('其他 4')
+  expect(within(headline).getByText('哑终端（按发现身份）').closest('p')).toHaveTextContent('81 个')
+  expect(within(headline).getByText('推测类型（按发现身份）').closest('p')).toHaveTextContent('手机 1,098')
+  expect(headline).toHaveTextContent('不可直接相加')
+})
+
+it('omits the composition rows and percentages when the denominator is unavailable', () => {
+  render(<DiscoveryCoverageReport report={{...report, typed_ipv4:undefined, identity_no_type_ipv4:undefined, no_identity_ipv4:undefined}} />)
+  const headline = screen.getByRole('region', {name:'覆盖概要'})
+  expect(within(headline).queryByRole('img')).not.toBeInTheDocument()
+  expect(headline).not.toHaveTextContent('%')
+  expect(headline.querySelector('.coverage-headline-card.is-confirmed dd')).toBeEmptyDOMElement()
+})

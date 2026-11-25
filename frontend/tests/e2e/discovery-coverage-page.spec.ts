@@ -180,3 +180,32 @@ for (const viewport of [{width:390,height:844}, {width:1280,height:800}, {width:
     expect(errors).toEqual([])
   })
 }
+
+for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:1440,height:900}]) {
+  test(`coverage headline leads with discovered, confirmed, inferred and pending IPv4 at ${viewport.width}px`, async ({page}, info) => {
+    const errors:string[] = []
+    page.on('pageerror', error => errors.push(error.message))
+    page.on('console', message => {if(message.type()==='error')errors.push(message.text())})
+    page.on('response', response => {if(response.status()>=400)errors.push(`${response.status()} ${response.url()}`)})
+    await page.setViewportSize(viewport)
+    await page.goto('/devices/coverage?window=24h')
+    const headline = page.getByRole('region',{name:'覆盖概要'})
+    await expect(headline).toBeVisible()
+    const cards = headline.locator('.coverage-headline-card')
+    await expect(cards).toHaveCount(4)
+    const labels = await cards.locator('dt').allTextContents()
+    expect(labels).toEqual(['发现的 IPv4 地址','已确认类型','推测类型','类型待确认'])
+    await expect(headline.getByRole('img', {name:/发现 IPv4 构成/})).toBeVisible()
+    const layout = await headline.evaluate(element => ({
+      overflow: element.scrollWidth > element.clientWidth + 1,
+      pageOverflow: document.documentElement.scrollWidth > innerWidth + 2,
+      cardsFit: [...element.querySelectorAll('.coverage-headline-card')].every(card => card.scrollWidth <= card.clientWidth + 1),
+    }))
+    expect(layout.overflow).toBe(false)
+    expect(layout.pageOverflow).toBe(false)
+    expect(layout.cardsFit).toBe(true)
+    expect(headline).not.toHaveText('未识别')
+    await headline.screenshot({path:info.outputPath(`coverage-headline-${viewport.width}.png`), animations:'disabled'})
+    expect(errors).toEqual([])
+  })
+}
