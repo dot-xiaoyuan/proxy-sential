@@ -21,13 +21,17 @@ type indexedDeviceCursor struct {
 }
 
 func indexedDeviceSignature(q DeviceQuery) string {
+	scope := q.IdentityScope
+	if crossVLAN(q) {
+		scope += "/cross-vlan-v1"
+	}
 	b, _ := json.Marshal(struct {
 		View, Mode, Search, DeviceType, Category, Capability, Protocol, State, Domain, VLAN, ReviewReason string
 		Window                                                                                            int64
 		HardwareV2                                                                                        bool
 		Subnet, From, To, IdentityScope                                                                   string `json:",omitempty"`
 		FirstSeenWithin                                                                                   int64  `json:",omitempty"`
-	}{q.View, q.Mode, q.Search, q.DeviceType, q.Category, q.Capability, q.Protocol, q.State, q.Domain, q.VLAN, q.ReviewReason, int64(q.Window), q.HardwareV2, q.Subnet, indexedDate(q.LastSeenFrom), indexedDate(q.LastSeenTo), q.IdentityScope, int64(q.FirstSeenWithin)})
+	}{q.View, q.Mode, q.Search, q.DeviceType, q.Category, q.Capability, q.Protocol, q.State, q.Domain, q.VLAN, q.ReviewReason, int64(q.Window), q.HardwareV2, q.Subnet, indexedDate(q.LastSeenFrom), indexedDate(q.LastSeenTo), scope, int64(q.FirstSeenWithin)})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
@@ -145,6 +149,7 @@ func (r Repository) devicesIndexed(ctx context.Context, db indexedQueryer, query
 		if orderedHasMore {
 			query.pageKeys = query.pageKeys[:query.Limit]
 		}
+		query.pageRepresentatives = true
 		selection, err = buildIndexedDeviceSelection(query)
 		if err != nil {
 			return nil, err
@@ -185,8 +190,9 @@ ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
 	defer rows.Close()
 	deviceRows := []deviceObservationRow{}
 	type pageGroup struct {
-		category string
-		lastSeen time.Time
+		scopeCount int
+		category   string
+		lastSeen   time.Time
 	}
 	groups := map[string]pageGroup{}
 	for rows.Next() {
@@ -200,6 +206,9 @@ ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
 		fields = append(fields, &group.category)
 		if r.HardwareV2 {
 			fields = append(fields, &group.lastSeen)
+			if crossVLAN(query) {
+				fields = append(fields, &group.scopeCount)
+			}
 		}
 		if err = rows.Scan(fields...); err != nil {
 			return nil, err
@@ -240,6 +249,9 @@ ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
 		// of the stored document. The cursor must use the SQL ordering boundary.
 		if r.HardwareV2 {
 			items[i].LastSeen = group.lastSeen
+			if group.scopeCount > 1 {
+				items[i].VLANScopeCount = group.scopeCount
+			}
 		}
 		if items[i].DeviceType == "" {
 			items[i].Category = group.category
@@ -298,6 +310,9 @@ ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
 		}
 	}
 	page := map[string]any{"items": items, "next_cursor": nextCursor, "has_more": hasMore, "facets": deviceFacets(items), "service_devices": services, "linked_endpoints": linked, "limit": query.Limit, "window": indexedWindowLabel(query.Window), "count_unit": "trusted_discovery_identity"}
+	if crossVLAN(query) {
+		page["count_unit"] = "cross_vlan_discovery_identity"
+	}
 	if r.HardwareV2 {
 		page["classification_version"] = "passive-hardware/v2"
 	}

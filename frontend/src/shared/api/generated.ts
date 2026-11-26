@@ -3925,7 +3925,7 @@ export interface paths {
                     /** @description Exclusive absolute observation bound */
                     last_seen_to?: string;
                     /** @description Passive hardware view for device evidence or address-only clues. Omit to keep the existing combined scope. */
-                    identity_scope?: "devices" | "address_clues";
+                    identity_scope?: "devices" | "address_clues" | "scoped_devices";
                     /** @description The latest seven Beijing calendar days */
                     first_seen_within?: "168h";
                     /** @description A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address */
@@ -7871,6 +7871,8 @@ export interface components {
             product_clues?: components["schemas"]["DiscoveryProductClue"][];
             /** @description 可信作用域身份的持久硬件类型；服务 TTL 到期不清除 */
             hardware_type?: string;
+            /** @description Number of matching scopes represented by this row. Details refer to the displayed scope. */
+            vlan_scope_count?: number;
             /** @description A scoped candidate device type supported by a recent endpoint profile. This field does not confirm a hardware type. */
             candidate_device_type?: string;
             /** @enum {string} */
@@ -8076,6 +8078,8 @@ export interface components {
             identified?: number;
             /** Format: int64 */
             dumb_terminals?: number;
+            /** @enum {string} */
+            identity_count_unit?: "cross_vlan_discovery_identity";
             /** Format: int64 */
             identity_total?: number;
             /**
@@ -8306,10 +8310,10 @@ export interface components {
             /** Format: date-time */
             as_of: string;
             /**
-             * @description A discovered device grouped by source scope and trusted endpoint or MAC identity; unresolved identity falls back to the discovery key.
+             * @description Reported grouping unit. Cross-VLAN groups require a matching IP and globally administered MAC in the same sensor
              * @enum {string}
              */
-            count_unit: "trusted_discovery_identity";
+            count_unit: "trusted_discovery_identity" | "cross_vlan_discovery_identity";
             window: string;
         };
         DiscoveryDevicePage: {
@@ -8335,7 +8339,7 @@ export interface components {
             has_more: boolean;
             total?: number;
             /** @enum {string} */
-            count_unit?: "trusted_discovery_identity";
+            count_unit?: "trusted_discovery_identity" | "cross_vlan_discovery_identity";
             facets?: {
                 [key: string]: unknown;
             }[];
@@ -10185,7 +10189,7 @@ export interface operations {
                 /** @description Exclusive absolute observation bound */
                 last_seen_to?: string;
                 /** @description Passive hardware view for device evidence or address-only clues. Omit to keep the existing combined scope. */
-                identity_scope?: "devices" | "address_clues";
+                identity_scope?: "devices" | "address_clues" | "scoped_devices";
                 /** @description The latest seven Beijing calendar days */
                 first_seen_within?: "168h";
                 /** @description A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address */
@@ -10245,7 +10249,7 @@ export interface operations {
                 /** @description Exclusive absolute observation bound */
                 last_seen_to?: string;
                 /** @description Passive hardware view for device evidence or address-only clues. Omit to keep the existing combined scope. */
-                identity_scope?: "devices" | "address_clues";
+                identity_scope?: "devices" | "address_clues" | "scoped_devices";
                 /** @description The latest seven Beijing calendar days */
                 first_seen_within?: "168h";
                 /** @description A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address */
@@ -10357,7 +10361,7 @@ export interface operations {
                 /** @description Exclusive absolute observation bound */
                 last_seen_to?: string;
                 /** @description Passive hardware view for device evidence or address-only clues. Omit to keep the existing combined scope. */
-                identity_scope?: "devices" | "address_clues";
+                identity_scope?: "devices" | "address_clues" | "scoped_devices";
                 /** @description The latest seven Beijing calendar days */
                 first_seen_within?: "168h";
                 /** @description A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address */

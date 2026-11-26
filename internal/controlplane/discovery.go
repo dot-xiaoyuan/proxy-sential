@@ -534,7 +534,7 @@ FROM candidates ORDER BY observations DESC,last_seen DESC LIMIT 100`)
 		query.IdentityScope = r.URL.Query().Get("identity_scope")
 		switch query.IdentityScope {
 		case "", "devices":
-		case "address_clues":
+		case "address_clues", "scoped_devices":
 			if path == "/discovery/devices/coverage-report" || !repo.HardwareV2 || query.Mode != "passive" ||
 				repo.ActiveStreamOnly || repo.PipelineV2 || os.Getenv("PROXY_SENTINEL_DISCOVERY_EVENTBUS_READ") == "true" {
 				writeError(w, 409, "identity_scope_read_path", "当前发现读取路径不支持地址线索视图")

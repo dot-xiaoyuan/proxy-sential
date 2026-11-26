@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -97,6 +98,9 @@ func (r Repository) devicesIndexedMetadata(ctx context.Context, db indexedQuerye
 		return IndexedDeviceMetadata{}, err
 	}
 	result := IndexedDeviceMetadata{CountUnit: "trusted_discovery_identity", Window: indexedWindowLabel(selection.Query.Window), Types: []IndexedDeviceTypeCount{}, AsOf: time.Now().UTC()}
+	if crossVLAN(q) {
+		result.CountUnit = "cross_vlan_discovery_identity"
+	}
 	if r.HardwareV2 {
 		result.ClassificationVersion = "passive-hardware/v2"
 	}
@@ -109,10 +113,17 @@ func (r Repository) devicesIndexedMetadata(ctx context.Context, db indexedQuerye
 		counts += ` UNION ALL SELECT 'ip_product',kind,count(DISTINCT identity_key),now()
  FROM matched CROSS JOIN LATERAL unnest(product_types) kind
  WHERE classification_status='candidate' GROUP BY kind`
-		counts += ` UNION ALL SELECT 'vlan',vlan,n,now() FROM (SELECT vlan,count(*) n FROM matched WHERE vlan<>'' GROUP BY vlan ORDER BY count(*) DESC,vlan LIMIT 100) v`
+		vlanSource := "matched"
+		if crossVLAN(q) {
+			vlanSource = "(SELECT m.vlan FROM display_members m JOIN matched a USING(display_key)) scope_vlans"
+		}
+		counts += ` UNION ALL SELECT 'vlan',vlan,n,now() FROM (SELECT vlan,count(*) n FROM ` + vlanSource + ` WHERE vlan<>'' GROUP BY vlan ORDER BY count(*) DESC,vlan LIMIT 100) v`
 	}
 	if q.includeOverview {
 		counts += indexedOverviewCountsSQL
+	}
+	if crossVLAN(q) {
+		counts = strings.ReplaceAll(counts, "WHERE last_seen", "WHERE asset_last_seen")
 	}
 	rows, err := db.QueryContext(ctx, selection.CTE+counts+` ORDER BY 1,2`, selection.Args...)
 	if err != nil {

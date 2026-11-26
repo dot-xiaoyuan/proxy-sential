@@ -236,6 +236,7 @@ type DeviceQuery struct {
 	HardwareV2                    bool
 	groupPageRows                 bool
 	pageKeys                      []string
+	pageRepresentatives           bool
 	pageKeySource                 pageKeySource
 	orderedPageDisabled           bool
 	structured                    bool
@@ -287,6 +288,7 @@ type DeviceView struct {
 	Site                 string              `json:"site,omitempty"`
 	Domain               string              `json:"domain,omitempty"`
 	VLAN                 string              `json:"vlan,omitempty"`
+	VLANScopeCount       int                 `json:"vlan_scope_count,omitempty"`
 	Manufacturer         string              `json:"manufacturer,omitempty"`
 	ModelName            string              `json:"model_name,omitempty"`
 	ClassificationStatus string              `json:"classification_status,omitempty"`

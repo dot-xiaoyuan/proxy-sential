@@ -6522,3 +6522,9 @@ pre.wrap-code {
 .truth-review dt { color: var(--ant-color-text-secondary, #475569); }
 .truth-review dd { margin: 4px 0; font-variant-numeric: tabular-nums; }
 /* End offline truth review */
+
+.discovery-scope-link.ant-btn {
+  padding-inline: 0;
+  white-space: nowrap;
+  flex-shrink: 0;
+}

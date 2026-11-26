@@ -8,6 +8,8 @@
 scripts/deploy/build-release.sh --version VERSION --output dist/proxy-sentinel-current.tar.gz
 ```
 
+204 被动资产包使用 `--profile passive-assets-204`。该包包含全部 PostgreSQL 迁移和 204 使用的 ClickHouse 迁移。共享上网索引 071 和 AI 中转站物化视图 072 按既有现场决定暂缓。发布清单记录 profile，升级器逐文件核验包内迁移。其他环境默认使用 full。
+
 将发布包、`.sha256`、`upgrade-application.sh`、`verify-applied-migrations.py`、`verify-application-cli.py`、`verify-application-runtime.py`、`validate-release-archive.py` 与 `manage-frontend-previous.py` 放入现场同一暂存目录，执行：
 
 ```bash

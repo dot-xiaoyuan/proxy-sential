@@ -30,7 +30,11 @@ func (r Repository) DevicesIndexedPosition(ctx context.Context, q DeviceQuery, p
 		return result, err
 	}
 	args := append(selection.Args, offset)
-	rows, err := r.DB.QueryContext(ctx, selection.CTE+` SELECT identity_key,device_key,last_seen FROM matched ORDER BY last_seen DESC,identity_key COLLATE "C" LIMIT 2 OFFSET $`+fmt.Sprint(len(args)), args...)
+	timeColumn := "last_seen"
+	if crossVLAN(q) {
+		timeColumn = "asset_last_seen AS last_seen"
+	}
+	rows, err := r.DB.QueryContext(ctx, selection.CTE+` SELECT identity_key,device_key,`+timeColumn+` FROM matched ORDER BY last_seen DESC,identity_key COLLATE "C" LIMIT 2 OFFSET $`+fmt.Sprint(len(args)), args...)
 	if err != nil {
 		return result, err
 	}

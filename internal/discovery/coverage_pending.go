@@ -34,18 +34,22 @@ func coverageIdentityPendingStatement(sensor string, window time.Duration, at ti
 		 JOIN discovery_list_observation f ON f.base_identity=g.identity_key
 		 WHERE f.sensor_id=%s AND f.observed_at BETWEEN $1 AND now() AND f.origin IN (%s)`, sensorArg, strings.Join(origins, ","))
 	}
+	profileSource := "matched"
+	if crossVLAN(selection.Query) {
+		profileSource = "candidate_source"
+	}
 	statement := selection.CTE + fmt.Sprintf(`, profile_inputs AS (
  SELECT DISTINCT identity_key COLLATE "C" identity_key,device_key,false has_profile
  FROM candidate_rows WHERE sensor_id=%s %s
  UNION ALL
  SELECT identity_key,NULL::text device_key,true
- FROM matched WHERE classification_status='candidate' AND cardinality(effective_types)=0 AND candidate_role<>''
+ FROM %s WHERE classification_status='candidate' AND cardinality(effective_types)=0 AND candidate_role<>''
 ), profile_keys AS MATERIALIZED (
  SELECT DISTINCT device_key FROM (
   SELECT device_key,bool_or(has_profile) OVER (PARTITION BY identity_key) has_profile
   FROM profile_inputs
  ) p WHERE device_key IS NOT NULL AND has_profile
-), `, sensorArg, cachedMembers) + coveragePerIPSQL(sensorArg, "$1", untilArg,
+), `, sensorArg, cachedMembers, profileSource) + coveragePerIPSQL(sensorArg, "$1", untilArg,
 		"LEFT JOIN profile_keys p ON p.device_key=h.device_key", "p.device_key IS NOT NULL") + coveragePendingRowsSQL + fmt.Sprintf(`
 SELECT identities.*,evidence.* FROM (
  SELECT now(),count(*),
@@ -84,6 +88,9 @@ func coverageIdentityAndPendingCounts(ctx context.Context, db coverageQueryRower
 	out.IdentityAsOf, out.IdentityTotal = &asOf, &total
 	out.Identified, out.DumbTerminals = &identified, &dumb
 	out.ProfileCandidates = &candidates
+	if structuredReadEnabled("coverage") && structuredReadEnabled("cross_vlan") {
+		out.IdentityCountUnit = "cross_vlan_discovery_identity"
+	}
 	out.IPv4Pending = rows
 	return nil
 }

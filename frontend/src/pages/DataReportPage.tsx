@@ -149,12 +149,12 @@ export function DataReportPage() {
       {readTraffic && <Metric label="标准事件" value={traffic?.event_count} unit="条" icon={<ThunderboltOutlined aria-hidden="true" />} loading={activity.isFetching} />}
       {readIdentity && <>
         <Metric label="近期终端" value={inventoryPreparing ? undefined : terminals?.total} unit="个" icon={<LaptopOutlined aria-hidden="true" />} loading={inventory.isFetching} />
-        <Metric label="发现记录" value={discovered?.total} unit="条" icon={<RadarChartOutlined aria-hidden="true" />} primary loading={discovery.isFetching} />
+        <Metric label={discovered?.count_unit === 'cross_vlan_discovery_identity' ? '发现身份' : '发现记录'} value={discovered?.total} unit={discovered?.count_unit === 'cross_vlan_discovery_identity' ? '个' : '条'} icon={<RadarChartOutlined aria-hidden="true" />} primary loading={discovery.isFetching} />
       </>}
     </dl>
 
     {readIdentity && <div className="data-report-grid data-report-assets">
-      <Panel id="discovery" title="发现设备" hint="被动发现 · 按采集范围与身份去重"
+      <Panel id="discovery" title="发现设备" hint={discovered?.count_unit === 'cross_vlan_discovery_identity' ? '同一采集域内按可信 IP 和 MAC 跨 VLAN 汇总' : '被动发现 · 按采集范围与身份去重'}
         links={[{ label: '发现列表', to: discoveryUrl }, { label: '覆盖报表', to: coverageUrl }]}
         asOf={discovered?.as_of} busy={discovery.isFetching}
         loadingLabel={discovery.isFetching && !discovered ? '正在读取发现统计…' : undefined}
@@ -171,7 +171,7 @@ export function DataReportPage() {
               { label: hardware ? '硬件结论已撤销' : '证据过期', value: discovered.expired, to: `${discoveryUrl}&discovery_state=expired` },
             ]} />
             {discovered.total > 0 && <p className="data-report-explainer">
-              {confirmedLabel}占发现记录 <strong>{percent.format(discovered.identified / discovered.total)}</strong>
+              {confirmedLabel}占{discovered.count_unit === 'cross_vlan_discovery_identity' ? '发现身份' : '发现记录'} <strong>{percent.format(discovered.identified / discovered.total)}</strong>
             </p>}
           </div>
           <RankList title={`${confirmedLabel}排行`} scale={discovered.identified}

@@ -79,6 +79,9 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
  ` + indexedProfileConflictSQL("rec") + ` profile_conflict
  FROM endpoint_recognition_summary rec
  JOIN (SELECT DISTINCT recognition_endpoint COLLATE "C" recognition_endpoint FROM seed_rows) relevant ON relevant.recognition_endpoint=rec.endpoint_id`
+	if crossVLAN(query) {
+		pageProfiles = false
+	}
 	if pageProfiles {
 		// Display-only clues can be joined after the page limit.
 		recognitionSource = `SELECT ''::text endpoint_id,''::text role,''::text os_family,
@@ -112,6 +115,7 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
  ) i ON true`
 	extraCTE, groupedUnion := "", ""
 	pageSource := ""
+	peerCTE := ""
 	if query.structured {
 		if hours := cachedGroupWindow(query); hours > 0 {
 			extraCTE = cachedGroupCTE(hours)
@@ -124,6 +128,10 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 		if query.pageKeys != nil {
 			args = append(args, query.pageKeys)
 			keys := fmt.Sprintf("$%d::text[]", len(args))
+			if crossVLAN(query) && query.pageKeySource == pageIdentityKeys {
+				peerCTE = "requested_peers AS MATERIALIZED (SELECT " + vlanPeerKeys(keys) + " members), "
+				keys = "(SELECT members FROM requested_peers)::text[]"
+			}
 			if query.pageKeySource == pageTupleLocators {
 				pageSource = "SELECT unnest(" + keys + ")::tid t"
 			} else if query.pageKeySource == pageBaseIdentityKeys {
@@ -151,7 +159,16 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 		beforeTrust, afterTrust = sources+", ", ""
 		trustFilter = " AND m.id IN (SELECT id FROM source_rows WHERE origin='sadp')"
 	}
-	statement := `WITH ` + beforeTrust + `trusted_address AS MATERIALIZED (
+	typesProjection := indexedTypesProjection(true)
+	matchCTE := ", matched AS (SELECT * FROM candidate_source" + matchedWhere + ")"
+	if crossVLAN(query) {
+		typesProjection = indexedHardwareProjection("h.hardware_model verified_model,coalesce(h.hardware_model_status='conflict',false) model_conflict,")
+		matchCTE = crossVLANAssetsSQL + ", matched AS (SELECT * FROM display_assets" + matchedWhere + ")"
+		if query.pageRepresentatives {
+			matchCTE += ", page_representatives AS (SELECT * FROM matched WHERE identity_key COLLATE \"C\"=ANY($" + fmt.Sprint(len(args)) + "::text[]))"
+		}
+	}
+	statement := `WITH ` + peerCTE + beforeTrust + `trusted_address AS MATERIALIZED (
  SELECT m.id observation_id,t.mac FROM discovery_observation_latest m
  JOIN LATERAL (
   SELECT min(lower(v.data->>'mac')) mac FROM discovery_observation_latest v
@@ -232,14 +249,12 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
  THEN min(profile_candidate_role) FILTER (WHERE valid_until>now() AND profile_candidate_role<>'') ELSE '' END candidate_role
  FROM candidate_rows GROUP BY identity_key COLLATE "C"` + candidateHaving + groupedUnion + `
 ), candidate_types AS (
- ` + indexedTypesProjection(true) + `
+ ` + typesProjection + `
 ), candidate_classified AS (
  SELECT *,` + indexedClassificationProjection(true) + ` classification_status FROM candidate_types
 ), candidate_source AS (
  SELECT *,` + indexedCategorySQL("") + ` category FROM candidate_classified
-), matched AS (
- SELECT * FROM candidate_source` + matchedWhere + `
-)`
+)` + matchCTE
 	return indexedDeviceSelection{Query: query, CTE: statement, Args: args, PageProfiles: pageProfiles}
 }
 
@@ -272,7 +287,9 @@ CROSS JOIN LATERAL (SELECT o.data,o.observed_at,o.device_key,o.source_id,o.origi
 	if cachedGroupWindow(selection.Query) > 0 {
 		// The cached groups are disjoint and already admitted for the default
 		// device scope. Bound this ordered branch before combining with live rows.
-		statement = strings.Replace(statement, "candidate_role FROM cache_groups g", "candidate_role FROM (SELECT * FROM cache_groups"+positionWhere+" ORDER BY last_seen DESC,identity_key LIMIT $"+limitParameter+") g", 1)
+		if !crossVLAN(selection.Query) {
+			statement = strings.Replace(statement, "candidate_role FROM cache_groups g", "candidate_role FROM (SELECT * FROM cache_groups"+positionWhere+" ORDER BY last_seen DESC,identity_key LIMIT $"+limitParameter+") g", 1)
+		}
 		q := selection.Query
 		q.groupPageRows = true
 		detail, err := buildIndexedDeviceSelection(q)
@@ -285,11 +302,20 @@ CROSS JOIN LATERAL (SELECT o.data,o.observed_at,o.device_key,o.source_id,o.origi
 )`
 		pageRows = "page_members"
 	}
+	source, fields, extras := "matched", "identity_key,device_key,last_seen,category", ""
+	if crossVLAN(selection.Query) {
+		if selection.Query.pageRepresentatives {
+			source = "page_representatives"
+		}
+		source = "(SELECT identity_key,device_key,asset_last_seen last_seen,category,vlan_scope_count FROM " + source + ") display_page"
+		fields += ",vlan_scope_count"
+		extras = ",c.vlan_scope_count"
+	}
 	return statement + `, candidates AS (
- SELECT identity_key,device_key,last_seen,category FROM matched` + positionWhere + `
+ SELECT ` + fields + ` FROM ` + source + positionWhere + `
  ORDER BY last_seen DESC,identity_key COLLATE "C" LIMIT $` + limitParameter + `
 )` + cachedRows + `
-SELECT c.identity_key,c.device_key,page_o.data,coalesce(dl.endpoint_id,l.linked_endpoint) linked_endpoint,` + profiles + `,c.category,c.last_seen
+SELECT c.identity_key,c.device_key,page_o.data,coalesce(dl.endpoint_id,l.linked_endpoint) linked_endpoint,` + profiles + `,c.category,c.last_seen` + extras + `
 FROM ` + pageRows + ` l JOIN candidates c USING(identity_key)
 ` + pageSource + `
 LEFT JOIN LATERAL (

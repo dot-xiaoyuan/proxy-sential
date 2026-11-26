@@ -5,7 +5,7 @@ import { deviceTypeLabel } from '../entities/device/DeviceInventoryCells'
 import { buildCoverageSummary, type CoverageSummary, type Tone } from './discoveryCoverageSummary'
 
 export type CoverageReport = components['schemas']['DiscoveryCoverageReport']
-export type CoverageComposition = { types?: { device_type: string; count: number }[]; candidate_types?: { device_type: string; count: number }[]; dumb_terminals?: number }
+export type CoverageComposition = { count_unit?: string; types?: { device_type: string; count: number }[]; candidate_types?: { device_type: string; count: number }[]; dumb_terminals?: number }
 type MirrorFunnel = NonNullable<CoverageReport['mirror_funnel']>
 type BindingFreshness = components['schemas']['DiscoveryBindingFreshness']
 type PendingRow = NonNullable<CoverageReport['ipv4_pending']>[number]
@@ -265,7 +265,7 @@ function CoverageComposition({ composition, feedback }: { composition?: Coverage
   return <section className="coverage-panel" aria-labelledby="coverage-types-heading">
     <header className="coverage-panel-heading"><div>
       <h4 id="coverage-types-heading">识别出了什么</h4>
-      <p>按设备记录计数，同一设备在不同 VLAN 会分别计数</p>
+      <p>{composition?.count_unit === 'cross_vlan_discovery_identity' ? '同一采集域内，地址一致且类型无冲突的全局 MAC 跨 VLAN 计一次。' : '按设备记录计数，同一设备在不同 VLAN 会分别计数'}</p>
     </div></header>
     {feedback}
     {!composition ? (!feedback && <p className="coverage-empty">正在读取类型构成…</p>)

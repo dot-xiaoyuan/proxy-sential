@@ -52,6 +52,9 @@ func (r Repository) ReadDeviceMetadata(ctx context.Context, sensor string, q Dev
 	}
 	var out IndexedDeviceMetadata
 	p, err := r.readPublication(ctx, sensor, "metadata", q.Window, &out)
+	if err == nil && structuredReadEnabled("cross_vlan") != (out.CountUnit == "cross_vlan_discovery_identity") {
+		return IndexedDeviceMetadata{}, ErrReportPreparing
+	}
 	out.Publication = p
 	if q.SkipOverview {
 		out.Overview = nil
@@ -65,6 +68,9 @@ func (r Repository) ReadCoverageReport(ctx context.Context, sensor string, windo
 	}
 	var out CoverageReport
 	p, err := r.readPublication(ctx, sensor, "coverage", window, &out)
+	if err == nil && structuredReadEnabled("cross_vlan") != (out.IdentityCountUnit == "cross_vlan_discovery_identity") {
+		return CoverageReport{}, ErrReportPreparing
+	}
 	out.Publication = p
 	return out, err
 }

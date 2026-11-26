@@ -11,7 +11,11 @@ func indexedTypesProjection(v2 bool) string {
 	if !v2 {
 		return "SELECT *," + indexedEffectiveTypesSQL + " effective_types FROM candidate_grouped"
 	}
-	return `SELECT g.*,CASE WHEN h.hardware_type_status='identified' THEN ARRAY[h.hardware_type] ELSE '{}'::text[] END effective_types,
+	return indexedHardwareProjection("")
+}
+
+func indexedHardwareProjection(extra string) string {
+	return `SELECT g.*,` + extra + `CASE WHEN h.hardware_type_status='identified' THEN ARRAY[h.hardware_type] ELSE '{}'::text[] END effective_types,
  h.hardware_type projection_type,h.hardware_type_status projection_status,h.first_seen projection_first_seen,h.type_changed_at,h.address_only_since
  FROM candidate_grouped g LEFT JOIN passive_hardware_current h USING(identity_key)`
 }

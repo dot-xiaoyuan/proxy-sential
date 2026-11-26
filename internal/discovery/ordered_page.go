@@ -130,7 +130,11 @@ func rankPageKeys(ctx context.Context, db indexedQueryer, q DeviceQuery, keys []
 		where = fmt.Sprintf(` WHERE last_seen<$%d OR (last_seen=$%d AND identity_key COLLATE "C">$%d)`, len(args)-1, len(args)-1, len(args))
 	}
 	args = append(args, q.Limit+1)
-	rows, err := db.QueryContext(ctx, s.CTE+" SELECT identity_key,last_seen FROM matched"+where+fmt.Sprintf(` ORDER BY last_seen DESC,identity_key COLLATE "C" LIMIT $%d`, len(args)), args...)
+	source := "matched"
+	if crossVLAN(q) {
+		source = "(SELECT identity_key,asset_last_seen last_seen FROM matched) assets"
+	}
+	rows, err := db.QueryContext(ctx, s.CTE+" SELECT identity_key,last_seen FROM "+source+where+fmt.Sprintf(` ORDER BY last_seen DESC,identity_key COLLATE "C" LIMIT $%d`, len(args)), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -172,6 +176,7 @@ func orderedDeviceKeys(ctx context.Context, db indexedQueryer, q DeviceQuery, po
 	}
 	lower := q.SnapshotAt.Add(-q.Window)
 	best := []pageSighting{}
+	visited := map[string]struct{}{}
 	for {
 		args := []any{lower, batch}
 		where := ""
@@ -209,6 +214,12 @@ func orderedDeviceKeys(ctx context.Context, db indexedQueryer, q DeviceQuery, po
 		keys, err := resolvePageSeeds(ctx, db, q, bases, 0, pageTupleLocators)
 		if err != nil {
 			return nil, err
+		}
+		if crossVLAN(q) {
+			keys, err = unrankedVLANSeeds(ctx, db, q, keys, visited, max(4096, 4*batch))
+			if err != nil {
+				return nil, err
+			}
 		}
 		ranked, err := rankPageKeys(ctx, db, q, keys, position)
 		if err != nil {

@@ -2,14 +2,16 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: build-release.sh --version VERSION --output FILE [--skip-frontend-validation]" >&2
+  echo "usage: build-release.sh --version VERSION --output FILE [--skip-frontend-validation] [--profile full|passive-assets-204]" >&2
 }
 
 version=""
 output=""
 skip_frontend_validation=false
+profile=full
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --profile) profile="${2:-}"; shift 2 ;;
     --version) version="${2:-}"; shift 2 ;;
     --output) output="${2:-}"; shift 2 ;;
     --skip-frontend-validation) skip_frontend_validation=true; shift ;;
@@ -17,6 +19,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || { echo "invalid release version" >&2; exit 2; }
+[[ "$profile" == full || "$profile" == passive-assets-204 ]] || { usage; exit 2; }
 [[ -n "$output" ]] || { usage; exit 2; }
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -63,7 +66,16 @@ for (const name of await readdir(directory)) {
   if (compressed.length < raw.length) await writeFile(join(directory, name + '.gz'), compressed);
 }
 JS
-  cp -R migrations "$release_dir/migrations"
+  mkdir -p "$release_dir/migrations/clickhouse"
+  cp -R migrations/postgres "$release_dir/migrations/postgres"
+  for migration in migrations/clickhouse/*.sql; do
+    case "$profile/${migration##*/}" in
+      passive-assets-204/071_stream_shared_subject_index.sql|passive-assets-204/072_ai_relay_stream_handshake_candidates.sql)
+        # These materialized views belong to the deferred shared-access and AI relay rollout.
+        continue ;;
+    esac
+    cp "$migration" "$release_dir/migrations/clickhouse/"
+  done
   cp -R assets/suricata "$release_dir/assets/suricata"
   cp -R assets/zeek "$release_dir/assets/zeek"
   cp scripts/zeek/install-icsnpp.sh "$release_dir/scripts/install-icsnpp.sh"
@@ -93,7 +105,7 @@ worktree_modified=false
 if [[ -n "$(git -C "$repo_root" status --porcelain --untracked-files=normal)" ]]; then worktree_modified=true; fi
 built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 cat > "$release_dir/release-manifest.json" <<EOF
-{"version":"$version","git_commit":"$commit","git_worktree_modified":$worktree_modified,"built_at":"$built_at","os":"linux","arch":"amd64"}
+{"version":"$version","profile":"$profile","git_commit":"$commit","git_worktree_modified":$worktree_modified,"built_at":"$built_at","os":"linux","arch":"amd64"}
 EOF
 (
   cd "$release_dir"

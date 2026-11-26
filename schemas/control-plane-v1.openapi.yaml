@@ -367,7 +367,7 @@ paths:
       parameters:
         - { name: last_seen_from, in: query, description: Inclusive absolute observation bound, paired with last_seen_to, schema: { type: string, format: date-time } }
         - { name: last_seen_to, in: query, description: Exclusive absolute observation bound, paired with last_seen_from, schema: { type: string, format: date-time } }
-        - { name: identity_scope, in: query, description: Passive hardware view for device evidence or address-only clues. Omit to keep the existing combined scope., schema: { type: string, enum: [devices, address_clues] } }
+        - { name: identity_scope, in: query, description: Passive hardware view for device evidence or address-only clues. Omit to keep the existing combined scope., schema: { type: string, enum: [devices, address_clues, scoped_devices] } }
         - { name: first_seen_within, in: query, description: The latest seven Beijing calendar days, schema: { type: string, enum: [168h] } }
         - { name: subnet, in: query, description: A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address, schema: { type: string } }
         - { name: type, in: query, schema: { type: string } }
@@ -402,7 +402,7 @@ paths:
         - { name: overview, in: query, description: Set false for facet-only reads, schema: { type: boolean, default: true } }
         - { name: last_seen_from, in: query, description: Inclusive absolute observation bound, paired with last_seen_to, schema: { type: string, format: date-time } }
         - { name: last_seen_to, in: query, description: Exclusive absolute observation bound, paired with last_seen_from, schema: { type: string, format: date-time } }
-        - { name: identity_scope, in: query, description: Passive hardware view for device evidence or address-only clues. Omit to keep the existing combined scope., schema: { type: string, enum: [devices, address_clues] } }
+        - { name: identity_scope, in: query, description: Passive hardware view for device evidence or address-only clues. Omit to keep the existing combined scope., schema: { type: string, enum: [devices, address_clues, scoped_devices] } }
         - { name: first_seen_within, in: query, description: The latest seven Beijing calendar days, schema: { type: string, enum: [168h] } }
         - { name: subnet, in: query, description: A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address, schema: { type: string } }
         - { name: type, in: query, schema: { type: string } }
@@ -450,7 +450,7 @@ paths:
       parameters:
         - { name: last_seen_from, in: query, description: Inclusive absolute observation bound, paired with last_seen_to, schema: { type: string, format: date-time } }
         - { name: last_seen_to, in: query, description: Exclusive absolute observation bound, paired with last_seen_from, schema: { type: string, format: date-time } }
-        - { name: identity_scope, in: query, description: Passive hardware view for device evidence or address-only clues. Omit to keep the existing combined scope., schema: { type: string, enum: [devices, address_clues] } }
+        - { name: identity_scope, in: query, description: Passive hardware view for device evidence or address-only clues. Omit to keep the existing combined scope., schema: { type: string, enum: [devices, address_clues, scoped_devices] } }
         - { name: first_seen_within, in: query, description: The latest seven Beijing calendar days, schema: { type: string, enum: [168h] } }
         - { name: subnet, in: query, description: A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address, schema: { type: string } }
         - { name: type, in: query, schema: { type: string } }
@@ -4524,7 +4524,7 @@ paths:
       parameters:
         - { name: last_seen_from, in: query, description: Inclusive absolute observation bound, paired with last_seen_to, schema: { type: string, format: date-time } }
         - { name: last_seen_to, in: query, description: Exclusive absolute observation bound, paired with last_seen_from, schema: { type: string, format: date-time } }
-        - { name: identity_scope, in: query, description: Passive hardware view for device evidence or address-only clues. Omit to keep the existing combined scope., schema: { type: string, enum: [devices, address_clues] } }
+        - { name: identity_scope, in: query, description: Passive hardware view for device evidence or address-only clues. Omit to keep the existing combined scope., schema: { type: string, enum: [devices, address_clues, scoped_devices] } }
         - { name: first_seen_within, in: query, description: The latest seven Beijing calendar days, schema: { type: string, enum: [168h] } }
         - { name: subnet, in: query, description: A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address, schema: { type: string } }
         - name: type
@@ -8951,6 +8951,7 @@ components:
           items: { type: string }
         product_clues: { type: array, items: { $ref: '#/components/schemas/DiscoveryProductClue' } }
         hardware_type: { type: string, description: "可信作用域身份的持久硬件类型；服务 TTL 到期不清除" }
+        vlan_scope_count: { type: integer, minimum: 2, description: Number of matching scopes represented by this row. Details refer to the displayed scope. }
         candidate_device_type: { type: string, description: A scoped candidate device type supported by a recent endpoint profile. This field does not confirm a hardware type. }
         hardware_type_status: { type: string, enum: [identified, candidate, conflict, revoked] }
         hardware_model: { type: string }
@@ -9080,6 +9081,7 @@ components:
         scoped_mac: { type: integer, format: int64, minimum: 0 }
         identified: { type: integer, format: int64, minimum: 0 }
         dumb_terminals: { type: integer, format: int64, minimum: 0 }
+        identity_count_unit: { type: string, enum: [cross_vlan_discovery_identity] }
         identity_total: { type: integer, format: int64, minimum: 0 }
         profile_candidate_identities: { type: integer, format: int64, minimum: 0, description: Discovery identities with a single profile type clue and without a confirmed hardware type. }
         ipv4_pending:
@@ -9216,7 +9218,7 @@ components:
                   subnet: { type: string }
                   count: { type: integer, format: int64, minimum: 0 }
         as_of: { type: string, format: date-time }
-        count_unit: { type: string, enum: [trusted_discovery_identity], description: A discovered device grouped by source scope and trusted endpoint or MAC identity; unresolved identity falls back to the discovery key. }
+        count_unit: { type: string, enum: [trusted_discovery_identity, cross_vlan_discovery_identity], description: Reported grouping unit. Cross-VLAN groups require a matching IP and globally administered MAC in the same sensor, site, interface and VRF. }
         window: { type: string }
     DiscoveryDevicePage:
       type: object
@@ -9242,7 +9244,7 @@ components:
         next_cursor: { type: string }
         has_more: { type: boolean }
         total: { type: integer }
-        count_unit: { type: string, enum: [trusted_discovery_identity] }
+        count_unit: { type: string, enum: [trusted_discovery_identity, cross_vlan_discovery_identity] }
         facets: { type: array, items: { type: object, additionalProperties: true } }
         service_devices: { type: integer }
         linked_endpoints: { type: integer }

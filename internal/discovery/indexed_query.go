@@ -129,7 +129,7 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 	classifiedWhere := []string{}
 	switch query.IdentityScope {
 	case "":
-	case "devices":
+	case "devices", "scoped_devices":
 		if query.HardwareV2 && query.Mode == "passive" {
 			classifiedWhere = append(classifiedWhere, "NOT has_observed_ip OR has_device_evidence")
 		} else {
