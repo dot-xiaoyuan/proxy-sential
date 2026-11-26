@@ -94,3 +94,37 @@ func TestParseCAPWAPDirectL2AndRoutedBoundary(t *testing.T) {
 		t.Fatal("DTLS CAPWAP frame must be ignored")
 	}
 }
+
+func TestParseCAPWAPEchoAndDataKeepAlive(t *testing.T) {
+	// 运行期 Echo Request (MsgType=13) 应被识别为 ip_only 的 CAPWAP AP 活跃心跳
+	echoReq := buildCAPWAPFrame("00:aa:bb:cc:dd:ee", "10.20.1.88", "10.20.0.1", 52480, 5246, 13, 0, "", "", "", false)
+	sig, ok := parseControlFrame(echoReq)
+	if !ok || sig.Kind != "capwap" || sig.MAC != "" || sig.IP != "10.20.1.88" || sig.Payload["message_type"] != "echo_request" {
+		t.Fatalf("expected CAPWAP echo_request, got %+v ok=%v", sig, ok)
+	}
+	// Echo Response (MsgType=14) 必须拒绝
+	echoResp := buildCAPWAPFrame("00:aa:bb:cc:dd:ee", "10.20.0.1", "10.20.1.88", 5246, 52480, 14, 0, "", "", "", false)
+	if _, ok := parseControlFrame(echoResp); ok {
+		t.Fatal("CAPWAP echo response must be rejected")
+	}
+
+	// UDP 5247 Data Keep-Alive (K=1, Session ID Type=35, Len=16)
+	keepalive := make([]byte, 8+22)
+	keepalive[0] = 0x00
+	keepalive[1] = 2 << 3 // HLEN=8
+	keepalive[3] = 0x08   // K=1
+	binary.BigEndian.PutUint16(keepalive[8:10], 22)
+	binary.BigEndian.PutUint16(keepalive[10:12], 35)
+	binary.BigEndian.PutUint16(keepalive[12:14], 16)
+	frame := buildDahuaFrame("00:aa:bb:cc:dd:ee", "10.20.1.89", "10.20.0.1", 52481, 5247, keepalive)
+	ksig, ok := parseControlFrame(frame)
+	if !ok || ksig.Kind != "capwap" || ksig.MAC != "" || ksig.IP != "10.20.1.89" || ksig.Payload["message_type"] != "data_keepalive" {
+		t.Fatalf("expected CAPWAP data_keepalive, got %+v ok=%v", ksig, ok)
+	}
+
+	// 普通 UDP 5247 数据帧（K=0）必须被拒绝
+	keepalive[3] = 0x00
+	if _, ok := parseControlFrame(buildDahuaFrame("00:aa:bb:cc:dd:ee", "10.20.1.89", "10.20.0.1", 52481, 5247, keepalive)); ok {
+		t.Fatal("non-keepalive CAPWAP data packet must be ignored")
+	}
+}

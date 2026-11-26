@@ -70,13 +70,24 @@ type PortGapItem struct {
 	Buckets    int64  `json:"buckets"`
 }
 
+// RandomMACStats 统计发现列表中本地管理随机 MAC（LAA，首字节 bit 1 为 1）的占比，
+// 用于区分“真实未知硬件厂商”与“手机/终端随机 MAC 导致的 OUI 缺失”。
+type RandomMACStats struct {
+	TotalMACs       int64   `json:"total_macs"`
+	LocalAdminMACs  int64   `json:"local_admin_macs"`
+	GlobalMACs      int64   `json:"global_macs"`
+	LocalAdminRatio float64 `json:"local_admin_ratio"`
+}
+
 // GapReport 汇总一次只读特征挖掘的完整结果，用于指导规则与协议优先级。
 type GapReport struct {
 	SensorID             string           `json:"sensor_id"`
 	Window               string           `json:"window"`
 	GeneratedAt          string           `json:"generated_at"`
 	Overlap              TwoListOverlap   `json:"two_list_overlap"`
+	RandomMAC            RandomMACStats   `json:"random_mac_stats"`
 	HardwareStatuses     []StatusCount    `json:"hardware_statuses"`
+	NewProtocolHits      []FeatureGapItem `json:"new_protocol_hits"`
 	UnmatchedDHCP        []FeatureGapItem `json:"unmatched_dhcp"`
 	HTTPDeviceAgents     []FeatureGapItem `json:"http_device_agents"`
 	UnconfirmedProtocols []FeatureGapItem `json:"unconfirmed_protocols"`
@@ -164,6 +175,14 @@ func RenderGapReportMarkdown(r GapReport) string {
 		r.Overlap.TerminalMACs, r.Overlap.DiscoveryMACs, r.Overlap.OverlapMACs,
 		r.Overlap.TerminalOnlyMACs, r.Overlap.DiscoveryOnlyMACs)
 
+	if r.RandomMAC.TotalMACs > 0 {
+		b.WriteString("## 1.5 随机 MAC（LAA）与全球唯一 OUI 分布\n\n")
+		b.WriteString("| 发现列表去重 MAC | 随机 MAC（LAA） | 全球唯一 OUI MAC | 随机 MAC 占比 |\n")
+		b.WriteString("| ---: | ---: | ---: | ---: |\n")
+		fmt.Fprintf(&b, "| %d | %d | %d | %.1f%% |\n\n",
+			r.RandomMAC.TotalMACs, r.RandomMAC.LocalAdminMACs, r.RandomMAC.GlobalMACs, r.RandomMAC.LocalAdminRatio*100)
+	}
+
 	if len(r.HardwareStatuses) > 0 {
 		b.WriteString("## 2. 硬件投影当前状态分布\n\n")
 		b.WriteString("| 状态 | 身份数 | 去重 MAC |\n| --- | ---: | ---: |\n")
@@ -191,6 +210,8 @@ func RenderGapReportMarkdown(r GapReport) string {
 		}
 		b.WriteString("\n")
 	}
+
+	writeFeatureSection("2.5 新增被动协议命中统计（CAPWAP / 大华发现 / IEEE 1905 / SSH）", "去重实体", r.NewProtocolHits)
 
 	writeFeatureSection("3. 高频 DHCP 指纹（Vendor Class / Options）", "去重 MAC", r.UnmatchedDHCP)
 	writeFeatureSection("4. 高频 HTTP 设备与客户端特征（UA / Server / Title）", "去重 IP", r.HTTPDeviceAgents)

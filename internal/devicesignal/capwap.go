@@ -62,6 +62,8 @@ func parseCAPWAP(ethernet ethernetFrame, source, destination string, payload []b
 		msgTypeName = "join_request"
 	case 5:
 		msgTypeName = "config_status_request"
+	case 13:
+		msgTypeName = "echo_request"
 	default:
 		return controlSignal{}, false
 	}
@@ -74,6 +76,23 @@ func parseCAPWAP(ethernet ethernetFrame, source, destination string, payload []b
 	elemBytes := ctrl[8:]
 	if maxLen := declaredLen - 3; maxLen < len(elemBytes) {
 		elemBytes = elemBytes[:maxLen]
+	}
+	if msgType == 13 {
+		// Echo Request 为运行期瘦 AP 保活心跳（WTP -> AC），载荷极小且可不携带 Board Data。
+		if declaredLen > 1024 || payload[3]&0x07 != 0 {
+			return controlSignal{}, false
+		}
+		frameMAC := strings.ToLower(net.HardwareAddr(ethernet.source[:]).String())
+		signal := baseControlSignal("capwap", ethernet, source, destination)
+		signal.MAC = ""
+		digest := sha256.Sum256(payload)
+		signal.Payload["is_request"] = true
+		signal.Payload["message_type"] = msgTypeName
+		signal.Payload["identity_status"] = "ip_only"
+		signal.Payload["l2_source_mac"] = frameMAC
+		signal.Payload["payload_sha256"] = hex.EncodeToString(digest[:])
+		signal.Payload["ttl"] = 1800
+		return signal, true
 	}
 
 	var vendorID uint32
@@ -195,4 +214,45 @@ func cleanCAPWAPText(raw []byte, limit int) string {
 		return ""
 	}
 	return cleaned
+}
+
+// parseCAPWAPDataKeepAlive 解析 RFC 5415 Section 4.4.2 的 CAPWAP 数据通道 Keep-Alive 报文（UDP 目标端口 5247）。
+// 严格校验明文前导、K=1 标志位、保留位为 0 且仅包含合法的 Session ID (Type 35, Len 16) 元素，
+// 拒绝一切普通无线业务封装帧，不保留会话 ID 原文（仅输出报文 SHA-256 摘要）。
+func parseCAPWAPDataKeepAlive(ethernet ethernetFrame, source, destination string, payload []byte) (controlSignal, bool) {
+	if len(payload) < 30 || len(payload) > 128 {
+		return controlSignal{}, false
+	}
+	if payload[0] != 0x00 {
+		return controlSignal{}, false
+	}
+	hlen := int(payload[1]>>3) * 4
+	if hlen < 8 || hlen+22 > len(payload) {
+		return controlSignal{}, false
+	}
+	// Byte 3: F(0x80) L(0x40) W(0x20) M(0x10) K(0x08) Flags(0x07)
+	if payload[3]&0x80 != 0 || payload[3]&0x08 == 0 || payload[3]&0x07 != 0 {
+		return controlSignal{}, false
+	}
+	body := payload[hlen:]
+	msgElemLen := int(binary.BigEndian.Uint16(body[0:2]))
+	if msgElemLen < 22 || msgElemLen > len(body) {
+		return controlSignal{}, false
+	}
+	elemType := binary.BigEndian.Uint16(body[2:4])
+	elemLen := int(binary.BigEndian.Uint16(body[4:6]))
+	if elemType != 35 || elemLen != 16 || 6+elemLen > msgElemLen {
+		return controlSignal{}, false
+	}
+	frameMAC := strings.ToLower(net.HardwareAddr(ethernet.source[:]).String())
+	signal := baseControlSignal("capwap", ethernet, source, destination)
+	signal.MAC = ""
+	digest := sha256.Sum256(payload)
+	signal.Payload["is_request"] = true
+	signal.Payload["message_type"] = "data_keepalive"
+	signal.Payload["identity_status"] = "ip_only"
+	signal.Payload["l2_source_mac"] = frameMAC
+	signal.Payload["payload_sha256"] = hex.EncodeToString(digest[:])
+	signal.Payload["ttl"] = 1800
+	return signal, true
 }

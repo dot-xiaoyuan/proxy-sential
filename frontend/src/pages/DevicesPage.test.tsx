@@ -31,6 +31,8 @@ describe('终端列表分页与搜索', () => {
     setup('/devices?tab=terminal&view=recent&window=24h&q=10.157.2.191')
     expect(screen.getByTestId('ip-observations')).toHaveTextContent('10.157.2.191')
     expect(screen.queryByRole('link', {name:'查看该 IP 的流量观察'})).not.toBeInTheDocument()
+    const discoveryLinks = screen.getAllByRole('link', { name: '在发现设备中查看' })
+    expect(discoveryLinks[0]).toHaveAttribute('href', '/devices?tab=discovery&discovery_window=720h&discovery_search=10.157.2.191')
   })
   it('没有事件读取权限时不加载流量观测', () => {
     fixture.total=0;fixture.eventsRead=false

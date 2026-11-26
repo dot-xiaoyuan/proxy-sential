@@ -58,6 +58,29 @@ SELECT
 		report.Warnings = append(report.Warnings, fmt.Sprintf("PostgreSQL 双表重叠查询失败: %v", err))
 	}
 
+	// 1.5 PostgreSQL: 发现列表随机 MAC（LAA，首字节 bit 1 为 1）占比统计
+	laaSQL := `
+WITH macs AS (
+  SELECT DISTINCT lower(mac) AS mac
+  FROM discovery_list_group_current
+  WHERE hours = $1
+    AND mac ~ '^[0-9a-fA-F]{2}:'
+)
+SELECT
+  count(*),
+  count(*) FILTER (WHERE ((('x' || substr(mac, 1, 2))::bit(8)::int) & 2) = 2),
+  count(*) FILTER (WHERE ((('x' || substr(mac, 1, 2))::bit(8)::int) & 2) = 0)
+FROM macs`
+	if err := s.pg.db.QueryRowContext(pgCtx, laaSQL, groupHours).Scan(
+		&report.RandomMAC.TotalMACs,
+		&report.RandomMAC.LocalAdminMACs,
+		&report.RandomMAC.GlobalMACs,
+	); err != nil {
+		report.Warnings = append(report.Warnings, fmt.Sprintf("PostgreSQL 随机 MAC 占比查询失败: %v", err))
+	} else if report.RandomMAC.TotalMACs > 0 {
+		report.RandomMAC.LocalAdminRatio = float64(report.RandomMAC.LocalAdminMACs) / float64(report.RandomMAC.TotalMACs)
+	}
+
 	// 2. PostgreSQL: 硬件投影状态分布
 	statusRows, err := s.pg.db.QueryContext(pgCtx, `
 SELECT coalesce(hardware_type_status, ''), count(*), count(DISTINCT mac)
@@ -82,6 +105,35 @@ ORDER BY 2 DESC`, opts.SensorID, windowHours)
 	sinceExpr := "parseDateTime64BestEffort(" + chQuote(since) + ",6)"
 	sensorFilter := "sensor_id=" + chQuote(opts.SensorID)
 	chSettings := "SETTINGS max_threads=1,max_memory_usage=268435456,max_execution_time=20 FORMAT JSONEachRow"
+
+	// 2.5 ClickHouse: 新增被动协议命中统计（CAPWAP / 大华发现 / IEEE 1905 / SSH Banner）
+	newProtoSQL := fmt.Sprintf(`
+SELECT
+  source_event_type AS category,
+  multiIf(
+    source_event_type='capwap', coalesce(nullIf(JSONExtractString(payload_json, 'message_type'), ''), nullIf(JSONExtractString(payload_json, 'capwap_message'), ''), 'capwap'),
+    source_event_type='dahua_discovery', coalesce(nullIf(JSONExtractString(payload_json, 'model'), ''), nullIf(JSONExtractString(payload_json, 'device_type'), ''), 'dahua'),
+    source_event_type='ssh_banner', coalesce(nullIf(JSONExtractString(payload_json, 'server'), ''), 'ssh'),
+    source_event_type
+  ) AS value,
+  multiIf(
+    source_event_type='capwap', coalesce(nullIf(JSONExtractString(payload_json, 'model'), ''), JSONExtractString(payload_json, 'manufacturer')),
+    source_event_type='dahua_discovery', JSONExtractString(payload_json, 'manufacturer'),
+    source_event_type='ssh_banner', JSONExtractString(payload_json, 'software'),
+    ''
+  ) AS detail,
+  uniq(if(subject_mac <> '', lower(subject_mac), subject_ip)) AS entities,
+  count() AS events
+FROM passive_discovery_events_v2
+PREWHERE %s AND source_event_type IN ('capwap','dahua_discovery','ieee1905','ieee1905_client','ssh_banner') AND timestamp >= %s
+GROUP BY category, value, detail
+ORDER BY entities DESC, events DESC
+LIMIT %d %s`, sensorFilter, sinceExpr, opts.Top, chSettings)
+	if items, qErr := s.queryFeatureGaps(ctx, newProtoSQL); qErr != nil {
+		report.Warnings = append(report.Warnings, fmt.Sprintf("ClickHouse 新增被动协议命中统计失败: %v", qErr))
+	} else {
+		report.NewProtocolHits = items
+	}
 
 	// 3. ClickHouse: 高频 DHCP Vendor Class / Option 55 组合
 	dhcpSQL := fmt.Sprintf(`

@@ -158,6 +158,12 @@ func parseControlFrames(frame []byte) []controlSignal {
 		}
 		return nil
 	}
+	if destinationPort == 5247 {
+		if signal, found := parseCAPWAPDataKeepAlive(ethernet, source, destination, udpPayload); found {
+			return []controlSignal{signal}
+		}
+		return nil
+	}
 	if sourcePort == 37810 || destinationPort == 37810 {
 		if signal, found := parseDahuaDiscovery(ethernet, source, destination, udpPayload); found {
 			return []controlSignal{signal}

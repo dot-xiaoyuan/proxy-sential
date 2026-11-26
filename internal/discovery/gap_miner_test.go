@@ -33,7 +33,14 @@ func TestRenderGapReportMarkdown(t *testing.T) {
 			TerminalOnlyMACs:  600,
 			DiscoveryOnlyMACs: 200,
 		},
+		RandomMAC: RandomMACStats{
+			TotalMACs:       3800,
+			LocalAdminMACs:  950,
+			GlobalMACs:      2850,
+			LocalAdminRatio: 0.25,
+		},
 		HardwareStatuses: []StatusCount{{Status: "identified", Count: 340, MACs: 338}},
+		NewProtocolHits:  []FeatureGapItem{{Category: "capwap", Value: "echo_request", Detail: "", Entities: 420, Events: 8400}},
 		UnmatchedDHCP:    []FeatureGapItem{{Category: "dhcp", Value: "android-dhcp-14", Detail: "1,3,6,15", Entities: 420, Events: 1200}},
 		MirrorPorts:      []PortGapItem{{Proto: "udp", Port: 37810, Annotation: CampusPortAnnotation("udp", 37810), SourceIPs: 18, Buckets: 90}},
 		Warnings:         []string{"sample warning"},
@@ -42,6 +49,8 @@ func TestRenderGapReportMarkdown(t *testing.T) {
 	for _, want := range []string{
 		"被动发现未识别特征摸底报告",
 		"| 4200 | 3800 | 3600 | 600 | 200 |",
+		"| 3800 | 950 | 2850 | 25.0% |",
+		"`echo_request`",
 		"`android-dhcp-14`",
 		"大华设备发现协议",
 		"sample warning",

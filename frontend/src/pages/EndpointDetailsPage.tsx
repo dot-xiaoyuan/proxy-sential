@@ -181,6 +181,7 @@ export function EndpointDetailsPage() {
           </Typography.Text>
         </div>
         <Space wrap>
+          {(profile.endpoint.primary_mac || latestIP) && <Link to={`/devices?tab=discovery&discovery_window=720h&discovery_search=${encodeURIComponent(profile.endpoint.primary_mac || latestIP)}`}>查看发现证据</Link>}
           <Link to={back}>返回终端列表</Link>
           {profile.recognition?.current_account_conflict&&<Tag color="orange">最新关联账号冲突</Tag>}
         </Space>

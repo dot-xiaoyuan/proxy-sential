@@ -79,7 +79,13 @@ func TestRouterProtocolFilterRetainsDeviceDiscoveryProtocols(t *testing.T) {
 		capwap[offset], capwap[offset+9] = 0x45, 17
 		binary.BigEndian.PutUint16(capwap[offset+22:], 5246)
 		if got := runRouterProtocolFilter(t, capwap); got == 0 {
-			t.Fatalf("CAPWAP with %d tags was rejected", tags)
+			t.Fatalf("CAPWAP 5246 with %d tags was rejected", tags)
+		}
+		capwapData, offset := discoveryFrame(tags, 0x0800)
+		capwapData[offset], capwapData[offset+9] = 0x45, 17
+		binary.BigEndian.PutUint16(capwapData[offset+22:], 5247)
+		if got := runRouterProtocolFilter(t, capwapData); got == 0 {
+			t.Fatalf("CAPWAP 5247 with %d tags was rejected", tags)
 		}
 		dahua, offset := discoveryFrame(tags, 0x0800)
 		dahua[offset], dahua[offset+9] = 0x45, 17
