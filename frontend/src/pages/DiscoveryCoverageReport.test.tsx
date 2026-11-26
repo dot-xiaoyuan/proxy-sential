@@ -98,7 +98,7 @@ it('ignores an overlap that cannot belong to both address sets', () => {
   expect(buildCoverageSummary({ ...field, mirror_funnel: { ...field.mirror_funnel, status: 'initializing' } }).total).toBeUndefined()
 })
 
-it('groups confirmed and inferred types by business category in visual cards', () => {
+it('merges confirmed and profile counts into one card per business category and isolates IP-only clues', () => {
   render(<DiscoveryCoverageReport report={field} composition={{
     ip_product_types: [{ device_type: 'switch', count: 6 }],
     types: [{ device_type: 'access_point', count: 240 }, { device_type: 'camera', count: 34 }, { device_type: 'printer', count: 33 },
@@ -111,16 +111,20 @@ it('groups confirmed and inferred types by business category in visual cards', (
   }} />)
   const types = screen.getByRole('region', { name: '识别出了什么' })
   expect(within(types).queryByRole('table')).not.toBeInTheDocument()
-  const confirmed = within(types).getByRole('region', { name: '硬件规则确认' })
-  expect(confirmed.querySelector('h5')).toHaveTextContent('硬件规则确认346')
-  const groups = [...confirmed.querySelectorAll('.coverage-type-group-head')].map(head => head.textContent)
-  expect(groups).toEqual(['网络设备253', '哑终端81', '电脑与移动终端12'])
-  expect(confirmed).toHaveTextContent('无线接入点 240')
-  expect(confirmed).toHaveTextContent('媒体播放器 3')
+  const computer = within(types).getByRole('region', { name: '电脑与移动终端' })
+  expect(computer.querySelector('h5')).toHaveTextContent('电脑与移动终端1,544')
+  const network = within(types).getByRole('region', { name: '网络设备' })
+  expect(network.querySelector('h5')).toHaveTextContent('网络设备369')
+  expect(within(network).getByRole('link', { name: '无线接入点 硬件规则确认 240' })).toHaveAttribute('href', '/devices?tab=discovery&discovery_window=24h&discovery_state=identified&discovery_type=access_point')
+  expect(within(network).getByRole('link', { name: '无线接入点 画像识别 17' })).toHaveAttribute('href', '/devices?tab=discovery&discovery_window=24h&discovery_state=profile_typed&discovery_type=access_point')
+  const dumb = within(types).getByRole('region', { name: '哑终端' })
+  expect(dumb.querySelector('h5')).toHaveTextContent('哑终端98')
+  expect(within(dumb).getByRole('link', { name: '打印机 硬件规则确认 33' })).toHaveAttribute('href', '/devices?tab=discovery&discovery_window=24h&discovery_state=identified&discovery_type=printer')
+  expect(within(dumb).getByRole('link', { name: '打印机 画像识别 17' })).toHaveAttribute('href', '/devices?tab=discovery&discovery_window=24h&discovery_state=profile_typed&discovery_type=printer')
   expect(types).not.toHaveTextContent('其中哑终端')
-  expect(within(types).getByRole('region', { name: 'IP 自报的产品类型' })).toHaveTextContent('归属待核实')
-  const inferred = within(types).getByRole('region', { name: '画像识别' })
-  expect([...inferred.querySelectorAll('.coverage-type-group-head')].map(head => head.textContent)).toEqual(['电脑与移动终端1,532', '网络设备116', '哑终端17'])
+  const ipOnly = within(types).getByRole('region', { name: 'IP 自报的产品类型' })
+  expect(ipOnly).toHaveTextContent('归属待核实')
+  expect(within(ipOnly).getByRole('link', { name: '交换机 6' })).toHaveAttribute('href', '/devices?tab=discovery&discovery_window=24h&discovery_state=ip_product_only&discovery_type=switch')
 })
 
 it('shows the processing lag, partial mirror window and identity timeout plainly', () => {
@@ -232,8 +236,8 @@ it('renders drill-down KPI cards, type chips, 7-day trend, brands and network ho
   expect(kpis).toHaveTextContent('1,280')
   expect(kpis).toHaveTextContent('较昨日同期 +70')
   expect(screen.getByRole('link', { name: '查看重点哑终端明细' })).toHaveAttribute('href', '/devices?tab=discovery&discovery_window=24h&discovery_capability=dumb')
-  expect(screen.getByRole('link', { name: '无线接入点 240' })).toHaveAttribute('href', '/devices?tab=discovery&discovery_window=24h&discovery_state=identified&discovery_type=access_point')
-  expect(screen.getByRole('link', { name: '手机 573' })).toHaveAttribute('href', '/devices?tab=discovery&discovery_window=24h&discovery_state=profile_typed&discovery_type=mobile')
+  expect(screen.getByRole('link', { name: '无线接入点 硬件规则确认 240' })).toHaveAttribute('href', '/devices?tab=discovery&discovery_window=24h&discovery_state=identified&discovery_type=access_point')
+  expect(screen.getByRole('link', { name: '手机 画像识别 573' })).toHaveAttribute('href', '/devices?tab=discovery&discovery_window=24h&discovery_state=profile_typed&discovery_type=mobile')
   expect(screen.getByRole('region', { name: '近 7 天每日新发现' })).toHaveTextContent('合计 156 个')
   expect(screen.getByRole('region', { name: '已确认设备品牌分布' })).toHaveTextContent('Huawei')
   const hotspots = screen.getByRole('region', { name: '网段与 VLAN 热点' })

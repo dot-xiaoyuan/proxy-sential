@@ -10774,6 +10774,20 @@ pre.wrap-code {
   min-width: 0;
 }
 
+.discovery-detail-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin-bottom: 10px;
+}
+
+.discovery-detail-links .ant-btn {
+  padding-inline: 0;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .discovery-detail-section h5 {
   margin-bottom: 6px;
   color: #0f172a;
@@ -13423,6 +13437,199 @@ pre.wrap-code {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+.coverage-category-bar-group {
+  display: grid;
+  gap: 6px;
+}
+
+.coverage-category-bar-group .coverage-funnel-bar {
+  height: 8px;
+}
+
+.coverage-category-split {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: #334155;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.coverage-category-split span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.coverage-category-split i {
+  display: inline-block;
+  font-style: normal;
+  flex-shrink: 0;
+}
+
+.coverage-category-items {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 10px 0 0;
+  border-top: 1px solid #e2e8f0;
+}
+
+.coverage-category-item {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.coverage-category-item .coverage-funnel-bar {
+  height: 5px;
+}
+
+.coverage-category-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.coverage-category-item-name {
+  color: #1e293b;
+  font-size: 13px;
+  font-weight: 500;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+a.coverage-category-item-name:hover {
+  color: #1d4ed8;
+}
+
+.coverage-category-item-counts {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.coverage-basis-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.coverage-basis-pill i {
+  display: inline-block;
+  font-style: normal;
+  flex-shrink: 0;
+}
+
+.coverage-basis-teal {
+  color: #115e59;
+}
+
+.coverage-basis-teal:hover {
+  background: #f0fdfa;
+  border-color: #5eead4;
+  color: #0f766e;
+}
+
+.coverage-basis-blue {
+  color: #1e3a8a;
+}
+
+.coverage-basis-blue:hover {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
+.coverage-category-item-total {
+  min-width: 22px;
+  text-align: right;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.coverage-ip-products-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  margin-top: 14px;
+  padding: 10px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.coverage-ip-products-head {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.coverage-ip-products-total {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.coverage-ip-product-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.coverage-ip-product-chip {
+  gap: 6px;
+  background: #ffffff;
+  color: #334155;
+}
+
+.coverage-ip-product-chip strong {
+  color: #0f172a;
+  font-weight: 650;
+}
+
+.coverage-ip-product-chip:hover {
+  background: #fffbeb;
+  border-color: #fcd34d;
+  color: #92400e;
+}
+
+.coverage-ip-product-chip:hover strong {
+  color: #92400e;
 }
 
 @media (max-width: 1120px) {
@@ -16163,7 +16370,10 @@ pre.wrap-code {
   gap: 4px 12px;
 }
 
-.discovery-empty-actions .ant-btn {
+.discovery-empty-actions .ant-btn,
+.discovery-empty-actions .discovery-empty-link {
+  display: inline-flex;
+  align-items: center;
   padding-inline: 2px;
   white-space: nowrap;
   flex-shrink: 0;

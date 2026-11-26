@@ -64,7 +64,7 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
     const reasons = report.getByRole('region',{name:'尚无类型判断的原因'})
     await expect(reasons).toContainText('1,683 个有设备层报文的地址尚无类型判断')
     await expect(reasons.locator('.coverage-reason-head').first()).toContainText('只有 ARP 等地址层报文728')
-    await expect(report.getByRole('region',{name:'硬件规则确认'})).toBeVisible()
+    await expect(report.getByRole('region',{name:'哑终端'})).toBeVisible()
     await expect(report).toContainText('发现处理滞后约 22 分钟')
     await expect(report.getByText('硬件规则未确认的地址明细')).not.toBeVisible()
     await page.screenshot({path:info.outputPath(`coverage-overview-${viewport.width}.png`),animations:'disabled'})
@@ -232,9 +232,9 @@ for (const [width, height, selectedWindow] of [[390, 844, '24h'], [1280, 800, '1
         if (url.pathname.endsWith('/discovery/devices/metadata') && !url.searchParams.has('state')) {
           return Promise.resolve(Response.json({
             count_unit:'trusted_discovery_identity', window:url.searchParams.get('window'), as_of:'2026-11-26T01:00:00Z',
-            total:133, identified:83, profile_typed:42, ip_product_only:8, dumb_terminals:118,
+            total:253, identified:83, profile_typed:162, ip_product_only:8, dumb_terminals:118,
             types:[{device_type:'printer',count:64},{device_type:'camera',count:12},{device_type:'wireless_host',count:7}],
-            candidate_types:[{device_type:'printer',count:15},{device_type:'environment_monitor',count:27}],
+            candidate_types:[{device_type:'mobile',count:120},{device_type:'printer',count:15},{device_type:'environment_monitor',count:27}],
             ip_product_types:[{device_type:'switch',count:8}],
           }))
         }
@@ -247,32 +247,32 @@ for (const [width, height, selectedWindow] of [[390, 844, '24h'], [1280, 800, '1
     await expect(section.locator('.report-confidence-strip')).toBeVisible()
     await expect(section).not.toContainText(/其中哑终端\s*[\d,]+\s*个/)
 
-    const confirmed = section.getByRole('region', {name:'硬件规则确认', exact:true})
-    await expect(confirmed).toBeVisible()
-    await expect(confirmed.locator('h5')).toContainText('83')
-    await expect(confirmed.getByRole('link', {name:'打印机 64'})).toHaveAttribute('href', `/devices?tab=discovery&discovery_window=${selectedWindow}&discovery_state=identified&discovery_type=printer`)
+    const dumb = section.getByRole('region', {name:'哑终端', exact:true})
+    await expect(dumb).toBeVisible()
+    await expect(dumb.locator('h5')).toContainText('118')
+    await expect(dumb.getByRole('link', {name:'打印机 硬件规则确认 64'})).toHaveAttribute('href', `/devices?tab=discovery&discovery_window=${selectedWindow}&discovery_state=identified&discovery_type=printer`)
+    await expect(dumb.getByRole('link', {name:'打印机 画像识别 15'})).toHaveAttribute('href', `/devices?tab=discovery&discovery_window=${selectedWindow}&discovery_state=profile_typed&discovery_type=printer`)
 
-    const inferred = section.getByRole('region', {name:'画像识别', exact:true})
-    await expect(inferred).toBeVisible()
-    await expect(inferred.locator('h5')).toContainText('42')
-    await expect(inferred.getByRole('link', {name:'打印机 15'})).toHaveAttribute('href', `/devices?tab=discovery&discovery_window=${selectedWindow}&discovery_state=profile_typed&discovery_type=printer`)
+    const network = section.getByRole('region', {name:'网络设备', exact:true})
+    await expect(network).toBeVisible()
+    await expect(network.locator('h5')).toContainText('7')
+    await expect(network.getByRole('link', {name:'无线分布式主机 硬件规则确认 7'})).toHaveAttribute('href', `/devices?tab=discovery&discovery_window=${selectedWindow}&discovery_state=identified&discovery_type=wireless_host`)
 
     const products = section.getByRole('region', {name:'IP 自报的产品类型', exact:true})
     await expect(products).toBeVisible()
     await expect(products).toContainText('归属待核实')
-    await expect(products).toContainText('交换机')
-    await expect(products).toContainText('8')
+    await expect(products.getByRole('link', {name:'交换机 8'})).toHaveAttribute('href', `/devices?tab=discovery&discovery_window=${selectedWindow}&discovery_state=ip_product_only&discovery_type=switch`)
 
     const geometry = await section.evaluate(element => {
-      const blocks = [...element.querySelectorAll('.coverage-type-block')]
-      const chips = [...element.querySelectorAll<HTMLElement>('.coverage-type-chip')]
+      const blocks = [...element.querySelectorAll('.coverage-category-card, .coverage-ip-products-strip')]
+      const pills = [...element.querySelectorAll<HTMLElement>('.coverage-basis-pill, .coverage-ip-product-chip')]
       const problems: string[] = []
       for (const block of blocks) {
         if (block.scrollWidth > block.clientWidth + 2) problems.push('block overflow')
       }
-      for (const chip of chips) {
-        const style = getComputedStyle(chip)
-        if (style.whiteSpace !== 'nowrap' || style.flexShrink !== '0') problems.push('chip wrap')
+      for (const pill of pills) {
+        const style = getComputedStyle(pill)
+        if (style.whiteSpace !== 'nowrap' || style.flexShrink !== '0') problems.push('pill wrap')
       }
       const rgb = (color: string) => color.match(/[\d.]+/g)!.map(Number)
       const luminance = (color: number[]) => color.slice(0,3).reduce((total, value, i) => {
@@ -295,14 +295,14 @@ for (const [width, height, selectedWindow] of [[390, 844, '24h'], [1280, 800, '1
         left:box.left,
         right:box.right,
         blocks:blocks.length,
-        chips:chips.length,
+        pills:pills.length,
         linkMinContrast:Math.min(...linkContrasts),
         problems,
       }
     })
     expect(geometry.problems).toEqual([])
-    expect(geometry.blocks).toBe(3)
-    expect(geometry.chips).toBe(5)
+    expect(geometry.blocks).toBe(4)
+    expect(geometry.pills).toBe(7)
     expect(geometry.linkMinContrast).toBeGreaterThanOrEqual(4.5)
     expect(geometry.pageWidth).toBeLessThanOrEqual(width + 2)
     expect(geometry.left).toBeGreaterThanOrEqual(-1)
@@ -313,11 +313,11 @@ for (const [width, height, selectedWindow] of [[390, 844, '24h'], [1280, 800, '1
     await info.attach('composition-dom', {path:domPath, contentType:'application/json'})
     await section.screenshot({path:info.outputPath(`composition-${width}.png`), animations:'disabled'})
 
-    for (const [card, label, state] of [
-      [confirmed, '打印机 64', 'identified'],
-      [inferred, '打印机 15', 'profile_typed'],
+    for (const [label, state] of [
+      ['打印机 硬件规则确认 64', 'identified'],
+      ['打印机 画像识别 15', 'profile_typed'],
     ] as const) {
-      await card.getByRole('link', {name:label}).click()
+      await dumb.getByRole('link', {name:label}).click()
       await expect(page).toHaveURL(url => url.pathname === '/devices' && url.searchParams.get('tab') === 'discovery'
         && url.searchParams.get('discovery_window') === selectedWindow && url.searchParams.get('discovery_type') === 'printer'
         && url.searchParams.get('discovery_state') === state)
