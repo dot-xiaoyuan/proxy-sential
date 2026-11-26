@@ -56,8 +56,11 @@ describe('menu and investigation navigation',()=>{
  })
 })
 
-it('limits the passive asset site to its nine product entries and keeps the shared site menu', () => {
+it('puts the unified asset report first on the passive asset site and keeps the shared site menu', () => {
  const session = {user:{id:'admin',name:'管理员'},role:'admin',permissions:['risks:read','cases:read','policies:read','identity:read','events:read','organization:read','users:manage','audit:read','ingest:read']} as Session
  expect(visibleNavigation(session).flatMap(g=>g.items.map(i=>i.key))).toContain('overview')
- expect(visibleNavigation({...session,site_profile:'passive_assets'}).flatMap(g=>g.items.map(i=>i.key))).toEqual(['discovered-devices','discovery-coverage','devices','data-report','rules','sources','organization','users','audit'])
+ const assetNav = visibleNavigation({...session,site_profile:'passive_assets'})
+ expect(assetNav[0]).toMatchObject({key:'asset-report',title:'资产总览报表'})
+ expect(assetNav[0].items[0]).toMatchObject({key:'discovery-coverage',title:'资产总览报表',to:'/devices/coverage'})
+ expect(assetNav.flatMap(g=>g.items.map(i=>i.key))).toEqual(['discovery-coverage','discovered-devices','devices','rules','sources','organization','users','audit'])
 })

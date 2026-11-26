@@ -172,3 +172,62 @@ it('displays the mirror ratio using valid pair counts and shows OUI only on dema
   expect(screen.getByText('全局管理 · 匹配 OUI')).toBeVisible()
   expect(screen.getByText('3,938 个无有效 MAC 配对')).toBeVisible()
 })
+
+it('renders drill-down KPI cards, type chips, 7-day trend, brands and network hotspots', () => {
+  render(
+    <DiscoveryCoverageReport
+      report={{
+        ...field,
+        planned_ipv4: {
+          status: 'ready',
+          visible_ipv4: 42,
+          ranges: [{ range: '10.126.254.0/24', device_type: '摄像机', visible_ipv4: 42 }],
+        },
+      }}
+      composition={{
+        count_unit: 'cross_vlan_discovery_identity',
+        total: 4490,
+        identified: 348,
+        profile_typed: 1321,
+        types: [{ device_type: 'access_point', count: 240 }, { device_type: 'printer', count: 35 }],
+        candidate_types: [{ device_type: 'mobile', count: 573 }],
+        ip_product_types: [{ device_type: 'switch', count: 68 }],
+        dumb_terminals: 79,
+        vlans: [{ vlan: '3112', count: 420 }],
+        overview: {
+          active: 1280,
+          previous_active: 1210,
+          dumb_terminals: 79,
+          new_seven_days: 156,
+          new_by_day: [
+            { date: '2026-11-20', count: 18 },
+            { date: '2026-11-21', count: 24 },
+          ],
+          brands: [
+            { brand: 'Huawei', device_type: 'access_point', count: 180 },
+            { brand: 'HP', device_type: 'printer', count: 25 },
+          ],
+          subnets: [{ subnet: '10.126.254.0/24', count: 160 }],
+        },
+      }}
+      windowKey="24h"
+    />,
+  )
+  const kpis = screen.getByLabelText('核心资产指标')
+  expect(kpis).toHaveTextContent('4,490')
+  expect(kpis).toHaveTextContent('348')
+  expect(kpis).toHaveTextContent('79')
+  expect(kpis).toHaveTextContent('1,280')
+  expect(kpis).toHaveTextContent('较昨日同期 +70')
+  expect(screen.getByRole('link', { name: '查看重点哑终端明细' })).toHaveAttribute('href', '/devices?tab=discovery&discovery_window=24h&discovery_capability=dumb')
+  expect(screen.getByRole('link', { name: '无线接入点 240' })).toHaveAttribute('href', '/devices?tab=discovery&discovery_window=24h&discovery_state=identified&discovery_type=access_point')
+  expect(screen.getByRole('link', { name: '手机 573' })).toHaveAttribute('href', '/devices?tab=discovery&discovery_window=24h&discovery_state=profile_typed&discovery_type=mobile')
+  expect(screen.getByRole('region', { name: '近 7 天每日新发现' })).toHaveTextContent('合计 156 个')
+  expect(screen.getByRole('region', { name: '已确认设备品牌分布' })).toHaveTextContent('Huawei')
+  const hotspots = screen.getByRole('region', { name: '网段与 VLAN 热点' })
+  expect(hotspots).toHaveTextContent('10.126.254.0/24')
+  fireEvent.click(within(hotspots).getByText('VLAN'))
+  expect(hotspots).toHaveTextContent('VLAN 3112')
+  fireEvent.click(within(hotspots).getByText('规划网段'))
+  expect(hotspots).toHaveTextContent('摄像机')
+})

@@ -21,13 +21,18 @@ for (const [width,height] of [[390,844],[1280,800],[1440,900]]) {
       },profile==='shared'?mockSession:{...mockSession,site_profile:'passive_assets'})
       await page.goto('/overview')
       if(profile==='passive_assets'){
-        await expect(page).toHaveURL(/tab=discovery/)
-        await expect(page.getByRole('heading',{name:'发现设备',level:1})).toBeVisible()
+        await expect(page).toHaveURL(/\/devices\/coverage/)
+        await expect(page.getByRole('heading',{name:'资产总览报表',level:1})).toBeVisible()
+        await expect(page.getByRole('region',{name:'设备发现覆盖报表'})).toBeVisible()
       } else await expect(page.getByRole('heading',{name:'运营工作台',level:1})).toBeVisible()
       if(width===390)await page.getByRole('button',{name:'打开导航'}).click()
       const menus=page.getByRole('menu').filter({visible:true})
       await expect(menus.getByText('运营工作台',{exact:true})).toHaveCount(profile==='shared'?1:0)
       await expect(menus.getByText('设备中心',{exact:true})).toBeVisible()
+      if(profile==='passive_assets'){
+        await expect(menus.getByText('资产总览报表',{exact:true})).toHaveCount(1)
+        await expect(menus.getByText('全局数据报表',{exact:true})).toHaveCount(0)
+      }
       await page.screenshot({path:info.outputPath('navigation.png'),animations:'disabled'})
       if(profile==='passive_assets'){
         await page.goto('/devices/coverage?section=review')

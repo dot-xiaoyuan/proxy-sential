@@ -1,11 +1,47 @@
+import { ArrowRightOutlined, CheckCircleOutlined, DesktopOutlined, FieldTimeOutlined, RadarChartOutlined } from '@ant-design/icons'
 import type { ReactNode } from 'react'
+import { deviceTypeLabel } from '../entities/device/DeviceInventoryCells'
 import type { components } from '../shared/api/generated'
 import { observedTimeTitle } from '../shared/ui/observedTime'
-import { deviceTypeLabel } from '../entities/device/DeviceInventoryCells'
 import { buildCoverageSummary, type CoverageSummary, type Tone } from './discoveryCoverageSummary'
+import {
+  BrandTypeChart,
+  DailyNewTrendChart,
+  NetworkHotspotsPanel,
+  ReportLink,
+  type BrandTypeRow,
+  type DailyNewRow,
+  type SubnetCountRow,
+  type VlanCountRow,
+} from './DiscoveryReportCharts'
 
 export type CoverageReport = components['schemas']['DiscoveryCoverageReport']
-export type CoverageComposition = { count_unit?: string; types?: TypeRow[]; candidate_types?: TypeRow[]; ip_product_types?: TypeRow[]; dumb_terminals?: number }
+export type CoverageComposition = {
+  count_unit?: string
+  total?: number
+  identified?: number
+  candidate?: number
+  profile_typed?: number
+  ip_product_only?: number
+  no_type_clue?: number
+  conflict?: number
+  revoked?: number
+  expired?: number
+  types?: TypeRow[]
+  candidate_types?: TypeRow[]
+  ip_product_types?: TypeRow[]
+  dumb_terminals?: number
+  vlans?: VlanCountRow[]
+  overview?: {
+    active?: number
+    previous_active?: number
+    dumb_terminals?: number
+    new_seven_days?: number
+    new_by_day?: DailyNewRow[]
+    brands?: BrandTypeRow[]
+    subnets?: SubnetCountRow[]
+  }
+}
 type MirrorFunnel = NonNullable<CoverageReport['mirror_funnel']>
 type BindingFreshness = components['schemas']['DiscoveryBindingFreshness']
 type PendingRow = NonNullable<CoverageReport['ipv4_pending']>[number]
@@ -13,6 +49,20 @@ type CoverageRow = { label: string; value: number; color?: 'teal' | 'blue' | 'sl
 
 const count = (value: number) => value.toLocaleString('zh-CN')
 const percent = (value: number, total: number) => `${(value / total * 100).toFixed(1)}%`
+
+function normalizeWindowKey(raw: string) {
+  return raw.replace(/^(\d+h)0m0s$/, '$1').replace(/^(\d+m)0s$/, '$1')
+}
+
+function discoveryListUrl(windowKey: string, extra?: Record<string, string>) {
+  const params = new URLSearchParams({ tab: 'discovery', discovery_window: windowKey })
+  if (extra) {
+    for (const [key, value] of Object.entries(extra)) {
+      if (value) params.set(key, value)
+    }
+  }
+  return `/devices?${params}`
+}
 
 function CoverageDonut({ label, rows, total, unit }: { label: string; rows: CoverageRow[]; total: number; unit: string }) {
   let offset = 0
@@ -82,10 +132,12 @@ function CoveragePendingTable({ rows }: { rows: PendingRow[] }) {
       const row = rows.find(item => item.status === status)
       const { network_only = 0, dhcp_only = 0, device_protocol = 0, other = 0 } = row ?? {}
       return <tr key={status}>
-        <th scope="row">{pendingLabels[status]}</th>
-        <td>{count(network_only)}</td><td>{count(dhcp_only)}</td>
-        <td>{count(device_protocol)}</td><td>{count(other)}</td>
-        <td><strong>{count(network_only + dhcp_only + device_protocol + other)}</strong></td>
+        <th scope="row" data-label="类型状态">{pendingLabels[status]}</th>
+        <td data-label="仅网络层">{count(network_only)}</td>
+        <td data-label="有 DHCP">{count(dhcp_only)}</td>
+        <td data-label="有设备协议">{count(device_protocol)}</td>
+        <td data-label="其他">{count(other)}</td>
+        <td data-label="合计"><strong>{count(network_only + dhcp_only + device_protocol + other)}</strong></td>
       </tr>
     })}</tbody>
   </table>
@@ -161,6 +213,147 @@ function HardwareTrendPanel({ trend }: { trend: NonNullable<CoverageReport['hard
 
 const windowLabels: Record<string, string> = { '15m': '近 15 分钟', '24h': '近 24 小时', '168h': '近 7 天', '720h': '近 30 天' }
 
+type KpiCardItem = {
+  key: string
+  label: string
+  value: number
+  unit: string
+  detail?: string
+  tone: 'primary' | 'teal' | 'blue' | 'slate'
+  icon: ReactNode
+  to?: string
+}
+
+function CoverageKpiStrip({
+  report,
+  summary,
+  composition,
+  windowKey,
+}: {
+  report: CoverageReport
+  summary: CoverageSummary
+  composition?: CoverageComposition
+  windowKey: string
+}) {
+  const hasCompositionTotal = composition?.total !== undefined
+  const crossVlan = (hasCompositionTotal ? composition.count_unit : report.identity_count_unit) === 'cross_vlan_discovery_identity'
+  const totalIdentities = hasCompositionTotal ? composition.total : report.identity_total
+  const confirmedIdentities = hasCompositionTotal ? composition.identified : report.identified
+  const profileIdentities = hasCompositionTotal
+    ? (composition.profile_typed ?? (composition.candidate_types ? composition.candidate_types.reduce((sum, row) => sum + row.count, 0) : undefined))
+    : report.profile_candidate_identities
+  const dumbTerminals = hasCompositionTotal
+    ? (composition.overview?.dumb_terminals ?? composition.dumb_terminals)
+    : report.dumb_terminals
+  const activeNow = composition?.overview?.active
+  const prevActive = composition?.overview?.previous_active
+
+  const cards: KpiCardItem[] = []
+  if (totalIdentities !== undefined) {
+    const parts: string[] = []
+    if (confirmedIdentities !== undefined) parts.push(`硬件确认 ${count(confirmedIdentities)}`)
+    if (profileIdentities !== undefined && profileIdentities > 0) parts.push(`画像识别 ${count(profileIdentities)}`)
+    cards.push({
+      key: 'identities',
+      label: crossVlan ? '发现身份' : '发现记录',
+      value: totalIdentities,
+      unit: crossVlan ? '个' : '条',
+      detail: parts.length > 0 ? parts.join(' · ') : (crossVlan ? '跨 VLAN 合并去重' : '按采集范围去重'),
+      tone: 'primary',
+      icon: <RadarChartOutlined aria-hidden="true" />,
+      to: discoveryListUrl(windowKey),
+    })
+  }
+  if (confirmedIdentities !== undefined) {
+    const rateText = summary.confirmed !== undefined && summary.device !== undefined && summary.device > 0
+      ? `IPv4 硬件确认率 ${percent(summary.confirmed, summary.device)}`
+      : '硬件规则明确确认'
+    cards.push({
+      key: 'confirmed',
+      label: '硬件规则确认',
+      value: confirmedIdentities,
+      unit: '个',
+      detail: rateText,
+      tone: 'teal',
+      icon: <CheckCircleOutlined aria-hidden="true" />,
+      to: discoveryListUrl(windowKey, { discovery_state: 'identified' }),
+    })
+  }
+  if (dumbTerminals !== undefined) {
+    cards.push({
+      key: 'dumb',
+      label: '重点哑终端',
+      value: dumbTerminals,
+      unit: '个',
+      detail: '打印、摄像、门禁、话机等',
+      tone: 'blue',
+      icon: <DesktopOutlined aria-hidden="true" />,
+      to: discoveryListUrl(windowKey, { discovery_capability: 'dumb' }),
+    })
+  }
+  if (activeNow !== undefined) {
+    const delta = prevActive !== undefined ? activeNow - prevActive : undefined
+    const deltaText = delta !== undefined
+      ? `较昨日同期 ${delta >= 0 ? '+' : ''}${count(delta)}`
+      : composition?.overview?.new_seven_days !== undefined
+        ? `近 7 天新发现 ${count(composition.overview.new_seven_days)} 个`
+        : '15 分钟内有观测'
+    cards.push({
+      key: 'active',
+      label: '近 15 分钟活跃',
+      value: activeNow,
+      unit: '个',
+      detail: deltaText,
+      tone: 'slate',
+      icon: <FieldTimeOutlined aria-hidden="true" />,
+      to: discoveryListUrl('15m'),
+    })
+  } else if (summary.total !== undefined || summary.device !== undefined) {
+    const value = summary.total ?? summary.device!
+    cards.push({
+      key: 'ipv4',
+      label: summary.total !== undefined ? '共发现 IPv4' : '设备层 IPv4',
+      value,
+      unit: '个',
+      detail: summary.total !== undefined && summary.device !== undefined ? `设备层报文 ${count(summary.device)} 个` : '去重 IPv4 地址',
+      tone: 'slate',
+      icon: <FieldTimeOutlined aria-hidden="true" />,
+      to: discoveryListUrl(windowKey),
+    })
+  }
+
+  if (cards.length === 0) return null
+
+  return (
+    <dl className="report-kpi-grid" aria-label="核心资产指标">
+      {cards.map(card => {
+        const inner = (
+          <>
+            <dt>
+              <span className="report-kpi-label">{card.icon}{card.label}</span>
+              {card.to && <ArrowRightOutlined className="report-kpi-arrow" aria-hidden="true" />}
+            </dt>
+            <dd>
+              <strong>{count(card.value)}</strong>
+              <span>{card.unit}</span>
+            </dd>
+            {card.detail && <p className="report-kpi-detail">{card.detail}</p>}
+          </>
+        )
+        return (
+          <div key={card.key} className={`report-kpi-card report-kpi-${card.tone}`}>
+            {card.to ? (
+              <ReportLink to={card.to} className="report-kpi-link" ariaLabel={`查看${card.label}明细`}>{inner}</ReportLink>
+            ) : (
+              <div className="report-kpi-static">{inner}</div>
+            )}
+          </div>
+        )
+      })}
+    </dl>
+  )
+}
+
 function FunnelBar({ segments, label }: { segments: { value: number; tone: Tone }[]; label: string }) {
   let x = 0
   return <svg className="coverage-funnel-bar" viewBox="0 0 100 10" preserveAspectRatio="none" role="img" aria-label={label}>
@@ -173,17 +366,22 @@ function FunnelBar({ segments, label }: { segments: { value: number; tone: Tone 
   </svg>
 }
 
-function CoverageFunnel({ summary }: { summary: CoverageSummary }) {
+function CoverageFunnel({ summary, plannedVisible }: { summary: CoverageSummary; plannedVisible?: number }) {
   const { total, device, confirmed, inferred, judged, pending, mirror, mirrorOnly } = summary
   if (device === undefined) return null
   const base = total ?? device
   const width = (value: number) => base > 0 ? 100 * value / base : 0
   const identified = judged ?? confirmed
   return <section className="coverage-panel coverage-funnel" aria-labelledby="coverage-funnel-heading">
-    <header className="coverage-panel-heading"><div>
-      <h4 id="coverage-funnel-heading">发现与识别</h4>
-      <p>按 IPv4 地址去重，每一层都包含在上一层中</p>
-    </div></header>
+    <header className="coverage-panel-heading">
+      <div>
+        <h4 id="coverage-funnel-heading">发现与识别</h4>
+        <p>按 IPv4 地址去重，每一层都包含在上一层中</p>
+      </div>
+      {plannedVisible !== undefined && (
+        <span className="report-panel-badge">规划网段可见 {count(plannedVisible)} 个 IPv4</span>
+      )}
+    </header>
     <ol className="coverage-funnel-steps">
       {total !== undefined && <li className="coverage-funnel-step">
         <div className="coverage-funnel-label"><strong>共发现 IPv4 地址</strong><span>流量或设备报文中出现过的地址</span></div>
@@ -242,7 +440,21 @@ function groupTypes(rows?: TypeRow[]) {
   return { groups, total: groups.reduce((sum, group) => sum + group.total, 0) }
 }
 
-function TypeGroups({ label, basis, rows, tone }: { label: string; basis: string; rows?: TypeRow[]; tone: Tone }) {
+function TypeGroups({
+  label,
+  basis,
+  rows,
+  tone,
+  windowKey,
+  drillState,
+}: {
+  label: string
+  basis: string
+  rows?: TypeRow[]
+  tone: Tone
+  windowKey: string
+  drillState?: 'identified' | 'profile_typed'
+}) {
   const { groups, total } = groupTypes(rows)
   if (total === 0) return null
   const max = Math.max(...groups.map(group => group.total))
@@ -253,35 +465,84 @@ function TypeGroups({ label, basis, rows, tone }: { label: string; basis: string
       {groups.map(group => <li key={group.key}>
         <div className="coverage-type-group-head"><span>{group.label}</span><strong>{count(group.total)}</strong></div>
         <FunnelBar label={`${label}·${group.label} ${count(group.total)} 个`} segments={[{ value: 100 * group.total / max, tone }]} />
-        <p>{group.members.slice(0, 5).map(row => <span key={row.device_type}>{deviceTypeLabel(row.device_type)} {count(row.count)}</span>)}
-          {group.members.length > 5 && <span>其他 {count(group.members.slice(5).reduce((sum, row) => sum + row.count, 0))}</span>}</p>
+        <p className="coverage-type-chips">
+          {group.members.slice(0, 6).map(row => drillState ? (
+            <ReportLink
+              key={row.device_type}
+              to={discoveryListUrl(windowKey, { discovery_state: drillState, discovery_type: row.device_type })}
+              className="coverage-type-chip"
+            >
+              {deviceTypeLabel(row.device_type)} {count(row.count)}
+            </ReportLink>
+          ) : (
+            <span key={row.device_type}>{deviceTypeLabel(row.device_type)} {count(row.count)}</span>
+          ))}
+          {group.members.length > 6 && <span>其他 {count(group.members.slice(6).reduce((sum, row) => sum + row.count, 0))}</span>}
+        </p>
       </li>)}
     </ul>
   </section>
 }
 
-function CoverageComposition({ composition, feedback }: { composition?: CoverageComposition; feedback?: ReactNode }) {
+function CoverageComposition({
+  composition,
+  feedback,
+  windowKey,
+}: {
+  composition?: CoverageComposition
+  feedback?: ReactNode
+  windowKey: string
+}) {
   const hasConfirmed = (composition?.types ?? []).some(row => row.count > 0)
   const hasInferred = (composition?.candidate_types ?? []).some(row => row.count > 0)
+  const confirmedTotal = (composition?.types ?? []).reduce((sum, row) => sum + row.count, 0)
+  const inferredTotal = (composition?.candidate_types ?? []).reduce((sum, row) => sum + row.count, 0)
+  const ipProductTotal = (composition?.ip_product_types ?? []).reduce((sum, row) => sum + row.count, 0)
+  const compositionSum = confirmedTotal + inferredTotal + ipProductTotal
+  const dumbCount = composition?.dumb_terminals ?? composition?.overview?.dumb_terminals
+
   return <section className="coverage-panel" aria-labelledby="coverage-types-heading">
-    <header className="coverage-panel-heading"><div>
-      <h4 id="coverage-types-heading">识别出了什么</h4>
-      <p>{composition?.count_unit === 'cross_vlan_discovery_identity' ? '同一采集域内，地址一致且类型无冲突的全局 MAC 跨 VLAN 计一次。' : '按设备记录计数，同一设备在不同 VLAN 会分别计数'}</p>
-    </div></header>
+    <header className="coverage-panel-heading">
+      <div>
+        <h4 id="coverage-types-heading">识别出了什么</h4>
+        <p>{composition?.count_unit === 'cross_vlan_discovery_identity' ? '同一采集域内，地址一致且类型无冲突的全局 MAC 跨 VLAN 计一次。' : '按设备记录计数，同一设备在不同 VLAN 会分别计数'}</p>
+      </div>
+      <ReportLink to={discoveryListUrl(windowKey)} className="report-inline-link">发现列表 <ArrowRightOutlined aria-hidden="true" /></ReportLink>
+    </header>
     {feedback}
+    {composition && compositionSum > 0 && (confirmedTotal > 0 || inferredTotal > 0) && (
+      <div className="report-confidence-strip" aria-label="类型依据层级分布">
+        <FunnelBar
+          label={`硬件规则确认 ${count(confirmedTotal)}，画像识别 ${count(inferredTotal)}${ipProductTotal > 0 ? `，IP 自报 ${count(ipProductTotal)}` : ''}`}
+          segments={[
+            { value: 100 * confirmedTotal / compositionSum, tone: 'teal' },
+            { value: 100 * inferredTotal / compositionSum, tone: 'blue' },
+            { value: 100 * ipProductTotal / compositionSum, tone: 'amber' },
+          ]}
+        />
+        <div className="report-confidence-legend">
+          {confirmedTotal > 0 && <span><i className="coverage-chart-key coverage-chart-teal" aria-hidden="true" />硬件规则确认 {count(confirmedTotal)}</span>}
+          {inferredTotal > 0 && <span><i className="coverage-chart-key coverage-chart-blue" aria-hidden="true" />画像识别 {count(inferredTotal)}</span>}
+          {ipProductTotal > 0 && <span><i className="coverage-chart-key coverage-chart-amber" aria-hidden="true" />IP 自报线索 {count(ipProductTotal)}</span>}
+        </div>
+      </div>
+    )}
     {!composition ? (!feedback && <p className="coverage-empty">正在读取类型构成…</p>)
       : !hasConfirmed && !hasInferred ? <p className="coverage-empty">选定范围内暂无类型结论。</p>
         : <>
-          <TypeGroups label="硬件规则确认" basis="按设备协议、产品或型号等证据匹配硬件规则。" rows={composition.types} tone="teal" />
-          {composition.dumb_terminals !== undefined && composition.dumb_terminals > 0 &&
-            <p className="coverage-footnote">其中哑终端 <strong>{count(composition.dumb_terminals)}</strong> 个，包括打印机、摄像机、门禁、话机等。</p>}
-          <TypeGroups label="画像识别" basis="按 DHCP 指纹等终端画像特征判断设备类型。" rows={composition.candidate_types} tone="blue" />
+          <TypeGroups label="硬件规则确认" basis="按设备协议、产品或型号等证据匹配硬件规则。" rows={composition.types} tone="teal" windowKey={windowKey} drillState="identified" />
+          {dumbCount !== undefined && dumbCount > 0 &&
+            <p className="coverage-footnote">其中哑终端 <strong>{count(dumbCount)}</strong> 个，包括打印机、摄像机、门禁、话机等。</p>}
+          <TypeGroups label="画像识别" basis="按 DHCP 指纹等终端画像特征判断设备类型。" rows={composition.candidate_types} tone="blue" windowKey={windowKey} drillState="profile_typed" />
         </>}
     {!!composition?.ip_product_types?.length && <section className="coverage-type-block" aria-label="IP 自报的产品类型">
       <h5>IP 自报的产品类型</h5>
       <p className="coverage-footnote">产品或型号来自该 IP 的协议报文，设备归属仍待核实。同一地址可能自报多种类型，各类型分别计数。</p>
       <ul className="coverage-type-groups">{composition.ip_product_types.map(row =>
-        <li className="coverage-type-group-head" key={row.device_type}><span>{deviceTypeLabel(row.device_type)}</span><strong>{count(row.count)}</strong></li>)}</ul>
+        <li className="coverage-type-group-head" key={row.device_type}>
+          <span>{deviceTypeLabel(row.device_type)}</span>
+          <strong>{count(row.count)}</strong>
+        </li>)}</ul>
     </section>}
   </section>
 }
@@ -310,8 +571,18 @@ function CoverageReasons({ summary }: { summary: CoverageSummary }) {
   </section>
 }
 
-export function DiscoveryCoverageReport({ report, composition, compositionFeedback }: {
-  report: CoverageReport; composition?: CoverageComposition; compositionFeedback?: ReactNode
+export function DiscoveryCoverageReport({
+  report,
+  composition,
+  compositionFeedback,
+  windowKey: providedWindowKey,
+  onOpenNetworks,
+}: {
+  report: CoverageReport
+  composition?: CoverageComposition
+  compositionFeedback?: ReactNode
+  windowKey?: string
+  onOpenNetworks?: () => void
 }) {
   const summary = buildCoverageSummary(report)
   const { device, confirmed, inferred, judged, total, deviceOutsideMirror } = summary
@@ -319,8 +590,18 @@ export function DiscoveryCoverageReport({ report, composition, compositionFeedba
   const lagMinutes = report.identity_as_of ? Math.round((Date.parse(report.as_of) - Date.parse(report.identity_as_of)) / 60_000) : 0
   const funnel = report.mirror_funnel
   // Go reports retain zero-valued minutes and seconds in their duration strings.
-  const windowKey = report.window.replace(/^(\d+h)0m0s$/, '$1').replace(/^(\d+m)0s$/, '$1')
-  const windowLabel = windowLabels[windowKey] ?? '所选时间范围'
+  const windowKey = providedWindowKey ?? normalizeWindowKey(report.window)
+  const windowLabel = windowLabels[normalizeWindowKey(report.window)] ?? '所选时间范围'
+  const trendDays = composition?.overview?.new_by_day ?? []
+  const brandRows = composition?.overview?.brands ?? []
+  const hasDailyTrend = trendDays.length > 0
+  const hasBrands = brandRows.length > 0
+  const hasHotspots = Boolean(
+    composition?.overview?.subnets?.some(row => !row.subnet.includes(':') && row.count > 0)
+    || composition?.vlans?.some(row => row.vlan && row.count > 0)
+    || report.planned_ipv4?.ranges?.some(row => row.visible_ipv4 > 0),
+  )
+
   return <section className="coverage-content" aria-label="设备发现覆盖报表">
     <div className="coverage-timestamps" aria-label="数据时效">
       {report.identity_as_of ? <span>设备数据截至 {observedTimeTitle(report.identity_as_of)}</span>
@@ -332,6 +613,7 @@ export function DiscoveryCoverageReport({ report, composition, compositionFeedba
         {funnel.available_from && `，起点 ${observedTimeTitle(funnel.available_from)}`}</span>}
     </div>
     {report.identity_status === 'timeout' && <p className="coverage-empty" role="status">身份统计读取超时。地址覆盖和镜像配对数据已加载，可刷新重试身份统计。</p>}
+    <CoverageKpiStrip report={report} summary={summary} composition={composition} windowKey={windowKey} />
     {device !== undefined && <p className="coverage-lead">
       {windowLabel}{total !== undefined ? <>共发现 <strong>{count(total)}</strong> 个 IPv4 地址，其中 <strong>{count(device)}</strong> 个有设备层报文。</>
         : <>有设备层报文的 IPv4 地址 <strong>{count(device)}</strong> 个。</>}
@@ -339,12 +621,31 @@ export function DiscoveryCoverageReport({ report, composition, compositionFeedba
         ? <>其中 <strong>{count(judged)}</strong> 个已有类型判断，占设备层地址的 {percent(judged, device)}（硬件规则确认 {count(confirmed)} 个，画像识别 {count(inferred)} 个）。</>
         : <>硬件规则已确认 <strong>{count(confirmed)}</strong> 个地址的类型；本次报表缺少画像识别明细。</>)}
     </p>}
-    <CoverageFunnel summary={summary} />
+    <CoverageFunnel summary={summary} plannedVisible={report.planned_ipv4?.visible_ipv4} />
     <div className="coverage-panels">
-      <CoverageComposition composition={composition} feedback={compositionFeedback} />
+      <CoverageComposition composition={composition} feedback={compositionFeedback} windowKey={windowKey} />
       <CoverageReasons summary={summary} />
     </div>
-    {report.hardware_trend && <HardwareTrendPanel trend={report.hardware_trend} />}
+    {(hasDailyTrend || hasBrands) && (
+      <div className={hasDailyTrend && hasBrands ? 'coverage-panels' : 'coverage-panels coverage-panels-single'}>
+        {hasDailyTrend && <DailyNewTrendChart days={trendDays} totalSevenDays={composition?.overview?.new_seven_days} />}
+        {hasBrands && <BrandTypeChart brands={brandRows} windowKey={windowKey} />}
+      </div>
+    )}
+    {(hasHotspots || report.hardware_trend) && (
+      <div className={hasHotspots && report.hardware_trend ? 'coverage-panels' : 'coverage-panels coverage-panels-single'}>
+        {hasHotspots && (
+          <NetworkHotspotsPanel
+            subnets={composition?.overview?.subnets}
+            vlans={composition?.vlans}
+            plannedRanges={report.planned_ipv4?.ranges}
+            windowKey={windowKey}
+            onOpenNetworks={onOpenNetworks}
+          />
+        )}
+        {report.hardware_trend && <HardwareTrendPanel trend={report.hardware_trend} />}
+      </div>
+    )}
     <ul className="coverage-scope-notes" aria-label="统计口径">
       <li>地址数不等于设备台数：同一设备可能使用多个地址，同一地址也可能被不同设备先后使用。</li>
       {deviceOutsideMirror !== undefined && deviceOutsideMirror > 0 && <li>有 {count(deviceOutsideMirror)} 个有设备层报文的地址未出现在本窗口的镜像统计中，已计入共发现总数。</li>}

@@ -28,6 +28,7 @@ import type { Session } from '../shared/api/types'
 const navigationIcons: Record<string, ReactNode> = {
   workbench: <DashboardOutlined />,
   'data-report': <BarChartOutlined />,
+  'asset-report': <BarChartOutlined />,
   'ai-relay': <ApiOutlined />,
   risk: <AlertOutlined />,
   assets: <LaptopOutlined />,
@@ -36,7 +37,7 @@ const navigationIcons: Record<string, ReactNode> = {
   system: <SettingOutlined />,
 }
 
-const standaloneNav = new Set(['workbench', 'data-report', 'ai-relay'])
+const standaloneNav = new Set(['workbench', 'data-report', 'asset-report', 'ai-relay'])
 
 function buildNavItems(session: Session): MenuProps['items'] {
   return visibleNavigation(session).map(group => standaloneNav.has(group.key) ? {
@@ -79,6 +80,8 @@ export function AppShell() {
   }
   const navItems = buildNavItems(session.data)
   const permission = routePermission(location.pathname, location.search, session.data)
+  const currentGroupTitle = assetSite && owner?.entry.key === 'discovery-coverage' ? '资产总览报表' : owner?.group.title
+  const currentPageTitle = assetSite && owner?.entry.key === 'discovery-coverage' ? '资产总览报表' : owner?.entry.title
 
   const menu = (
     <Menu
@@ -135,8 +138,8 @@ export function AppShell() {
             {isMockEnabled && <span className="mock-badge">Mock API Active</span>}
             {owner && (
               <div className="app-current-page">
-                {owner.group.title !== owner.entry.title && <span className="app-current-group">{owner.group.title}</span>}
-                <h1 className="app-current-title">{owner.entry.title}</h1>
+                {currentGroupTitle !== currentPageTitle && <span className="app-current-group">{currentGroupTitle}</span>}
+                <h1 className="app-current-title">{currentPageTitle}</h1>
               </div>
             )}
           </Space>

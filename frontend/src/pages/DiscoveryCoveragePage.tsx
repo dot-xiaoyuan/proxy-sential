@@ -1,23 +1,25 @@
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Button, Input, Segmented, Select, Tabs, Typography } from 'antd'
 import { ReloadOutlined, SearchOutlined } from '@ant-design/icons'
+import { useQuery } from '@tanstack/react-query'
+import { Button, Input, Segmented, Tabs, Typography } from 'antd'
+import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { ApiError, request } from '../shared/api/client'
 import type { components } from '../shared/api/generated'
-import { observedTimeTitle } from '../shared/ui/observedTime'
+import { useSession } from '../shared/api/queries'
 import { AppLoadingState } from '../shared/ui'
-import { CoverageProtocolReplay, DiscoveryCoverageReport, DiscoveryMirrorCoverage, type CoverageReport } from './DiscoveryCoverageReport'
-import { DiscoveryCoverageDiagnostics } from './DiscoveryCoverageDiagnostics'
-import { TruthReviewPanel } from './TruthReviewPanel'
+import { observedTimeTitle } from '../shared/ui/observedTime'
 import { CensusPanel } from './CensusPanel'
+import { DiscoveryCoverageDiagnostics } from './DiscoveryCoverageDiagnostics'
+import { CoverageProtocolReplay, DiscoveryCoverageReport, DiscoveryMirrorCoverage, type CoverageReport } from './DiscoveryCoverageReport'
+import { DiscoverySupplementaryPanels } from './DiscoverySupplementaryPanels'
+import { TruthReviewPanel } from './TruthReviewPanel'
 
 const windows = [
   { value: '15m', label: '近 15 分钟' },
   { value: '24h', label: '近 24 小时' },
   { value: '168h', label: '近 7 天' },
   { value: '720h', label: '近 30 天' },
-]
+] as const
 const sections = [
   { key: 'overview', label: '覆盖总览' },
   { key: 'networks', label: '网段与 VLAN' },
@@ -91,6 +93,8 @@ function CoverageNetworks({ data, window }: { data: Metadata; window: string }) 
 export function DiscoveryCoveragePage() {
   const [params, setParams] = useSearchParams()
   const [censusOpened, setCensusOpened] = useState(false)
+  const { data: session } = useSession()
+  const assetSite = session?.site_profile === 'passive_assets'
   const requested = params.get('window') || '24h'
   const window = windows.some(item => item.value === requested) ? requested : '24h'
   const section = sections.find(item => item.key === params.get('section'))?.key ?? 'overview'
@@ -133,9 +137,17 @@ export function DiscoveryCoveragePage() {
 
   return <main className="page device-center-page discovery-coverage-page">
     <header className="discovery-report-page-header">
-      <Typography.Title level={3}>设备发现覆盖报表</Typography.Title>
+      <div className="discovery-report-title-group">
+        <Typography.Title level={3}>{assetSite ? '资产发现总览' : '设备发现覆盖报表'}</Typography.Title>
+      </div>
       {section !== 'history' && section !== 'review' && <div className="discovery-report-page-actions">
-        <Select aria-label="统计时间范围" value={window} options={windows} onChange={value => changeParam('window', value)} />
+        <Segmented
+          className="discovery-report-window-switch"
+          aria-label="统计时间范围"
+          value={window}
+          options={windows.map(({ value, label }) => ({ value, label }))}
+          onChange={value => changeParam('window', String(value))}
+        />
         <Button icon={<ReloadOutlined aria-hidden="true"/>} onClick={refresh} loading={isFetching}>刷新</Button>
       </div>}
     </header>
@@ -143,8 +155,16 @@ export function DiscoveryCoveragePage() {
       ...item,
       children: item.key === 'overview' ? <>
         {section === 'overview' && feedback('覆盖总览')}
-        {coverage.data && <DiscoveryCoverageReport report={coverage.data} composition={distribution.data}
-          compositionFeedback={distribution.isError ? feedback('类型构成', distribution) : undefined} />}
+        {coverage.data && (
+          <DiscoveryCoverageReport
+            report={coverage.data}
+            composition={distribution.data}
+            compositionFeedback={distribution.isError ? feedback('类型构成', distribution) : undefined}
+            windowKey={window}
+            onOpenNetworks={() => changeParam('section', 'networks')}
+          />
+        )}
+        {section === 'overview' && <DiscoverySupplementaryPanels window={window} />}
       </> : item.key === 'networks' ? <>
         {section === 'networks' && feedback('网段和 VLAN')}
         {distribution.data && <CoverageNetworks data={distribution.data} window={window} />}

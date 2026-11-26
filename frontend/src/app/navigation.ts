@@ -74,13 +74,14 @@ export function routePermission(path: string, search: string, session?: Session)
   if(path === '/actions') return tab==='actions'?'actions:read':tab==='reports'?'behavior-reports:read':'policies:read'
   return routeOwner(path,search)?.entry.permission
 }
-const assetSiteGroups: [string, string[]][] = [
-  ['assets', ['discovered-devices','discovery-coverage','devices']],
-  ['data-report', ['data-report']],
-  ['strategy', ['rules']],
-  ['system', ['sources','organization','users','audit']],
+// 204 资产发现站将统一报表置顶作为登录后默认首页，不再并行暴露两套割裂报表入口。
+const assetSiteGroups: { key: string; title?: string; sourceGroup: string; items: { key: string; title?: string }[] }[] = [
+  { key: 'asset-report', title: '资产总览报表', sourceGroup: 'assets', items: [{ key: 'discovery-coverage', title: '资产总览报表' }] },
+  { key: 'assets', sourceGroup: 'assets', items: [{ key: 'discovered-devices' }, { key: 'devices' }] },
+  { key: 'strategy', sourceGroup: 'strategy', items: [{ key: 'rules' }] },
+  { key: 'system', sourceGroup: 'system', items: [{ key: 'sources' }, { key: 'organization' }, { key: 'users' }, { key: 'audit' }] },
 ]
-const assetSiteKeys = new Set(assetSiteGroups.flatMap(([,keys])=>keys))
+const assetSiteKeys = new Set(assetSiteGroups.flatMap(group => group.items.map(entry => entry.key)))
 export function assetSiteAllows(path: string, search: string) {
   if (path === '/' || path === '/accounts' || path.startsWith('/accounts/')) return true
   const owner = routeOwner(path,search)
@@ -88,9 +89,17 @@ export function assetSiteAllows(path: string, search: string) {
 }
 
 export function visibleNavigation(session: Session) {
- const groups = session.site_profile === 'passive_assets' ? assetSiteGroups.map(([groupKey, keys]) => {
-   const group = navigation.find(g => g.key === groupKey)!
-   return {...group, items:keys.map(key => group.items.find(i => i.key === key)!)}
+ const groups = session.site_profile === 'passive_assets' ? assetSiteGroups.map(spec => {
+   const source = navigation.find(g => g.key === spec.sourceGroup)!
+   return {
+     ...source,
+     key: spec.key,
+     title: spec.title ?? source.title,
+     items: spec.items.map(itemSpec => {
+       const entry = source.items.find(i => i.key === itemSpec.key)!
+       return itemSpec.title ? { ...entry, title: itemSpec.title } : entry
+     }),
+   }
  }) : navigation
  return groups.map(group => ({...group,items:group.items.flatMap(entry => {
   if(entry.hidden)return []
