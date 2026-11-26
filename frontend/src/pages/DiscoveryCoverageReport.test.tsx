@@ -22,26 +22,26 @@ it('partitions device-observed IPv4 and joins the mirror census only through the
   const summary = buildCoverageSummary(field)
   expect(summary).toMatchObject({device:3438, confirmed:347, inferred:1408, pending:1683, mirror:6053, total:7575, mirrorOnly:4137, deviceOutsideMirror:1522})
   expect(summary.reasons.map(reason => [reason.key, reason.value])).toEqual([
-    ['inferred',1408], ['network',1262], ['protocol',275], ['dhcp',144], ['conflict',2],
+    ['network',728], ['unlinked',661], ['protocol',148], ['dhcp',144], ['conflict',2],
   ])
-  expect(summary.reasons.reduce((sum, reason) => sum + reason.value, 0)).toBe(3438 - 347)
+  expect(summary.reasons.reduce((sum, reason) => sum + reason.value, 0)).toBe(3438 - 347 - 1408)
 })
 
 it('leads with one funnel whose layers are subsets of the previous one', () => {
   render(<DiscoveryCoverageReport report={field} />)
   const lead = screen.getByText(/共发现/, {selector:'p'})
-  expect(lead).toHaveTextContent('近 24 小时共发现 7,575 个 IPv4 地址，其中 3,438 个有设备层报文。已确认类型 347 个，占 10.1%；另有 1,408 个推测出类型，待证据确认。')
+  expect(lead).toHaveTextContent('近 24 小时共发现 7,575 个 IPv4 地址，其中 3,438 个有设备层报文。其中 1,755 个已有类型判断，占设备层地址的 51.0%（硬件规则确认 347 个，画像识别 1,408 个）。')
   const funnel = screen.getByRole('region', {name:'发现与识别'})
   const steps = within(funnel).getAllByRole('listitem').filter(item => item.classList.contains('coverage-funnel-step'))
-  expect(steps.map(step => step.querySelector('.coverage-funnel-label strong')?.textContent)).toEqual(['共发现 IPv4 地址','有设备层报文','识别出类型'])
+  expect(steps.map(step => step.querySelector('.coverage-funnel-label strong')?.textContent)).toEqual(['共发现 IPv4 地址','有设备层报文','已有类型判断'])
   expect(steps[0]).toHaveTextContent('7,575')
   expect(steps[1]).toHaveTextContent('3,438占 45.4%')
   expect(steps[2]).toHaveTextContent('1,755占设备层 51.0%')
-  expect(steps[2]).toHaveTextContent('已确认 34710.1%')
-  expect(steps[2]).toHaveTextContent('推测 1,40841.0%画像线索，非确定结论')
+  expect(steps[2]).toHaveTextContent('硬件规则确认 34710.1%')
+  expect(steps[2]).toHaveTextContent('画像识别 1,40841.0%')
   expect(funnel).toHaveTextContent('4,137 个只在流量中出现，没有设备层报文，无法判断类型')
-  expect(funnel).toHaveTextContent('1,683 个有设备层报文，类型待确认')
-  expect(within(funnel).getByRole('img', {name:'识别出类型 1,755 个，其中已确认 347 个，推测 1,408 个'})).toBeVisible()
+  expect(funnel).toHaveTextContent('1,683 个有设备层报文，尚无类型判断')
+  expect(within(funnel).getByRole('img', {name:'已有类型判断 1,755 个，其中硬件规则确认 347 个，画像识别 1,408 个'})).toBeVisible()
   expect(screen.getByRole('list', {name:'统计口径'})).toHaveTextContent('有 1,522 个有设备层报文的地址未出现在本窗口的镜像统计中')
   expect(screen.getByRole('list', {name:'统计口径'})).toHaveTextContent('另有 IPv6 地址 3,022 个，未计入以上数字')
   expect(document.body).not.toHaveTextContent('未识别')
@@ -57,14 +57,14 @@ it.each([
 
 it('explains every unconfirmed address with mutually exclusive reasons', () => {
   render(<DiscoveryCoverageReport report={field} />)
-  const reasons = screen.getByRole('region', {name:'还没确认类型的原因'})
-  expect(reasons).toHaveTextContent('3,091 个有设备层报文的地址尚未确认类型')
+  const reasons = screen.getByRole('region', {name:'尚无类型判断的原因'})
+  expect(reasons).toHaveTextContent('1,683 个有设备层报文的地址尚无类型判断')
   const rows = within(reasons).getAllByRole('listitem')
   expect(rows.map(row => row.querySelector('.coverage-reason-head')?.textContent)).toEqual([
-    '已推测出类型，待证据确认1,40845.6%',
-    '只有 ARP 等地址层报文1,26240.8%',
-    '有设备协议报文，证据不足2758.9%',
-    '有 DHCP 报文，特征不足1444.7%',
+    '只有 ARP 等地址层报文72843.3%',
+    'IP 地址的设备归属待核实66139.3%',
+    '有设备协议报文，证据不足1488.8%',
+    '有 DHCP 报文，特征不足1448.6%',
     '证据冲突或确认被撤回20.1%',
   ])
 })
@@ -84,12 +84,11 @@ it('falls back to device counts when the overlap or profile evidence is unavaila
   const funnel = screen.getByRole('region', {name:'发现与识别'})
   expect(funnel).not.toHaveTextContent('共发现 IPv4 地址')
   expect(funnel).toHaveTextContent('镜像流量另见 5,835 个站点网段地址，与上面的地址部分重叠，合并总数暂不可用。')
-  expect(funnel).toHaveTextContent('已确认类型推测线索暂不可用')
+  expect(funnel).toHaveTextContent('硬件规则确认画像识别统计暂不可用')
   expect(screen.getByText(/有设备层报文的 IPv4 地址/, {selector:'p'})).toHaveTextContent('15,390')
-  const reasons = screen.getByRole('region', {name:'还没确认类型的原因'})
-  expect(within(reasons).getAllByRole('listitem').map(row => row.querySelector('.coverage-reason-head span')?.textContent)).toEqual([
-    '设备归属待核实','只有 ARP 等地址层报文','有设备协议报文，证据不足','有 DHCP 报文，特征不足','其他证据',
-  ])
+  const reasons = screen.getByRole('region', {name:'尚无类型判断的原因'})
+  expect(reasons).toHaveTextContent('本次报表缺少画像识别明细')
+  expect(within(reasons).queryAllByRole('listitem')).toHaveLength(0)
 })
 
 it('ignores an overlap that cannot belong to both address sets', () => {
@@ -99,6 +98,7 @@ it('ignores an overlap that cannot belong to both address sets', () => {
 
 it('groups confirmed and inferred types by business category in device records', () => {
   render(<DiscoveryCoverageReport report={field} composition={{
+    ip_product_types:[{device_type:'switch', count:6}],
     types:[{device_type:'access_point', count:240}, {device_type:'camera', count:34}, {device_type:'printer', count:33},
       {device_type:'laptop', count:11}, {device_type:'router', count:10}, {device_type:'access_control', count:5},
       {device_type:'recorder', count:4}, {device_type:'media_player', count:3}, {device_type:'switch', count:3},
@@ -108,13 +108,14 @@ it('groups confirmed and inferred types by business category in device records',
     dumb_terminals:81,
   }} />)
   const types = screen.getByRole('region', {name:'识别出了什么'})
-  const confirmed = within(types).getByRole('region', {name:'已确认类型'})
-  expect(confirmed.querySelector('h5')).toHaveTextContent('已确认类型346 个设备记录')
+  const confirmed = within(types).getByRole('region', {name:'硬件规则确认'})
+  expect(confirmed.querySelector('h5')).toHaveTextContent('硬件规则确认346 个设备记录')
   const groups = [...confirmed.querySelectorAll('.coverage-type-group-head')].map(head => head.textContent)
   expect(groups).toEqual(['网络设备253','哑终端81','电脑与移动终端12'])
   expect(confirmed).toHaveTextContent('无线接入点 240')
   expect(types).toHaveTextContent('其中哑终端 81 个')
-  const inferred = within(types).getByRole('region', {name:'推测类型（待确认）'})
+  expect(within(types).getByRole('region',{name:'IP 自报的产品类型'})).toHaveTextContent('设备归属仍待核实')
+  const inferred = within(types).getByRole('region', {name:'画像识别'})
   expect([...inferred.querySelectorAll('.coverage-type-group-head')].map(head => head.textContent)).toEqual(['电脑与移动终端1,532','网络设备116'])
 })
 
@@ -129,10 +130,10 @@ it('keeps technical breakdowns available but folded below the summary', () => {
   render(<DiscoveryCoverageReport report={{...field, ipv4_binding_freshness:{current:1370, expired:943, uncertain:465, no_binding:660}, planned_ipv4:{status:'partial', version:'version-1', as_of:report.as_of, available_from:report.as_of,
     visible_ipv4:2, ranges:[{range:'192.0.2.0/24', device_type:'摄像头', visible_ipv4:2}]}}} />)
   const details = screen.getByText('查看技术明细')
-  expect(screen.getByText('待确认地址的类型状态与证据')).not.toBeVisible()
+  expect(screen.getByText('硬件规则未确认的地址明细')).not.toBeVisible()
   fireEvent.click(details)
-  const table = screen.getByRole('table', {name:'待确认 IPv4 的画像及协议证据'})
-  expect(within(within(table).getByRole('row', {name:/已有画像类型线索/})).getAllByRole('cell').map(cell => cell.textContent)).toEqual(['35','1,316','57','0','1,408'])
+  const table = screen.getByRole('table', {name:'硬件规则未确认 IPv4 的画像及协议证据'})
+  expect(within(within(table).getByRole('row', {name:/画像已识别类型/})).getAllByRole('cell').map(cell => cell.textContent)).toEqual(['35','1,316','57','0','1,408'])
   expect(screen.getByRole('region', {name:'IPv4 绑定时效'})).toBeVisible()
   expect(screen.getByRole('region', {name:'规划设备网段的可见 IPv4'})).toHaveTextContent('192.0.2.0/24 · 摄像头')
 })
@@ -153,9 +154,9 @@ it('keeps an empty window distinct from missing statistics', () => {
   const empty = {...report, ipv4:0, typed_ipv4:0, identity_no_type_ipv4:0, no_identity_ipv4:0,
     untyped_network_only_ipv4:0, untyped_dhcp_only_ipv4:0, untyped_application_ipv4:0, untyped_other_ipv4:0}
   const view = render(<DiscoveryCoverageReport report={empty} />)
-  expect(screen.getByRole('region', {name:'还没确认类型的原因'})).toHaveTextContent('选定范围内暂无有设备层报文的地址。')
+  expect(screen.getByRole('region', {name:'尚无类型判断的原因'})).toHaveTextContent('选定范围内暂无有设备层报文的地址。')
   view.rerender(<DiscoveryCoverageReport report={{...empty, ipv4:5, typed_ipv4:5}} />)
-  expect(screen.getByRole('region', {name:'还没确认类型的原因'})).toHaveTextContent('有设备层报文的地址均已确认类型。')
+  expect(screen.getByRole('region', {name:'尚无类型判断的原因'})).toHaveTextContent('有设备层报文的地址均已有类型判断。')
   view.rerender(<DiscoveryCoverageReport report={{...report, typed_ipv4:undefined}} />)
   expect(screen.getByRole('region', {name:'发现与识别'})).not.toHaveTextContent('已确认类型')
 })

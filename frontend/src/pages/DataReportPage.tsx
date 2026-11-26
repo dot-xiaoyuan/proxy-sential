@@ -22,7 +22,7 @@ const windowKeys = windows.map(window => window.value)
 const number = new Intl.NumberFormat('zh-CN')
 const percent = new Intl.NumberFormat('zh-CN', { style: 'percent', maximumFractionDigits: 1 })
 const eventLabels: Record<string, string> = {
-  dns: 'DNS', tls: 'TLS', http: 'HTTP', flow: '流记录', connection: '连接', arp: 'ARP', ndp: 'NDP',
+  dns: 'DNS', tls: 'TLS', http: 'HTTP', flow: '流记录', connection: '连接', device: '设备观测', arp: 'ARP', ndp: 'NDP',
   dhcp: 'DHCP', mdns: 'mDNS', ssdp: 'SSDP', snmp: 'SNMP', lldp: 'LLDP',
 }
 
@@ -128,7 +128,10 @@ export function DataReportPage() {
   const discoveryUrl = `/devices?tab=discovery&discovery_window=${period.discovery}`
   const coverageUrl = `/devices/coverage?window=${period.discovery}`
   const hardware = discovered?.classification_version === 'passive-hardware/v2'
-  const confirmedLabel = hardware ? '已确认硬件类型' : '已识别类型'
+  const confirmedLabel = hardware ? '硬件规则确认' : '已识别类型'
+  const profileCount = discovered?.profile_typed ?? discovered?.candidate_types?.reduce((sum, row) => sum + row.count, 0)
+  const judgedCount = discovered && profileCount !== undefined ? discovered.identified + profileCount : undefined
+  const hasEvidenceCounts = discovered?.no_type_clue !== undefined
   const queries = [
     ...(readIdentity ? [discovery, inventory] : []),
     ...(readTraffic ? [activity] : []),
@@ -166,20 +169,38 @@ export function DataReportPage() {
             <h3>识别构成</h3>
             <Counts values={[
               { label: confirmedLabel, value: discovered.identified, to: `${discoveryUrl}&discovery_state=identified` },
-              { label: '待核实', value: discovered.candidate, to: `${discoveryUrl}&discovery_state=candidate` },
+              { label: '画像识别', value: hardware ? profileCount : undefined, to: hasEvidenceCounts ? `${discoveryUrl}&discovery_state=profile_typed` : undefined },
+              { label: '仅 IP 自报，设备归属待核实', value: discovered.ip_product_only, to: `${discoveryUrl}&discovery_state=ip_product_only` },
+              { label: '暂无类型线索', value: discovered.no_type_clue, to: `${discoveryUrl}&discovery_state=no_type_clue` },
+              { label: profileCount === undefined ? '候选记录' : '其他候选记录',
+                value: hasEvidenceCounts ? undefined : discovered.candidate - (profileCount ?? 0),
+                to: profileCount === undefined ? `${discoveryUrl}&discovery_state=candidate` : undefined },
               { label: '类型冲突', value: discovered.conflict, to: `${discoveryUrl}&discovery_state=conflict` },
-              { label: hardware ? '硬件结论已撤销' : '证据过期', value: discovered.expired, to: `${discoveryUrl}&discovery_state=expired` },
+              { label: '硬件结论已撤回', value: discovered.revoked, to: `${discoveryUrl}&discovery_state=revoked` },
+              { label: discovered.revoked === undefined ? '证据过期或已撤回' : '其他过期记录', value: discovered.expired - (discovered.revoked ?? 0),
+                to: discovered.revoked ? undefined : `${discoveryUrl}&discovery_state=expired` },
             ]} />
             {discovered.total > 0 && <p className="data-report-explainer">
-              {confirmedLabel}占{discovered.count_unit === 'cross_vlan_discovery_identity' ? '发现身份' : '发现记录'} <strong>{percent.format(discovered.identified / discovered.total)}</strong>
+              {judgedCount === undefined ? confirmedLabel : '已有类型判断'} <strong>{number.format(judgedCount ?? discovered.identified)}</strong> 个，占{discovered.count_unit === 'cross_vlan_discovery_identity' ? '发现身份' : '发现记录'}的 <strong>{percent.format((judgedCount ?? discovered.identified) / discovered.total)}</strong>
             </p>}
           </div>
-          <RankList title={`${confirmedLabel}排行`} scale={discovered.identified}
+          <RankList title={`${confirmedLabel}的类型`} scale={discovered.identified}
             empty="当前范围暂无可列出的类型。"
             rows={(discovered.types ?? []).map(row => ({
               key: row.device_type, label: deviceTypeLabel(row.device_type), count: row.count,
               to: `${discoveryUrl}&discovery_state=identified&discovery_type=${encodeURIComponent(row.device_type)}`,
             }))} />
+          {hardware && profileCount !== undefined && profileCount > 0 && <RankList title="画像识别的类型" scale={profileCount} empty=""
+            rows={(discovered.candidate_types ?? []).map(row => ({
+              key: row.device_type, label: deviceTypeLabel(row.device_type), count: row.count,
+              to: hasEvidenceCounts ? `${discoveryUrl}&discovery_state=profile_typed&discovery_type=${encodeURIComponent(row.device_type)}` : undefined,
+            }))} />}
+          {!!discovered.ip_product_types?.length && <div>
+            <RankList title="IP 自报的产品类型" empty="" rows={discovered.ip_product_types.map(row => ({
+              key: row.device_type, label: deviceTypeLabel(row.device_type), count: row.count,
+            }))} />
+            <p className="data-report-explainer">产品或型号来自 IP 的协议报文，设备归属待核实。各类型独立计数。</p>
+          </div>}
         </div>}
       </Panel>
       <Panel id="inventory" title="终端台账" hint="统计窗口内有观测的台账终端"

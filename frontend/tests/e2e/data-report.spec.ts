@@ -60,7 +60,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await expect(report.locator('.data-report-metrics dd strong')).toHaveCount(3)
     await expect(report.locator('.data-report-metrics dd strong').first()).not.toHaveText(initialEvents ?? '')
     await expect(discovered.getByRole('link', { name: '覆盖报表' })).toHaveAttribute('href', '/devices/coverage?window=168h')
-    await expect(discovered.getByRole('link', { name: '待核实' })).toHaveAttribute(
+    await expect(discovered.getByRole('link', { name: '候选记录' })).toHaveAttribute(
       'href', '/devices?tab=discovery&discovery_window=168h&discovery_state=candidate',
     )
     expect(requests.some(url => url.pathname.endsWith('/discovery/devices/metadata') &&
@@ -204,4 +204,28 @@ test('a DPI-only viewer receives the traffic panel', async ({ page }) => {
   await expect(page.getByRole('region', { name: '终端台账' })).toHaveCount(0)
   await expect(page.getByRole('region', { name: '发现设备' })).toHaveCount(0)
   expect(identityRequests).toEqual([])
+})
+
+test('global report counts profile types and keeps IP-only product evidence separate', async ({page}, info) => {
+  await page.goto('/reports/data')
+  const discovered = page.getByRole('region', {name:'发现设备'})
+  await expect(discovered.getByRole('heading', {name:'识别构成'})).toBeVisible()
+  await page.evaluate(async () => {
+    const module = '/src/mocks/hardwareReplay.ts'
+    const {installHardwareReplay} = await import(module)
+    installHardwareReplay()
+  })
+  await page.getByRole('button',{name:'刷新'}).click()
+  await expect(discovered).toContainText('已有类型判断 4 个')
+  await expect(discovered).toContainText('80%')
+  await expect(discovered.getByRole('link',{name:'画像识别',exact:true})).toHaveAttribute('href',/discovery_state=profile_typed$/)
+  await expect(discovered.getByRole('link',{name:'仅 IP 自报，设备归属待核实'})).toHaveAttribute('href',/discovery_state=ip_product_only$/)
+  await expect(discovered.getByRole('link',{name:'暂无类型线索'})).toHaveAttribute('href',/discovery_state=no_type_clue$/)
+  await expect(discovered.getByRole('link',{name:'手机',exact:true})).toHaveAttribute('href',/discovery_state=profile_typed&discovery_type=mobile$/)
+  await expect(discovered.getByRole('heading',{name:'IP 自报的产品类型'})).toBeVisible()
+  for (const [width,height] of [[390,844],[1280,800],[1440,900]]) {
+    await page.setViewportSize({width,height})
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width+2)
+    await discovered.screenshot({path:info.outputPath(`profile-report-${width}.png`),animations:'disabled'})
+  }
 })

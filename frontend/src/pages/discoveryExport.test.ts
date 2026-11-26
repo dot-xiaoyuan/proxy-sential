@@ -84,3 +84,14 @@ it('records the exact scope, timestamp and total in nonempty and empty downloads
   expect(discoveryCSV([],{}, {...manifest,total:0})).toContain('导出摘要,mode=passive&type=camera,2026-11-24T10:00:00Z,0')
   expect(() => discoveryCSV([],{},manifest)).toThrow('清单不完整')
 })
+
+it('includes the attributed profile type and its basis in separate CSV fields', () => {
+  const csv = discoveryCSV([{
+    id:'profile', hardware_type_status:'candidate', classification_status:'candidate',
+    type_evidence_state:'profile_typed', candidate_device_type:'mobile',
+  }], {mobile:'手机'})
+  const [headers, row] = csv.trim().split('\r\n').map(line => line.split(','))
+  expect(row[headers.indexOf('设备类型')]).toBe('')
+  expect(row[headers.indexOf('类型判断依据')]).toBe('画像识别')
+  expect(row[headers.indexOf('画像类型')]).toBe('手机')
+})

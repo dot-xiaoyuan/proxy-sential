@@ -102,11 +102,11 @@ it('keeps totals visible and expands the stat cards and interactive type chart o
   const routerRow = within(overview).getByRole('button', { name: '路由器 30' })
   expect(routerRow.querySelector('.discovery-type-fill')).toHaveClass('is-10')
   expect(within(overview).getByRole('button', { name: '无线接入点 12' }).querySelector('.discovery-type-fill')).toHaveClass('is-4')
-  const candidate = within(overview).getByRole('button', { name: /待核实/ })
+  const candidate = within(overview).getByRole('button', { name: /发现线索/ })
   expect(candidate).toHaveAttribute('aria-pressed', 'false')
   fireEvent.click(candidate)
-  await waitFor(() => expect(within(overview).getByRole('button', { name: /待核实/ })).toHaveAttribute('aria-pressed', 'true'))
-  expect(within(overview).getByRole('button', { name: /待核实/ })).toHaveClass('is-active')
+  await waitFor(() => expect(within(overview).getByRole('button', { name: /发现线索/ })).toHaveAttribute('aria-pressed', 'true'))
+  expect(within(overview).getByRole('button', { name: /发现线索/ })).toHaveClass('is-active')
 })
 
 it('uses the same review reason for the list and count', async () => {
@@ -157,7 +157,7 @@ it('shows complete discovery and confirmed type counts using the same metadata s
   fireEvent.click(within(overview).getByRole('button', { name: '统计与类型线索' }))
   expect(overview).toHaveTextContent('共 84 个设备')
   expect(overview).toHaveTextContent('已识别类型（合计 42）')
-  expect(overview).toHaveTextContent('待核实 35')
+  expect(overview).toHaveTextContent('发现线索 35')
   expect(overview).toHaveTextContent('类型冲突 4')
   expect(overview).toHaveTextContent('证据过期 3')
   expect(overview).toHaveTextContent('数据延迟 2 分钟')
@@ -359,7 +359,7 @@ it('keeps V8 profile type clues visible without counting them as hardware confir
   request.mockImplementation((path: string) => {
     if (path.startsWith('/discovery/devices/metadata?')) return Promise.resolve({
       total: 1, identified: 0, candidate: 1, conflict: 0, expired: 0,
-      classification_version: 'passive-hardware/v2', types: [], candidate_types: [{ device_type: 'mobile', count: 1 }],
+      classification_version: 'passive-hardware/v2', profile_typed:1, ip_product_only:0, no_type_clue:0, revoked:0, types: [], candidate_types: [{ device_type: 'mobile', count: 1 }],
     })
     if (path.startsWith('/discovery/devices?')) return Promise.resolve({
       items: [{ ...device, hardware_type_status: 'candidate', candidate_device_type: 'mobile' }],
@@ -369,28 +369,31 @@ it('keeps V8 profile type clues visible without counting them as hardware confir
   })
   renderPanel()
   const overview = await screen.findByLabelText('发现设备总览')
-  expect(await screen.findByText('疑似手机')).toBeVisible()
+  const row = (await screen.findByRole('button', {name:'查看详情'})).closest('tr')!
+  expect(within(row).getByText('手机', {exact:true})).toBeVisible()
+  expect(within(row).getByText('画像识别', {exact:true})).toBeVisible()
+  expect(overview).toHaveTextContent('已有类型判断 1 · 缺少类型线索 0')
   expect(overview).toHaveTextContent('共 1 条发现记录')
-  expect(overview).toHaveTextContent('已确认硬件类型（合计 0）')
+  expect(overview).toHaveTextContent('硬件规则确认（合计 0）')
   fireEvent.click(within(overview).getByRole('button', { name: '统计与类型线索' }))
-  fireEvent.click(within(screen.getByLabelText('画像类型线索')).getByRole('button', { name: /手机/ }))
+  fireEvent.click(within(screen.getByLabelText('画像识别类型')).getByRole('button', { name: /手机/ }))
   await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).startsWith('/discovery/devices?') &&
-    String(path).includes('type=mobile') && String(path).includes('state=candidate'))).toBe(true))
+    String(path).includes('type=mobile') && String(path).includes('state=profile_typed'))).toBe(true))
 })
 
 it('filters response IP products without adding hardware confirmations', async () => {
   mockReads()
   const read=request.getMockImplementation()!
   request.mockImplementation((path:string)=>path.startsWith('/discovery/devices/metadata?')?Promise.resolve({
-    total:1,identified:0,candidate:1,conflict:0,expired:0,classification_version:'passive-hardware/v2',types:[],ip_product_types:[{device_type:'switch',count:1}],
+    total:1,identified:0,candidate:1,conflict:0,expired:0,classification_version:'passive-hardware/v2',profile_typed:0, ip_product_only:1, no_type_clue:0, revoked:0, types:[],ip_product_types:[{device_type:'switch',count:1}],
   }):read(path))
   renderPanel()
   const products=await screen.findByLabelText('IP 产品类型线索')
   const overview = screen.getByLabelText('发现设备总览')
-  expect(overview).toHaveTextContent('已确认硬件类型（合计 0）')
+  expect(overview).toHaveTextContent('硬件规则确认（合计 0）')
   fireEvent.click(within(overview).getByRole('button', { name: '统计与类型线索' }))
   fireEvent.click(within(products).getByRole('button',{name:/交换机/}))
-  await waitFor(()=>expect(request.mock.calls.some(([path])=>String(path).startsWith('/discovery/devices?')&&String(path).includes('type=switch')&&String(path).includes('state=candidate'))).toBe(true))
+  await waitFor(()=>expect(request.mock.calls.some(([path])=>String(path).startsWith('/discovery/devices?')&&String(path).includes('type=switch')&&String(path).includes('state=ip_product_only'))).toBe(true))
 })
 
 it('labels address-only observations and keeps the same IP in different VLANs independently traceable', async () => {
@@ -439,7 +442,7 @@ it('shows the observed model separately from the address identity', async () => 
   expect(within(row).getByText('10.161.255.2')).toBeVisible()
   expect(within(row).getByText('S5310-24SFP4XS-E')).toHaveAttribute('title', '自报型号 S5310-24SFP4XS-E，归属待核实')
   expect(within(row).getByText('产品线索 · 归属待核实')).toBeVisible()
-  expect(row.querySelector('[data-label="设备类型"]')?.textContent).toBe('交换机 · 线索')
+  expect(row.querySelector('[data-label="设备类型"]')?.textContent).toBe('交换机')
   expect(row).not.toHaveTextContent(manufacturer)
   fireEvent.click(within(row).getByRole('button', {name:'查看详情'}))
   expect(await screen.findByLabelText('IP 产品证据')).toHaveTextContent(manufacturer)
@@ -529,7 +532,7 @@ it('filters the list from the triage counts', async () => {
   mockReads()
   renderPanel()
   fireEvent.click(screen.getByRole('button', { name: '统计与类型线索' }))
-  fireEvent.click(screen.getByRole('button', { name: /待核实/ }))
+  fireEvent.click(screen.getByRole('button', { name: /发现线索/ }))
   await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).startsWith('/discovery/devices?') && String(path).includes('state=candidate'))).toBe(true))
 })
 
@@ -860,15 +863,17 @@ it('distinguishes personal computer profile clues from confirmed hardware in the
     candidate_device_type:'desktop', recognition:{evidence:['Client UA: Mac 浏览器']}})
   const base = request.getMockImplementation()!
   request.mockImplementation((path: string) => path.startsWith('/discovery/devices/metadata?')
-    ? Promise.resolve({ classification_version:'passive-hardware/v2', total:1318, identified:1, candidate:1317,
+    ? Promise.resolve({ classification_version:'passive-hardware/v2', total:1318, identified:1, candidate:1317, profile_typed:1317, ip_product_only:0, no_type_clue:0, revoked:0,
       types:[{device_type:'desktop',count:1}], candidate_types:[{device_type:'desktop',count:1317}] })
     : base(path))
   renderPanel(['/?discovery_type=desktop'])
-  expect(await screen.findByText('疑似个人电脑')).toBeVisible()
-  expect(await screen.findByText(/待核实 1317（含画像推测 1,317）/)).toBeInTheDocument()
+  const row = (await screen.findByRole('button', {name:'查看详情'})).closest('tr')!
+  expect(within(row).getByText('个人电脑', {exact:true})).toBeVisible()
+  expect(await screen.findByText('已有类型判断 1,318 · 缺少类型线索 0')).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', {name:'查看详情'}))
   const dialog = within(await screen.findByRole('dialog'))
-  expect(dialog.getByText('硬件类型待确认')).toBeInTheDocument()
+  expect(dialog.getByText('画像识别')).toBeInTheDocument()
+  expect(dialog.queryByText(/待确认/)).not.toBeInTheDocument()
   expect(dialog.getByText(/台式机和笔记本/)).toBeInTheDocument()
   expect(dialog.getByText('同 MAC 画像中的浏览器线索 · Mac 浏览器')).toBeInTheDocument()
   expect(dialog.queryByText('类型结论')).toBeNull()
@@ -876,5 +881,5 @@ it('distinguishes personal computer profile clues from confirmed hardware in the
   fireEvent.mouseDown(screen.getByRole('combobox', {name:'设备类型'}))
   const option = await screen.findByRole('option', {name:/个人电脑/})
   expect(option).toHaveTextContent('已确认 1')
-  expect(option).toHaveTextContent('画像推测 1,317')
+  expect(option).toHaveTextContent('画像识别 1,317')
 })

@@ -44,7 +44,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
         const typeCounts = (types: Record<string, number>) =>
           Object.entries(types).map(([device_type, count]) => ({ device_type, count }))
         return Response.json({
-          ...sample, ...(addressView?{total:2,identified:0,candidate:2,conflict:0,expired:0}:{total:6872,identified:341,candidate:6494,conflict:0,expired:37}),
+          ...sample, ...(addressView?{total:2,identified:0,candidate:2,conflict:0,expired:0,profile_typed:0,ip_product_only:1,no_type_clue:1,revoked:0}:{total:6872,identified:341,candidate:6494,conflict:0,expired:37,profile_typed:2244,ip_product_only:77,no_type_clue:4173,revoked:37}),
           classification_version: 'passive-hardware/v2',
           types: typeCounts({access_point:238, camera:33, printer:31, router:11, laptop:10, access_control:5, media_player:5, recorder:4, desktop:2, voip_phone:2}),
           candidate_types: typeCounts({mobile:1290, desktop:579, tablet:192, router:108, access_point:29, virtual:27, printer:10, switch:4, server:2, firewall:1, iot_device:1, smart_tv:1}),
@@ -74,7 +74,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await expect(detail).not.toBeVisible()
     const productRow = page.getByRole('row').filter({ has: page.getByText('S5310-24SFP4XS-E', { exact: true }) })
     await expect(productRow.getByText('产品线索 · 归属待核实')).toBeVisible()
-    await expect(productRow.locator('td[data-label="设备类型"]')).toHaveText('交换机 · 线索')
+    await expect(productRow.locator('td[data-label="设备类型"]')).toHaveText('交换机')
     await expect(productRow).not.toContainText('Ruijie Networks')
     const printer = page.getByRole('row').filter({has:page.getByText('HP LaserJet Pro MFP',{exact:true})})
     const vendor = printer.locator('td[data-label="厂商 / 系统"]')
@@ -112,7 +112,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
       const box = panel.getBoundingClientRect()
       return {
         left: box.left, right: box.right, width: box.width, viewport: innerWidth,
-        clipped: [...panel.querySelectorAll<HTMLElement>('.discovery-type-option > span')].some(label => label.scrollWidth > label.clientWidth+1),
+        clipped: [...panel.querySelectorAll<HTMLElement>('.discovery-type-option > span:first-child, .discovery-type-option-counts > span')].some(label => label.scrollWidth > label.clientWidth+1),
         wraps: [...panel.querySelectorAll('.discovery-type-option > span')].some(label => getComputedStyle(label).whiteSpace !== 'nowrap'),
       }
     })
@@ -155,16 +155,19 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await page.getByRole('menuitem',{name:'全部发现',exact:true}).click()
     await overview.getByRole('button', { name: '统计与类型线索' }).click()
     await expect(overview.getByRole('button', { name: '收起统计' })).toHaveAttribute('aria-expanded', 'true')
-    await expect(overview.locator('.discovery-stat-card')).toHaveCount(7)
+    await expect(overview.locator('.discovery-stat-card')).toHaveCount(9)
     await expect(overview.locator('.discovery-type-row').first()).toBeVisible()
     await expect(overview.getByLabel('IP 产品类型线索')).toBeVisible()
+    await expect(overview.getByRole('button', { name: /缺少类型线索 4173/ })).toBeVisible()
+    await expect(overview).toContainText('已有类型判断 2,585')
+    await expect(overview).not.toContainText('待核实 6494')
     const probe = await page.evaluate(() => {
       const panel = document.querySelector('.discovery-overview') as HTMLElement
       const cards = [...panel.querySelectorAll<HTMLElement>('.discovery-stat-card')]
       const rows = [...panel.querySelectorAll<HTMLElement>('.discovery-type-row')]
       const style = getComputedStyle(panel)
       const chart = panel.querySelector('.discovery-type-chart')!.getBoundingClientRect()
-      const profiles = panel.querySelector('[aria-label="画像类型线索"]')!.getBoundingClientRect()
+      const profiles = panel.querySelector('[aria-label="画像识别类型"]')!.getBoundingClientRect()
       const products = panel.querySelector('[aria-label="IP 产品类型线索"]')!.getBoundingClientRect()
       return {
         documentOverflow: document.documentElement.scrollWidth > innerWidth + 2,

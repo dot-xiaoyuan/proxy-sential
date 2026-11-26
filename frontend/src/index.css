@@ -6275,6 +6275,7 @@ pre.wrap-code {
 .discovery-type-option { display: grid; gap: 2px; padding-block: 2px; white-space: normal; }
 .discovery-type-option-counts { display: flex; flex-wrap: wrap; gap: 2px 12px; color: #475569; font-size: 12px; font-variant-numeric: tabular-nums; }
 .discovery-type-option-counts:empty { display: none; }
+.discovery-type-option > span:first-child,
 .discovery-type-option-counts > span { white-space: nowrap; flex-shrink: 0; }
 .discovery-query-controls .discovery-filter-active { border-color: #93c5fd; background: #eff6ff; color: #1e3a8a; }
 .discovery-applied-filters { gap: 4px 6px; }

@@ -5,7 +5,7 @@ import { deviceTypeLabel } from '../entities/device/DeviceInventoryCells'
 import { buildCoverageSummary, type CoverageSummary, type Tone } from './discoveryCoverageSummary'
 
 export type CoverageReport = components['schemas']['DiscoveryCoverageReport']
-export type CoverageComposition = { count_unit?: string; types?: { device_type: string; count: number }[]; candidate_types?: { device_type: string; count: number }[]; dumb_terminals?: number }
+export type CoverageComposition = { count_unit?: string; types?: TypeRow[]; candidate_types?: TypeRow[]; ip_product_types?: TypeRow[]; dumb_terminals?: number }
 type MirrorFunnel = NonNullable<CoverageReport['mirror_funnel']>
 type BindingFreshness = components['schemas']['DiscoveryBindingFreshness']
 type PendingRow = NonNullable<CoverageReport['ipv4_pending']>[number]
@@ -64,8 +64,8 @@ function BindingFreshnessRows({ freshness }: { freshness: BindingFreshness }) {
 }
 
 const pendingLabels: Record<PendingRow['status'], string> = {
-  with_profile: '已有画像类型线索',
-  without_profile: '暂无画像类型线索',
+  with_profile: '画像已识别类型',
+  without_profile: '尚无类型判断',
   withdrawn_confirmation: '曾确认后撤回',
   conflict: '类型证据冲突',
   unlinked: '地址归属待核实',
@@ -73,7 +73,7 @@ const pendingLabels: Record<PendingRow['status'], string> = {
 
 function CoveragePendingTable({ rows }: { rows: PendingRow[] }) {
   const statuses = Object.keys(pendingLabels) as PendingRow['status'][]
-  return <table className="coverage-pending-table" aria-label="待确认 IPv4 的画像及协议证据">
+  return <table className="coverage-pending-table" aria-label="硬件规则未确认 IPv4 的画像及协议证据">
     <thead><tr>
       <th scope="col">类型状态</th><th scope="col">仅网络层</th><th scope="col">有 DHCP</th>
       <th scope="col">有设备协议</th><th scope="col">其他</th><th scope="col">合计</th>
@@ -94,7 +94,7 @@ function CoveragePendingTable({ rows }: { rows: PendingRow[] }) {
 export function CoverageProtocolReplay() {
   return <details className="coverage-panel coverage-protocol-replay">
     <summary>设备协议回放明细 · 11 月 23 日 18:54</summary>
-    <p className="coverage-footnote">2026/11/23 18:54 的固定 24 小时快照。从 1,062 条回放观测中追查 197 个已关联且有设备协议的待确认 IPv4。</p>
+    <p className="coverage-footnote">2026/11/23 18:54 的固定 24 小时快照。从 1,062 条回放观测中追查 197 个已有归属和设备协议报文、当时未获硬件规则确认的 IPv4 地址。</p>
     <CoverageRows total={197} unit="个 IP" rows={[
       { label: '协议响应缺可信 MAC', value: 129, color: 'slate' },
       { label: '已归属，缺规则可用字段', value: 24 },
@@ -174,11 +174,11 @@ function FunnelBar({ segments, label }: { segments: { value: number; tone: Tone 
 }
 
 function CoverageFunnel({ summary }: { summary: CoverageSummary }) {
-  const { total, device, confirmed, inferred, pending, mirror, mirrorOnly } = summary
+  const { total, device, confirmed, inferred, judged, pending, mirror, mirrorOnly } = summary
   if (device === undefined) return null
   const base = total ?? device
   const width = (value: number) => base > 0 ? 100 * value / base : 0
-  const identified = confirmed !== undefined ? confirmed + (inferred ?? 0) : undefined
+  const identified = judged ?? confirmed
   return <section className="coverage-panel coverage-funnel" aria-labelledby="coverage-funnel-heading">
     <header className="coverage-panel-heading"><div>
       <h4 id="coverage-funnel-heading">发现与识别</h4>
@@ -199,21 +199,21 @@ function CoverageFunnel({ summary }: { summary: CoverageSummary }) {
         <div className="coverage-funnel-value"><strong>{count(device)}</strong>{total !== undefined && total > 0 && <small>占 {percent(device, total)}</small>}</div>
       </li>
       {pending !== undefined && pending > 0 && <li className="coverage-funnel-drop">
-        {count(pending)} 个有设备层报文，类型待确认，原因见下方
+        {count(pending)} 个有设备层报文，尚无类型判断，原因见下方
       </li>}
       {identified !== undefined && confirmed !== undefined && <li className="coverage-funnel-step">
         <div className="coverage-funnel-label">
-          <strong>{inferred !== undefined ? '识别出类型' : '已确认类型'}</strong>
-          <span>{inferred !== undefined ? '已确认与推测分开计数' : '推测线索暂不可用'}</span>
+          <strong>{inferred !== undefined ? '已有类型判断' : '硬件规则确认'}</strong>
+          <span>{inferred !== undefined ? '按判断依据分组' : '画像识别统计暂不可用'}</span>
         </div>
         <FunnelBar label={inferred !== undefined
-          ? `识别出类型 ${count(identified)} 个，其中已确认 ${count(confirmed)} 个，推测 ${count(inferred)} 个`
-          : `已确认类型 ${count(confirmed)} 个`}
+          ? `已有类型判断 ${count(identified)} 个，其中硬件规则确认 ${count(confirmed)} 个，画像识别 ${count(inferred)} 个`
+          : `硬件规则确认 ${count(confirmed)} 个`}
           segments={[{ value: width(confirmed), tone: 'teal' }, { value: width(inferred ?? 0), tone: 'blue' }]} />
         <div className="coverage-funnel-value"><strong>{count(identified)}</strong>{device > 0 && <small>占设备层 {percent(identified, device)}</small>}</div>
         <ul className="coverage-funnel-legend">
-          <li><span className="coverage-chart-key coverage-chart-teal" aria-hidden="true" />已确认 <strong>{count(confirmed)}</strong>{device > 0 && <small>{percent(confirmed, device)}</small>}</li>
-          {inferred !== undefined && <li><span className="coverage-chart-key coverage-chart-blue" aria-hidden="true" />推测 <strong>{count(inferred)}</strong>{device > 0 && <small>{percent(inferred, device)}</small>}<em>画像线索，非确定结论</em></li>}
+          <li><span className="coverage-chart-key coverage-chart-teal" aria-hidden="true" />硬件规则确认 <strong>{count(confirmed)}</strong>{device > 0 && <small>{percent(confirmed, device)}</small>}</li>
+          {inferred !== undefined && <li><span className="coverage-chart-key coverage-chart-blue" aria-hidden="true" />画像识别 <strong>{count(inferred)}</strong>{device > 0 && <small>{percent(inferred, device)}</small>}</li>}
         </ul>
       </li>}
     </ol>
@@ -242,12 +242,13 @@ function groupTypes(rows?: TypeRow[]) {
   return { groups, total: groups.reduce((sum, group) => sum + group.total, 0) }
 }
 
-function TypeGroups({ label, rows, tone }: { label: string; rows?: TypeRow[]; tone: Tone }) {
+function TypeGroups({ label, basis, rows, tone }: { label: string; basis: string; rows?: TypeRow[]; tone: Tone }) {
   const { groups, total } = groupTypes(rows)
   if (total === 0) return null
   const max = Math.max(...groups.map(group => group.total))
   return <section className="coverage-type-block" aria-label={label}>
     <h5>{label}<span>{count(total)} 个设备记录</span></h5>
+    <p className="coverage-footnote">{basis}</p>
     <ul className="coverage-type-groups">
       {groups.map(group => <li key={group.key}>
         <div className="coverage-type-group-head"><span>{group.label}</span><strong>{count(group.total)}</strong></div>
@@ -271,31 +272,36 @@ function CoverageComposition({ composition, feedback }: { composition?: Coverage
     {!composition ? (!feedback && <p className="coverage-empty">正在读取类型构成…</p>)
       : !hasConfirmed && !hasInferred ? <p className="coverage-empty">选定范围内暂无类型结论。</p>
         : <>
-          <TypeGroups label="已确认类型" rows={composition.types} tone="teal" />
+          <TypeGroups label="硬件规则确认" basis="按设备协议、产品或型号等证据匹配硬件规则。" rows={composition.types} tone="teal" />
           {composition.dumb_terminals !== undefined && composition.dumb_terminals > 0 &&
             <p className="coverage-footnote">其中哑终端 <strong>{count(composition.dumb_terminals)}</strong> 个，包括打印机、摄像机、门禁、话机等。</p>}
-          <TypeGroups label="推测类型（待确认）" rows={composition.candidate_types} tone="blue" />
+          <TypeGroups label="画像识别" basis="按 DHCP 指纹等终端画像特征判断设备类型。" rows={composition.candidate_types} tone="blue" />
         </>}
+    {!!composition?.ip_product_types?.length && <section className="coverage-type-block" aria-label="IP 自报的产品类型">
+      <h5>IP 自报的产品类型</h5>
+      <p className="coverage-footnote">产品或型号来自该 IP 的协议报文，设备归属仍待核实。同一地址可能自报多种类型，各类型分别计数。</p>
+      <ul className="coverage-type-groups">{composition.ip_product_types.map(row =>
+        <li className="coverage-type-group-head" key={row.device_type}><span>{deviceTypeLabel(row.device_type)}</span><strong>{count(row.count)}</strong></li>)}</ul>
+    </section>}
   </section>
 }
 
 function CoverageReasons({ summary }: { summary: CoverageSummary }) {
-  const { device, confirmed, reasons } = summary
-  const unconfirmed = device !== undefined && confirmed !== undefined ? device - confirmed : undefined
+  const { device, pending, reasons } = summary
   const max = Math.max(1, ...reasons.map(reason => reason.value))
   return <section className="coverage-panel" aria-labelledby="coverage-reasons-heading">
     <header className="coverage-panel-heading"><div>
-      <h4 id="coverage-reasons-heading">还没确认类型的原因</h4>
-      <p>{unconfirmed !== undefined ? `${count(unconfirmed)} 个有设备层报文的地址尚未确认类型，按主要证据分组，互不重叠` : '按主要证据分组，互不重叠'}</p>
+      <h4 id="coverage-reasons-heading">尚无类型判断的原因</h4>
+      {pending !== undefined && pending > 0 && <p>{count(pending)} 个有设备层报文的地址尚无类型判断，按主要原因分组。</p>}
     </div></header>
     {reasons.length === 0 ? <p className="coverage-empty">{device === 0 ? '选定范围内暂无有设备层报文的地址。'
-      : unconfirmed === 0 ? '有设备层报文的地址均已确认类型。' : '本次统计暂无原因分组。'}</p>
+      : pending === 0 ? '有设备层报文的地址均已有类型判断。' : pending === undefined ? '本次报表缺少画像识别明细，无法统计尚无类型判断的地址。' : '本次统计暂无原因分组。'}</p>
       : <ul className="coverage-reasons">
         {reasons.map(reason => <li key={reason.key}>
           <div className="coverage-reason-head">
             <span>{reason.label}</span>
             <strong>{count(reason.value)}</strong>
-            {unconfirmed !== undefined && unconfirmed > 0 && <small>{percent(reason.value, unconfirmed)}</small>}
+           {pending !== undefined && pending > 0 && <small>{percent(reason.value, pending)}</small>}
           </div>
           <FunnelBar label={`${reason.label} ${count(reason.value)} 个地址`} segments={[{ value: 100 * reason.value / max, tone: reason.tone }]} />
           <p>{reason.detail}</p>
@@ -308,7 +314,7 @@ export function DiscoveryCoverageReport({ report, composition, compositionFeedba
   report: CoverageReport; composition?: CoverageComposition; compositionFeedback?: ReactNode
 }) {
   const summary = buildCoverageSummary(report)
-  const { device, confirmed, inferred, total, deviceOutsideMirror } = summary
+  const { device, confirmed, inferred, judged, total, deviceOutsideMirror } = summary
   const review = report.ipv4_type_review
   const lagMinutes = report.identity_as_of ? Math.round((Date.parse(report.as_of) - Date.parse(report.identity_as_of)) / 60_000) : 0
   const funnel = report.mirror_funnel
@@ -329,9 +335,9 @@ export function DiscoveryCoverageReport({ report, composition, compositionFeedba
     {device !== undefined && <p className="coverage-lead">
       {windowLabel}{total !== undefined ? <>共发现 <strong>{count(total)}</strong> 个 IPv4 地址，其中 <strong>{count(device)}</strong> 个有设备层报文。</>
         : <>有设备层报文的 IPv4 地址 <strong>{count(device)}</strong> 个。</>}
-      {confirmed !== undefined && device > 0 && <>已确认类型 <strong>{count(confirmed)}</strong> 个，占 {percent(confirmed, device)}</>}
-      {inferred !== undefined && inferred > 0 && <>；另有 <strong>{count(inferred)}</strong> 个推测出类型，待证据确认</>}
-      {confirmed !== undefined && device > 0 && '。'}
+      {confirmed !== undefined && device > 0 && (judged !== undefined && inferred !== undefined
+        ? <>其中 <strong>{count(judged)}</strong> 个已有类型判断，占设备层地址的 {percent(judged, device)}（硬件规则确认 {count(confirmed)} 个，画像识别 {count(inferred)} 个）。</>
+        : <>硬件规则已确认 <strong>{count(confirmed)}</strong> 个地址的类型；本次报表缺少画像识别明细。</>)}
     </p>}
     <CoverageFunnel summary={summary} />
     <div className="coverage-panels">
@@ -343,13 +349,13 @@ export function DiscoveryCoverageReport({ report, composition, compositionFeedba
       <li>地址数不等于设备台数：同一设备可能使用多个地址，同一地址也可能被不同设备先后使用。</li>
       {deviceOutsideMirror !== undefined && deviceOutsideMirror > 0 && <li>有 {count(deviceOutsideMirror)} 个有设备层报文的地址未出现在本窗口的镜像统计中，已计入共发现总数。</li>}
       {report.ipv6 > 0 && <li>另有 IPv6 地址 {count(report.ipv6)} 个，未计入以上数字。</li>}
-      {review && review.confirmed_inactive > 0 && <li>已确认类型中有 {count(review.confirmed_inactive)} 个地址的设备活动线索已到期，仍按已确认计入。</li>}
+      {review && review.confirmed_inactive > 0 && <li>硬件规则已确认的类型中有 {count(review.confirmed_inactive)} 个地址的设备活动线索已到期，仍按已确认计入。</li>}
     </ul>
     <details className="coverage-panel coverage-technical">
       <summary>查看技术明细</summary>
       <div className="coverage-technical-body">
         {report.ipv4_pending && <section aria-labelledby="coverage-matrix-heading">
-          <h5 id="coverage-matrix-heading" className="coverage-binding-family">待确认地址的类型状态与证据</h5>
+          <h5 id="coverage-matrix-heading" className="coverage-binding-family">硬件规则未确认的地址明细</h5>
           <CoveragePendingTable rows={report.ipv4_pending} />
           <p className="coverage-footnote">有 DHCP 一栏只统计窗口内暂无设备协议的地址。</p>
         </section>}
@@ -393,13 +399,13 @@ export function DiscoveryMirrorCoverage({ funnel }: { funnel?: MirrorFunnel }) {
           <div><h4 id="coverage-binding-heading">有效 IP–MAC 配对</h4><p>窗口内出现且查询时仍有效</p></div>
         </header>
         <CoverageDonut label="有效配对的身份与类型构成" total={funnel.ip_mac_pairs} unit="种有效配对" rows={[
-          { label: '关联到设备且类型已确认', value: funnel.typed_pairs, color: 'teal' },
-          { label: '关联到设备，类型待确认', value: funnel.identified_pairs - funnel.typed_pairs },
+          { label: '关联到设备且硬件规则已确认类型', value: funnel.typed_pairs, color: 'teal' },
+          { label: '已关联，暂无硬件规则确认', value: funnel.identified_pairs - funnel.typed_pairs },
           { label: '身份待关联', value: funnel.ip_mac_pairs - funnel.identified_pairs, color: 'slate' },
         ]} />
         <dl className="coverage-pair-identities">
           <div><dt>配对关联的发现身份</dt><dd>{count(funnel.trusted_identities)} 个</dd></div>
-          {funnel.typed_identities !== undefined && <div><dt>其中类型已确认</dt><dd>{count(funnel.typed_identities)} 个</dd></div>}
+          {funnel.typed_identities !== undefined && <div><dt>其中经硬件规则确认</dt><dd>{count(funnel.typed_identities)} 个</dd></div>}
         </dl>
         <p className="coverage-footnote">同一发现身份可对应多种配对。关联按采集范围和镜像时间对齐。</p>
       </section>

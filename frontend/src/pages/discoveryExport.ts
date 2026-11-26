@@ -1,5 +1,5 @@
 import { getApiBase } from '../shared/api/client'
-import { activityStates, confirmedDeviceType, hardwareStates, type HardwareView } from './discoveryHardware'
+import { activityStates, confirmedDeviceType, deviceTypeEvidenceState, hardwareStates, typeEvidenceLabels, type HardwareView } from './discoveryHardware'
 import type { components } from '../shared/api/generated'
 
 type ExportableDevice = HardwareView & {
@@ -118,8 +118,10 @@ function deviceType(item: ExportableDevice, types: Record<string, string>): stri
 }
 
 export function discoveryCSV(items: ExportableDevice[], types: Record<string, string>, manifest?: {scope:string; snapshotAt:string; total:number}): string {
-  const rows: string[][] = [['标识', '名称', 'MAC', '当前地址', '设备类型', '历史型号类型', '型号自报时间', '品牌', '型号', '操作系统', '网络域', 'VLAN', '采集传感器', '证据状态', '识别置信度', '识别规则', '窗口内首次观测', '最近观测', '证据数', '待核实原因', '核实线索时间', '硬件类型状态', '类型依据时间', '活动状态', '硬件规则版本', '硬件来源引用', '人工核实类型', '人工核实型号', '实物或台账依据', '镜像覆盖核对', '核实时间', '核实人', 'IP 产品线索', '产品证据时间', '响应作用域', '产品原文引用', '产品匹配状态', '最后观测 IP', 'IP 观测时间']]
+  const rows: string[][] = [['标识', '名称', 'MAC', '当前地址', '设备类型', '历史型号类型', '型号自报时间', '品牌', '型号', '操作系统', '网络域', 'VLAN', '采集传感器', '证据状态', '识别置信度', '识别规则', '窗口内首次观测', '最近观测', '证据数', '待核实原因', '核实线索时间', '硬件类型状态', '类型依据时间', '活动状态', '硬件规则版本', '硬件来源引用', '人工核实类型', '人工核实型号', '实物或台账依据', '镜像覆盖核对', '核实时间', '核实人', 'IP 产品线索', '产品证据时间', '响应作用域', '产品原文引用', '产品匹配状态', '最后观测 IP', 'IP 观测时间', '类型判断依据', '画像类型']]
   for (const item of items) {
+    const evidenceState = deviceTypeEvidenceState(item)
+    const profileType = evidenceState === 'profile_typed' ? item.candidate_device_type : ''
     rows.push([
       item.id ?? '',
       item.name ?? '',
@@ -155,6 +157,8 @@ export function discoveryCSV(items: ExportableDevice[], types: Record<string, st
       (item.product_clues ?? []).map(clue => clue.product_status).join(';'),
       item.last_observed_ip ?? '',
       item.last_observed_ip_at ?? '',
+      typeEvidenceLabels[evidenceState] ?? '',
+      profileType ? types[profileType] ?? profileType : '',
     ])
   }
   if (manifest) {

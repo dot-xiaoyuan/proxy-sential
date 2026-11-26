@@ -21,7 +21,7 @@ import { Button,
 } from 'antd'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { DownloadOutlined, DownOutlined, FilterOutlined, LoadingOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons'
-import { request } from '../shared/api/client'
+import { ApiError, request } from '../shared/api/client'
 import type { components } from '../shared/api/generated'
 import type { InventoryDetail } from '../shared/api/types'
 import { DiscoveryDeviceIcon } from '../entities/device/DiscoveryDeviceIcon'
@@ -39,7 +39,7 @@ import { deviceTypeLabel } from '../entities/device/DeviceInventoryCells'
 import { observedTimeLabel, observedTimeTitle } from '../shared/ui/observedTime'
 import { flowBelongsToDevice, serviceBelongsToDevice, signalAddressMatchesDevice } from './discoveryServiceAttribution'
 import { discoveryClassificationExplanation, discoveryNameClue } from './discoveryClassificationClues'
-import { activityStates, confirmedDeviceType, hardwareStates, type HardwareView } from './discoveryHardware'
+import { activityStates, confirmedDeviceType, deviceTypeEvidenceState, hardwareStates, typeEvidenceLabels, type HardwareView } from './discoveryHardware'
 
 type DeviceRecognition = { os_family?: string; os_family_confidence?: number; device_type?: string; brand?: string; model?: string; confidence?: number; rule_version?: string; source?: string; evidence?: string[]; brand_inference_status?: string; brand_inference_brand?: string; brand_inference_confidence?: number }
 type Device = components['schemas']['DiscoveryDevice'] & HardwareView & { recognition?: DeviceRecognition }
@@ -81,8 +81,11 @@ function discoveryAddressClue(item: Device) {
 }
 
 function hardwareStatusLabel(item: Device): string {
-  if (item.hardware_type_status === 'candidate' && item.product_clues?.length) return item.product_clues.some(clue => clue.type) ? '产品类型有依据，设备归属待核实' : '已有产品字段，类型待匹配'
-  return hardwareStates[item.hardware_type_status ?? ''] ?? ''
+  const evidence = deviceTypeEvidenceState(item)
+  if (hasVirtualizationClue(item)) return '画像线索'
+  if (evidence === 'ip_product_only') return item.product_clues?.some(clue => clue.product_status === 'conflict')
+    ? 'IP 自报产品有冲突' : 'IP 自报 · 归属待核实'
+  return typeEvidenceLabels[evidence] ?? ''
 }
 
 function ipProductTypeLabel(item: Device, types: Record<string, string>) {
@@ -140,7 +143,7 @@ function typeLabel(item:Device, types:Record<string,string>) {
 function profileCandidateLabel(item:Device, types:Record<string,string>) {
   const type=item.candidate_device_type
   if (hasVirtualizationClue(item)) return '虚拟化线索'
-  return item.hardware_type_status==='candidate'&&type?`疑似${types[type]??deviceTypeLabel(type)}`:''
+  return item.hardware_type_status==='candidate'&&type?(types[type]??deviceTypeLabel(type)):''
 }
 
 function hasVirtualizationClue(item: Device) {
@@ -209,7 +212,6 @@ function secondaryTypeClue(item:Device, types:Record<string,string>, signal?:Pas
 const discoveryFilterKeys = ['category','type','protocol','state','domain','vlan','window','capability','random_mac','os','review_reason','last_seen_from','last_seen_to','first_seen_within','subnet','identity_scope'] as const
 const discoveryPresets = [
   {id:'active-dumb', name:'近 15 分钟活跃哑终端', params:'discovery_window=15m&discovery_capability=dumb'},
-  {id:'review-recent', name:'待核实设备 · 近 24 小时', params:'discovery_state=candidate'},
   {id:'new-confirmed', name:'高置信度新设备 · 近 7 天', params:'discovery_window=168h&discovery_state=identified&discovery_first_seen_within=168h'},
   {id:'conflicts', name:'类型冲突待核实', params:'discovery_state=conflict'},
 ]
@@ -231,19 +233,20 @@ function DiscoveryDetailHeader({item, types, profileModel, openProfile}: {item: 
   const profile = profileCandidateLabel(item, types)
   const product = ipProductTypeLabel(item, types)
   const status = item.hardware_type_status || item.classification_status
-  const pending = status === 'candidate'
-  const statusLabel = confirmed ? '硬件类型已确认' : ({
-    candidate: '硬件类型待确认', conflict: '类型证据冲突', revoked: '确认已撤销', expired: '历史证据已过期',
-  } as Record<string,string>)[status ?? '']
+  const hasProfileType = deviceTypeEvidenceState(item) === 'profile_typed'
+  const evidence = deviceTypeEvidenceState(item)
+  const statusLabel = item.hardware_type_status
+    ? hardwareStatusLabel(item)
+    : ({conflict: '类型证据冲突', expired: '历史证据已过期'} as Record<string,string>)[status ?? '']
   const type = confirmed ? types[confirmed] ?? deviceTypeLabel(confirmed)
-    : profile || (product ? `IP 自报产品 · ${product}` : !item.hardware_type_status && status !== 'conflict' ? typeLabel(item, types) : '')
+    : profile || product || (!item.hardware_type_status && status !== 'conflict' ? typeLabel(item, types) : '')
   let explanation = discoveryClassificationExplanation(item)
   if (profile) {
     explanation = item.candidate_device_type === 'desktop'
-      ? '画像中的电脑特征可见于台式机和笔记本。硬件类型仍待产品证据确认。'
-      : '终端画像提示了这个类型，仍需能归属到该设备的产品证据来确认。'
-  } else if (product) {
-    explanation = '这个地址有产品自报信息，仍需核实它对应的设备身份。'
+      ? '电脑画像可见于台式机和笔记本。'
+      : hasVirtualizationClue(item) ? virtualizationHelp : ''
+  } else if (evidence === 'ip_product_only' && !item.product_clues?.some(clue => clue.product_status === 'conflict')) {
+    explanation = ''
   }
   return <>
     <header className="discovery-detail-identity">
@@ -262,7 +265,7 @@ function DiscoveryDetailHeader({item, types, profileModel, openProfile}: {item: 
       </div>
       {explanation && <p>{explanation}</p>}
       {profile && profileModel && <p>关联终端画像中的型号 · {profileModel}</p>}
-      {pending && item.candidate_device_type === 'desktop' && item.recognition?.evidence?.filter(note => note.startsWith('Client UA: ')).map(note =>
+      {hasProfileType && item.candidate_device_type === 'desktop' && item.recognition?.evidence?.filter(note => note.startsWith('Client UA: ')).map(note =>
         <p key={note}>同 MAC 画像中的浏览器线索 · {note.slice('Client UA: '.length)}</p>)}
     </section>
   </>
@@ -405,12 +408,22 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
     enabled:query.has('type'),staleTime:60_000,
   })
   const hardwareV2=discoveryMetadata.data?.classification_version==='passive-hardware/v2'
-  const confirmedTypesLabel=hardwareV2?'已确认硬件类型':'已识别类型'
+  const confirmedTypesLabel=hardwareV2?typeEvidenceLabels.identified:'已识别类型'
   const groupedDevices = discoveryMetadata.data?.count_unit === 'cross_vlan_discovery_identity'
   const countUnit = groupedDevices ? '个发现身份' : scopedView ? '条范围记录' : addressView ? '条地址线索' : hardwareV2 ? '条发现记录' : '个设备'
   const discoveryTotal = discoveryMetadata.data?.total
-  const viewStates=hardwareV2?{...states,identified:'已知硬件类型',expired:'硬件结论已撤销'}:states
-  const metadataValue=(value?:number)=>value??(discoveryMetadata.isError?'统计读取失败':'统计中')
+  const metadata = discoveryMetadata.data
+  const hasTypeBreakdown = hardwareV2 && metadata?.profile_typed !== undefined && metadata.ip_product_only !== undefined && metadata.no_type_clue !== undefined
+  const candidateCards = [
+    {state:'profile_typed', label:typeEvidenceLabels.profile_typed, count:metadata?.profile_typed},
+    {state:'ip_product_only', label:typeEvidenceLabels.ip_product_only, count:metadata?.ip_product_only},
+    {state:'no_type_clue', label:typeEvidenceLabels.no_type_clue, count:metadata?.no_type_clue},
+  ]
+  const viewStates = hardwareV2 ? { ...typeEvidenceLabels, candidate:'全部发现线索', expired:typeEvidenceLabels.revoked } : states
+  const waitingForMetadata = discoveryMetadata.error instanceof ApiError && discoveryMetadata.error.status === 503 &&
+    discoveryMetadata.error.message.includes('discovery_report_preparing')
+  const metadataFailure = discoveryMetadata.isError && !waitingForMetadata
+  const metadataValue=(value?:number)=>value??(metadataFailure?'统计读取失败':'统计中')
   // keepPreviousData 会保留上一次结果，只看 isPending 会让搜索看起来没有反应。
   // 输入尚未落到 URL、列表或统计仍在请求时都算“更新中”，给用户持续反馈。
   const pendingSearch = draft.trim() !== search
@@ -480,7 +493,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
     const label = typeLabel(item, types)
     const productHint = label ? '' : ipProductTypeLabel(item, types)
     if (productHint) {
-      return <Typography.Text type="secondary" title="IP 自报产品类型，设备归属待核实">{productHint} · 线索</Typography.Text>
+      return <Typography.Text type="secondary" title="IP 自报产品类型，设备归属待核实">{productHint}</Typography.Text>
     }
     if (!label) return null
     const title = hasVirtualizationClue(item)
@@ -595,8 +608,6 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const profileFacets = facetCounts(typeFacet?.candidate_types)
   const productFacets = facetCounts(typeFacet?.ip_product_types)
   const selectedTypes = (params.get('discovery_type')??'').split(',').filter(Boolean)
-  const selectedProfileCount = hardwareV2 && selectedTypes.length === 1
-    ? discoveryMetadata.data?.candidate_types?.find(row => row.device_type === selectedTypes[0])?.count : undefined
   const scopeLabel = params.get('discovery_last_seen_from')
     ? `${observedTimeTitle(params.get('discovery_last_seen_from')!)} 至 ${observedTimeTitle(params.get('discovery_last_seen_to')??'')}`
     : ({'15m':'近 15 分钟','168h':'近 7 天','720h':'近 30 天',all:'近 30 天'} as Record<string,string>)[params.get('discovery_window')??'']??'近 24 小时'
@@ -609,7 +620,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   const stateOptions = [
     {value:'',label:'全部证据状态'},
     {value:'identified,candidate,conflict',label:'当前有效（不含过期）'},
-    ...Object.entries(viewStates).map(([value,label])=>({value,label})),
+    ...Object.entries(viewStates).filter(([value])=>!hardwareV2||!['candidate','expired'].includes(value)||params.get('discovery_state')===value).map(([value,label])=>({value,label})),
   ]
   const filterLabels: Record<string,string> = {
     category:'分类', type:'类型', protocol:'协议', state:'证据', domain:'网络域', vlan:'VLAN',
@@ -722,7 +733,9 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
           const clueCount=sumOf(clues,group.types)
           return <Button key={group.key} type="text" className={`discovery-stat-card${active?' is-active':''}`} aria-pressed={active} onClick={()=>shortcut(active?'':group.types.join(','),'dumb')}><span className="discovery-stat-label">{group.label}</span>{' '}<strong>{sumOf(confirmed,group.types)}</strong>{clueCount>0&&<span className="discovery-stat-rate">另有线索 {clueCount}</span>}</Button>
         })}
-        <Button type="text" className={`discovery-stat-card${params.get('discovery_state')==='candidate'?' is-active':''}`} aria-pressed={params.get('discovery_state')==='candidate'} onClick={()=>toggleState('candidate')}><span className="discovery-stat-label">待核实</span>{' '}<strong>{metadataValue(discoveryMetadata.data?.candidate)}</strong></Button>
+        {hasTypeBreakdown
+          ? candidateCards.map(card=>statCard(card.state,card.label,card.count))
+          : statCard('candidate','发现线索',metadata?.candidate)}
       </div>
       {scopedBrands.length>0&&<div className="discovery-dumb-brands"><Typography.Text type="secondary">当前筛选已确认品牌</Typography.Text>
         {scopedBrands.map(row=><Button key={`${row.brand}:${row.device_type}`} size="small" onClick={()=>change('search',row.brand)}>
@@ -737,14 +750,19 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
     <div className="workspace-topbar">
     <header className="terminal-workspace-header"><div><span className="terminal-eyebrow">设备中心 / 204 独立管理</span><Typography.Title level={3}>发现设备</Typography.Title><Typography.Text type="secondary">发现镜像中的设备，核对类型与识别依据。</Typography.Text></div><div className="terminal-header-actions"><Button icon={<ReloadOutlined aria-hidden="true"/>} onClick={refreshWorkspace}>刷新数据</Button></div></header>
     </div>
-    {discoveryMetadata.isError&&<AppErrorAlert title="读取发现数量失败" message={discoveryMetadata.error.message} action={<Button onClick={()=>void discoveryMetadata.refetch()}>重试统计</Button>}/>}
+    {waitingForMetadata && <div role="status">正在生成统计报表。</div>}
+    {metadataFailure&&<AppErrorAlert title="读取发现数量失败" message={discoveryMetadata.error?.message} action={<Button onClick={()=>void discoveryMetadata.refetch()}>重试统计</Button>}/>}
     {position.isError&&<AppErrorAlert title="页码定位失败" message={position.error.message} action={<Button onClick={()=>void position.refetch()}>重试定位</Button>}/>}
     {devices.isError&&<AppErrorAlert title="读取发现设备失败" message={devices.data?'当前展示上次成功读取的结果；请重试。':devices.error.message} action={<Button onClick={()=>void devices.refetch()}>重试列表</Button>}/>}
     {(!devices.isError||devices.data)&&<section aria-busy={searching} className={searching?'surface center-list-surface is-updating':'surface center-list-surface'}>
       <section className="discovery-overview" aria-label="发现设备总览">
         <div className="discovery-overview-line">
-          <strong>{discoveryTotal===undefined?(discoveryMetadata.isError?'统计读取失败':'统计中'):`共 ${discoveryTotal} ${countUnit}`}</strong>
-          {!addressView&&discoveryMetadata.data&&<Typography.Text type="secondary">已确认 {discoveryMetadata.data.identified} · 待核实 {discoveryMetadata.data.candidate}{selectedProfileCount !== undefined && selectedProfileCount > 0 && `（含画像推测 ${selectedProfileCount.toLocaleString('zh-CN')}）`}</Typography.Text>}
+          <strong>{discoveryTotal===undefined?(metadataFailure?'统计读取失败':'统计中'):`共 ${discoveryTotal} ${countUnit}`}</strong>
+          {!addressView&&metadata&&<Typography.Text type="secondary">
+            {hasTypeBreakdown
+              ? `已有类型判断 ${(metadata.identified + (metadata.profile_typed ?? 0)).toLocaleString('zh-CN')} · 缺少类型线索 ${metadata.no_type_clue?.toLocaleString('zh-CN')}`
+              : `已确认 ${metadata.identified} · 发现线索 ${metadata.candidate}`}
+          </Typography.Text>}
           <Typography.Text className="discovery-overview-caption" type="secondary" title={groupedDevices?'同一采集域中，地址一致且无类型冲突的全局 MAC 跨 VLAN 汇总':hardwareV2?'按采集范围和发现分组计数':undefined}>
             {scopeLabel}{discoveryMetadata.data?.as_of?` · 统计于 ${observedTimeTitle(discoveryMetadata.data.as_of)}`:''}{discoveryMetadata.data?.publication && ` · 报表发布于 ${observedTimeTitle(discoveryMetadata.data.publication.published_at)}`}{discoveryMetadata.data?.publication?.delayed?' · 发布延迟':''}{discoveryMetadata.isFetching?' · 统计更新中':''}
           </Typography.Text>
@@ -766,25 +784,25 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
               </Button>
             </>}
             {statCard('identified',confirmedTypesLabel,discoveryMetadata.data?.identified)}
-            {statCard('candidate','待核实',discoveryMetadata.data?.candidate)}
+            {hasTypeBreakdown ? candidateCards.map(card=>statCard(card.state,card.label,card.count)) : statCard('candidate','发现线索',metadata?.candidate)}
             {statCard('conflict','类型冲突',discoveryMetadata.data?.conflict)}
-            {statCard('expired',hardwareV2?'硬件结论已撤销':'证据过期',discoveryMetadata.data?.expired)}
+            {statCard(hardwareV2?'revoked':'expired',hardwareV2?typeEvidenceLabels.revoked:'证据过期',hardwareV2?(metadata?.revoked??metadata?.expired):metadata?.expired)}
           </div>
           <div className="discovery-type-chart">
             <Typography.Text type="secondary" className="discovery-type-chart-head">{confirmedTypesLabel}{discoveryMetadata.data?`（合计 ${confirmedTypes.reduce((sum,item)=>sum+item.count,0)}）`:''}</Typography.Text>
             {confirmedTypes.length?[...confirmedTypes].sort((a,b)=>b.count-a.count||a.device_type.localeCompare(b.device_type)).map(item=><Button key={item.device_type} type="text" size="small" className="discovery-type-row" onClick={()=>shortcut(item.device_type,dumbFilter?'dumb':'','identified')}><span className="discovery-type-row-body">{types[item.device_type]??deviceTypeLabel(item.device_type)} <span className="discovery-type-track" aria-hidden="true">
-              <span className={`discovery-type-fill is-${barBucket(item.count,typeMax)}`}/></span><strong className="discovery-type-count">{item.count}</strong></span></Button>):<Typography.Text type="secondary">{discoveryMetadata.data?`当前筛选下暂无${confirmedTypesLabel}`:discoveryMetadata.isError?'统计读取失败':'统计中'}</Typography.Text>}
+              <span className={`discovery-type-fill is-${barBucket(item.count,typeMax)}`}/></span><strong className="discovery-type-count">{item.count}</strong></span></Button>):<Typography.Text type="secondary">{discoveryMetadata.data?`当前筛选下暂无${confirmedTypesLabel}`:metadataFailure?'统计读取失败':'统计中'}</Typography.Text>}
           </div>
-          {!!discoveryMetadata.data?.candidate_types?.length&&<div className="discovery-overview-types discovery-overview-candidates" aria-label="画像类型线索">
-            <Typography.Text type="secondary">画像推测（硬件类型待确认）</Typography.Text>
+          {!!discoveryMetadata.data?.candidate_types?.length&&<div className="discovery-overview-types discovery-overview-candidates" aria-label="画像识别类型">
+            <Typography.Text type="secondary">画像识别</Typography.Text>
             {[...discoveryMetadata.data.candidate_types].sort((a,b)=>b.count-a.count||a.device_type.localeCompare(b.device_type)).map(item=>
-              <Button key={item.device_type} type="text" size="small" className="discovery-overview-type" onClick={()=>shortcut(item.device_type,dumbFilter?'dumb':'','candidate')}>{types[item.device_type]??deviceTypeLabel(item.device_type)} <strong>{item.count}</strong></Button>
+              <Button key={item.device_type} type="text" size="small" className="discovery-overview-type" onClick={()=>shortcut(item.device_type,dumbFilter?'dumb':'',hasTypeBreakdown?'profile_typed':'candidate')}>{types[item.device_type]??deviceTypeLabel(item.device_type)} <strong>{item.count}</strong></Button>
             )}
           </div>}
           {!!discoveryMetadata.data?.ip_product_types?.length&&<div className="discovery-overview-types discovery-overview-candidates" aria-label="IP 产品类型线索">
-            <Typography.Text type="secondary">IP 产品类型线索（不计入确认硬件）</Typography.Text>
+            <Typography.Text type="secondary">IP 产品自报 · 设备归属待核实</Typography.Text>
             {[...discoveryMetadata.data.ip_product_types].sort((a,b)=>b.count-a.count||a.device_type.localeCompare(b.device_type)).map(item=>
-              <Button key={item.device_type} type="text" size="small" className="discovery-overview-type" onClick={()=>shortcut(item.device_type,dumbFilter?'dumb':'','candidate')}>{types[item.device_type]??deviceTypeLabel(item.device_type)} <strong>{item.count}</strong></Button>
+              <Button key={item.device_type} type="text" size="small" className="discovery-overview-type" onClick={()=>shortcut(item.device_type,dumbFilter?'dumb':'',hasTypeBreakdown?'ip_product_only':'candidate')}>{types[item.device_type]??deviceTypeLabel(item.device_type)} <strong>{item.count}</strong></Button>
             )}
           </div>}
         </div>
@@ -805,7 +823,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
                 const type = String(option.value)
                 const counts = [
                   [hardwareV2 ? '已确认' : '已识别', confirmedFacets.get(type)],
-                  ['画像推测', profileFacets.get(type)], ['IP 产品线索', productFacets.get(type)],
+                  ['画像识别', profileFacets.get(type)], ['IP 产品自报', productFacets.get(type)],
                 ] as const
                 return <span className="discovery-type-option"><span>{option.label}</span>
                   <span className="discovery-type-option-counts">{counts.map(([label, count]) =>
