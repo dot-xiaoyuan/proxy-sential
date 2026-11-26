@@ -10,6 +10,16 @@ func hardwareProfileCandidateSQL(role, confidence, conflict, seen string) string
 		seen + "<=now() AND " + confidence + ">=0.4 AND NOT " + conflict + " THEN coalesce(" + role + ",'') ELSE '' END"
 }
 
+func hardwareCandidateRoleSQL(role, confidence, conflict, seen string) string {
+	return "CASE WHEN l.profile_identity_verified AND l.dhcp_candidate_type<>'' AND NOT " + conflict +
+		" AND coalesce(" + role + ",'') IN ('',l.dhcp_candidate_type) THEN l.dhcp_candidate_type ELSE " +
+		hardwareProfileCandidateSQL(role, confidence, conflict, seen) + " END"
+}
+
+func (q DeviceQuery) readsTypeClues() bool {
+	return q.Mode == "passive" || q.DeviceType != "" || q.includeCandidateTypes || q.View == "iot" || q.Capability == "dumb"
+}
+
 // Hardware classification already has an incremental authoritative projection.
 // Keep only scalar search/identity fields before pagination; the same statement
 // fetches the selected original rows by their MVCC tuple locator afterward.
@@ -21,7 +31,7 @@ func hardwareProfileCandidateSQL(role, confidence, conflict, seen string) string
 func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []string, candidateHaving, matchedWhere string) indexedDeviceSelection {
 	searchIP, searchName, searchType, searchManufacturer, searchModel := "''::text", "''::text", "''::text", "''::text", "''::text"
 	dhcpType := "''::text"
-	if query.DeviceType != "" || query.includeCandidateTypes || query.View == "iot" || query.Capability == "dumb" {
+	if query.readsTypeClues() {
 		dhcpType = `CASE WHEN l.origin IN ('dhcp_client','dhcp') AND NOT l.withdrawn AND l.valid_until>now() THEN coalesce(d.evidence->'payload'->>'dhcp_candidate_type','') ELSE '' END`
 	}
 	profileType := "''::text"
@@ -39,7 +49,7 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 			"data->'capabilities'", "d.capabilities").Replace(indexedObservationCapabilitiesSQL)
 	}
 	productType := "''::text"
-	if query.DeviceType != "" || query.includeCandidateTypes || query.View == "iot" || query.Capability == "dumb" {
+	if query.readsTypeClues() {
 		productType = indexedValidProductTypeSQL
 	}
 	productEvidence := "false"
@@ -82,7 +92,11 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 	if crossVLAN(query) {
 		pageProfiles = false
 	}
+	profileCandidate := hardwareCandidateRoleSQL("rec.role", "coalesce(rec.profile_confidence,0)", "coalesce(rec.profile_conflict,false)", "rec.profile_seen")
 	if pageProfiles {
+		// The bounded page applies this part of the evidence state once it has
+		// the actual profile, including its conflicts. Keep the IP-only fallback.
+		profileCandidate = "''::text"
 		// Display-only clues can be joined after the page limit.
 		recognitionSource = `SELECT ''::text endpoint_id,''::text role,''::text os_family,
  NULL::timestamptz profile_seen,0::double precision profile_confidence,false profile_conflict WHERE false`
@@ -101,7 +115,8 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
  ` + searchName + ` search_name,` + searchType + ` search_device_type,
  ` + searchManufacturer + ` search_manufacturer,` + searchModel + ` search_model,
  ` + caps + ` observation_capabilities,
- ` + productType + ` product_type,` + productEvidence + ` product_evidence,
+	 ` + productType + ` product_type,` + productEvidence + ` product_evidence,
+ coalesce((` + indexedProductAttributionSQL + ` AND d.product_clue->>'product_status'='conflict'),false) product_conflict,
  ` + dhcpType + ` dhcp_candidate_type,
  (l.valid_until>now() AND d.confidence IN ('strong','confirmed') AND coalesce(d.evidence->'observer'->>'capture_scope_issue','')='') service_clue_valid
  FROM discovery_observation_latest l
@@ -213,7 +228,7 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 ), seed_rows AS MATERIALIZED (
  SELECT l.observation_tid,l.id,l.device_key,l.origin,l.observed_at,l.valid_until,l.sensor_id,
  l.search_ip,l.search_mac,l.search_name,l.search_device_type,` + searchManufacturerSQL + ` search_manufacturer,l.search_model,
- ` + identitySQL + ` identity_key,l.vlan,l.raw_ip,l.observation_capabilities,l.product_type,l.product_evidence,l.dhcp_candidate_type,l.service_clue_valid,
+ ` + identitySQL + ` identity_key,l.vlan,l.raw_ip,l.observation_capabilities,l.product_type,l.product_evidence,l.product_conflict,l.dhcp_candidate_type,l.service_clue_valid,
  (l.capture_scope_valid AND l.sensor_id<>'' AND l.site_id<>'' AND l.access_domain<>''
   AND lower(l.raw_mac) ~ '^[0-9a-f][02468ace](:[0-9a-f]{2}){5}$' AND lower(l.raw_mac)<>'00:00:00:00:00:00'
   AND (coalesce(l.display_endpoint,'')='' OR lower(l.display_endpoint)='mac:'||lower(l.raw_mac))) profile_identity_verified,
@@ -225,20 +240,19 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 ), candidate_rows AS MATERIALIZED (
  SELECT l.observation_tid,l.id,l.device_key,l.origin,l.observed_at,l.valid_until,l.sensor_id,
  l.search_ip,l.search_mac,l.search_name,l.search_device_type,l.search_manufacturer,l.search_model,
- l.identity_key,l.vlan,l.observation_capabilities,l.raw_ip,l.product_type,l.product_evidence,l.service_clue_valid,l.linked_endpoint,l.lease_campus,l.recognition_endpoint,l.profile_identity_verified,
+ l.identity_key,l.vlan,l.observation_capabilities,l.raw_ip,l.product_type,l.product_evidence,l.product_conflict,l.dhcp_candidate_type,l.service_clue_valid,l.linked_endpoint,l.lease_campus,l.recognition_endpoint,l.profile_identity_verified,
  ` + subnet + ` subnet,
  coalesce(rec.role,'') profile_role,coalesce(rec.profile_confidence,0) profile_confidence,
  ` + profileOS + ` profile_os,` + profileType + ` profile_type,
  coalesce(rec.profile_conflict,false) AND coalesce(rec.role,'')<>'' profile_conflict,
- CASE WHEN l.profile_identity_verified AND l.dhcp_candidate_type<>'' AND NOT coalesce(rec.profile_conflict,false)
-  AND coalesce(rec.role,'') IN ('',l.dhcp_candidate_type) THEN l.dhcp_candidate_type
- ELSE ` + hardwareProfileCandidateSQL("rec.role", "coalesce(rec.profile_confidence,0)", "coalesce(rec.profile_conflict,false)", "rec.profile_seen") + ` END profile_candidate_role
+ ` + profileCandidate + ` profile_candidate_role
  FROM seed_rows l LEFT JOIN recognition rec ON rec.endpoint_id=l.recognition_endpoint
 ), candidate_grouped AS (
  SELECT identity_key COLLATE "C" identity_key,max(vlan) vlan,coalesce(min(device_key COLLATE "C") FILTER (WHERE search_mac<>''),min(device_key COLLATE "C")) device_key,
  max(observed_at) last_seen,max(profile_os) profile_os,
  ` + subnets + ` subnets,
  coalesce(array_agg(DISTINCT product_type) FILTER (WHERE product_type<>''),'{}'::text[]) product_types,
+ bool_or(product_conflict) has_product_conflict,
  bool_or(raw_ip<>'') has_observed_ip,
  bool_or(search_mac<>'' OR linked_endpoint<>'' OR product_evidence) has_device_evidence,
  bool_or(service_clue_valid AND observation_capabilities ?| ARRAY['printing','scanning','casting','media_rendering','network_video','voice']) has_iot_service,
@@ -253,7 +267,11 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 ), candidate_classified AS (
  SELECT *,` + indexedClassificationProjection(true) + ` classification_status FROM candidate_types
 ), candidate_source AS (
- SELECT *,` + indexedCategorySQL("") + ` category FROM candidate_classified
+ SELECT *,` + indexedCategorySQL("") + ` category,
+ CASE WHEN classification_status<>'candidate' THEN coalesce(projection_status,classification_status)
+  WHEN candidate_role<>'' THEN 'profile_typed'
+  WHEN cardinality(product_types)>0 OR has_product_conflict THEN 'ip_product_only' ELSE 'no_type_clue' END type_evidence_state
+ FROM candidate_classified
 )` + matchCTE
 	return indexedDeviceSelection{Query: query, CTE: statement, Args: args, PageProfiles: pageProfiles}
 }
@@ -263,12 +281,12 @@ func buildHardwareIndexedSelection(query DeviceQuery, args []any, baseWhere []st
 // coalesced in seed_rows: the legacy page_link CASE fallback was unreachable,
 // so probing the historical link table here would only add random disk reads.
 func buildHardwareIndexedPage(selection indexedDeviceSelection, positionWhere, limitParameter string) (string, error) {
-	profiles := "l.profile_role,l.profile_confidence,l.profile_conflict,l.profile_candidate_role"
+	profiles := "l.profile_role,l.profile_confidence,l.profile_conflict,c.candidate_role"
 	profileJoin := ""
 	if selection.PageProfiles {
 		confidence, conflict := indexedProfileConfidenceSQL("page_rec"), indexedProfileConflictSQL("page_rec")
 		profiles = "coalesce(page_rec.role,'')," + confidence + ",(" + conflict + ") AND coalesce(page_rec.role,'')<>''," +
-			hardwareProfileCandidateSQL("page_rec.role", confidence, "("+conflict+")", "page_rec.last_seen")
+			hardwareCandidateRoleSQL("page_rec.role", confidence, "("+conflict+")", "page_rec.last_seen")
 		profileJoin = "LEFT JOIN endpoint_recognition_summary page_rec ON page_rec.endpoint_id=l.recognition_endpoint\n"
 	}
 	pageSource := "JOIN discovery_observation_latest page_o ON page_o.ctid=l.observation_tid"
@@ -302,12 +320,12 @@ CROSS JOIN LATERAL (SELECT o.data,o.observed_at,o.device_key,o.source_id,o.origi
 )`
 		pageRows = "page_members"
 	}
-	source, fields, extras := "matched", "identity_key,device_key,last_seen,category", ""
+	source, fields, extras := "matched", "identity_key,device_key,last_seen,category,candidate_role,type_evidence_state", ""
 	if crossVLAN(selection.Query) {
 		if selection.Query.pageRepresentatives {
 			source = "page_representatives"
 		}
-		source = "(SELECT identity_key,device_key,asset_last_seen last_seen,category,vlan_scope_count FROM " + source + ") display_page"
+		source = "(SELECT identity_key,device_key,asset_last_seen last_seen,category,candidate_role,type_evidence_state,vlan_scope_count FROM " + source + ") display_page"
 		fields += ",vlan_scope_count"
 		extras = ",c.vlan_scope_count"
 	}
@@ -315,7 +333,7 @@ CROSS JOIN LATERAL (SELECT o.data,o.observed_at,o.device_key,o.source_id,o.origi
  SELECT ` + fields + ` FROM ` + source + positionWhere + `
  ORDER BY last_seen DESC,identity_key COLLATE "C" LIMIT $` + limitParameter + `
 )` + cachedRows + `
-SELECT c.identity_key,c.device_key,page_o.data,coalesce(dl.endpoint_id,l.linked_endpoint) linked_endpoint,` + profiles + `,c.category,c.last_seen` + extras + `
+SELECT c.identity_key,c.device_key,page_o.data,coalesce(dl.endpoint_id,l.linked_endpoint) linked_endpoint,` + profiles + `,c.category,c.last_seen,c.type_evidence_state` + extras + `
 FROM ` + pageRows + ` l JOIN candidates c USING(identity_key)
 ` + pageSource + `
 LEFT JOIN LATERAL (

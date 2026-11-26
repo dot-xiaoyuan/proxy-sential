@@ -372,7 +372,7 @@ paths:
         - { name: subnet, in: query, description: A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address, schema: { type: string } }
         - { name: type, in: query, schema: { type: string } }
         - { name: protocol, in: query, schema: { type: string } }
-        - { name: state, in: query, schema: { type: string, enum: [identified, expired, conflict, candidate] } }
+        - { name: state, in: query, description: "Comma-separated evidence states. Hardware v2 also accepts profile_typed, ip_product_only, no_type_clue, and revoked. The legacy candidate value covers all three candidate groups.", schema: { type: string } }
         - { name: review_reason, in: query, schema: { type: string, enum: [new_priority, type_change, conflict, address_only] } }
         - { name: domain, in: query, schema: { type: string } }
         - { name: vlan, in: query, schema: { type: string } }
@@ -407,7 +407,7 @@ paths:
         - { name: subnet, in: query, description: A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address, schema: { type: string } }
         - { name: type, in: query, schema: { type: string } }
         - { name: protocol, in: query, schema: { type: string } }
-        - { name: state, in: query, schema: { type: string, enum: [identified, expired, conflict, candidate] } }
+        - { name: state, in: query, description: "Comma-separated evidence states. Hardware v2 also accepts profile_typed, ip_product_only, no_type_clue, and revoked. The legacy candidate value covers all three candidate groups.", schema: { type: string } }
         - { name: review_reason, in: query, schema: { type: string, enum: [new_priority, type_change, conflict, address_only] } }
         - { name: domain, in: query, schema: { type: string } }
         - { name: vlan, in: query, schema: { type: string } }
@@ -455,7 +455,7 @@ paths:
         - { name: subnet, in: query, description: A canonical IPv4 /24 or IPv6 /64 network of a current directly observed address, schema: { type: string } }
         - { name: type, in: query, schema: { type: string } }
         - { name: protocol, in: query, schema: { type: string } }
-        - { name: state, in: query, schema: { type: string } }
+        - { name: state, in: query, description: "Comma-separated evidence states. Hardware v2 also accepts profile_typed, ip_product_only, no_type_clue, and revoked. The legacy candidate value covers all three candidate groups.", schema: { type: string } }
         - { name: review_reason, in: query, schema: { type: string, enum: [new_priority, type_change, conflict, address_only] } }
         - { name: domain, in: query, schema: { type: string } }
         - { name: vlan, in: query, schema: { type: string } }
@@ -4537,13 +4537,9 @@ paths:
             type: string
         - name: state
           in: query
+          description: Comma-separated evidence states supported by the discovery list.
           schema:
             type: string
-            enum:
-              - identified
-              - expired
-              - conflict
-              - candidate
         - name: review_reason
           in: query
           schema:
@@ -8953,6 +8949,7 @@ components:
         hardware_type: { type: string, description: "可信作用域身份的持久硬件类型；服务 TTL 到期不清除" }
         vlan_scope_count: { type: integer, minimum: 2, description: Number of matching scopes represented by this row. Details refer to the displayed scope. }
         candidate_device_type: { type: string, description: A scoped candidate device type supported by a recent endpoint profile. This field does not confirm a hardware type. }
+        type_evidence_state: { type: string, enum: [identified, profile_typed, ip_product_only, no_type_clue, conflict, revoked, expired], description: Mutually exclusive type evidence group for this discovery identity. }
         hardware_type_status: { type: string, enum: [identified, candidate, conflict, revoked] }
         hardware_model: { type: string }
         hardware_model_status: { type: string }
@@ -9146,6 +9143,10 @@ components:
         total: { type: integer, format: int64, minimum: 0 }
         identified: { type: integer, format: int64, minimum: 0, description: Current non-conflicting identities with one explicit device type. }
         candidate: { type: integer, format: int64, minimum: 0 }
+        profile_typed: { type: integer, format: int64, minimum: 0, description: Candidate identities with an attributed profile device type. }
+        ip_product_only: { type: integer, format: int64, minimum: 0, description: Candidate identities with an IP product type and no profile device type. }
+        no_type_clue: { type: integer, format: int64, minimum: 0, description: Candidate identities without an attributed profile or an IP product type. }
+        revoked: { type: integer, format: int64, minimum: 0, description: Revoked hardware conclusions already included in the legacy expired count. }
         conflict: { type: integer, format: int64, minimum: 0 }
         expired: { type: integer, format: int64, minimum: 0 }
         types:
@@ -9168,7 +9169,7 @@ components:
               count: { type: integer, format: int64, minimum: 0 }
         ip_product_types:
           type: array
-          description: Counts of candidate identities with valid response-IP product types; excluded from confirmed hardware counts and may overlap profile clues.
+          description: Counts by response-IP product type among IP-product-only candidates. An identity can contribute to multiple type facets.
           items:
             type: object
             required: [device_type, count]

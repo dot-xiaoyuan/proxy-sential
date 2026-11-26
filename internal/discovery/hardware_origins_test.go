@@ -51,8 +51,8 @@ func TestIndexedHardwareListAndExportKeepRetainedSNMPClue(t *testing.T) {
 	repo := Repository{DB: db, HardwareV2: true}
 	for _, export := range []bool{false, true} {
 		mock.ExpectQuery("FROM candidate_rows l JOIN candidates").
-			WillReturnRows(sqlmock.NewRows([]string{"identity", "key", "data", "endpoint", "role", "confidence", "conflict", "profile_candidate_role", "category", "last_seen"}).
-				AddRow("ip-only", "key", raw, "", "", 0, false, "", "identity_only", now))
+			WillReturnRows(sqlmock.NewRows([]string{"identity", "key", "data", "endpoint", "role", "confidence", "conflict", "profile_candidate_role", "category", "last_seen", "type_evidence_state"}).
+				AddRow("ip-only", "key", raw, "", "", 0, false, "", "identity_only", now, "no_type_clue"))
 		mock.ExpectQuery("SELECT identity_key,data FROM passive_hardware_current").
 			WillReturnRows(sqlmock.NewRows([]string{"identity_key", "data"}))
 		page, err := repo.devicesIndexed(context.Background(), db, DeviceQuery{Mode: "passive", Export: export}, false)

@@ -32,3 +32,16 @@ func TestIndexedRejectsInvalidStateInList(t *testing.T) {
 		t.Fatal("expected invalid state error")
 	}
 }
+
+func TestIndexedHardwareTypeEvidenceStateFilters(t *testing.T) {
+	for _, state := range []string{"profile_typed", "ip_product_only,no_type_clue", "revoked", "candidate,identified,profile_typed"} {
+		q := DeviceQuery{Mode: "passive", HardwareV2: true, State: state}
+		if _, err := buildIndexedDeviceSelection(q); err != nil {
+			t.Errorf("v2 state %q: %v", state, err)
+		}
+		q.HardwareV2 = false
+		if _, err := buildIndexedDeviceSelection(q); err == nil {
+			t.Errorf("legacy path accepted v2 state %q", state)
+		}
+	}
+}

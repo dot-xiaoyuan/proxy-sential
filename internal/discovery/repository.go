@@ -309,6 +309,7 @@ type DeviceView struct {
 	Name                 string              `json:"name,omitempty"`
 	DeviceType           string              `json:"device_type,omitempty"`
 	CandidateDeviceType  string              `json:"candidate_device_type,omitempty"`
+	TypeEvidenceState    string              `json:"type_evidence_state,omitempty"`
 	Category             string              `json:"category"`
 	IdentityKind         string              `json:"identity_kind"`
 	Capabilities         []string            `json:"capabilities"`

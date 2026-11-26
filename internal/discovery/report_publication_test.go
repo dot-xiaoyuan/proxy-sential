@@ -44,6 +44,18 @@ func TestPublishedReportScopeAndLastSuccess(t *testing.T) {
 	if _, e := db.Exec(`INSERT INTO discovery_report_publications VALUES ('site','metadata',24,now()-interval '20 min',now()-interval '20 min',now()-interval '19 min','{"total":7,"overview":{"active":2}}')`); e != nil {
 		t.Fatal(e)
 	}
+	if _, e := repo.ReadDeviceMetadata(ctx, "site", q); !errors.Is(e, ErrReportPreparing) {
+		t.Fatal("old publication has no evidence breakdown", e)
+	}
+	if _, e := db.Exec(`UPDATE discovery_report_publications SET document=document||'{"candidate":7,"profile_typed":4,"no_type_clue":3,"revoked":0}'::jsonb`); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := repo.ReadDeviceMetadata(ctx, "site", q); !errors.Is(e, ErrReportPreparing) {
+		t.Fatal("missing IP count became zero", e)
+	}
+	if _, e := db.Exec(`UPDATE discovery_report_publications SET document=document||'{"candidate":7,"profile_typed":4,"ip_product_only":0,"no_type_clue":3,"revoked":0}'::jsonb`); e != nil {
+		t.Fatal(e)
+	}
 	// Missing input tables make this publication fail; the committed document survives.
 	var schema string
 	if e := db.QueryRow("SELECT current_schema()").Scan(&schema); e != nil {

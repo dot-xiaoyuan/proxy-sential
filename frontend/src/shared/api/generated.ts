@@ -3932,7 +3932,8 @@ export interface paths {
                     subnet?: string;
                     type?: string;
                     protocol?: string;
-                    state?: "identified" | "expired" | "conflict" | "candidate";
+                    /** @description Comma-separated evidence states supported by the discovery list. */
+                    state?: string;
                     review_reason?: "new_priority" | "type_change" | "conflict" | "address_only";
                     domain?: string;
                     vlan?: string;
@@ -7875,6 +7876,11 @@ export interface components {
             vlan_scope_count?: number;
             /** @description A scoped candidate device type supported by a recent endpoint profile. This field does not confirm a hardware type. */
             candidate_device_type?: string;
+            /**
+             * @description Mutually exclusive type evidence group for this discovery identity.
+             * @enum {string}
+             */
+            type_evidence_state?: "identified" | "profile_typed" | "ip_product_only" | "no_type_clue" | "conflict" | "revoked" | "expired";
             /** @enum {string} */
             hardware_type_status?: "identified" | "candidate" | "conflict" | "revoked";
             hardware_model?: string;
@@ -8252,6 +8258,26 @@ export interface components {
             identified: number;
             /** Format: int64 */
             candidate: number;
+            /**
+             * Format: int64
+             * @description Candidate identities with an attributed profile device type.
+             */
+            profile_typed?: number;
+            /**
+             * Format: int64
+             * @description Candidate identities with an IP product type and no profile device type.
+             */
+            ip_product_only?: number;
+            /**
+             * Format: int64
+             * @description Candidate identities without an attributed profile or an IP product type.
+             */
+            no_type_clue?: number;
+            /**
+             * Format: int64
+             * @description Revoked hardware conclusions already included in the legacy expired count.
+             */
+            revoked?: number;
             /** Format: int64 */
             conflict: number;
             /** Format: int64 */
@@ -8268,7 +8294,7 @@ export interface components {
                 /** Format: int64 */
                 count: number;
             }[];
-            /** @description Counts of candidate identities with valid response-IP product types; excluded from confirmed hardware counts and may overlap profile clues. */
+            /** @description Counts by response-IP product type among IP-product-only candidates. An identity can contribute to multiple type facets. */
             ip_product_types?: {
                 device_type: string;
                 /** Format: int64 */
@@ -10196,7 +10222,8 @@ export interface operations {
                 subnet?: string;
                 type?: string;
                 protocol?: string;
-                state?: "identified" | "expired" | "conflict" | "candidate";
+                /** @description Comma-separated evidence states. Hardware v2 also accepts profile_typed, ip_product_only, no_type_clue, and revoked. The legacy candidate value covers all three candidate groups. */
+                state?: string;
                 review_reason?: "new_priority" | "type_change" | "conflict" | "address_only";
                 domain?: string;
                 vlan?: string;
@@ -10256,7 +10283,8 @@ export interface operations {
                 subnet?: string;
                 type?: string;
                 protocol?: string;
-                state?: "identified" | "expired" | "conflict" | "candidate";
+                /** @description Comma-separated evidence states. Hardware v2 also accepts profile_typed, ip_product_only, no_type_clue, and revoked. The legacy candidate value covers all three candidate groups. */
+                state?: string;
                 review_reason?: "new_priority" | "type_change" | "conflict" | "address_only";
                 domain?: string;
                 vlan?: string;
@@ -10368,6 +10396,7 @@ export interface operations {
                 subnet?: string;
                 type?: string;
                 protocol?: string;
+                /** @description Comma-separated evidence states. Hardware v2 also accepts profile_typed, ip_product_only, no_type_clue, and revoked. The legacy candidate value covers all three candidate groups. */
                 state?: string;
                 review_reason?: "new_priority" | "type_change" | "conflict" | "address_only";
                 domain?: string;

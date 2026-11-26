@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
 	"strings"
 	"time"
 )
@@ -131,7 +132,7 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 	case "":
 	case "devices", "scoped_devices":
 		if query.HardwareV2 && query.Mode == "passive" {
-			classifiedWhere = append(classifiedWhere, "NOT has_observed_ip OR has_device_evidence")
+			classifiedWhere = append(classifiedWhere, "(NOT has_observed_ip OR has_device_evidence)")
 		} else {
 			query.IdentityScope = ""
 		}
@@ -161,31 +162,50 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 		args = append(args, subnet.String())
 		classifiedWhere = append(classifiedWhere, fmt.Sprintf("$%d = ANY(subnets)", len(args)))
 	}
-	if query.DeviceType != "" {
-		// Comma-separated types stay parameterized; the indexed path matches any
-		// of them against the identified/expired/candidate type columns.
-		args = append(args, query.DeviceType)
-		match := "= ANY(string_to_array($" + fmt.Sprint(len(args)) + ", ','))"
-		if query.HardwareV2 {
-			classifiedWhere = append(classifiedWhere, "(projection_type"+match+" OR (classification_status='candidate' AND (candidate_role"+match+" OR product_types && string_to_array($"+fmt.Sprint(len(args))+", ','))))")
-		} else {
-			classifiedWhere = append(classifiedWhere, "((classification_status='identified' AND effective_types[1]"+match+") OR (classification_status='expired' AND historical_type"+match+") OR (classification_status='candidate' AND candidate_role"+match+"))")
-		}
-	}
 	if query.Protocol != "" {
 		args = append(args, query.Protocol)
 		having = append(having, fmt.Sprintf("bool_or(origin = ANY(string_to_array($%d, ',')))", len(args)))
 	}
+	evidenceTypeOnly := false
 	if query.State != "" {
-		for _, state := range strings.Split(query.State, ",") {
-			switch strings.TrimSpace(state) {
+		states := strings.Split(query.State, ",")
+		evidenceFilter := false
+		for i, state := range states {
+			states[i] = strings.TrimSpace(state)
+			switch states[i] {
 			case "identified", "candidate", "expired", "conflict":
+			case "profile_typed", "ip_product_only", "no_type_clue", "revoked":
+				if !query.HardwareV2 {
+					return indexedDeviceSelection{}, fmt.Errorf("invalid discovery state")
+				}
+				evidenceFilter = true
 			default:
 				return indexedDeviceSelection{}, fmt.Errorf("invalid discovery state")
 			}
 		}
-		args = append(args, query.State)
-		classifiedWhere = append(classifiedWhere, "classification_status = ANY(string_to_array($"+fmt.Sprint(len(args))+", ','))")
+		args = append(args, strings.Join(states, ","))
+		match := " = ANY(string_to_array($" + fmt.Sprint(len(args)) + ", ','))"
+		predicate := "classification_status" + match
+		if evidenceFilter {
+			query.includeCandidateTypes = true
+			evidenceTypeOnly = !slices.Contains(states, "candidate")
+			predicate = "(" + predicate + " OR type_evidence_state" + match + ")"
+		}
+		classifiedWhere = append(classifiedWhere, predicate)
+	}
+	if query.DeviceType != "" {
+		// Comma-separated types stay parameterized; the indexed path matches any
+		// of them against the identified/expired/candidate type columns.
+		args = append(args, query.DeviceType)
+		kinds := fmt.Sprintf("string_to_array($%d, ',')", len(args))
+		match := "= ANY(" + kinds + ")"
+		if evidenceTypeOnly {
+			classifiedWhere = append(classifiedWhere, "((classification_status<>'candidate' AND projection_type"+match+") OR (type_evidence_state='profile_typed' AND candidate_role"+match+") OR (type_evidence_state='ip_product_only' AND product_types && "+kinds+"))")
+		} else if query.HardwareV2 {
+			classifiedWhere = append(classifiedWhere, "(projection_type"+match+" OR (classification_status='candidate' AND (candidate_role"+match+" OR product_types && "+kinds+")))")
+		} else {
+			classifiedWhere = append(classifiedWhere, "((classification_status='identified' AND effective_types[1]"+match+") OR (classification_status='expired' AND historical_type"+match+") OR (classification_status='candidate' AND candidate_role"+match+"))")
+		}
 	}
 	if query.Capability != "" {
 		if query.Capability == "dumb" && query.HardwareV2 {

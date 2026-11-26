@@ -72,13 +72,16 @@ func TestHardwareMetadataReportsCandidatesApartFromConfirmedTypes(t *testing.T) 
 	mock.ExpectQuery("(?s)endpoint_recognition_summary.*GROUP BY classification_status").
 		WillReturnRows(sqlmock.NewRows([]string{"status", "type", "count", "as_of"}).
 			AddRow("identified", "printer", 3, at).
-			AddRow("candidate", "mobile", 12, at).
-			AddRow("candidate", "", 5, at))
+			AddRow("profile_typed", "mobile", 12, at).
+			AddRow("ip_product_only", "", 2, at).
+			AddRow("no_type_clue", "", 3, at).
+			AddRow("revoked", "", 1, at))
 	metadata, err := (Repository{HardwareV2: true}).devicesIndexedMetadata(context.Background(), db, DeviceQuery{Mode: "passive"}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if metadata.Total != 20 || metadata.Identified != 3 || metadata.Candidate != 17 ||
+	if metadata.Total != 21 || metadata.Identified != 3 || metadata.Candidate != 17 ||
+		metadata.ProfileTyped != 12 || metadata.IPProductOnly != 2 || metadata.NoTypeClue != 3 || metadata.Revoked != 1 || metadata.Expired != 1 ||
 		len(metadata.Types) != 1 || metadata.Types[0] != (IndexedDeviceTypeCount{DeviceType: "printer", Count: 3}) ||
 		len(metadata.CandidateTypes) != 1 || metadata.CandidateTypes[0] != (IndexedDeviceTypeCount{DeviceType: "mobile", Count: 12}) {
 		t.Fatalf("metadata=%+v", metadata)

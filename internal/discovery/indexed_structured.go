@@ -36,7 +36,7 @@ func structuredSourceSQL(query DeviceQuery, baseWhere []string, pageSource strin
 		caps = "l.capabilities"
 	}
 	dhcp := "''::text"
-	if query.DeviceType != "" || query.includeCandidateTypes || query.View == "iot" || query.Capability == "dumb" {
+	if query.readsTypeClues() {
 		dhcp = "CASE WHEN l.valid_until>now() AND l.origin IN ('dhcp_client','dhcp') THEN l.dhcp_type ELSE '' END"
 	}
 	return ` SELECT ` + locator + ` observation_tid,l.id,l.device_key,l.origin,l.observed_at,l.valid_until,l.sensor_id,l.site_id,l.access_domain,l.vlan,l.vrf,l.raw_mac,l.raw_ip,
@@ -45,6 +45,7 @@ func structuredSourceSQL(query DeviceQuery, baseWhere []string, pageSource strin
  ` + caps + ` observation_capabilities,
  CASE WHEN l.valid_until>now() AND l.product_status='identified' THEN l.product_type ELSE '' END product_type,
  (l.valid_until>now() AND l.product_status IN ('identified','no_type_match','conflict')) product_evidence,
+ (l.valid_until>now() AND l.product_status='conflict') product_conflict,
  ` + dhcp + ` dhcp_candidate_type,
  (l.valid_until>now() AND l.strong_service AND l.scope_valid) service_clue_valid,l.base_identity
  FROM ` + source + ` WHERE ` + predicates
@@ -97,6 +98,11 @@ func cachedGroupCTE(hours int) string {
  UNION
  SELECT jsonb_build_array('identity',f.sensor_id,f.site_id,f.access_domain,f.vlan,f.vrf,'mac',t.mac)::text
  FROM trusted_address t JOIN discovery_list_observation f ON f.id=t.observation_id
+ UNION
+ -- The group cache retains resolved product types. Re-read groups containing
+ -- an unresolved product type conflict from the structured observation rows.
+ SELECT f.base_identity FROM discovery_list_observation f
+ WHERE f.product_status='conflict' AND f.observed_at BETWEEN $1 AND now() AND f.valid_until>now()
 ), cache_groups AS MATERIALIZED (
  SELECT g.* FROM discovery_list_group_current g
  WHERE hours=%d AND last_seen>=$1 AND computed_at<=least(now(),$1::timestamptz+interval '%d hours')
@@ -113,7 +119,7 @@ func cachedGroupedSQL(q DeviceQuery, pageProfiles bool) string {
 		conf := indexedProfileConfidenceSQL("p")
 		conflict := indexedProfileConflictSQL("p")
 		dhcp := "false"
-		if q.includeCandidateTypes {
+		if q.readsTypeClues() {
 			dhcp = "true"
 		}
 		role = `CASE WHEN NOT (` + conflict + `) AND g.verified_until>now() THEN CASE
@@ -122,7 +128,7 @@ func cachedGroupedSQL(q DeviceQuery, pageProfiles bool) string {
  WHEN p.last_seen BETWEEN $1 AND now() AND ` + conf + `>=0.4 THEN coalesce(p.role,'')
  ELSE '' END ELSE '' END`
 	}
-	return ` UNION ALL SELECT g.identity_key,g.vlan,g.device_key,g.last_seen,''::text profile_os,g.subnets,g.product_types,
+	return ` UNION ALL SELECT g.identity_key,g.vlan,g.device_key,g.last_seen,''::text profile_os,g.subnets,g.product_types,false has_product_conflict,
  g.has_ip,true,false,false,false,false,` + role + ` candidate_role FROM cache_groups g` + join
 }
 

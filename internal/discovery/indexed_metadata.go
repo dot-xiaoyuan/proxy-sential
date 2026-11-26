@@ -10,6 +10,7 @@ import (
 )
 
 type IndexedDeviceMetadata struct {
+	*IndexedTypeEvidenceCounts
 	Publication           *ReportPublication        `json:"publication,omitempty"`
 	ClassificationVersion string                    `json:"classification_version,omitempty"`
 	Total                 int64                     `json:"total"`
@@ -25,6 +26,15 @@ type IndexedDeviceMetadata struct {
 	AsOf                  time.Time                 `json:"as_of"`
 	CountUnit             string                    `json:"count_unit"`
 	Window                string                    `json:"window"`
+}
+
+// Candidate partitions are mutually exclusive. Revoked is part of the legacy
+// expired count. A missing group of fields identifies an older publication.
+type IndexedTypeEvidenceCounts struct {
+	ProfileTyped  int64 `json:"profile_typed"`
+	IPProductOnly int64 `json:"ip_product_only"`
+	NoTypeClue    int64 `json:"no_type_clue"`
+	Revoked       int64 `json:"revoked"`
 }
 
 var discoveryCalendar = time.FixedZone("Asia/Shanghai", 8*60*60)
@@ -101,18 +111,21 @@ func (r Repository) devicesIndexedMetadata(ctx context.Context, db indexedQuerye
 	if crossVLAN(q) {
 		result.CountUnit = "cross_vlan_discovery_identity"
 	}
+	countState, countGroup := "classification_status", "classification_status,device_type"
 	if r.HardwareV2 {
+		result.IndexedTypeEvidenceCounts = &IndexedTypeEvidenceCounts{}
 		result.ClassificationVersion = "passive-hardware/v2"
+		countState, countGroup = "type_evidence_state", "classification_status,type_evidence_state,device_type"
 	}
-	counts := ` SELECT classification_status,
+	counts := ` SELECT ` + countState + `,
  CASE WHEN classification_status='identified' THEN effective_types[1]
   WHEN classification_status='candidate' AND cardinality(effective_types)=0 THEN candidate_role
   ELSE '' END device_type,
- count(*),now() FROM matched GROUP BY classification_status,device_type`
+ count(*),now() FROM matched GROUP BY ` + countGroup
 	if r.HardwareV2 {
 		counts += ` UNION ALL SELECT 'ip_product',kind,count(DISTINCT identity_key),now()
  FROM matched CROSS JOIN LATERAL unnest(product_types) kind
- WHERE classification_status='candidate' GROUP BY kind`
+ WHERE type_evidence_state='ip_product_only' GROUP BY kind`
 		vlanSource := "matched"
 		if crossVLAN(q) {
 			vlanSource = "(SELECT m.vlan FROM display_members m JOIN matched a USING(display_key)) scope_vlans"
@@ -165,9 +178,19 @@ func (r Repository) devicesIndexedMetadata(ctx context.Context, db indexedQuerye
 			result.Types = append(result.Types, IndexedDeviceTypeCount{DeviceType: kind, Count: count})
 		case "candidate":
 			result.Candidate += count
-			if r.HardwareV2 && kind != "" {
-				result.CandidateTypes = append(result.CandidateTypes, IndexedDeviceTypeCount{DeviceType: kind, Count: count})
-			}
+		case "profile_typed":
+			result.Candidate += count
+			result.ProfileTyped += count
+			result.CandidateTypes = append(result.CandidateTypes, IndexedDeviceTypeCount{DeviceType: kind, Count: count})
+		case "ip_product_only":
+			result.Candidate += count
+			result.IPProductOnly += count
+		case "no_type_clue":
+			result.Candidate += count
+			result.NoTypeClue += count
+		case "revoked":
+			result.Expired += count
+			result.Revoked += count
 		case "conflict":
 			result.Conflict += count
 		case "expired":

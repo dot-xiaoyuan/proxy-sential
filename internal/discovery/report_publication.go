@@ -31,9 +31,15 @@ func defaultMetadataScope(q DeviceQuery) bool {
 func (r Repository) readPublication(ctx context.Context, sensor, report string, window time.Duration, dst any) (*ReportPublication, error) {
 	var raw []byte
 	p := new(ReportPublication)
-	err := r.DB.QueryRowContext(ctx, `SELECT document,bucket_start,published_at,
+	statement := `SELECT document,bucket_start,published_at,
 		bucket_start + interval '10 minutes' <= now()
-		FROM discovery_report_publications WHERE sensor_id=$1 AND report=$2 AND hours=$3`, sensor, report, int(window.Hours())).Scan(&raw, &p.BucketStart, &p.PublishedAt, &p.Delayed)
+		FROM discovery_report_publications WHERE sensor_id=$1 AND report=$2 AND hours=$3`
+	if report == "metadata" {
+		// Older snapshots have no partition counts. Missing values must not
+		// become zeros in the API while the publisher computes a new snapshot.
+		statement += ` AND document ?& ARRAY['profile_typed','ip_product_only','no_type_clue','revoked']`
+	}
+	err := r.DB.QueryRowContext(ctx, statement, sensor, report, int(window.Hours())).Scan(&raw, &p.BucketStart, &p.PublishedAt, &p.Delayed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrReportPreparing
 	}
@@ -52,7 +58,9 @@ func (r Repository) ReadDeviceMetadata(ctx context.Context, sensor string, q Dev
 	}
 	var out IndexedDeviceMetadata
 	p, err := r.readPublication(ctx, sensor, "metadata", q.Window, &out)
-	if err == nil && structuredReadEnabled("cross_vlan") != (out.CountUnit == "cross_vlan_discovery_identity") {
+	if err == nil && (structuredReadEnabled("cross_vlan") != (out.CountUnit == "cross_vlan_discovery_identity") ||
+		out.IndexedTypeEvidenceCounts == nil || out.ProfileTyped+out.IPProductOnly+out.NoTypeClue != out.Candidate ||
+		out.Total != out.Identified+out.Candidate+out.Conflict+out.Expired || out.Revoked > out.Expired) {
 		return IndexedDeviceMetadata{}, ErrReportPreparing
 	}
 	out.Publication = p

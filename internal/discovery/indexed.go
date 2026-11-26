@@ -190,9 +190,10 @@ ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
 	defer rows.Close()
 	deviceRows := []deviceObservationRow{}
 	type pageGroup struct {
-		scopeCount int
-		category   string
-		lastSeen   time.Time
+		scopeCount        int
+		category          string
+		typeEvidenceState string
+		lastSeen          time.Time
 	}
 	groups := map[string]pageGroup{}
 	for rows.Next() {
@@ -205,7 +206,7 @@ ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
 		}
 		fields = append(fields, &group.category)
 		if r.HardwareV2 {
-			fields = append(fields, &group.lastSeen)
+			fields = append(fields, &group.lastSeen, &group.typeEvidenceState)
 			if crossVLAN(query) {
 				fields = append(fields, &group.scopeCount)
 			}
@@ -249,6 +250,7 @@ ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
 		// of the stored document. The cursor must use the SQL ordering boundary.
 		if r.HardwareV2 {
 			items[i].LastSeen = group.lastSeen
+			items[i].TypeEvidenceState = group.typeEvidenceState
 			if group.scopeCount > 1 {
 				items[i].VLANScopeCount = group.scopeCount
 			}
@@ -258,8 +260,11 @@ ORDER BY c.last_seen DESC,c.identity_key COLLATE "C",l.id`
 		}
 		if items[i].ClassificationStatus == "candidate" {
 			items[i].CandidateDeviceType = candidateTypes[items[i].indexedIdentityKey]
-			if selection.PageProfiles && query.View != "iot" && items[i].CandidateDeviceType != "" {
-				items[i].Category = deviceCategory(items[i].CandidateDeviceType)
+			if selection.PageProfiles && items[i].CandidateDeviceType != "" {
+				items[i].TypeEvidenceState = "profile_typed"
+				if query.View != "iot" {
+					items[i].Category = deviceCategory(items[i].CandidateDeviceType)
+				}
 			}
 		}
 		if query.ReviewReason != "" {

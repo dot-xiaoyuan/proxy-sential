@@ -69,6 +69,14 @@ func TestStructuredDiscoveryPostgresParity(t *testing.T) {
 	put("same-ip-other-vlan", "00:12:34:00:00:00", "10.0.0.8", "20", "arp", at.Add(-4*time.Hour))
 	put("dhcp", "00:12:34:00:00:02", "10.0.0.2", "10", "dhcp", at.Add(-2*time.Hour))
 	put("product", "", "10.0.0.9", "10", "snmp", at.Add(-time.Minute))
+	put("second-product", "", "10.0.0.9", "10", "snmp", at.Add(-2*time.Minute))
+	run(`UPDATE discovery_observation_latest SET data=jsonb_set(data,'{product_clue,type}','"printer"') WHERE id='second-product'`)
+	put("also-product", "00:12:34:00:00:04", "10.0.0.8", "10", "snmp", at.Add(-2*time.Minute))
+	put("conflicting-product", "00:12:34:00:00:0b", "10.0.0.8", "10", "snmp", at.Add(-2*time.Minute))
+	run(`UPDATE discovery_observation_latest SET data=jsonb_set(data,'{product_clue}',((data->'product_clue')-'type')||'{"product_status":"conflict","conflicting_types":["router","switch"]}'::jsonb) WHERE id='conflicting-product'`)
+	put("model-without-type", "00:12:34:00:00:0c", "10.0.0.8", "10", "snmp", at.Add(-2*time.Minute))
+	run(`UPDATE discovery_observation_latest SET data=jsonb_set(data,'{product_clue}',((data->'product_clue')-'type')||'{"product_status":"no_type_match","model":"AB-100"}'::jsonb) WHERE id='model-without-type'`)
+	put("mac-without-ip", "00:12:34:00:00:f1", "", "10", "arp", at.Add(-3*time.Minute))
 	put("address", "", "10.0.0.10", "10", "ssdp", at.Add(-time.Minute))
 	run("INSERT INTO endpoint_recognition_summary VALUES('mac:00:12:34:00:00:04','desktop','Windows','{}',0.8,false,$1)", at)
 	put("binding-arp", "00:12:34:00:00:f0", "10.0.0.80", "30", "arp", at.Add(-2*time.Hour))
@@ -102,13 +110,14 @@ func TestStructuredDiscoveryPostgresParity(t *testing.T) {
 	run(`INSERT INTO passive_hardware_current(identity_key,scope_key,device_key,sensor_id,campus_id,access_domain,mac,hardware_type,hardware_type_status,first_seen,last_seen,active_until,data)
       SELECT base_identity,'scope',device_key,sensor_id,site_id,access_domain,raw_mac,'printer',status,observed_at,observed_at,valid_until,
         jsonb_build_object('hardware_type','printer','hardware_type_status',status,'first_seen',observed_at,'last_seen',observed_at)
-      FROM discovery_list_observation CROSS JOIN LATERAL (SELECT CASE id WHEN 'arp1' THEN 'identified' ELSE 'revoked' END status) s WHERE id IN ('arp1','arp7')`)
+      FROM discovery_list_observation CROSS JOIN LATERAL (SELECT CASE id WHEN 'arp1' THEN 'identified' WHEN 'arp9' THEN 'conflict' ELSE 'revoked' END status) s WHERE id IN ('arp1','arp7','arp9')`)
 	var groups int
 	if err := db.QueryRow("SELECT count(*) FROM discovery_list_group_current WHERE hours=24").Scan(&groups); err != nil || groups < 26 {
 		t.Fatal(groups, err)
 	}
 	// A repeated observation touches the structured timestamp without rewriting its evidence.
 	run("UPDATE discovery_observation_latest SET observed_at=$1 WHERE id='arp0'", at)
+	t.Run("TypeEvidencePartitions", func(t *testing.T) { checkTypeEvidencePartitions(t, db, at) })
 	for _, surface := range []string{"", "list"} {
 		t.Setenv("PROXY_SENTINEL_DISCOVERY_STRUCTURED_READS", surface)
 		q := DeviceQuery{Mode: "passive", Window: 24 * time.Hour, Limit: 1, SnapshotAt: at, IdentityScope: "devices"}
@@ -249,6 +258,90 @@ func TestStructuredDiscoveryPostgresParity(t *testing.T) {
 	var sizes string
 	if err := db.QueryRow("SELECT concat_ws(',',(SELECT count(*) FROM discovery_list_observation),(SELECT count(*) FROM discovery_list_group_current),(SELECT count(*) FROM discovery_list_ip_current))").Scan(&sizes); err != nil || strings.TrimSpace(sizes) != "0,0,0" {
 		t.Fatal(sizes, err)
+	}
+}
+
+func checkTypeEvidencePartitions(t *testing.T, db *sql.DB, at time.Time) {
+	ctx := context.Background()
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	repo := Repository{HardwareV2: true}
+	for _, flags := range []string{"", "list,statistics,address_links", "list,statistics,address_links,ordered_pages,cross_vlan"} {
+		t.Setenv("PROXY_SENTINEL_DISCOVERY_STRUCTURED_READS", flags)
+		q := DeviceQuery{Mode: "passive", IdentityScope: "devices", Window: 24 * time.Hour, SnapshotAt: at, Limit: 200}
+		read := func(state string, export bool) []DeviceView {
+			t.Helper()
+			q.State, q.Export = state, export
+			page, err := repo.DevicesIndexedSnapshot(ctx, tx, q)
+			if err != nil {
+				t.Fatal(flags, state, err)
+			}
+			return page["items"].([]DeviceView)
+		}
+		list := read("", false)
+		if exported := read("", true); !reflect.DeepEqual(exported, list) {
+			t.Fatalf("list/export mismatch with %q", flags)
+		}
+		meta, err := repo.DevicesIndexedMetadataSnapshot(ctx, tx, q)
+		if err != nil {
+			t.Fatal(flags, err)
+		}
+		if meta.Total != int64(len(list)) || meta.Total != meta.Identified+meta.Candidate+meta.Conflict+meta.Expired ||
+			meta.Candidate != meta.ProfileTyped+meta.IPProductOnly+meta.NoTypeClue || meta.Revoked != 1 || meta.Conflict != 1 {
+			t.Fatalf("unclosed evidence counts %s: %+v %+v", flags, meta, meta.IndexedTypeEvidenceCounts)
+		}
+		counts := map[string]int64{"identified": meta.Identified, "profile_typed": meta.ProfileTyped, "ip_product_only": meta.IPProductOnly, "no_type_clue": meta.NoTypeClue, "revoked": meta.Revoked, "conflict": meta.Conflict}
+		for state, n := range counts {
+			filtered := read(state, false)
+			if n == 0 || int64(len(filtered)) != n {
+				t.Fatalf("%s %s got %d rows, metadata %d", flags, state, len(filtered), n)
+			}
+			for _, row := range filtered {
+				if row.TypeEvidenceState != state {
+					t.Fatalf("%s filter %s admitted %s", flags, state, row.TypeEvidenceState)
+				}
+			}
+		}
+		if n := len(read("candidate", false)); int64(n) != meta.Candidate {
+			t.Fatal("legacy candidate union", flags, n, meta.Candidate)
+		}
+		if n := len(read("ip_product_only,revoked", false)); int64(n) != meta.IPProductOnly+meta.Revoked {
+			t.Fatal("multi-select union", flags, n)
+		}
+		for state, facets := range map[string][]IndexedDeviceTypeCount{"profile_typed": meta.CandidateTypes, "ip_product_only": meta.IPProductTypes} {
+			for _, facet := range facets {
+				q.DeviceType = facet.DeviceType
+				if got := len(read(state, false)); int64(got) != facet.Count {
+					t.Fatalf("%s %s/%s selected %d rows, facet %d", flags, state, facet.DeviceType, got, facet.Count)
+				}
+			}
+		}
+		q.DeviceType = "switch"
+		if got := len(read("profile_typed", false)); got != 0 {
+			t.Fatalf("%s matched %d profiles by their independent IP product type", flags, got)
+		}
+		if got := len(read("candidate", false)); got != 2 {
+			t.Fatalf("%s legacy candidate/switch broad match: %d", flags, got)
+		}
+		// The DHCP-only candidate, the profiled identity with IP product evidence,
+		// and the identity with two mutually exclusive IP reports each count once.
+		witness := map[string]string{"dhcp": "profile_typed", "also-product": "profile_typed", "second-product": "ip_product_only", "conflicting-product": "ip_product_only", "model-without-type": "no_type_clue", "mac-without-ip": "no_type_clue"}
+		for _, row := range list {
+			for _, o := range row.Observations {
+				if want, ok := witness[o.ID]; ok {
+					if row.TypeEvidenceState != want || (want == "profile_typed") != (row.CandidateDeviceType != "") || row.DeviceType != "" {
+						t.Fatalf("%s %s: state=%s candidate=%s confirmed=%s", flags, o.ID, row.TypeEvidenceState, row.CandidateDeviceType, row.DeviceType)
+					}
+					delete(witness, o.ID)
+				}
+			}
+		}
+		if len(witness) != 0 {
+			t.Fatalf("missing fixture identities: %v", witness)
+		}
 	}
 }
 
