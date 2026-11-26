@@ -3990,6 +3990,18 @@ paths:
                 $ref: "#/components/schemas/IngestStatus"
         "500":
           $ref: "#/components/responses/InternalError"
+  /ingest/passive-health:
+    get:
+      operationId: getPassiveHealth
+      responses:
+        "200":
+          description: Latest read-only passive discovery site health, storage capacity, timers, and watermark lag snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassiveHealthSnapshot"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /ingest/runs:
     get:
       operationId: listIngestRuns
@@ -10499,6 +10511,104 @@ components:
           type: object
           additionalProperties:
             type: integer
+    PassiveHealthSnapshot:
+      type: object
+      required: [available, stale, age_seconds, alerts, failed_units, max_watermark_lag_seconds]
+      properties:
+        available:
+          type: boolean
+        stale:
+          type: boolean
+        age_seconds:
+          type: integer
+        sampled_at:
+          type: string
+        release:
+          type: string
+        alerts:
+          type: array
+          items:
+            type: string
+        errors:
+          type: object
+          additionalProperties:
+            type: string
+        failed_units:
+          type: array
+          items:
+            type: string
+        timers:
+          type: array
+          items:
+            type: object
+            required: [unit, active]
+            properties:
+              unit:
+                type: string
+              active:
+                type: boolean
+        disk:
+          type: object
+          required: [available, total]
+          properties:
+            available:
+              type: integer
+            total:
+              type: integer
+        storage:
+          type: object
+          required: [postgres_bytes, clickhouse_bytes, zeek_logs_bytes]
+          properties:
+            postgres_bytes:
+              type: integer
+            clickhouse_bytes:
+              type: integer
+            zeek_logs_bytes:
+              type: integer
+        archive_hardware:
+          type: object
+          required: [hardware_waiting, hardware_errors, waiting, retrying, failed]
+          properties:
+            hardware_waiting:
+              type: integer
+            hardware_errors:
+              type: integer
+            waiting:
+              type: integer
+            retrying:
+              type: integer
+            failed:
+              type: integer
+        readyz:
+          type: object
+          required: [http, status]
+          properties:
+            http:
+              type: integer
+            status:
+              type: string
+            components:
+              type: object
+              additionalProperties:
+                type: string
+        watermarks:
+          type: array
+          items:
+            type: object
+            required: [sensor_id, source_event_type, cursor_timestamp, updated_at]
+            properties:
+              sensor_id:
+                type: string
+              source_event_type:
+                type: string
+              cursor_timestamp:
+                type: string
+              updated_at:
+                type: string
+              lag_seconds:
+                type: integer
+        max_watermark_lag_seconds:
+          type: integer
     EventTypeCount:
       type: object
       required: [type, count]

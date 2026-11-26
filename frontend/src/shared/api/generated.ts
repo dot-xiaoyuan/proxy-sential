@@ -3431,6 +3431,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ingest/passive-health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getPassiveHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ingest/runs": {
         parameters: {
             query?: never;
@@ -9080,6 +9096,53 @@ export interface components {
             last_event_type_dist: {
                 [key: string]: number;
             };
+        };
+        PassiveHealthSnapshot: {
+            available: boolean;
+            stale: boolean;
+            age_seconds: number;
+            sampled_at?: string;
+            release?: string;
+            alerts: string[];
+            errors?: {
+                [key: string]: string;
+            };
+            failed_units: string[];
+            timers?: {
+                unit: string;
+                active: boolean;
+            }[];
+            disk?: {
+                available: number;
+                total: number;
+            };
+            storage?: {
+                postgres_bytes: number;
+                clickhouse_bytes: number;
+                zeek_logs_bytes: number;
+            };
+            archive_hardware?: {
+                hardware_waiting: number;
+                hardware_errors: number;
+                waiting: number;
+                retrying: number;
+                failed: number;
+            };
+            readyz?: {
+                http: number;
+                status: string;
+                components?: {
+                    [key: string]: string;
+                };
+            };
+            watermarks?: {
+                sensor_id: string;
+                source_event_type: string;
+                cursor_timestamp: string;
+                updated_at: string;
+                lag_seconds?: number;
+            }[];
+            max_watermark_lag_seconds: number;
         };
         EventTypeCount: {
             type: string;
@@ -15860,6 +15923,27 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IngestStatus"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getPassiveHealth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Latest read-only passive discovery site health, storage capacity, timers, and watermark lag snapshot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PassiveHealthSnapshot"];
                 };
             };
             500: components["responses"]["InternalError"];

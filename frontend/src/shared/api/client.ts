@@ -38,6 +38,7 @@ import type {
   FingerprintConflictItem,
   IngestDiagnostic,
   IngestStatus,
+  PassiveHealthSnapshot,
   IngestDiagnosticListResponse,
   IpDeviceInventory,
   IpActivityProfile,
@@ -226,6 +227,7 @@ export const api = {
   streamEventBody: (ref: StreamBodyRef) => request<NormalizedEventSummary>(`/events/stream-body${search({ ref: JSON.stringify(ref) })}`),
   event: (eventId: string) => request<NormalizedEventSummary>(`/events/${encodeURIComponent(eventId)}`),
   ingestStatus: () => request<IngestStatus>('/ingest/status'),
+  passiveHealth: () => request<PassiveHealthSnapshot>('/ingest/passive-health'),
   ingestRuns: (query: ListQuery = {}) => request<ShadowRunListResponse>(`/ingest/runs${search(query)}`),
   ingestDiagnostics: (query: ListQuery = {}) =>
     request<IngestDiagnosticListResponse>(`/ingest/diagnostics${search(query)}`),

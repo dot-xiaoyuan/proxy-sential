@@ -907,6 +907,8 @@ func (s *Server) dispatchAPI(w http.ResponseWriter, r *http.Request, path string
 		s.handleEvent(w, r, strings.TrimPrefix(path, "/events/"))
 	case r.Method == http.MethodGet && path == "/ingest/status":
 		s.handleIngestStatus(w, r)
+	case r.Method == http.MethodGet && path == "/ingest/passive-health":
+		s.handlePassiveHealth(w, r)
 	case r.Method == http.MethodGet && path == "/ingest/runs":
 		s.handleShadowRuns(w, r)
 	case r.Method == http.MethodGet && path == "/ingest/diagnostics":

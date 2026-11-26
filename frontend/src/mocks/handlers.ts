@@ -688,6 +688,28 @@ export const handlers = [
     return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 })
   }),
   http.get('/api/v1/ingest/status', () => HttpResponse.json(ingestStatus)),
+  http.get('/api/v1/ingest/passive-health', () => HttpResponse.json({
+    available: true,
+    stale: false,
+    age_seconds: 95,
+    sampled_at: new Date(Date.now() - 95_000).toISOString(),
+    release: '2026.11.26-mock',
+    alerts: ['archive_retry_exhausted'],
+    failed_units: [],
+    timers: [
+      { unit: 'proxy-sentinel-zeek-log-prune.timer', active: true },
+      { unit: 'proxy-sentinel-device-retention.timer', active: true },
+      { unit: 'proxy-sentinel-passive-health.timer', active: true },
+    ],
+    disk: { available: 950_000_000_000, total: 1_800_000_000_000 },
+    storage: { postgres_bytes: 45_000_000_000, clickhouse_bytes: 520_000_000_000, zeek_logs_bytes: 12_000_000_000 },
+    archive_hardware: { hardware_waiting: 14, hardware_errors: 0, waiting: 0, retrying: 0, failed: 120 },
+    watermarks: [
+      { sensor_id: 'campus-204', source_event_type: 'capwap', cursor_timestamp: new Date(Date.now() - 120_000).toISOString(), updated_at: new Date(Date.now() - 10_000).toISOString(), lag_seconds: 120 },
+      { sensor_id: 'campus-204', source_event_type: 'ssh', cursor_timestamp: new Date(Date.now() - 115_000).toISOString(), updated_at: new Date(Date.now() - 8_000).toISOString(), lag_seconds: 115 },
+    ],
+    max_watermark_lag_seconds: 120,
+  })),
   http.get('/api/v1/ingest/runs', () => HttpResponse.json({ runs: shadowRuns })),
   http.get('/api/v1/ingest/diagnostics', ({ request }) => { const result = mockPage(ingestDiagnostics, new URL(request.url)); return HttpResponse.json({ diagnostics: result.items, page: result.page }) }),
   http.get('/api/v1/ingest/diagnostics/:diagnosticId', ({ params }) => { const item = ingestDiagnostics.find((entry) => entry.diagnostic_id === params.diagnosticId); return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 }) }),

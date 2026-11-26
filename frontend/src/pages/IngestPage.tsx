@@ -22,7 +22,9 @@ import {
   useIngestEventTypes,
   useIngestErrors,
   useIngestStatus,
+  usePassiveHealth,
 } from "../shared/api/queries";
+import { PassiveHealthPanel } from "./PassiveHealthPanel";
 import type {
   IngestDiagnostic,
   NormalizedEventSummary,
@@ -37,7 +39,7 @@ import {
 } from "../shared/ui";
 
 export function IngestPage({ embedded = false }: { embedded?: boolean } = {}) {
-  const [activeTab, setActiveTab] = useUrlState("diagnostic_tab","nodes",["nodes","types","diagnostics","errors","events"]);
+  const [activeTab, setActiveTab] = useUrlState("diagnostic_tab","nodes",["nodes","health","types","diagnostics","errors","events"]);
   const [inspectJson, setInspectJson] = useState<{
     title: string;
     data: unknown;
@@ -47,6 +49,7 @@ export function IngestPage({ embedded = false }: { embedded?: boolean } = {}) {
   const diagnosticPage = useServerPagination("diagnostics_");
 
   const status = useIngestStatus();
+  const passiveHealth = usePassiveHealth(activeTab === "health");
   const eventTypes = useIngestEventTypes(activeTab === "types");
   const diagnostics = useIngestDiagnostics(
     { limit: diagnosticPage.pageSize, cursor: diagnosticPage.cursor },
@@ -293,6 +296,19 @@ export function IngestPage({ embedded = false }: { embedded?: boolean } = {}) {
                     </Descriptions.Item>
                   </Descriptions>
                 </div>
+              ),
+            },
+            {
+              key: "health",
+              label: "系统健康与容量",
+              children: (
+                <PassiveHealthPanel
+                  data={passiveHealth.data}
+                  isError={passiveHealth.isError}
+                  isFetching={passiveHealth.isFetching}
+                  isLoading={passiveHealth.isLoading}
+                  onRefresh={() => void passiveHealth.refetch()}
+                />
               ),
             },
             {

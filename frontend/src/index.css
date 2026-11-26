@@ -16379,6 +16379,75 @@ a.coverage-category-item-name:hover {
   flex-shrink: 0;
 }
 
+/* L2 系统健康与容量运维看板 */
+.passive-health-panel {
+  gap: 14px;
+}
+
+.passive-health-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.passive-health-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.passive-health-tag {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.passive-health-alert-list {
+  margin: 4px 0 0;
+  padding-inline-start: 18px;
+}
+
+.passive-health-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.passive-health-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.passive-health-timer-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+
+@media (max-width: 1024px) {
+  .passive-health-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .passive-health-kpi-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .passive-health-section {
+    padding: 12px 14px;
+  }
+}
+
 /* 终端列表与发现设备列表统一排版与密度优化 */
 .device-inventory-toolbar {
   display: flex;

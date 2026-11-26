@@ -4,11 +4,14 @@ After=docker.service proxy-sentinel-control-plane.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 /opt/proxy-sentinel/current/scripts/passive_health.py --journal
+EnvironmentFile=-/opt/proxy-sentinel/config/runtime.env
+ExecStartPre=/usr/bin/mkdir -p /opt/proxy-sentinel/data/passive-health
+ExecStart=/usr/bin/python3 /opt/proxy-sentinel/current/scripts/passive_health.py --journal --snapshot-file /opt/proxy-sentinel/data/passive-health/latest.json
 TimeoutStartSec=100s
 Nice=10
-UMask=0077
+UMask=0022
 NoNewPrivileges=true
 ProtectSystem=strict
+ReadWritePaths=/opt/proxy-sentinel/data/passive-health
 ProtectHome=true
 PrivateTmp=true

@@ -71,6 +71,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	s.signalMetrics(w)
 	s.identityMetrics(ctx, w)
+	s.passiveHealthMetrics(w)
 }
 
 func (s *Server) signalMetrics(w http.ResponseWriter) {

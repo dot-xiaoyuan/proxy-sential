@@ -110,6 +110,7 @@ export const queryKeys = {
     ["endpoint-identity", endpointId, query] as const,
   events: (query: EventQuery) => ["events", query] as const,
   ingestStatus: ["ingest-status"] as const,
+  passiveHealth: ["ingest-passive-health"] as const,
   ingestRuns: (query: ListQuery) => ["ingest-runs", query] as const,
   ingestDiagnostics: (query: ListQuery) =>
     ["ingest-diagnostics", query] as const,
@@ -439,6 +440,15 @@ export function useIngestStatus() {
   return useQuery({
     queryKey: queryKeys.ingestStatus,
     queryFn: api.ingestStatus,
+  });
+}
+
+export function usePassiveHealth(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.passiveHealth,
+    queryFn: api.passiveHealth,
+    enabled,
+    staleTime: 30_000,
   });
 }
 
