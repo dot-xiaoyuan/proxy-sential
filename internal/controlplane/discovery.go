@@ -74,6 +74,10 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request, path st
 		s.handleDiscoveryCensus(w, r, path)
 		return
 	}
+	if path == "/discovery/annotations" || path == "/discovery/ledgers" || strings.HasPrefix(path, "/discovery/ledgers/") {
+		s.handleAssetGovernance(w, r, path)
+		return
+	}
 	if r.Method != "GET" && s.readOnly {
 		writeError(w, 403, "read_only", "只读模式不允许配置发现任务")
 		return

@@ -541,6 +541,115 @@ paths:
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
+  /discovery/annotations:
+    get:
+      operationId: listAssetAnnotations
+      parameters:
+        - name: target_key
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Audited manual asset annotations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssetAnnotationListResponse'
+    put:
+      operationId: upsertAssetAnnotation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssetManualAnnotation'
+      responses:
+        '200':
+          description: Saved manual asset annotation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssetManualAnnotation'
+    delete:
+      operationId: deleteAssetAnnotation
+      parameters:
+        - name: target_key
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Deleted annotation acknowledgement.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted, target_key]
+                properties:
+                  deleted: { type: boolean }
+                  target_key: { type: string }
+  /discovery/ledgers:
+    get:
+      operationId: listAssetLedgers
+      responses:
+        '200':
+          description: Persisted campus asset ledger snapshots.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssetLedgerListResponse'
+    post:
+      operationId: createAssetLedger
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssetLedgerImportRequest'
+      responses:
+        '201':
+          description: Imported campus ledger snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssetLedgerSnapshot'
+  /discovery/ledgers/{ledgerId}:
+    delete:
+      operationId: deleteAssetLedger
+      parameters:
+        - name: ledgerId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Deleted ledger acknowledgement.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted, ledger_id]
+                properties:
+                  deleted: { type: boolean }
+                  ledger_id: { type: string }
+  /discovery/ledgers/{ledgerId}/reconcile:
+    get:
+      operationId: reconcileAssetLedger
+      parameters:
+        - name: ledgerId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: window
+          in: query
+          schema: { type: string, enum: [24h, 168h, 720h] }
+      responses:
+        '200':
+          description: Four-quadrant reconciliation result between persisted ledger and passive discovery.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssetLedgerReconcileResponse'
   /discovery/scan-profiles:
     get:
       operationId: getDiscoveryScanProfiles
@@ -10990,3 +11099,118 @@ components:
         model: { type: string }
         role: { type: string }
         os: { type: string }
+
+    AssetManualAnnotation:
+      type: object
+      required: [target_key, verification_status]
+      properties:
+        target_key: { type: string }
+        sensor_id: { type: string }
+        verification_status: { type: string, enum: [verified, corrected, ignored, unverified] }
+        override_device_type: { type: string }
+        override_brand: { type: string }
+        override_model: { type: string }
+        department: { type: string }
+        owner_name: { type: string }
+        asset_tag: { type: string }
+        note: { type: string }
+        updated_by: { type: string }
+        created_at: { type: string }
+        updated_at: { type: string }
+
+    AssetAnnotationListResponse:
+      type: object
+      required: [writable, items]
+      properties:
+        writable: { type: boolean }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AssetManualAnnotation' }
+
+    AssetLedgerSnapshot:
+      type: object
+      required: [ledger_id, name, source_kind, entry_count, imported_at]
+      properties:
+        ledger_id: { type: string }
+        sensor_id: { type: string }
+        name: { type: string }
+        source_kind: { type: string }
+        entry_count: { type: integer }
+        imported_by: { type: string }
+        imported_at: { type: string }
+        note: { type: string }
+
+    AssetLedgerListResponse:
+      type: object
+      required: [writable, items]
+      properties:
+        writable: { type: boolean }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AssetLedgerSnapshot' }
+
+    AssetLedgerEntry:
+      type: object
+      properties:
+        mac: { type: string }
+        ip: { type: string }
+        asset_name: { type: string }
+        expected_type: { type: string }
+        expected_vendor: { type: string }
+        expected_model: { type: string }
+        department: { type: string }
+        location: { type: string }
+        asset_tag: { type: string }
+
+    AssetLedgerImportRequest:
+      type: object
+      required: [name, source_kind, entries]
+      properties:
+        name: { type: string }
+        source_kind: { type: string }
+        note: { type: string }
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/AssetLedgerEntry' }
+
+    AssetReconcileItem:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [registered_active, discovered_unregistered, ledger_offline, attribute_mismatch] }
+        mac: { type: string }
+        ip: { type: string }
+        asset_name: { type: string }
+        asset_tag: { type: string }
+        department: { type: string }
+        location: { type: string }
+        expected_type: { type: string }
+        observed_type: { type: string }
+        expected_vendor: { type: string }
+        observed_vendor: { type: string }
+        last_seen: { type: string }
+        detail: { type: string }
+
+    AssetLedgerReconcileSummary:
+      type: object
+      required: [ledger_total, observed_total, registered_active, discovered_unregistered, ledger_offline, attribute_mismatch]
+      properties:
+        ledger_total: { type: integer }
+        observed_total: { type: integer }
+        registered_active: { type: integer }
+        discovered_unregistered: { type: integer }
+        ledger_offline: { type: integer }
+        attribute_mismatch: { type: integer }
+
+    AssetLedgerReconcileResponse:
+      type: object
+      required: [ledger, window, reconciled_at, summary, items, truncated]
+      properties:
+        ledger: { $ref: '#/components/schemas/AssetLedgerSnapshot' }
+        window: { type: string }
+        reconciled_at: { type: string }
+        summary: { $ref: '#/components/schemas/AssetLedgerReconcileSummary' }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AssetReconcileItem' }
+        truncated: { type: boolean }

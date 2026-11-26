@@ -48,6 +48,7 @@ type Options struct {
 	FrontendDir              string
 	ReadOnly                 bool
 	AllowIdentityIngest      bool
+	AssetAnnotationsWrite    bool
 	StorageMode              string
 	PostgresDSN              string
 	ClickHouseDSN            string
@@ -93,8 +94,9 @@ type Server struct {
 	shadowDir           string
 	sensorID            string
 	frontendDir         string
-	readOnly            bool
-	allowIdentityIngest bool
+	readOnly              bool
+	allowIdentityIngest   bool
+	assetAnnotationsWrite bool
 	reader              store.Reader
 	fingerprints        *fingerprint.Manager
 	fingerprintOffline  bool
@@ -456,6 +458,7 @@ func NewServerWithError(opts Options) (*Server, error) {
 		frontendDir:             opts.FrontendDir,
 		readOnly:                opts.ReadOnly,
 		allowIdentityIngest:     opts.AllowIdentityIngest,
+		assetAnnotationsWrite:   opts.AssetAnnotationsWrite,
 		reader:                  reader,
 		fingerprints:            fingerprints,
 		fingerprintOffline:      !opts.FingerprintAutoUpdate,
@@ -706,7 +709,7 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 			strings.HasPrefix(path, "/integrations/identity/snapshot-uploads/") ||
 			path == "/integrations/identity/bridge/catalog-snapshots")
 	localObservationPost := r.Method == http.MethodPost && strings.HasPrefix(path, "/violation-cases/") && strings.HasSuffix(path, "/release-preview")
-	if r.Method != http.MethodGet && r.Method != http.MethodHead && s.readOnly && !identityIngestPost && !(r.Method == http.MethodPut && path == "/integrations/identity/bridge") && !srun4KReadOnlyMutationAllowed(r.Method, path) && !organizationConfigurationAllowed(r.Method, path) && !endpointRegistrationAllowed(r.Method, path) && !localObservationPost && !(path == "/mcp" && r.Method == http.MethodPost) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && s.readOnly && !identityIngestPost && !(r.Method == http.MethodPut && path == "/integrations/identity/bridge") && !srun4KReadOnlyMutationAllowed(r.Method, path) && !organizationConfigurationAllowed(r.Method, path) && !endpointRegistrationAllowed(r.Method, path) && !s.assetGovernanceMutationAllowed(r.Method, path) && !localObservationPost && !(path == "/mcp" && r.Method == http.MethodPost) {
 		writeError(w, http.StatusForbidden, "read_only", "mutating operations are disabled by the global read-only switch")
 		return
 	}
@@ -1307,6 +1310,9 @@ func requiredPermission(method, path string) string {
 	if strings.HasPrefix(path, "/discovery/") {
 		if method == http.MethodGet {
 			return "identity:read"
+		}
+		if path == "/discovery/annotations" || path == "/discovery/ledgers" || strings.HasPrefix(path, "/discovery/ledgers/") {
+			return "endpoints:write"
 		}
 		return "integrations:write"
 	}

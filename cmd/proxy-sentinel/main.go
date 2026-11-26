@@ -1814,6 +1814,7 @@ func runControlPlaneServe(args []string) error {
 	sharedObservationEnabled := fs.Bool("shared-observation-enabled", envBool("PROXY_SENTINEL_SHARED_OBSERVATION_ENABLED", false), "materialize sharing and record observe decisions; never dispatch actions")
 	readOnly := fs.Bool("read-only", true, "disable mutating review and reload endpoints")
 	allowIdentityIngest := fs.Bool("allow-identity-ingest", envBool("PROXY_SENTINEL_ALLOW_IDENTITY_INGEST_IN_READ_ONLY", false), "allow authenticated identity events and snapshots while the global control plane remains read-only")
+	assetAnnotationsWrite := fs.Bool("asset-annotations-write", envBool("PROXY_SENTINEL_ASSET_ANNOTATIONS_WRITE", false), "allow audited manual asset annotations and campus ledger reconciliation writes while global read-only remains enforced")
 	storageMode := fs.String("storage-mode", firstEnv("PROXY_SENTINEL_STORAGE_MODE", "file"), "storage mode: file, db, or dual")
 	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN for production business storage")
 	clickHouseDSN := fs.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP URL for production event and diagnostic storage")
@@ -1915,6 +1916,7 @@ func runControlPlaneServe(args []string) error {
 		ReadOnly:                 *readOnly,
 		SharedObservationEnabled: *sharedObservationEnabled,
 		AllowIdentityIngest:      *allowIdentityIngest,
+		AssetAnnotationsWrite:    *assetAnnotationsWrite,
 		StorageMode:              *storageMode,
 		PostgresDSN:              *postgresDSN,
 		ClickHouseDSN:            *clickHouseDSN,

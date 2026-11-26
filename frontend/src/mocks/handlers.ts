@@ -42,6 +42,51 @@ function normalizeIp(value: string) {
   return decodeURIComponent(value)
 }
 
+const mockAssetAnnotations: Array<{
+  target_key: string
+  sensor_id: string
+  verification_status: 'verified' | 'corrected' | 'ignored' | 'unverified'
+  override_device_type: string
+  override_brand: string
+  override_model: string
+  department: string
+  owner_name: string
+  asset_tag: string
+  note: string
+  updated_by: string
+  created_at: string
+  updated_at: string
+}> = [
+  {
+    target_key: 'ip:10.42.1.11',
+    sensor_id: 'campus-204',
+    verification_status: 'verified',
+    override_device_type: 'access_point',
+    override_brand: 'Ruijie',
+    override_model: 'RG-AP820-L',
+    department: '网络中心',
+    owner_name: '值班运维',
+    asset_tag: 'NCU-AP-101',
+    note: '教学楼一楼走廊吸顶 AP',
+    updated_by: 'admin',
+    created_at: '2026-11-26T08:00:00Z',
+    updated_at: '2026-11-26T08:00:00Z',
+  },
+]
+
+const mockAssetLedgers = [
+  {
+    ledger_id: 'ledger-mock-ap-001',
+    sensor_id: 'campus-204',
+    name: '2026秋季-教学区瘦AP台账',
+    source_kind: 'ac_ap',
+    entry_count: 472,
+    imported_by: 'admin',
+    imported_at: '2026-11-26T09:00:00Z',
+    note: '导出自核心无线 AC',
+  },
+]
+
 const mockSRun4KIntegration = (connectorId: string, values: Record<string, unknown> = {}) => ({
   connector_id: connectorId, host: '192.168.0.190', authorization_database_host: '192.168.0.224', online_redis_host: '192.168.0.225',
   catalog_redis_host: '192.168.0.226', event_redis_host: '192.168.0.227', northbound_api_host: '192.168.0.227',
@@ -710,6 +755,85 @@ export const handlers = [
     ],
     max_watermark_lag_seconds: 120,
   })),
+  http.get('/api/v1/discovery/annotations', ({ request }) => {
+    const key = new URL(request.url).searchParams.get('target_key')
+    const items = key ? mockAssetAnnotations.filter(item => item.target_key === key.toLowerCase()) : mockAssetAnnotations
+    return HttpResponse.json({ writable: true, items })
+  }),
+  http.put('/api/v1/discovery/annotations', async ({ request }) => {
+    const body = (await request.json()) as Record<string, string>
+    const key = (body.target_key ?? '').toLowerCase()
+    const saved = {
+      target_key: key,
+      sensor_id: 'campus-204',
+      verification_status: (body.verification_status || 'verified') as 'verified' | 'corrected' | 'ignored' | 'unverified',
+      override_device_type: body.override_device_type || '',
+      override_brand: body.override_brand || '',
+      override_model: body.override_model || '',
+      department: body.department || '',
+      owner_name: body.owner_name || '',
+      asset_tag: body.asset_tag || '',
+      note: body.note || '',
+      updated_by: 'admin',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+    const idx = mockAssetAnnotations.findIndex(item => item.target_key === key)
+    if (idx >= 0) mockAssetAnnotations[idx] = saved
+    else mockAssetAnnotations.unshift(saved)
+    return HttpResponse.json(saved)
+  }),
+  http.delete('/api/v1/discovery/annotations', ({ request }) => {
+    const key = (new URL(request.url).searchParams.get('target_key') ?? '').toLowerCase()
+    const idx = mockAssetAnnotations.findIndex(item => item.target_key === key)
+    if (idx >= 0) mockAssetAnnotations.splice(idx, 1)
+    return HttpResponse.json({ deleted: true, target_key: key })
+  }),
+  http.get('/api/v1/discovery/ledgers', () => HttpResponse.json({ writable: true, items: mockAssetLedgers })),
+  http.post('/api/v1/discovery/ledgers', async ({ request }) => {
+    const body = (await request.json()) as { name: string; source_kind: string; note?: string; entries: unknown[] }
+    const created = {
+      ledger_id: `ledger-mock-${Date.now()}`,
+      sensor_id: 'campus-204',
+      name: body.name,
+      source_kind: body.source_kind || 'general',
+      entry_count: body.entries?.length ?? 0,
+      imported_by: 'admin',
+      imported_at: new Date().toISOString(),
+      note: body.note || '',
+    }
+    mockAssetLedgers.unshift(created)
+    return HttpResponse.json(created, { status: 201 })
+  }),
+  http.delete('/api/v1/discovery/ledgers/:ledgerId', ({ params }) => {
+    const idx = mockAssetLedgers.findIndex(item => item.ledger_id === params.ledgerId)
+    if (idx >= 0) mockAssetLedgers.splice(idx, 1)
+    return HttpResponse.json({ deleted: true, ledger_id: String(params.ledgerId) })
+  }),
+  http.get('/api/v1/discovery/ledgers/:ledgerId/reconcile', ({ params, request }) => {
+    const ledger = mockAssetLedgers.find(item => item.ledger_id === params.ledgerId) ?? mockAssetLedgers[0]
+    const win = new URL(request.url).searchParams.get('window') || '24h'
+    return HttpResponse.json({
+      ledger,
+      window: win,
+      reconciled_at: new Date().toISOString(),
+      summary: {
+        ledger_total: 472,
+        observed_total: 485,
+        registered_active: 460,
+        discovered_unregistered: 13,
+        ledger_offline: 8,
+        attribute_mismatch: 4,
+      },
+      items: [
+        { status: 'registered_active', ip: '10.42.1.11', asset_name: '教1-101-AP', department: '网络中心', expected_type: 'access_point', observed_type: 'access_point', last_seen: new Date().toISOString(), detail: '已登记且在窗口内活跃' },
+        { status: 'discovered_unregistered', ip: '10.42.9.88', observed_type: 'access_point', last_seen: new Date().toISOString(), detail: '被动发现已观测到活跃记录，但不在当前台账中' },
+        { status: 'ledger_offline', ip: '10.42.2.45', asset_name: '图书馆3F-AP', department: '图书馆', expected_type: 'access_point', detail: '台账已登记但当前窗口未观测到活跃流量' },
+        { status: 'attribute_mismatch', mac: 'aa:bb:cc:dd:ee:02', ip: '10.42.3.18', asset_name: '实验楼-AP', expected_type: 'access_point', observed_type: 'router', last_seen: new Date().toISOString(), detail: '台账品类 access_point 与被动观测 router 不符' },
+      ],
+      truncated: false,
+    })
+  }),
   http.get('/api/v1/ingest/runs', () => HttpResponse.json({ runs: shadowRuns })),
   http.get('/api/v1/ingest/diagnostics', ({ request }) => { const result = mockPage(ingestDiagnostics, new URL(request.url)); return HttpResponse.json({ diagnostics: result.items, page: result.page }) }),
   http.get('/api/v1/ingest/diagnostics/:diagnosticId', ({ params }) => { const item = ingestDiagnostics.find((entry) => entry.diagnostic_id === params.diagnosticId); return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 }) }),

@@ -111,6 +111,9 @@ export const queryKeys = {
   events: (query: EventQuery) => ["events", query] as const,
   ingestStatus: ["ingest-status"] as const,
   passiveHealth: ["ingest-passive-health"] as const,
+  assetAnnotations: (targetKey?: string) => ["discovery-asset-annotations", targetKey ?? "all"] as const,
+  assetLedgers: ["discovery-asset-ledgers"] as const,
+  assetLedgerReconcile: (ledgerId: string, window: string) => ["discovery-asset-ledger-reconcile", ledgerId, window] as const,
   ingestRuns: (query: ListQuery) => ["ingest-runs", query] as const,
   ingestDiagnostics: (query: ListQuery) =>
     ["ingest-diagnostics", query] as const,
@@ -448,6 +451,33 @@ export function usePassiveHealth(enabled = true) {
     queryKey: queryKeys.passiveHealth,
     queryFn: api.passiveHealth,
     enabled,
+    staleTime: 30_000,
+  });
+}
+
+export function useAssetAnnotations(targetKey?: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.assetAnnotations(targetKey),
+    queryFn: () => api.assetAnnotations(targetKey),
+    enabled,
+    staleTime: 15_000,
+  });
+}
+
+export function useAssetLedgers(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.assetLedgers,
+    queryFn: api.assetLedgers,
+    enabled,
+    staleTime: 30_000,
+  });
+}
+
+export function useAssetLedgerReconcile(ledgerId: string, window: '24h' | '168h' | '720h' = '24h', enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.assetLedgerReconcile(ledgerId, window),
+    queryFn: () => api.reconcileAssetLedger(ledgerId, window),
+    enabled: enabled && Boolean(ledgerId),
     staleTime: 30_000,
   });
 }

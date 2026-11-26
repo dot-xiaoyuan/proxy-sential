@@ -12,6 +12,7 @@ import { CensusPanel } from './CensusPanel'
 import { DiscoveryCoverageReport, DiscoveryMirrorCoverage, type CoverageReport } from './DiscoveryCoverageReport'
 import { DiscoverySupplementaryPanels } from './DiscoverySupplementaryPanels'
 import { TruthReviewPanel } from './TruthReviewPanel'
+import { AssetLedgerPanel } from './AssetLedgerPanel'
 
 const windows = [
   { value: '15m', label: '近 15 分钟' },
@@ -179,7 +180,7 @@ export function DiscoveryCoveragePage() {
           <summary>镜像明细与台账对照</summary>
           {censusOpened && <CensusPanel />}
         </details>
-      </> : <TruthReviewPanel />,
+      </> : <div className="coverage-review-stack"><AssetLedgerPanel /><TruthReviewPanel /></div>,
     }))} />
   </main>
 }

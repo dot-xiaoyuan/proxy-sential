@@ -651,6 +651,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/discovery/annotations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAssetAnnotations"];
+        put: operations["upsertAssetAnnotation"];
+        post?: never;
+        delete: operations["deleteAssetAnnotation"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/ledgers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAssetLedgers"];
+        put?: never;
+        post: operations["createAssetLedger"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/ledgers/{ledgerId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["deleteAssetLedger"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery/ledgers/{ledgerId}/reconcile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["reconcileAssetLedger"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/discovery/scan-profiles": {
         parameters: {
             query?: never;
@@ -9412,6 +9476,89 @@ export interface components {
             role?: string;
             os?: string;
         };
+        AssetManualAnnotation: {
+            target_key: string;
+            sensor_id?: string;
+            /** @enum {string} */
+            verification_status: "verified" | "corrected" | "ignored" | "unverified";
+            override_device_type?: string;
+            override_brand?: string;
+            override_model?: string;
+            department?: string;
+            owner_name?: string;
+            asset_tag?: string;
+            note?: string;
+            updated_by?: string;
+            created_at?: string;
+            updated_at?: string;
+        };
+        AssetAnnotationListResponse: {
+            writable: boolean;
+            items: components["schemas"]["AssetManualAnnotation"][];
+        };
+        AssetLedgerSnapshot: {
+            ledger_id: string;
+            sensor_id?: string;
+            name: string;
+            source_kind: string;
+            entry_count: number;
+            imported_by?: string;
+            imported_at: string;
+            note?: string;
+        };
+        AssetLedgerListResponse: {
+            writable: boolean;
+            items: components["schemas"]["AssetLedgerSnapshot"][];
+        };
+        AssetLedgerEntry: {
+            mac?: string;
+            ip?: string;
+            asset_name?: string;
+            expected_type?: string;
+            expected_vendor?: string;
+            expected_model?: string;
+            department?: string;
+            location?: string;
+            asset_tag?: string;
+        };
+        AssetLedgerImportRequest: {
+            name: string;
+            source_kind: string;
+            note?: string;
+            entries: components["schemas"]["AssetLedgerEntry"][];
+        };
+        AssetReconcileItem: {
+            /** @enum {string} */
+            status: "registered_active" | "discovered_unregistered" | "ledger_offline" | "attribute_mismatch";
+            mac?: string;
+            ip?: string;
+            asset_name?: string;
+            asset_tag?: string;
+            department?: string;
+            location?: string;
+            expected_type?: string;
+            observed_type?: string;
+            expected_vendor?: string;
+            observed_vendor?: string;
+            last_seen?: string;
+            detail?: string;
+        };
+        AssetLedgerReconcileSummary: {
+            ledger_total: number;
+            observed_total: number;
+            registered_active: number;
+            discovered_unregistered: number;
+            ledger_offline: number;
+            attribute_mismatch: number;
+        };
+        AssetLedgerReconcileResponse: {
+            ledger: components["schemas"]["AssetLedgerSnapshot"];
+            window: string;
+            reconciled_at: string;
+            summary: components["schemas"]["AssetLedgerReconcileSummary"];
+            items: components["schemas"]["AssetReconcileItem"][];
+            truncated: boolean;
+        };
     };
     responses: {
         /** @description Invalid request. */
@@ -10640,6 +10787,170 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    listAssetAnnotations: {
+        parameters: {
+            query?: {
+                target_key?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Audited manual asset annotations. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetAnnotationListResponse"];
+                };
+            };
+        };
+    };
+    upsertAssetAnnotation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssetManualAnnotation"];
+            };
+        };
+        responses: {
+            /** @description Saved manual asset annotation. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetManualAnnotation"];
+                };
+            };
+        };
+    };
+    deleteAssetAnnotation: {
+        parameters: {
+            query: {
+                target_key: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted annotation acknowledgement. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        deleted: boolean;
+                        target_key: string;
+                    };
+                };
+            };
+        };
+    };
+    listAssetLedgers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Persisted campus asset ledger snapshots. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetLedgerListResponse"];
+                };
+            };
+        };
+    };
+    createAssetLedger: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssetLedgerImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Imported campus ledger snapshot. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetLedgerSnapshot"];
+                };
+            };
+        };
+    };
+    deleteAssetLedger: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                ledgerId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted ledger acknowledgement. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        deleted: boolean;
+                        ledger_id: string;
+                    };
+                };
+            };
+        };
+    };
+    reconcileAssetLedger: {
+        parameters: {
+            query?: {
+                window?: "24h" | "168h" | "720h";
+            };
+            header?: never;
+            path: {
+                ledgerId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Four-quadrant reconciliation result between persisted ledger and passive discovery. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetLedgerReconcileResponse"];
                 };
             };
         };

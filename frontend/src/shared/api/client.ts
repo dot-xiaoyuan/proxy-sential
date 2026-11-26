@@ -39,6 +39,12 @@ import type {
   IngestDiagnostic,
   IngestStatus,
   PassiveHealthSnapshot,
+  AssetManualAnnotation,
+  AssetAnnotationListResponse,
+  AssetLedgerSnapshot,
+  AssetLedgerListResponse,
+  AssetLedgerImportRequest,
+  AssetLedgerReconcileResponse,
   IngestDiagnosticListResponse,
   IpDeviceInventory,
   IpActivityProfile,
@@ -228,6 +234,19 @@ export const api = {
   event: (eventId: string) => request<NormalizedEventSummary>(`/events/${encodeURIComponent(eventId)}`),
   ingestStatus: () => request<IngestStatus>('/ingest/status'),
   passiveHealth: () => request<PassiveHealthSnapshot>('/ingest/passive-health'),
+  assetAnnotations: (targetKey?: string) =>
+    request<AssetAnnotationListResponse>(`/discovery/annotations${targetKey ? search({ target_key: targetKey }) : ''}`),
+  upsertAssetAnnotation: (payload: AssetManualAnnotation) =>
+    request<AssetManualAnnotation>('/discovery/annotations', { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteAssetAnnotation: (targetKey: string) =>
+    request<{ deleted: boolean; target_key: string }>(`/discovery/annotations${search({ target_key: targetKey })}`, { method: 'DELETE' }),
+  assetLedgers: () => request<AssetLedgerListResponse>('/discovery/ledgers'),
+  createAssetLedger: (payload: AssetLedgerImportRequest) =>
+    request<AssetLedgerSnapshot>('/discovery/ledgers', { method: 'POST', body: JSON.stringify(payload) }),
+  deleteAssetLedger: (ledgerId: string) =>
+    request<{ deleted: boolean; ledger_id: string }>(`/discovery/ledgers/${encodeURIComponent(ledgerId)}`, { method: 'DELETE' }),
+  reconcileAssetLedger: (ledgerId: string, window: '24h' | '168h' | '720h' = '24h') =>
+    request<AssetLedgerReconcileResponse>(`/discovery/ledgers/${encodeURIComponent(ledgerId)}/reconcile${search({ window })}`),
   ingestRuns: (query: ListQuery = {}) => request<ShadowRunListResponse>(`/ingest/runs${search(query)}`),
   ingestDiagnostics: (query: ListQuery = {}) =>
     request<IngestDiagnosticListResponse>(`/ingest/diagnostics${search(query)}`),
