@@ -448,7 +448,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
   types.desktop='个人电脑'
   if(hardwareV2)types.virtual_machine='虚拟化'
   const items:Device[]=devices.data?.items??[]
-  const typedPageCount=items.filter(item=>!!confirmedDeviceType(item)).length
+  const judgedPageCount = items.filter(item => confirmedDeviceType(item) || deviceTypeEvidenceState(item) === 'profile_typed').length
   const allServiceTargets=[...new Set(items.flatMap(item=>item.sensor_id&&item.mac?(item.current_addresses??(item.primary_ip?[item.primary_ip]:[])).map(ip=>`${item.sensor_id}|${item.mac!.toLowerCase()}|${ip}`):[]))].sort()
   const serviceKey=allServiceTargets.slice(0,50).join(',')
   const serviceClues=useQuery({queryKey:['discovery-service-clues',serviceKey],queryFn:({signal})=>request<{items:Record<string,ServiceClue[]>}>(`/discovery/service-clues?targets=${encodeURIComponent(serviceKey)}`,{signal}),enabled:serviceKey!==''&&coverage.data?.enabled===true,staleTime:60_000})
@@ -869,7 +869,7 @@ export function PassiveDiscoveryPanel({view}:{view:'iot'|'records'}) {
       <div className="discovery-result-footer">
       <div className="terminal-page-summary" aria-label="发现设备摘要">
         <span>当前页 <strong>{items.length}</strong> {countUnit}</span>
-        {!addressView&&<span>本页明确类型 <strong>{typedPageCount}</strong></span>}
+        {!addressView&&<span>本页已有类型判断 <strong>{judgedPageCount}</strong></span>}
         <span>本页近15分钟观测 <strong>{recentPageCount}</strong></span>
       </div>
       <AppServerPagination disabled={devices.isFetching||position.isLocating} page={page+1} pageSize={pageSize} total={discoveryMetadata.data?.total} onChange={(nextPage,nextSize)=>{

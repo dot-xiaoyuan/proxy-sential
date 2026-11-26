@@ -17,6 +17,7 @@ test('persistent hardware, activity, and sources remain distinct at three viewpo
   await expect(ledger.getByRole('button', {name:'00:11:22:33:44:66', exact:true})).toBeVisible()
   await expect(page.getByText('最近活动线索已过期',{exact:true})).toBeVisible()
   await expect(page.getByLabel('发现设备总览')).toContainText('已有类型判断 4')
+  await expect(page.getByLabel('发现设备摘要')).toContainText('本页已有类型判断 4')
   const observation = ledger.getByRole('row').filter({hasText:'192.0.2.40'})
   await expect(observation.getByRole('button', {name:'地址线索', exact:true})).toBeVisible()
   await expect(observation.getByRole('button', {name:'192.0.2.40', exact:true})).toHaveCount(0)

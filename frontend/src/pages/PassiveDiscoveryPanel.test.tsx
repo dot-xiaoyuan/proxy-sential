@@ -126,7 +126,7 @@ it('shows the filtered discovery metadata total when the cursor page has no tota
   const summary = await screen.findByLabelText('发现设备摘要')
   const overview = await screen.findByLabelText('发现设备总览')
   await waitFor(()=>expect(overview).toHaveTextContent('共 84 个设备'))
-  expect(summary).toHaveTextContent('本页明确类型 1')
+  expect(summary).toHaveTextContent('本页已有类型判断 1')
   const table = within(screen.getByRole('table'))
   expect(await table.findByRole('button', { name: '02:00:00:20:40:01' })).toBeVisible()
   expect(table.getByText('无线接入点', {exact:true})).toBeVisible()
@@ -210,7 +210,7 @@ it('keeps an expired product self-report visible without counting it as an effec
   const table = await screen.findByRole('table')
   await waitFor(()=>expect(table).toHaveTextContent('打印机 · 历史型号自报'))
   expect(table).not.toHaveTextContent('摄像头 · 类型线索')
-  expect(screen.getByLabelText('发现设备摘要')).toHaveTextContent('本页明确类型 0')
+  expect(screen.getByLabelText('发现设备摘要')).toHaveTextContent('本页已有类型判断 0')
 })
 
 it('keeps a computer hostname out of confirmed device type and OS fields', async () => {
@@ -218,7 +218,7 @@ it('keeps a computer hostname out of confirmed device type and OS fields', async
   renderPanel()
   expect(await screen.findByText('电脑名称线索')).toBeVisible()
   expect(screen.queryByText(/办公终端|Windows/)).not.toBeInTheDocument()
-  expect(screen.getByLabelText('发现设备摘要')).toHaveTextContent('本页明确类型 0')
+  expect(screen.getByLabelText('发现设备摘要')).toHaveTextContent('本页已有类型判断 0')
   fireEvent.click(screen.getByRole('button',{name:'查看详情'}))
   expect(await screen.findByText(/名称可自行设置，不能据此确认设备类型、操作系统或用途/)).toBeInTheDocument()
   expect(screen.getByText(/仅有地址活动证据/)).toBeInTheDocument()
@@ -373,6 +373,7 @@ it('keeps V8 profile type clues visible without counting them as hardware confir
   expect(within(row).getByText('手机', {exact:true})).toBeVisible()
   expect(within(row).getByText('画像识别', {exact:true})).toBeVisible()
   expect(overview).toHaveTextContent('已有类型判断 1 · 缺少类型线索 0')
+  expect(screen.getByLabelText('发现设备摘要')).toHaveTextContent('本页已有类型判断 1')
   expect(overview).toHaveTextContent('共 1 条发现记录')
   expect(overview).toHaveTextContent('硬件规则确认（合计 0）')
   fireEvent.click(within(overview).getByRole('button', { name: '统计与类型线索' }))
@@ -464,7 +465,7 @@ it('does not count expired or conflicting recognition as an explicit current typ
   mockReads({items:{}},{...device,classification_status:'expired',recognition:{device_type:'access_point',confidence:.95}})
   renderPanel()
   await screen.findAllByText('192.0.2.10')
-  expect(screen.getByLabelText('发现设备摘要')).toHaveTextContent('本页明确类型 0')
+  expect(screen.getByLabelText('发现设备摘要')).toHaveTextContent('本页已有类型判断 0')
 })
 
 it('removes previous rows when a filter changes after one discovery key was split into evidence groups',async()=>{
@@ -792,7 +793,7 @@ it('retains a known hardware type when service observations expire and shows its
   mockReads({items:{}}, {...device,classification_status:'expired',device_type:'camera',hardware_type:'printer',hardware_type_status:'identified',hardware_model:'Canon MF260 Series',type_evidence_at:'2026-11-09T08:00:00Z',type_rule_version:'hardware-v8',activity_status:'stale',type_sources:[{source:'dns_sd',rule_id:'canon-mf260',rule_version:'hardware-v8',evidence_id:'model-event-1',observed_at:'2026-11-09T08:00:00Z'}]})
   renderPanel()
   expect((await screen.findAllByText('打印机'))[0]).toBeVisible()
-  expect(await screen.findByLabelText('发现设备摘要')).toHaveTextContent('本页明确类型 1')
+  expect(await screen.findByLabelText('发现设备摘要')).toHaveTextContent('本页已有类型判断 1')
   expect(await screen.findByText('最近活动线索已过期')).toBeVisible()
   fireEvent.click(screen.getByRole('button',{name:'查看详情'}))
   const dialog=await screen.findByRole('dialog')
@@ -804,7 +805,7 @@ it('retains a known hardware type when service observations expire and shows its
 it('does not revive a revoked scoped hardware type through a legacy endpoint summary', async () => {
   mockReads({items:{}}, {...device,hardware_type_status:'revoked',activity_status:'active',recognition:{device_type:'camera',confidence:0.99}})
   renderPanel()
-  expect(await screen.findByLabelText('发现设备摘要')).toHaveTextContent('本页明确类型 0')
+  expect(await screen.findByLabelText('发现设备摘要')).toHaveTextContent('本页已有类型判断 0')
   expect(await screen.findByText('硬件结论已撤销')).toBeVisible()
   expect(screen.queryByText('摄像头')).not.toBeInTheDocument()
 })
