@@ -1,0 +1,11 @@
+[Unit]
+Description=Schedule Proxy Sentinel Zeek rotated log compression and retention pruning
+
+[Timer]
+OnCalendar=*:20:00
+RandomizedDelaySec=2min
+Persistent=true
+Unit=proxy-sentinel-zeek-log-prune.service
+
+[Install]
+WantedBy=timers.target

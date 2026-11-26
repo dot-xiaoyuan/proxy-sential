@@ -1,0 +1,14 @@
+[Unit]
+Description=Proxy Sentinel Zeek rotated log compression and retention pruning
+After=local-fs.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/opt/proxy-sentinel/config/runtime.env
+ExecStart=/usr/bin/python3 /opt/proxy-sentinel/current/scripts/zeek_log_prune.py
+Nice=10
+CPUWeight=15
+IOWeight=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true

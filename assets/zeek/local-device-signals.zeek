@@ -6,6 +6,11 @@
 @load ./snmp-device-signals
 @load base/protocols/dns
 
+# 生产单进程 Zeek 按小时原生轮转，通过后处理脚本原子重命名为 <base>.log-YYYYMMDD-HHMMSS（保留 inode），
+# 兼顾 realtime ingest 尾读无丢行、原文归档可追溯及磁盘稳态上限；离线回放夹具可覆盖为 0secs。
+redef Log::default_rotation_interval = 1 hr;
+redef Log::default_rotation_postprocessor_cmd = "/opt/proxy-sentinel/current/scripts/zeek-postrotate.sh";
+
 module ProxySentinel;
 
 export {

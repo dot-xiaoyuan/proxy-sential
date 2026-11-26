@@ -94,6 +94,7 @@ if [[ "$manage_zeek" == true ]]; then
   : "${PROXY_SENTINEL_ZEEK_X509_PATH:=$zeek_log_dir/x509.log}"
   : "${PROXY_SENTINEL_ZEEK_LLDP_PATH:=$zeek_log_dir/lldp.log}"
   : "${PROXY_SENTINEL_ZEEK_SSDP_PATH:=$zeek_log_dir/ssdp.log}"
+  : "${PROXY_SENTINEL_ZEEK_SSH_PATH:=$zeek_log_dir/ssh.log}"
   snmp_default_path="$zeek_log_dir/snmp.log"
   if [[ "$hardware_capture" == true ]]; then snmp_default_path="$zeek_log_dir/snmp_device.log"; fi
   : "${PROXY_SENTINEL_ZEEK_SNMP_PATH:=$snmp_default_path}"
@@ -103,7 +104,7 @@ if [[ "$manage_zeek" == true ]]; then
     export PROXY_SENTINEL_ZEEK_BACNET_PATH PROXY_SENTINEL_ZEEK_MODBUS_PATH
   fi
   export PROXY_SENTINEL_ZEEK_DHCP_PATH PROXY_SENTINEL_ZEEK_SOFTWARE_PATH PROXY_SENTINEL_ZEEK_MDNS_PATH PROXY_SENTINEL_ZEEK_NBNS_PATH PROXY_SENTINEL_ZEEK_LLMNR_PATH
-  export PROXY_SENTINEL_ZEEK_CONN_PATH PROXY_SENTINEL_ZEEK_DNS_PATH PROXY_SENTINEL_ZEEK_HTTP_PATH PROXY_SENTINEL_ZEEK_SSL_PATH PROXY_SENTINEL_ZEEK_X509_PATH PROXY_SENTINEL_ZEEK_LLDP_PATH PROXY_SENTINEL_ZEEK_SSDP_PATH PROXY_SENTINEL_ZEEK_SNMP_PATH
+  export PROXY_SENTINEL_ZEEK_CONN_PATH PROXY_SENTINEL_ZEEK_DNS_PATH PROXY_SENTINEL_ZEEK_HTTP_PATH PROXY_SENTINEL_ZEEK_SSL_PATH PROXY_SENTINEL_ZEEK_X509_PATH PROXY_SENTINEL_ZEEK_LLDP_PATH PROXY_SENTINEL_ZEEK_SSDP_PATH PROXY_SENTINEL_ZEEK_SSH_PATH PROXY_SENTINEL_ZEEK_SNMP_PATH
 fi
 ingest_source_args="--eve $eve_path"
 shadow_zeek_args=""
@@ -209,6 +210,7 @@ preflight() {
   append_ingest_source PROXY_SENTINEL_ZEEK_LLDP_PATH --zeek-lldp
   append_ingest_source PROXY_SENTINEL_ZEEK_SSDP_PATH --zeek-ssdp
   append_ingest_source PROXY_SENTINEL_ZEEK_SNMP_PATH --zeek-snmp
+  append_ingest_source PROXY_SENTINEL_ZEEK_SSH_PATH --zeek-ssh
   if [[ "$hardware_capture" == true ]]; then
     append_ingest_source PROXY_SENTINEL_ZEEK_BACNET_PATH --zeek-bacnet
     append_ingest_source PROXY_SENTINEL_ZEEK_MODBUS_PATH --zeek-modbus
