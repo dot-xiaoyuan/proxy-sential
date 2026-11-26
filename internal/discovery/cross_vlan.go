@@ -41,7 +41,8 @@ const crossVLANAssetsSQL = `, scoped_keys AS MATERIALIZED (
  GROUP BY k.identity_key,m.family
  HAVING coalesce(min(f.raw_ip) FILTER (WHERE strpos(f.raw_ip,':')=0)=max(f.raw_ip) FILTER (WHERE strpos(f.raw_ip,':')=0),min(f.raw_ip)=max(f.raw_ip))
 ), compatible_pairs AS (
- SELECT p.pair_key FROM pair_members p JOIN candidate_source c USING(identity_key)
+ SELECT p.pair_key,unnest(array_agg(p.identity_key)) identity_key
+ FROM pair_members p JOIN candidate_source c USING(identity_key)
  GROUP BY p.pair_key HAVING count(*)>1 AND bool_and(c.classification_status IN ('identified','candidate'))
  AND count(DISTINCT coalesce(c.effective_types[1],nullif(c.candidate_role,'')))<=1
  AND count(DISTINCT nullif(c.verified_model,''))<=1 AND NOT bool_or(c.model_conflict)
@@ -49,7 +50,7 @@ const crossVLANAssetsSQL = `, scoped_keys AS MATERIALIZED (
  AND count(DISTINCT c.product_types[1])<=1
 ), display_members AS (
  SELECT c.*,coalesce(p.pair_key,c.identity_key) display_key
- FROM candidate_source c LEFT JOIN (SELECT p.* FROM pair_members p JOIN compatible_pairs v USING(pair_key)) p USING(identity_key)
+ FROM candidate_source c LEFT JOIN compatible_pairs p USING(identity_key)
 ), display_ranked AS (
  SELECT m.*,count(*) OVER family vlan_scope_count,max(last_seen) OVER family asset_last_seen,
  row_number() OVER (PARTITION BY display_key ORDER BY (classification_status='identified') DESC,
