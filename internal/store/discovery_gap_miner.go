@@ -100,11 +100,19 @@ ORDER BY 2 DESC`, opts.SensorID, windowHours)
 		}
 	}
 
-	// 仅采集非空 ClickHouse 采样（所有查询严格限制单线程、256MB 内存与 20 秒超时）。
-	since := time.Now().UTC().Add(-opts.Window).Format(time.RFC3339)
+	// 仅采集非空 ClickHouse 采样（所有查询严格限制双线程、256MB 内存与 30 秒超时；
+	// 原始大表 passive_discovery_events_v2 自动有界采样最近 <=4 小时，避免 24h+ 扫描超时）。
+	chSampleWindow := opts.Window
+	if chSampleWindow > 4*time.Hour {
+		chSampleWindow = 4 * time.Hour
+		report.Warnings = append(report.Warnings, fmt.Sprintf("ClickHouse 原始事件特征采样已自动有界收敛为最近 %s（PostgreSQL 双表与随机 MAC 统计仍使用完整 %s 窗口）", chSampleWindow, opts.Window))
+	}
+	since := time.Now().UTC().Add(-chSampleWindow).Format(time.RFC3339)
 	sinceExpr := "parseDateTime64BestEffort(" + chQuote(since) + ",6)"
+	portSince := time.Now().UTC().Add(-opts.Window).Format(time.RFC3339)
+	portSinceExpr := "parseDateTime64BestEffort(" + chQuote(portSince) + ",6)"
 	sensorFilter := "sensor_id=" + chQuote(opts.SensorID)
-	chSettings := "SETTINGS max_threads=1,max_memory_usage=268435456,max_execution_time=20 FORMAT JSONEachRow"
+	chSettings := "SETTINGS max_threads=2,max_memory_usage=268435456,max_execution_time=30 FORMAT JSONEachRow"
 
 	// 2.5 ClickHouse: 新增被动协议命中统计（CAPWAP / 大华发现 / IEEE 1905 / SSH Banner）
 	newProtoSQL := fmt.Sprintf(`
@@ -218,7 +226,7 @@ PREWHERE %s AND window_start >= toDateTime(%s)
 WHERE dst_port IN (22, 23, 53, 80, 123, 137, 139, 161, 443, 445, 502, 515, 554, 631, 1900, 3389, 3702, 5060, 5246, 5247, 5353, 8000, 9100, 37020, 37777, 37810, 47808)
 GROUP BY proto, dst_port
 ORDER BY source_ips DESC, buckets DESC
-LIMIT %d %s`, sensorFilter, sinceExpr, opts.Top, chSettings)
+LIMIT %d %s`, sensorFilter, portSinceExpr, opts.Top, chSettings)
 	if raw, qErr := s.ch.query(ctx, portSQL); qErr != nil {
 		report.Warnings = append(report.Warnings, fmt.Sprintf("ClickHouse 目标端口统计失败: %v", qErr))
 	} else {

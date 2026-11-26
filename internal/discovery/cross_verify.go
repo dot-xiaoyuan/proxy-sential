@@ -147,23 +147,29 @@ func EvaluateCrossVerification(in CrossVerificationInput) CrossVerificationResul
 		})
 	}
 
-	// 5. 移动终端：Android/HarmonyOS DHCP + 移动厂商专有连通性 SNI 或移动 Dalvik/iPhone UA 互证
+	// 5. 移动终端（含 204 占比 67.8% 的随机 LAA MAC 场景）：Android/HarmonyOS DHCP + 移动厂商专有连通性/生态 SNI 或移动客户端 UA 互证
 	isMobileDHCP := strings.HasPrefix(dhcpVendorLower, "android-dhcp-") ||
 		strings.HasPrefix(dhcpVendorLower, "huawei:android:") ||
 		strings.HasPrefix(dhcpVendorLower, "huawei:openharmony:") ||
 		(strings.HasPrefix(dhcpVendorLower, "dhcpcd-1") && !strings.Contains(dhcpVendorLower, "linux"))
+	hasMobileEco := ecoSet["huawei"] || ecoSet["vivo"] || ecoSet["xiaomi"] || ecoSet["oppo"] ||
+		ecoSet["oppo/realme"] || ecoSet["honor"] || ecoSet["samsung"]
 	hasMobileUA := false
+	hasAppleMobileUA := false
 	for _, ua := range in.UserAgents {
 		lowerUA := strings.ToLower(ua)
 		if strings.Contains(lowerUA, "dalvik/") || strings.Contains(lowerUA, "liveio_android") ||
 			strings.Contains(lowerUA, "android") || strings.Contains(lowerUA, "iphone") {
 			hasMobileUA = true
-			break
+		}
+		if strings.Contains(lowerUA, "iphone") || strings.Contains(lowerUA, "cpu iphone os") ||
+			(strings.Contains(lowerUA, "cfnetwork") && strings.Contains(lowerUA, "darwin") && strings.Contains(lowerUA, "ios")) {
+			hasAppleMobileUA = true
 		}
 	}
-	if isMobileDHCP && (ecoSet["huawei"] || ecoSet["vivo"] || hasMobileUA) && !strings.EqualFold(in.DHCPCandidateType, "tablet") {
+	if isMobileDHCP && (hasMobileEco || hasMobileUA) && !strings.EqualFold(in.DHCPCandidateType, "tablet") {
 		secondSource := "ua:mobile_client"
-		if ecoSet["huawei"] || ecoSet["vivo"] {
+		if hasMobileEco {
 			secondSource = "sni:mobile_connectivity"
 		}
 		matches = append(matches, matchCandidate{
@@ -171,6 +177,22 @@ func EvaluateCrossVerification(in CrossVerificationInput) CrossVerificationResul
 			ruleID:      "cross:mobile-dhcp-ecosystem",
 			sources:     []string{"dhcp:mobile_os", secondSource},
 			explanation: "移动端 DHCP 指纹与手机厂商连通性/客户端特征独立互证为移动终端",
+		})
+	}
+
+	// 6. Apple 移动终端（LAA 随机 MAC 常见无 Option 60）：Apple iOS 标准 Option 55 参数列表 + Apple 设备生态/iPhone UA 互证
+	cleanOpt55 := strings.ReplaceAll(strings.TrimSpace(in.DHCPRequestedOptions), " ", "")
+	isAppleMobileOpt55 := cleanOpt55 == "1,121,3,6,15,108,114,119,252" || cleanOpt55 == "1,121,3,6,15,114,119,252"
+	if isAppleMobileOpt55 && (ecoSet["apple"] || hasAppleMobileUA) && !strings.EqualFold(in.DHCPCandidateType, "desktop") && !strings.EqualFold(in.DHCPCandidateType, "tablet") {
+		secondSource := "ua:apple_mobile"
+		if ecoSet["apple"] {
+			secondSource = "sni:apple_ecosystem"
+		}
+		matches = append(matches, matchCandidate{
+			deviceType:  "mobile",
+			ruleID:      "cross:mobile-apple-dhcp55-ecosystem",
+			sources:     []string{"dhcp:apple_opt55", secondSource},
+			explanation: "Apple iOS 标准 DHCP Option 55 序列与 Apple 设备生态/客户端特征独立互证为移动终端",
 		})
 	}
 
