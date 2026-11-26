@@ -7,12 +7,12 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { isIPAddress } from '../shared/ipAddress'
 import { can } from '../shared/auth/permissions'
 import { IpTrafficObservations } from '../widgets/IpTrafficObservations'
-import { InfoCircleOutlined, SettingOutlined } from '@ant-design/icons'
+import { FilterOutlined, InfoCircleOutlined, ReloadOutlined, SettingOutlined } from '@ant-design/icons'
 
 import { TerminalInventoryIdentity, DeviceLedgerRecognition, DeviceLedgerOS, deviceDetailsURL } from '../entities/device/DeviceInventoryCells'
 import { useDeviceInventoryMetadata, useDeviceRecognitionSummary, useDevices, useSession } from '../shared/api/queries'
 import type { DeviceInventoryListItem, DeviceQuery } from '../shared/api/types'
-import { AppErrorAlert, AppListHeader, AppLoadingState, AppServerPagination, AppTable, AppTableBar, formatDateTime, type ReportWindow, type UniversityDimensions, UniversityDimensionFilters, useServerPagination, useCursorPagePosition } from '../shared/ui'
+import { AppErrorAlert, AppLoadingState, AppServerPagination, AppTable, AppTableBar, formatDateTime, type ReportWindow, type UniversityDimensions, UniversityDimensionFilters, useServerPagination, useCursorPagePosition } from '../shared/ui'
 
 export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
   const [params, setParams] = useSearchParams()
@@ -75,17 +75,22 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
   const showProfile = visibleColumns.includes('recognition') || visibleColumns.includes('os')
   const showContext = visibleColumns.includes('context')
   const deviceColumns: ColumnsType<DeviceInventoryListItem> = [
-    { title: 'IPv4 / 终端', key: 'identity', width: 260, render: (_, row) => <TerminalInventoryIdentity device={row} href={detailURL(row)} showName={!devices.data?.device_names_disabled} /> },
-    { title: 'IPv6 / 接入', key: 'address', width: 225, render: (_, row) => <div className="terminal-inventory-network">
-      {(() => { const ipv6 = row.current_ipv6 || (row.current_ip && row.current_ip.includes(':') ? row.current_ip : undefined); return ipv6 ? <div className="terminal-inventory-address"><Link className="mono" to={detailURL(row)}>{ipv6}</Link><Typography.Text className="device-copy-control" copyable={{ text: ipv6 }} /></div> : null })()}
-      {row.ip_match && <span className="device-match-caption" title={`${row.ip_match.ip} · ${row.ip_match.matched_at}`}>{row.ip_match.is_recent_ip ? '最近 IP 命中' : '历史 IP 命中'}</span>}
-      {showContext && row.current_access_conflict && <Tag color="orange">接入位置冲突</Tag>}
-      {showContext && row.current_access_id && <Typography.Text type="secondary" title={row.current_access_id}>{accessLocationLabel(row.current_access_id)}</Typography.Text>}
-    </div> },
-    ...(showProfile ? [{ title: '类型 / 品牌 / 系统', key: 'profile', width: 205, render: (_: unknown, row: DeviceInventoryListItem) => <div className="terminal-inventory-profile">{visibleColumns.includes('recognition') && <DeviceLedgerRecognition device={row} showBrandLogo />}{visibleColumns.includes('os') && <DeviceLedgerOS device={row} />}</div> }] : []),
-    ...(showContext ? [{ title: '账号 / 接入', key: 'access', width: 215, render: (_: unknown, row: DeviceInventoryListItem) => <OwnershipAccess device={row} /> }] : []),
-    ...(visibleColumns.includes('observed') ? [{ title: '最近观测', key: 'observed', width: 105, render: (_: unknown, row: DeviceInventoryListItem) => <ObservedTime value={row.last_seen} /> }] : []),
-    { title: '操作', key: 'action', width: 95, fixed: 'right', render: (_, row) => <div className="terminal-inventory-actions"><Link to={detailURL(row)}>查看详情</Link></div> },
+    { title: 'IPv4 / 终端', key: 'identity', width: 256, render: (_, row) => <TerminalInventoryIdentity device={row} href={detailURL(row)} showName={!devices.data?.device_names_disabled} /> },
+    { title: 'IPv6 / 接入', key: 'address', width: 228, render: (_, row) => {
+      const ipv6 = row.current_ipv6 || (row.current_ip && row.current_ip.includes(':') ? row.current_ip : undefined)
+      const hasContent = Boolean(ipv6 || row.ip_match || (showContext && (row.current_access_conflict || row.current_access_id)))
+      if (!hasContent) return null
+      return <div className="terminal-inventory-network">
+        {ipv6 && <div className="terminal-inventory-address"><Link className="mono" to={detailURL(row)}>{ipv6}</Link><Typography.Text className="device-copy-control" copyable={{ text: ipv6 }} /></div>}
+        {row.ip_match && <span className="device-match-caption" title={`${row.ip_match.ip} · ${row.ip_match.matched_at}`}>{row.ip_match.is_recent_ip ? '最近 IP 命中' : '历史 IP 命中'}</span>}
+        {showContext && row.current_access_conflict && <Tag color="orange">接入位置冲突</Tag>}
+        {showContext && row.current_access_id && <Typography.Text type="secondary" title={row.current_access_id}>{accessLocationLabel(row.current_access_id)}</Typography.Text>}
+      </div>
+    } },
+    ...(showProfile ? [{ title: '类型 / 品牌 / 系统', key: 'profile', width: 216, render: (_: unknown, row: DeviceInventoryListItem) => <div className="terminal-inventory-profile">{visibleColumns.includes('recognition') && <DeviceLedgerRecognition device={row} showBrandLogo />}{visibleColumns.includes('os') && <DeviceLedgerOS device={row} />}</div> }] : []),
+    ...(showContext ? [{ title: '账号 / 接入', key: 'access', width: 205, render: (_: unknown, row: DeviceInventoryListItem) => <OwnershipAccess device={row} /> }] : []),
+    ...(visibleColumns.includes('observed') ? [{ title: '最近观测', key: 'observed', width: 108, render: (_: unknown, row: DeviceInventoryListItem) => <ObservedTime value={row.last_seen} /> }] : []),
+    { title: '操作', key: 'action', width: 86, fixed: 'right', align: 'right', render: (_, row) => <div className="terminal-inventory-actions"><Link to={detailURL(row)}>查看详情</Link></div> },
   ]
   const inlineBar = (
     <AppTableBar
@@ -93,35 +98,54 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
       searchValue={searchInput}
       onSearchChange={setSearchInput}
       onSearch={()=>change({q:searchInput.trim()})}
+      searching={devices.isFetching || position.isLocating}
       filters={<>
         {searchTypeControl}
-        <Button size="small" onClick={()=>change({q:searchInput.trim()})}>查询</Button>
-        <Button size="small" type="text" onClick={()=>setFiltersOpen(value=>!value)}>{filtersOpen?'收起筛选':'更多筛选'}{moreFilterCount?`（已启用 ${moreFilterCount} 项）`:''}</Button>
+        <Button onClick={()=>change({q:searchInput.trim()})}>查询</Button>
+        <Button
+          className={moreFilterCount ? 'discovery-filter-active' : undefined}
+          icon={<FilterOutlined aria-hidden="true" />}
+          onClick={()=>setFiltersOpen(value=>!value)}
+        >
+          {filtersOpen?'收起筛选':'更多筛选'}{moreFilterCount?` · ${moreFilterCount}`:''}
+        </Button>
       </>}
       panel={filtersOpen?moreFilters:undefined}
       extra={timeControl}
     />
   )
+  const refreshTerminalList = () => {
+    void devices.refresh()
+    void metadata.refresh()
+  }
+  const freshnessMeta = (
+    <div className="device-list-freshness">
+      {devices.dataUpdatedAt>0&&<Typography.Text type="secondary">刷新 {new Date(devices.dataUpdatedAt).toLocaleTimeString('zh-CN',{hour12:false})}</Typography.Text>}
+      {devices.data?.as_of&&<Typography.Text type="secondary">画像更新 {shortTime(devices.data.as_of)}</Typography.Text>}
+      {devices.data?.read_model_updating&&<Typography.Text className="device-read-model-state">画像摘要更新中</Typography.Text>}
+      {metadata.isError&&<Typography.Text className="device-read-model-state">统计读取失败 <Button type="link" size="small" onClick={()=>void metadata.refresh()}>重试统计</Button></Typography.Text>}
+    </div>
+  )
   return <section className={embedded ? "device-inventory-page terminal-inventory-page" : "page device-inventory-page terminal-inventory-page"}>
     {!embedded&&<header className="device-page-header"><Typography.Title level={3}>终端列表</Typography.Title><div className="device-header-actions"><Link to="/devices?tab=network">网络设备</Link>{scopeControls}</div></header>}
-    {inlineBar}
-    {searchType==='account'&&<Typography.Text className="device-list-note" type="secondary">账号精确匹配最新观测候选，不代表在线或登记责任人；历史账号请进入详情溯源。</Typography.Text>}
 
     <section className="surface device-inventory-surface">
-      <AppListHeader
-        title="终端列表"
-        count={total!==undefined?<Tooltip title={metadata.data?.as_of?`统计时间：${formatDateTime(metadata.data.as_of)}`:undefined}><span>{total} 个终端身份</span></Tooltip>:undefined}
-        actions={<>
-          {embedded&&scopeControls}
-          <Tooltip title="近期观测不等于在线，终端身份数不等于物理终端数；账号和接入位置为观测关联。"><InfoCircleOutlined aria-label="列表说明"/></Tooltip>
-          <Popover trigger="click" title="显示列" content={<Checkbox.Group value={visibleColumns} options={columnOptions} onChange={values=>{const next=values.map(String);setVisibleColumns(next);localStorage.setItem('device-ledger-columns',JSON.stringify(next))}}/>}><Button className="device-column-settings" icon={<SettingOutlined/>}>列设置</Button></Popover>
-        </>}
-      />
-      <div className="device-list-freshness">
-        {devices.dataUpdatedAt>0&&<Typography.Text type="secondary">列表刷新 {new Date(devices.dataUpdatedAt).toLocaleTimeString('zh-CN',{hour12:false})}</Typography.Text>}
-        {devices.data?.as_of&&<Typography.Text type="secondary">画像更新时间 {shortTime(devices.data.as_of)}</Typography.Text>}
-        {devices.data?.read_model_updating&&<Typography.Text className="device-read-model-state">画像摘要更新中</Typography.Text>}
-        {metadata.isError&&<Typography.Text className="device-read-model-state">统计读取失败 <Button type="link" size="small" onClick={()=>void metadata.refresh()}>重试统计</Button></Typography.Text>}
+      <div className="device-inventory-toolbar">
+        <div className="device-inventory-summary-bar">
+          <div className="device-inventory-summary-main">
+            {!embedded && <h4 className="app-list-title">终端列表</h4>}
+            {total!==undefined&&<Tooltip title={metadata.data?.as_of?`统计时间：${formatDateTime(metadata.data.as_of)}`:undefined}><strong className="device-inventory-total tabular-num">{total} 个终端身份</strong></Tooltip>}
+            {freshnessMeta}
+          </div>
+          <div className="device-inventory-summary-actions">
+            {embedded&&scopeControls}
+            <Tooltip title="近期观测不等于在线，终端身份数不等于物理终端数；账号和接入位置为观测关联。"><InfoCircleOutlined className="device-info-icon" aria-label="列表说明"/></Tooltip>
+            <Popover trigger="click" title="显示列" content={<Checkbox.Group value={visibleColumns} options={columnOptions} onChange={values=>{const next=values.map(String);setVisibleColumns(next);localStorage.setItem('device-ledger-columns',JSON.stringify(next))}}/>}><Button className="device-column-settings" icon={<SettingOutlined/>}>列设置</Button></Popover>
+            <Button icon={<ReloadOutlined aria-hidden="true" />} aria-label="刷新数据" loading={devices.isFetching} onClick={refreshTerminalList}>刷新</Button>
+          </div>
+        </div>
+        {inlineBar}
+        {searchType==='account'&&<Typography.Text className="device-list-note" type="secondary">账号精确匹配最新观测候选，不代表在线或登记责任人；历史账号请进入详情溯源。</Typography.Text>}
       </div>
       {devices.isError&&devices.data&&<AppErrorAlert title="刷新失败，保留上次列表" message={devices.error.message}/>}
       {devices.data?.read_model_state&&!devices.data.read_model_state.complete&&<Alert type="info" showIcon title="历史关联正在回填" description="当前显示已生成的终端摘要；历史检索和关联统计尚不完整，更新延迟以处理状态为准。"/>}
@@ -170,9 +194,10 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
 }
 
 function OwnershipAccess({ device }: { device: DeviceInventoryListItem }) {
+  if (!device.current_account_conflict && !device.current_account) return null
   return <div className="device-context-cell">
     {device.current_account_conflict&&<div><Tag color="orange">关联账号冲突</Tag><Typography.Text className="brand-evidence-wrap">{(device.current_account_candidates??[]).join(' / ')}</Typography.Text></div>}
-    {device.current_account?<div><Typography.Text type="secondary">关联账号</Typography.Text><Typography.Text className="brand-evidence-wrap">{device.current_account}</Typography.Text></div>:!device.current_account_conflict&&<div><Typography.Text type="secondary">关联账号</Typography.Text><span className="account-placeholder">无认证账号</span></div>}
+    {device.current_account&&<Typography.Text className="brand-evidence-wrap mono wrap-text">{device.current_account}</Typography.Text>}
   </div>
 }
 
