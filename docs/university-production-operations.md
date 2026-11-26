@@ -199,3 +199,22 @@ SELECT count(*) AS missing_reference_members FROM passive_archive_members WHERE 
 从工作区执行 `python3 scripts/maintenance/capacity_204.py collect artifacts/204-operations-20261125`。脚本通过 SSH 在 204 执行只读查询，在本地按北京时间保存 `capacity-YYYY-MM-DD.json`，同日复跑保留第一份成功样本。每天在同一时段采集，使用 `python3 scripts/maintenance/capacity_204.py report artifacts/204-operations-20261125` 查看逐日差量。跳过缺日区间，WAL 字节差按实时间隔折算速率。统计重置或表 OID 变化时重新累计 HOT 比例。连续七个采样日后按表估算净增长，分别列出热历史 30 天与归档 365 天的增量，扣除数据盘 20% 余量。当前态、其他业务和有 TTL 的流量表单列日增长。整机容量结论还需核对这些业务的留存策略及数据库之外的空间变化。
 
 7 天和 30 天覆盖报表从同一份硬件身份投影和类型变更账本读取趋势。后台发布时按传感器计数，随已有报表一起更新。首次观测按身份的最早观测时间计入。类型变更只统计确认类型变为另一确认类型的身份，同一身份同一窗口只计一次。仅上期有观测表示末次观测落在上一个等长时段。迟到证据可改变后续发布结果。页面给出投影的最早留存观测、账本起点和最近成功时间。区间超出留存边界时显示缺口，无支撑记录的项目显示覆盖待核查。流量汇总表的 8 天及 31 天 TTL 与这些硬件身份证据各自独立。
+
+
+### 204 生产落地治理（容量自愈、巡检监控、受审计轻写与验收门禁）
+
+204 被动资产发现节点围绕长期无人值守运行落地了四层治理能力：
+
+1. **全链路磁盘与保留期治理**：
+   - Zeek 启用原生 1 小时轮转（`assets/zeek/local-device-signals.zeek` 的 `Log::default_rotation_interval = 1 hr` 与 `zeek-postrotate.sh`），并由 `proxy-sentinel-zeek-log-prune.timer` 每小时执行 `scripts/zeek_log_prune.py`：保留最近 35 分钟未压缩轮转文件供 `ingest` 尾读追齐，超过 35 分钟自动 `gzip` 压缩，高体积连接日志保留 24 小时、协议发现日志保留 72 小时自动淘汰。
+   - ClickHouse 迁移 `077_passive_storage_ttl.sql` 为 `passive_discovery_raw_archive` 绑定 365 天（1 年）TTL，配合既有 7 天/8 天/30 天 TTL 与 `proxy-sentinel-device-retention.timer` 形成完整热/冷生命周期闭环。
+   - 部署磁盘安全余量默认上调至 `PROXY_SENTINEL_MIN_FREE_KB=104857600`（100 GiB），同步开启 `--zeek-ssh` 采集 SSH Banner 辅助网络设备与主机识别。
+2. **故障可感知与容量监控**：
+   - `proxy-sentinel-passive-health.timer` 每 10 分钟写入原子快照 `/opt/proxy-sentinel/data/passive-health/latest.json`，覆盖数据盘使用率（80% 预警 / 90% 告警）、PostgreSQL / ClickHouse / Zeek 字节分解、发现源最大水位滞后（>15 分钟告警）、定时器激活状态、失败 systemd 单元及可选 Webhook 推送；单次探针超时写入 `errors` 字段但不中断快照输出。
+   - 控制面提供 `GET /api/v1/ingest/passive-health` 供前端「数据流与采集 → 系统健康与容量」面板只读展示，同时在 `/metrics` 暴露 `proxy_sentinel_passive_health_*` Prometheus 指标。
+3. **受审计的资产运营轻写层**：
+   - 在全局 `--read-only=true` 继续硬锁策略配置、北向处置、采集器与扫描配置的前提下，可通过 `PROXY_SENTINEL_ASSET_ANNOTATIONS_WRITE=true`（或 `--asset-annotations-write`）仅放行资产人工核验纠偏（`PUT/DELETE /api/v1/discovery/annotations`）与校方资产台账导入管理（`POST/DELETE /api/v1/discovery/ledgers`），权限收敛于 `endpoints:write` 并保留 CSRF 校验与全量 `audit_logs` 审计记录，绝不改写底层原始观测证据。
+   - 迁移 `260_asset_annotations_and_ledgers.sql` 建立 `asset_manual_annotations`、`asset_ledger_snapshots`、`asset_ledger_entries` 三张业务表，支持在「发现设备详情弹窗」内人工核验/纠偏并在「覆盖报表 → 人工核实」持久化导入校方 AC/交换机/安防/打印机 CSV 台账，实时生成“已登记在线 / 新发现未登记 / 台账离线 / 属性不符”四象限差异清单并导出 CSV。
+4. **一键验收门禁与 7 天烤机清单**：
+   - 每次升级或日常巡检可直接运行 `/opt/proxy-sentinel/current/bin/proxy-sentinel doctor --samples 20`（传入 `--auth-user`/`--auth-pass` 可额外采样认证态发现列表、元数据、覆盖报表与健康接口的 P50/P95/P99，默认门禁 P95 ≤ 500ms、P99 ≤ 1000ms），支持 `--format json` 接入自动化流水线。
+   - 7 天无人值守烤机复核项：连续 7 日观察 `disk_used_ratio` 稳态波动（不单调爬升）、`max_watermark_lag_seconds < 900`、`systemd_failed_units = 0`、5 个运维定时器均保持 `active`，以及校方真实台账对账与人工核验闭环运行正常。

@@ -2,6 +2,17 @@
 
 本页只记录当前版本和未完成事项。现场数值以每次只读检查为准；旧发布、验收和方案演进记录留在 Git 历史中。
 
+## 204 生产落地工程收官（L1–L4 全量发布与现场验收，11 月 26 日 20:07）
+
+- **当前 204 现场版本**：`2026.11.26-44302248`（`passive-assets-204` Profile，提交 `44302248`，固定包 `/opt/proxy-sentinel/proxy-sentinel-current.tar.gz` SHA-256 为 `9b6c9d28999ace74c13306144605afd6fa1f74371765a7a8d8ba03846708e74d`）。10 个核心应用进程均运行于 `2026.11.26-44302248`；控制面继续保持 `PROXY_SENTINEL_READ_ONLY='true'`（硬锁策略、处置与扫描配置），并显式开启受审计轻写白名单 `PROXY_SENTINEL_ASSET_ANNOTATIONS_WRITE='true'`，配置 `runtime.env` SHA-256 为 `2abc78cfd97e223fb4da8c10a610480a607e07fadfbf984e3803c700dd095540`。
+- **迁移账本与旧版清理**：PostgreSQL 258 项（本次应用 `260_asset_annotations_and_ledgers.sql`，`asset_manual_annotations` / `asset_ledger_snapshots` / `asset_ledger_entries` 三表已核验就绪），ClickHouse 75 项（含 L1 应用的 `077_passive_storage_ttl.sql` 一年原始归档 TTL，继续排除 184 专用的 `071`/`072`）。回退基线 `previous` 与 `frontend-previous` 指向 `2026.11.26-5618a519`，已无引用的旧版 `2026.11.26-12a9f70c` 已核对零引用后退役清理。
+- **L1–L4 现场验收结果（20:07 实测）**：
+  - **L1 容量自愈与 SSH Banner 采集**：Zeek 原生 1 小时轮转 + `zeek-postrotate.sh` + `proxy-sentinel-zeek-log-prune.timer`、ClickHouse `077` 一年归档 TTL、`device-retention.timer` 与 `MIN_FREE_KB=100GiB` 全部生效；数据盘由基线 54%（915G）降至 **45%–47.5%（可用 947.5 GiB）**，`conn.log` 稳态缩小至 54M。`--zeek-ssh` 采集源已在线。
+  - **L2 故障感知与容量监控**：`proxy-sentinel-passive-health.timer` 持续刷新 `/opt/proxy-sentinel/data/passive-health/latest.json`（距今 162 秒，`errors={}`），`/metrics` 正常输出 `proxy_sentinel_passive_health_*` 指标，`GET /ingest?diagnostic_tab=health` 返回 HTTP 200。
+  - **L3 受审计资产运营层**：`/api/v1/discovery/annotations` 与 `/api/v1/discovery/ledgers` 未登录均返回 HTTP 401（鉴权与 CSRF 边界有效），前端发现详情弹窗内嵌人工核验标注卡、覆盖报表「人工核实」内嵌校园资产台账四象限持久化对账面板，4 个页面入口（`/`、`/devices?tab=discovery`、`/devices/coverage?section=review`、`/ingest?diagnostic_tab=health`）均返回 HTTP 200。24h 在线瘦 AP（CAPWAP）保持 **472 / 472 台**已识别。
+  - **L4 一键门禁与离线交付固化**：204 现场运行 `/opt/proxy-sentinel/current/bin/proxy-sentinel doctor --samples 20` 零 FAIL：`/readyz` HTTP 200（P50=1.5ms、P95=273.6ms、P99=394.5ms，n=20 err=0）、`/metrics` 正常、快照新鲜（162s）、失败单元 0、5 个运维定时器全部 `active`、数据盘 47.5%、24 个发现源最大水位滞后 240s（阈值 900s）；离线构建与安装脚本（`build-airgap-bundle.sh`、`install-airgap-openeuler.sh`、`install-openeuler.sh`）已全面固化 L1–L4 配置与定时器。
+- **代码验证与后续观察项**：Go 单元与门禁测试、`go vet`、`go build`、14 项 Python 运维单测、Shell 语法校验、前端 66 项关联 Vitest、OpenAPI 契约与 `tsc -b`、生产构建及 Playwright 三视口（390×844 / 1280×800 / 1440×900）验收全通过。待后续跟踪：1）观察 7 天无人值守烤机期间数据盘占用与 Zeek 小时轮转稳态；2）校方人员登录态导入真实 AC/交换机台账并传入账号凭据跑一次 `proxy-sentinel doctor --auth-user ...` 完成认证态查询接口 P95/P99 基线留档；3）2026-11-15 遗留的 57G `.preserved-20261115*` 历史文件继续原样保留待确认归属后按规处理。
+
 ## 204 被动资产发现中长期路线图（阶段一至五收官，11 月 26 日 17:07）
 
 - **当前 204 现场版本**：`2026.11.26-b8f04b6a`（`passive-assets-204` Profile，提交 `b8f04b6a`，固定包 `/opt/proxy-sentinel/proxy-sentinel-current.tar.gz` SHA-256 为 `34cdb954f788680866fce33aed4ebdb669c0177ad0ea66447a00c6f9a09d1514`）。10 个核心应用进程均运行于新版本，控制面保持 `--read-only=true`，`/readyz` 返回 HTTP 200，`runtime.env` SHA-256 保持 `f6244f950d098368db027a52653cae8fdde24e2c3596ee2ca30ee42725216020` 不变。
