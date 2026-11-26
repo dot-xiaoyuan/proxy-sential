@@ -15,12 +15,12 @@ export type PlannedRangeRow = { range: string; device_type: string; visible_ipv4
 
 const countFormat = (value: number) => value.toLocaleString('zh-CN')
 
-// 与覆盖报表保持一致的设备大类归属与中性色阶
+// 与覆盖报表保持一致的设备大类归属与统一品牌色阶
 const categoryMeta = [
   { key: 'network', label: '网络设备', color: '#0f766e', types: ['access_point', 'router', 'switch', 'firewall', 'gateway', 'wireless_host', 'wireless_controller', 'voice_gateway'] },
-  { key: 'dumb', label: '哑终端', color: '#0284c7', types: ['printer', 'scanner', 'camera', 'recorder', 'nvr', 'access_control', 'voip_phone', 'media_player', 'media_device', 'display', 'tv', 'ups', 'pdu', 'environment_monitor'] },
-  { key: 'computer', label: '电脑与移动终端', color: '#4f46e5', types: ['laptop', 'desktop', 'mobile', 'tablet', 'server', 'virtual_machine'] },
-  { key: 'other', label: '其他', color: '#64748b', types: [] as string[] },
+  { key: 'dumb', label: '哑终端', color: '#2257a7', types: ['printer', 'scanner', 'camera', 'recorder', 'nvr', 'access_control', 'voip_phone', 'media_player', 'media_device', 'display', 'tv', 'ups', 'pdu', 'environment_monitor'] },
+  { key: 'computer', label: '电脑与移动终端', color: '#475569', types: ['laptop', 'desktop', 'mobile', 'tablet', 'server', 'virtual_machine'] },
+  { key: 'other', label: '其他', color: '#94a3b8', types: [] as string[] },
 ] as const
 
 function categoryKeyFor(deviceType: string): (typeof categoryMeta)[number]['key'] {
@@ -211,8 +211,8 @@ export function DailyNewTrendChart({ days, totalSevenDays }: { days: DailyNewRow
       {
         name: '新发现身份',
         type: 'bar',
-        barMaxWidth: 26,
-        itemStyle: { color: '#0284c7', borderRadius: [4, 4, 0, 0] },
+        barMaxWidth: 24,
+        itemStyle: { color: '#2257a7', borderRadius: [4, 4, 0, 0] },
         data: ordered.map(row => row.count),
       },
       {

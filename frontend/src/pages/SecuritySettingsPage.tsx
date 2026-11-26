@@ -1,14 +1,12 @@
-import { AppListHeader, AppTable } from '../shared/ui'
+import { AppListHeader, AppTable, StatusDot } from '../shared/ui'
 import { useState } from "react";
 import {
   Button,
-  Card,
   Form,
   Input,
   Modal,
   Select,
   Space,
-  Tag,
   message,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
@@ -27,7 +25,6 @@ import {
   AppServerPagination,
   useServerPagination,
 } from "../shared/ui";
-import { statusColor } from '../shared/ui/status'
 
 const roleLabels: Record<string, string> = {
   viewer: "只读查看",
@@ -54,15 +51,15 @@ if(users.isError)return <AppErrorAlert title="用户权限读取失败"/>;
     {
       title: "角色",
       dataIndex: "role",
-      render: (value) => <Tag>{roleLabels[value] ?? value}</Tag>,
+      render: (value) => <span className="ps-neutral-pill">{roleLabels[value] ?? value}</span>,
     },
     {
       title: "状态",
       dataIndex: "disabled",
       render: (value) => (
-        <Tag color={statusColor(value ? "disabled" : "ok")}>
+        <StatusDot tone={value ? "neutral" : "ok"}>
           {value ? "已停用" : "正常"}
-        </Tag>
+        </StatusDot>
       ),
     },
     {
@@ -117,11 +114,7 @@ if(users.isError)return <AppErrorAlert title="用户权限读取失败"/>;
       ),
     },
   ];
-return <main className="page"><Card><AppListHeader title="用户权限" count={`${users.data?.page.total ?? 0} 条`} />                  <div className="tab-toolbar">
-                    <Button type="primary" onClick={() => setUserOpen(true)}>
-                      新建用户
-                    </Button>
-                  </div>
+return <main className="page"><section className="surface"><AppListHeader title="本地账号" count={`${users.data?.page.total ?? 0} 个账号`} actions={<Button type="primary" onClick={() => setUserOpen(true)}>新建用户</Button>} />
                   <AppTable
                     className="compact-list-table"
                     columns={userColumns}
@@ -136,7 +129,7 @@ return <main className="page"><Card><AppListHeader title="用户权限" count={`
                     total={users.data?.page.total}
                     onChange={userPage.update}
                   />
-</Card>      <Modal
+</section>      <Modal
         title="新建本地用户"
         open={userOpen}
         confirmLoading={userMutation.isPending}

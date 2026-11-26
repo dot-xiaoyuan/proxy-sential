@@ -1,10 +1,10 @@
-import { LockOutlined, SafetyCertificateOutlined, UserOutlined } from '@ant-design/icons'
+import { LockOutlined, UserOutlined } from '@ant-design/icons'
 import { Button, Form, Input, Typography } from 'antd'
 import { useState } from 'react'
 
 import { ApiError } from '../shared/api/client'
 import { useLogin } from '../shared/api/queries'
-import { AppErrorAlert } from '../shared/ui'
+import { AppErrorAlert, BrandLogo } from '../shared/ui'
 
 function loginErrorMessage(error: unknown) {
   if (!(error instanceof ApiError)) return '无法连接登录服务，请检查网络后重试。'
@@ -31,24 +31,26 @@ export function LoginPage() {
   return (
     <main className="login-page">
       <div className="login-layout">
-        <header className="login-topbar">
-          <span className="login-mark" aria-hidden="true"><SafetyCertificateOutlined /></span>
-          <div className="login-brand-copy">
-            <strong>Proxy Sentinel</strong>
-            <span>高校网络风险运营平台</span>
-          </div>
-        </header>
-
         <div className="login-main">
           <section className="login-card" aria-labelledby="login-card-title">
+            <header className="login-brand-bar">
+              <BrandLogo className="login-brand-logo" />
+              <div className="login-brand-copy">
+                <strong>Proxy Sentinel</strong>
+                <span>校园网终端与网络运营平台</span>
+              </div>
+            </header>
+
             <div className="login-card-heading">
               <Typography.Title level={1} id="login-card-title">登录</Typography.Title>
+              <Typography.Text type="secondary">使用本地管理员或运营账号进入系统</Typography.Text>
             </div>
 
             {login.isError && <AppErrorAlert className="margin-bottom-md" title="登录失败" message={loginErrorMessage(login.error)} />}
             <Form
               className="login-form"
               layout="vertical"
+              requiredMark={false}
               onFinish={(values: { username: string; password: string }) => login.mutate(values)}
               onValuesChange={() => { if (login.isError) login.reset() }}
             >
@@ -58,9 +60,7 @@ export function LoginPage() {
               <Form.Item
                 label="密码"
                 name="password"
-                rules={[{ required: true, message: '请输入密码' }]}
-                extra={capsLock ? <span className="login-caps-hint">大写锁定已开启</span> : undefined}
-              >
+                rules={[{ required: true, message: '请输入密码' }]}>
                 <Input.Password
                   autoComplete="current-password"
                   placeholder="请输入密码"
@@ -70,12 +70,11 @@ export function LoginPage() {
                   onBlur={() => setCapsLock(false)}
                 />
               </Form.Item>
-              <Button block htmlType="submit" loading={login.isPending} type="primary">登 录</Button>
+              {capsLock && <p className="login-caps-hint" role="status">大写锁定已开启</p>}
+              <Button block htmlType="submit" loading={login.isPending} type="primary">登录</Button>
             </Form>
-
           </section>
         </div>
-
       </div>
     </main>
   )

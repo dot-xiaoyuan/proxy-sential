@@ -78,8 +78,8 @@ export function OrganizationPage() {
   const editButton = (value: OrganizationKind, item: object, label: string) => writable && <Button size="small" onClick={() => open(value, item)}>{label}</Button>
   const campusColumns: ColumnsType<NonNullable<typeof campusList.data>['items'][number]> = [
     { title: '校区', dataIndex: 'name', render: (value: string) => <Typography.Text strong>{value}</Typography.Text> },
-    { title: '楼宇', key: 'buildings', width: 100, render: (_, campus) => `${data.buildings.filter(item => item.campus_id === campus.campus_id).length} 栋` },
-    { title: '网段', key: 'zones', width: 100, render: (_, campus) => `${data.network_zones.filter(zone => zone.campus_id === campus.campus_id).length} 个` },
+    { title: '楼宇', key: 'buildings', width: 100, align: 'right', render: (_, campus) => <span className="tabular-num">{data.buildings.filter(item => item.campus_id === campus.campus_id).length} 栋</span> },
+    { title: '网段', key: 'zones', width: 100, align: 'right', render: (_, campus) => <span className="tabular-num">{data.network_zones.filter(zone => zone.campus_id === campus.campus_id).length} 个</span> },
     { title: '操作', key: 'action', width: 120, render: (_, campus) => editButton('campuses', campus, '编辑校区') },
   ]
   const zoneColumns: ColumnsType<NonNullable<typeof zoneList.data>['items'][number]> = [

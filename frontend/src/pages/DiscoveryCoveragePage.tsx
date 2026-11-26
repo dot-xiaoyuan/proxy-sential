@@ -138,7 +138,13 @@ export function DiscoveryCoveragePage() {
   return <main className="page device-center-page discovery-coverage-page">
     <header className="discovery-report-page-header">
       <div className="discovery-report-title-group">
-        <Typography.Title level={3}>{assetSite ? '资产发现总览' : '设备发现覆盖报表'}</Typography.Title>
+        {assetSite ? (
+          <Typography.Text className="discovery-report-subtitle" type="secondary">
+            被动发现覆盖率、设备构成与近 7 天变化
+          </Typography.Text>
+        ) : (
+          <Typography.Title level={3}>设备发现覆盖报表</Typography.Title>
+        )}
       </div>
       {section !== 'history' && section !== 'review' && <div className="discovery-report-page-actions">
         <Segmented

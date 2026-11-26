@@ -7,7 +7,6 @@ import { UploadOutlined } from "@ant-design/icons";
 import {App as AntApp,
   Button,
   Descriptions,
-  Skeleton,
   Space,
   Tabs,
   Tag,
@@ -23,7 +22,7 @@ import {
 import type { DeviceFingerprintBundleManifest } from "../shared/api/types";
 import { can } from "../shared/auth/permissions";
 import { statusText } from '../shared/ui/status';
-import { AppErrorAlert, AppFactBar, formatDateTime } from '../shared/ui'
+import { AppErrorAlert, AppFactBar, AppLoadingState, StatusDot, formatDateTime } from '../shared/ui'
 
 
 
@@ -47,7 +46,7 @@ export function RulesPage() {
   );
 
   if (session.isLoading) {
-    return <Skeleton active />;
+    return <AppLoadingState rows={6} />;
   }
 
   const fingerprintStatusItems = [
@@ -154,19 +153,18 @@ export function RulesPage() {
   ].filter(item => item.children !== '' && item.children !== undefined && item.children !== null)
   const fingerprintDetailItems = fingerprintStatusItems.filter(item => !['version','status','mode','counts'].includes(String(item.key)))
 
+  const assetSite = session.data?.site_profile === 'passive_assets'
+
   return (
     <main className="page rules-page">
       <div className="page-header">
         <div>
-          <Typography.Title className="page-title" level={3}>
-            规则与特征库
-          </Typography.Title>
-          <Typography.Text type="secondary">
-            维护 AI 中转站域名库和设备特征库，查看生效版本。
+          <Typography.Text className="page-subtitle" type="secondary">
+            {assetSite ? '维护设备特征库并核对生效版本与离线导入状态。' : '维护 AI 中转站域名库和设备特征库，查看生效版本。'}
           </Typography.Text>
         </div>
       </div>
-      <AppFactBar items={['风险规则暂不支持在线热重载']} />
+      {!assetSite && <AppFactBar items={['风险规则暂不支持在线热重载']} />}
       <section className="surface operations-tabs-surface">
         <Tabs
           activeKey={activeTab}
@@ -179,15 +177,23 @@ export function RulesPage() {
               disabled:!can(session.data,'identity:read'),
               children: (
                 <div>
-                  {fingerprintLibrary.isLoading ? <Skeleton active/> : fingerprintLibrary.isError ? (
+                  {fingerprintLibrary.isLoading ? <AppLoadingState rows={4} /> : fingerprintLibrary.isError ? (
                     <AppErrorAlert title="设备特征库状态加载失败" />
                   ) : fingerprintLibrary.data && (
                     <section className="fingerprint-runtime">
                       <div className="fingerprint-runtime-summary">
                         <div className="fingerprint-runtime-fact"><span>当前版本</span><strong className="mono">{fingerprintLibrary.data.version || ''}</strong></div>
-                        <div className="fingerprint-runtime-fact"><span>运行状态</span><Tag color={fingerprintLibrary.data.status === 'ready' ? 'green' : 'gold'}>{statusText(fingerprintLibrary.data.status)}</Tag></div>
+                        <div className="fingerprint-runtime-fact"><span>运行状态</span><StatusDot tone={fingerprintLibrary.data.status === 'ready' ? 'ok' : 'warn'}>{statusText(fingerprintLibrary.data.status)}</StatusDot></div>
                         <div className="fingerprint-runtime-fact"><span>更新模式</span><strong>{fingerprintLibrary.data.offline_mode === undefined ? '' : fingerprintLibrary.data.offline_mode ? '离线包导入' : '联网更新'}</strong></div>
-                        <div className="fingerprint-runtime-fact"><span>规则规模</span><strong>OUI {fingerprintLibrary.data.oui_count ?? 0} · UA {fingerprintLibrary.data.rule_count ?? 0} · DHCP {fingerprintLibrary.data.dhcp_rule_count ?? 0} · 域名 {fingerprintLibrary.data.domain_rule_count ?? 0}</strong></div>
+                        <div className="fingerprint-runtime-fact">
+                          <span>规则规模</span>
+                          <div className="rules-scale-grid">
+                            <span>OUI <strong className="tabular-num">{(fingerprintLibrary.data.oui_count ?? 0).toLocaleString('zh-CN')}</strong></span>
+                            <span>UA <strong className="tabular-num">{(fingerprintLibrary.data.rule_count ?? 0).toLocaleString('zh-CN')}</strong></span>
+                            <span>DHCP <strong className="tabular-num">{(fingerprintLibrary.data.dhcp_rule_count ?? 0).toLocaleString('zh-CN')}</strong></span>
+                            <span>域名 <strong className="tabular-num">{(fingerprintLibrary.data.domain_rule_count ?? 0).toLocaleString('zh-CN')}</strong></span>
+                          </div>
+                        </div>
                       </div>
                       <details className="filter-disclosure">
                         <summary>运行与回填详情</summary>

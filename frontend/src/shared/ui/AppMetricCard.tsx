@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { ArrowDownOutlined, ArrowUpOutlined } from '@ant-design/icons'
-import { Card, Tag, Typography } from 'antd'
+import { Card, Typography } from 'antd'
 
 interface AppMetricCardProps {
   title: string
@@ -12,11 +12,18 @@ interface AppMetricCardProps {
   statusColor?: 'blue' | 'green' | 'orange' | 'red' | 'purple'
 }
 
+const dotToneByColor: Record<NonNullable<AppMetricCardProps['statusColor']>, string> = {
+  blue: 'info',
+  green: 'ok',
+  orange: 'warn',
+  red: 'danger',
+  purple: 'neutral',
+}
+
 export function AppMetricCard({
   title,
   value,
   unit,
-  icon,
   trend,
   statusText,
   statusColor = 'blue',
@@ -27,7 +34,12 @@ export function AppMetricCard({
         <Typography.Text className="metric-card-label" type="secondary">
           {title}
         </Typography.Text>
-        {icon && <span className="metric-card-icon">{icon}</span>}
+        {statusText && (
+          <span className={`ps-status-pill ps-status-${dotToneByColor[statusColor]}`}>
+            <span className="ps-status-dot" aria-hidden="true" />
+            <span>{statusText}</span>
+          </span>
+        )}
       </div>
 
       <div className="metric-card-value-row">
@@ -41,21 +53,14 @@ export function AppMetricCard({
         )}
       </div>
 
-      {(trend !== undefined || statusText) && (
+      {trend !== undefined && (
         <div className="metric-card-footer">
-          {trend !== undefined && (
-            <span
-              className={trend >= 0 ? 'metric-card-trend metric-card-trend-up' : 'metric-card-trend metric-card-trend-down'}
-            >
-              {trend >= 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />}
-              {Math.abs(trend)}%
-            </span>
-          )}
-          {statusText && (
-            <Tag className="dpi-badge-tag" color={statusColor}>
-              {statusText}
-            </Tag>
-          )}
+          <span
+            className={trend >= 0 ? 'metric-card-trend metric-card-trend-up' : 'metric-card-trend metric-card-trend-down'}
+          >
+            {trend >= 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />}
+            {Math.abs(trend)}%
+          </span>
         </div>
       )}
     </Card>

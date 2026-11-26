@@ -1,4 +1,4 @@
-import { ArrowRightOutlined, CheckCircleOutlined, DesktopOutlined, FieldTimeOutlined, RadarChartOutlined } from '@ant-design/icons'
+import { ArrowRightOutlined } from '@ant-design/icons'
 import type { ReactNode } from 'react'
 import { deviceTypeLabel } from '../entities/device/DeviceInventoryCells'
 import type { components } from '../shared/api/generated'
@@ -220,7 +220,6 @@ type KpiCardItem = {
   unit: string
   detail?: string
   tone: 'primary' | 'teal' | 'blue' | 'slate'
-  icon: ReactNode
   to?: string
 }
 
@@ -260,7 +259,6 @@ function CoverageKpiStrip({
       unit: crossVlan ? '个' : '条',
       detail: parts.length > 0 ? parts.join(' · ') : (crossVlan ? '跨 VLAN 合并去重' : '按采集范围去重'),
       tone: 'primary',
-      icon: <RadarChartOutlined aria-hidden="true" />,
       to: discoveryListUrl(windowKey),
     })
   }
@@ -275,7 +273,6 @@ function CoverageKpiStrip({
       unit: '个',
       detail: rateText,
       tone: 'teal',
-      icon: <CheckCircleOutlined aria-hidden="true" />,
       to: discoveryListUrl(windowKey, { discovery_state: 'identified' }),
     })
   }
@@ -287,7 +284,6 @@ function CoverageKpiStrip({
       unit: '个',
       detail: '打印、摄像、门禁、话机等',
       tone: 'blue',
-      icon: <DesktopOutlined aria-hidden="true" />,
       to: discoveryListUrl(windowKey, { discovery_capability: 'dumb' }),
     })
   }
@@ -305,7 +301,6 @@ function CoverageKpiStrip({
       unit: '个',
       detail: deltaText,
       tone: 'slate',
-      icon: <FieldTimeOutlined aria-hidden="true" />,
       to: discoveryListUrl('15m'),
     })
   } else if (summary.total !== undefined || summary.device !== undefined) {
@@ -317,7 +312,6 @@ function CoverageKpiStrip({
       unit: '个',
       detail: summary.total !== undefined && summary.device !== undefined ? `设备层报文 ${count(summary.device)} 个` : '去重 IPv4 地址',
       tone: 'slate',
-      icon: <FieldTimeOutlined aria-hidden="true" />,
       to: discoveryListUrl(windowKey),
     })
   }
@@ -330,7 +324,10 @@ function CoverageKpiStrip({
         const inner = (
           <>
             <dt>
-              <span className="report-kpi-label">{card.icon}{card.label}</span>
+              <span className="report-kpi-label">
+                <span className={`report-kpi-dot report-kpi-dot-${card.tone}`} aria-hidden="true" />
+                {card.label}
+              </span>
               {card.to && <ArrowRightOutlined className="report-kpi-arrow" aria-hidden="true" />}
             </dt>
             <dd>
@@ -341,7 +338,7 @@ function CoverageKpiStrip({
           </>
         )
         return (
-          <div key={card.key} className={`report-kpi-card report-kpi-${card.tone}`}>
+          <div key={card.key} className="report-kpi-card">
             {card.to ? (
               <ReportLink to={card.to} className="report-kpi-link" ariaLabel={`查看${card.label}明细`}>{inner}</ReportLink>
             ) : (

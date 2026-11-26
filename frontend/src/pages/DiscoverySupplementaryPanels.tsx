@@ -1,4 +1,4 @@
-import { ArrowRightOutlined, LaptopOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { ArrowRightOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
 import { Button, Skeleton } from 'antd'
 import { ApiError, request } from '../shared/api/client'
@@ -95,7 +95,7 @@ export function DiscoverySupplementaryPanels({ window }: { window: string }) {
           <section className="coverage-panel report-supp-panel" aria-labelledby="supp-inventory-heading" aria-busy={inventory.isFetching}>
             <header className="coverage-panel-heading">
               <div>
-                <h4 id="supp-inventory-heading"><LaptopOutlined aria-hidden="true" /> 终端台账</h4>
+                <h4 id="supp-inventory-heading">终端台账</h4>
                 <p>{period.label}内有观测的台账终端</p>
               </div>
               <div className="report-supp-actions">
@@ -159,7 +159,7 @@ export function DiscoverySupplementaryPanels({ window }: { window: string }) {
           <section className="coverage-panel report-supp-panel" aria-labelledby="supp-traffic-heading" aria-busy={activity.isFetching}>
             <header className="coverage-panel-heading">
               <div>
-                <h4 id="supp-traffic-heading"><ThunderboltOutlined aria-hidden="true" /> 网络访问概况</h4>
+                <h4 id="supp-traffic-heading">网络访问概况</h4>
                 <p>{period.label}标准事件与活跃访问汇总</p>
               </div>
               <div className="report-supp-actions">

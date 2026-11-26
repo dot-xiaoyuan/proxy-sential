@@ -10,6 +10,7 @@ import { proxySentinelTheme } from './theme'
 export function App() {
   return (
     <ConfigProvider
+      button={{ autoInsertSpace: false }}
       locale={zhCN}
       theme={proxySentinelTheme}
     >

@@ -21,6 +21,7 @@ import type { MenuProps } from 'antd'
 import { useLogout, useSession } from '../shared/api/queries'
 import { LoginPage } from '../pages/LoginPage'
 import { can } from '../shared/auth/permissions'
+import { BrandLogo } from '../shared/ui'
 import { assetSiteAllows, routeOwner, routePermission, visibleNavigation } from './navigation'
 
 import type { Session } from '../shared/api/types'
@@ -45,16 +46,6 @@ function buildNavItems(session: Session): MenuProps['items'] {
   } : {key:group.key,label:group.title,icon:navigationIcons[group.key],children:group.items.map(entry=>({key:entry.key,label:<NavLink to={entry.to} onClick={()=>{if(entry.to.split('?')[0]==='/devices'){performance.clearMarks('device-inventory-enter');performance.mark('device-inventory-enter')}}}>{entry.title}</NavLink>}))})
 }
 
-function SentinelLogo() {
-  return (
-    <svg aria-label="Proxy Sentinel" role="img" className="brand-logo-svg" fill="none" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
-      <path d="M16 3L5 7V14C5 20.5 9.7 26.5 16 29C22.3 26.5 27 20.5 27 14V7L16 3Z" stroke="#0284c7" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" />
-      <circle cx="16" cy="15" r="5" stroke="#0ea5e9" strokeWidth="2" />
-      <circle cx="16" cy="15" fill="#0284c7" r="2" />
-    </svg>
-  )
-}
-
 export function AppShell() {
   const [collapsed, setCollapsed] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -71,7 +62,7 @@ export function AppShell() {
     contentRef.current?.scrollTo({ top: 0, behavior: 'auto' })
   }, [location.pathname, location.search])
 
-  if (session.isLoading) return <main className="app-bootstrap-loading" aria-busy="true"><SentinelLogo/><Spin size="large"/><Typography.Text type="secondary">正在恢复会话…</Typography.Text></main>
+  if (session.isLoading) return <main className="app-bootstrap-loading" aria-busy="true"><BrandLogo /><Spin size="large"/><Typography.Text type="secondary">正在恢复会话…</Typography.Text></main>
   if (session.isError || !session.data) return <LoginPage />
   const assetSite = session.data.site_profile === 'passive_assets'
   if (assetSite && (location.pathname === '/' || !assetSiteAllows(location.pathname, location.search))) {
@@ -108,7 +99,7 @@ export function AppShell() {
         width={232}
       >
         <div className="brand">
-          <SentinelLogo />
+          <BrandLogo />
           {!collapsed && (
             <div className="brand-copy">
               <div className="brand-title">Proxy Sentinel</div>
