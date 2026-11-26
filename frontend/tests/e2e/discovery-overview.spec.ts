@@ -107,19 +107,14 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await typePicker.click()
     const popup = page.locator('.discovery-type-popup:visible')
     await expect(popup.getByRole('option', { name: /^打印机/ })).toBeVisible()
-    await expect.poll(() => popup.evaluate(el => el.getBoundingClientRect().width)).toBeGreaterThanOrEqual(240)
-    const pickerProbe = await popup.evaluate(panel => {
+    await expect.poll(() => popup.evaluate(panel => {
       const box = panel.getBoundingClientRect()
       return {
-        left: box.left, right: box.right, width: box.width, viewport: innerWidth,
+        wideEnough: box.width >= 240, withinViewport: box.left >= 0 && box.right <= innerWidth + 1,
         clipped: [...panel.querySelectorAll<HTMLElement>('.discovery-type-option > span:first-child, .discovery-type-option-counts > span')].some(label => label.scrollWidth > label.clientWidth+1),
-        wraps: [...panel.querySelectorAll('.discovery-type-option > span')].some(label => getComputedStyle(label).whiteSpace !== 'nowrap'),
+        wraps: [...panel.querySelectorAll('.discovery-type-option > span:first-child, .discovery-type-option-counts > span')].some(label => getComputedStyle(label).whiteSpace !== 'nowrap'),
       }
-    })
-    expect(pickerProbe.width).toBeGreaterThanOrEqual(240)
-    expect(pickerProbe.left).toBeGreaterThanOrEqual(0)
-    expect(pickerProbe.right).toBeLessThanOrEqual(pickerProbe.viewport+1)
-    expect(pickerProbe).toMatchObject({ clipped: false, wraps: false })
+    })).toEqual({ wideEnough: true, withinViewport: true, clipped: false, wraps: false })
     await page.screenshot({ path: test.info().outputPath('type-picker.png'), animations: 'disabled' })
     await page.keyboard.press('Escape')
     await expect(popup).not.toBeVisible()
