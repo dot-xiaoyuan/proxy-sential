@@ -1,3 +1,4 @@
+import { writeFile } from 'node:fs/promises'
 import { expect, test, type Page } from '@playwright/test'
 
 async function assertCoverageLayout(page: Page) {
@@ -63,7 +64,7 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
     const reasons = report.getByRole('region',{name:'尚无类型判断的原因'})
     await expect(reasons).toContainText('1,683 个有设备层报文的地址尚无类型判断')
     await expect(reasons.locator('.coverage-reason-head').first()).toContainText('只有 ARP 等地址层报文728')
-    await expect(report.getByRole('region',{name:'识别出了什么'})).toBeVisible()
+    await expect(report.getByRole('region',{name:'设备类型构成'})).toBeVisible()
     await expect(report).toContainText('发现处理滞后约 22 分钟')
     await expect(report.getByText('硬件规则未确认的地址明细')).not.toBeVisible()
     await page.screenshot({path:info.outputPath(`coverage-overview-${viewport.width}.png`),animations:'disabled'})
@@ -210,6 +211,143 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
     await expect(page.locator('body')).not.toContainText('未识别')
     await page.screenshot({path:info.outputPath(`coverage-overview-full-${viewport.width}.png`), fullPage:true, animations:'disabled'})
     await page.locator('.coverage-content > .coverage-panels').first().screenshot({path:info.outputPath(`coverage-overview-panels-${viewport.width}.png`), animations:'disabled'})
+    expect(errors).toEqual([])
+  })
+}
+
+for (const [width, height, selectedWindow] of [[390, 844, '24h'], [1280, 800, '168h'], [1440, 900, '720h']] as const) {
+  test(`composition groups each type once and preserves its evidence filter at ${width}px`, async ({page}, info) => {
+    const errors: string[] = []
+    page.on('pageerror', error => errors.push(error.message))
+    page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
+    page.on('response', response => { if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`) })
+    page.on('requestfailed', request => {
+      if (request.failure()?.errorText !== 'net::ERR_ABORTED') errors.push(request.url())
+    })
+    await page.setViewportSize({width, height})
+    await page.addInitScript(() => {
+      const fetch = window.fetch.bind(window)
+      window.fetch = (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : String(input), location.href)
+        if (url.pathname.endsWith('/discovery/devices/metadata') && !url.searchParams.has('state')) {
+          return Promise.resolve(Response.json({
+            count_unit:'trusted_discovery_identity', window:url.searchParams.get('window'), as_of:'2026-11-26T01:00:00Z',
+            total:133, identified:83, profile_typed:42, ip_product_only:8, dumb_terminals:118,
+            types:[{device_type:'printer',count:64},{device_type:'camera',count:12},{device_type:'wireless_host',count:7}],
+            candidate_types:[{device_type:'printer',count:15},{device_type:'environment_monitor',count:27}],
+            ip_product_types:[{device_type:'switch',count:8}],
+          }))
+        }
+        return fetch(input, init)
+      }
+    })
+    await page.goto(`/devices/coverage?window=${selectedWindow}`)
+    const section = page.getByRole('region', {name:'识别出了什么', exact:true})
+    const composition = section.getByRole('region', {name:'设备类型构成', exact:true})
+    const table = composition.getByRole('table', {name:'设备类型及判断依据', exact:true})
+    await expect(table.locator('thead th')).toHaveText(['品类','合计','硬件规则确认','画像识别'])
+    await expect(section).not.toContainText(/其中哑终端\s*[\d,]+\s*个/)
+    const headers = table.getByRole('columnheader')
+    await expect(headers).toHaveCount(4)
+    for (const toggle of await table.locator('button[aria-expanded="false"]').all()) await toggle.click()
+    const rows = table.locator('tbody tr')
+    for (const [label, total, hardware, profile, type] of [
+      ['哑终端',118,76,42,''], ['网络设备',7,7,0,''],
+      ['打印机',79,64,15,'printer'], ['摄像头',12,12,0,'camera'],
+      ['环境监测设备',27,0,27,'environment_monitor'], ['无线分布式主机',7,7,0,'wireless_host'],
+    ] as const) {
+      const row = rows.filter({has:page.getByText(label, {exact:true})})
+      await expect(row).toHaveCount(1)
+      const cells = row.locator(':scope > th, :scope > td')
+      await expect(cells).toHaveCount(4)
+      const numbers = (await cells.allTextContents()).slice(1).map(text => Number(text.trim().replaceAll(',','')))
+      expect(numbers, label).toEqual([total, hardware, profile])
+      if (!type) {
+        await expect(row.getByRole('link')).toHaveCount(0)
+        continue
+      }
+      for (const [index, value, state] of [[2,hardware,'identified'],[3,profile,'profile_typed']] as const) {
+        const link = cells.nth(index).getByRole('link')
+        await expect(link).toHaveCount(value > 0 ? 1 : 0)
+        if (value > 0) {
+          const url = new URL((await link.getAttribute('href'))!, page.url())
+          expect([url.pathname, ...['tab','discovery_window','discovery_state','discovery_type'].map(key => url.searchParams.get(key))])
+            .toEqual(['/devices','discovery',selectedWindow,state,type])
+        }
+      }
+    }
+    await expect(table.locator('tfoot tr').locator('th, td')).toHaveText(['总计','125','83','42'])
+    const products = section.getByRole('region', {name:'IP 自报的产品类型', exact:true})
+    await expect(products).toContainText('交换机')
+    await expect(products).toContainText('8')
+    await expect(table.getByText('交换机', {exact:true})).toHaveCount(0)
+    const printer = rows.filter({has:page.getByText('打印机', {exact:true})})
+
+    const geometry = await table.evaluate(element => {
+      const rows = [...element.querySelectorAll('tr')].filter(row => row.getClientRects().length)
+      const columns = [...element.querySelectorAll('thead th')].map(el => el.getBoundingClientRect())
+      const problems: string[] = []
+      for (const row of rows) {
+        const cells = [...row.cells]
+        if (cells.length !== 4) { problems.push('columns'); continue }
+        cells.forEach((cell, i) => {
+          const box = cell.getBoundingClientRect()
+          if (box.width < 1 || Math.abs(box.left - columns[i].left) > 2 || Math.abs(box.right - columns[i].right) > 2) problems.push('alignment')
+          const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT)
+          while (walker.nextNode()) {
+            if (!walker.currentNode.textContent?.trim()) continue
+            const range = new Range()
+            range.selectNodeContents(walker.currentNode)
+            for (const rect of range.getClientRects()) {
+              if (rect.left < box.left - 1 || rect.right > box.right + 1 || rect.bottom > box.bottom + 1) problems.push('text clipped')
+            }
+          }
+          for (const child of cell.querySelectorAll<HTMLElement>('*')) {
+            if (child.clientWidth && child.scrollWidth > child.clientWidth + 2
+              && ['hidden','clip'].includes(getComputedStyle(child).overflowX)) problems.push('clipped label')
+          }
+          if (cell.scrollWidth > cell.clientWidth + 2) problems.push('cell overflow')
+        })
+      }
+      const rgb = (color: string) => color.match(/[\d.]+/g)!.map(Number)
+      const luminance = (color: number[]) => color.slice(0,3).reduce((total, value, i) => {
+        const c = value / 255
+        return total + (c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4) * [0.2126,0.7152,0.0722][i]
+      }, 0)
+      const linkContrasts = [...element.querySelectorAll('a')].map(link => {
+        let background = [255,255,255]
+        for (let el: Element | null = link; el; el = el.parentElement) {
+          const fill = rgb(getComputedStyle(el).backgroundColor)
+          if (fill.length === 3 || fill[3] === 1) { background = fill; break }
+        }
+        const a = luminance(rgb(getComputedStyle(link).color)), b = luminance(background)
+        return (Math.max(a,b) + .05) / (Math.min(a,b) + .05)
+      })
+      const box = element.getBoundingClientRect()
+      return {pageWidth:document.documentElement.scrollWidth, tableWidth:box.width, left:box.left, right:box.right,
+        rows:rows.length, linkMinContrast:Math.min(...linkContrasts), problems}
+    })
+    expect(geometry.problems).toEqual([])
+    expect(geometry.linkMinContrast).toBeGreaterThanOrEqual(4.5)
+    expect(geometry.pageWidth).toBeLessThanOrEqual(width + 2)
+    expect(geometry.left).toBeGreaterThanOrEqual(-1)
+    expect(geometry.right).toBeLessThanOrEqual(width + 1)
+    await assertCoverageLayout(page)
+    const domPath = info.outputPath(`composition-dom-${width}.json`)
+    await writeFile(domPath, JSON.stringify(geometry, null, 2))
+    await info.attach('composition-dom', {path:domPath, contentType:'application/json'})
+    await section.screenshot({path:info.outputPath(`composition-${width}.png`), animations:'disabled'})
+    for (const [cell, state] of [[2,'identified'],[3,'profile_typed']] as const) {
+      for (const toggle of await table.locator('button[aria-expanded="false"]').all()) await toggle.click()
+      const link = printer.locator(':scope > th, :scope > td').nth(cell).getByRole('link')
+      await link.click()
+      await expect(page).toHaveURL(url => url.pathname === '/devices' && url.searchParams.get('tab') === 'discovery'
+        && url.searchParams.get('discovery_window') === selectedWindow && url.searchParams.get('discovery_type') === 'printer'
+        && url.searchParams.get('discovery_state') === state)
+      await expect(page.getByLabel('已应用筛选')).toContainText('打印机')
+      await page.goBack()
+      await expect(table).toBeVisible()
+    }
     expect(errors).toEqual([])
   })
 }

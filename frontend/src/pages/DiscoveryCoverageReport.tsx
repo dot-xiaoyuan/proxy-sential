@@ -410,137 +410,123 @@ const categoryTypes: { key: string; label: string; types: string[] }[] = [
 
 type TypeRow = { device_type: string; count: number }
 
-function groupTypes(rows?: TypeRow[]) {
-  const items = (rows ?? []).filter(row => row.count > 0)
-  const groups = [...categoryTypes, { key: 'other', label: '其他', types: [] as string[] }].map(category => {
-    const members = items.filter(row => category.key === 'other'
-      ? !categoryTypes.some(known => known.types.includes(row.device_type))
-      : category.types.includes(row.device_type))
-      .sort((a, b) => b.count - a.count || a.device_type.localeCompare(b.device_type))
-    return { ...category, members, total: members.reduce((sum, row) => sum + row.count, 0) }
-  }).filter(group => group.total > 0)
-    .sort((a, b) => Number(a.key === 'other') - Number(b.key === 'other') || b.total - a.total)
-  return { groups, total: groups.reduce((sum, group) => sum + group.total, 0) }
+type TypeCounts = { confirmed: number; profile: number }
+
+const compositionTypeLabels: Record<string, string> = {
+  firewall: '防火墙',
+  media_player: '媒体播放器',
+  nvr: '网络录像机',
+  tv: '电视',
 }
 
-function TypeGroups({
-  label,
-  basis,
-  rows,
-  tone,
-  windowKey,
-  drillState,
-  footnote,
-}: {
-  label: string
-  basis: string
-  rows?: TypeRow[]
-  tone: Tone
+function typeCountsTotal(counts: TypeCounts) {
+  return counts.confirmed + counts.profile
+}
+
+function sumTypeCounts(rows: Iterable<TypeCounts>) {
+  const total = { confirmed: 0, profile: 0 }
+  for (const row of rows) {
+    total.confirmed += row.confirmed
+    total.profile += row.profile
+  }
+  return total
+}
+
+function groupTypeCounts(composition: CoverageComposition) {
+  const counts = new Map<string, TypeCounts>()
+  for (const [basis, rows] of [['confirmed', composition.types], ['profile', composition.candidate_types]] as const) {
+    for (const row of rows ?? []) {
+      if (row.count <= 0) continue
+      const entry = counts.get(row.device_type) ?? { confirmed: 0, profile: 0 }
+      entry[basis] += row.count
+      counts.set(row.device_type, entry)
+    }
+  }
+  const members = [...counts].sort(([typeA, a], [typeB, b]) =>
+    typeCountsTotal(b) - typeCountsTotal(a) || typeA.localeCompare(typeB))
+  const mappedTypes = new Set(categoryTypes.flatMap(group => group.types))
+  return [...categoryTypes, { key: 'other', label: '其他', types: [] }].map(group => {
+    const rows = members.filter(([type]) => group.key === 'other' ? !mappedTypes.has(type) : group.types.includes(type))
+    return { ...group, rows, total: sumTypeCounts(rows.map(([, counts]) => counts)) }
+  }).filter(group => group.rows.length > 0)
+}
+
+function TypeCountLink({ value, type, state, windowKey }: {
+  value: number
+  type: string
+  state: 'identified' | 'profile_typed'
   windowKey: string
-  drillState?: 'identified' | 'profile_typed'
-  footnote?: ReactNode
 }) {
-  const { groups, total } = groupTypes(rows)
-  if (total === 0) return null
-  const max = Math.max(...groups.map(group => group.total))
-  return <section className="coverage-type-block" aria-label={label}>
-    <h5>{label}<span>{count(total)} 个设备记录</span></h5>
-    <p className="coverage-footnote">{basis}</p>
-    <ul className="coverage-type-groups">
-      {groups.map(group => <li key={group.key}>
-        <div className="coverage-type-group-head"><span>{group.label}</span><strong>{count(group.total)}</strong></div>
-        <FunnelBar label={`${label}·${group.label} ${count(group.total)} 个`} segments={[{ value: 100 * group.total / max, tone }]} />
-        <p className="coverage-type-chips">
-          {group.members.slice(0, 6).map(row => drillState ? (
-            <ReportLink
-              key={row.device_type}
-              to={discoveryListUrl(windowKey, { discovery_state: drillState, discovery_type: row.device_type })}
-              className="coverage-type-chip"
-            >
-              {deviceTypeLabel(row.device_type)} {count(row.count)}
-            </ReportLink>
-          ) : (
-            <span key={row.device_type}>{deviceTypeLabel(row.device_type)} {count(row.count)}</span>
-          ))}
-          {group.members.length > 6 && <span>其他 {count(group.members.slice(6).reduce((sum, row) => sum + row.count, 0))}</span>}
-        </p>
-      </li>)}
-    </ul>
-    {footnote && <p className="coverage-footnote">{footnote}</p>}
+  return value > 0 ? <ReportLink
+    to={discoveryListUrl(windowKey, { discovery_state: state, discovery_type: type })}
+    className="coverage-type-count-link"
+    ariaLabel={`${compositionTypeLabels[type] ?? deviceTypeLabel(type)} ${state === 'identified' ? '硬件规则确认' : '画像识别'} ${count(value)}`}
+  >{count(value)}</ReportLink> : 0
+}
+
+function CoverageTypeTable({ groups, windowKey }: {
+  groups: ReturnType<typeof groupTypeCounts>
+  windowKey: string
+}) {
+  const overall = sumTypeCounts(groups.map(group => group.total))
+  return <section className="coverage-type-block" aria-label="设备类型构成">
+    <table className="coverage-type-table" aria-label="设备类型及判断依据">
+      <thead><tr>
+        <th scope="col">品类</th>
+        <th scope="col">合计</th>
+        <th scope="col">硬件规则确认</th>
+        <th scope="col">画像识别</th>
+      </tr></thead>
+      {groups.map(group => <tbody key={group.key}>
+        <tr className="coverage-type-subtotal">
+          <th scope="row">{group.label}</th>
+          <td>{count(typeCountsTotal(group.total))}</td>
+          <td>{count(group.total.confirmed)}</td>
+          <td>{count(group.total.profile)}</td>
+        </tr>
+        {group.rows.map(([type, counts]) => <tr key={type}>
+          <th scope="row">{compositionTypeLabels[type] ?? deviceTypeLabel(type)}</th>
+          <td>{count(typeCountsTotal(counts))}</td>
+          <td><TypeCountLink value={counts.confirmed} type={type} state="identified" windowKey={windowKey} /></td>
+          <td><TypeCountLink value={counts.profile} type={type} state="profile_typed" windowKey={windowKey} /></td>
+        </tr>)}
+      </tbody>)}
+      <tfoot><tr>
+        <th scope="row">总计</th>
+        <td>{count(typeCountsTotal(overall))}</td>
+        <td>{count(overall.confirmed)}</td>
+        <td>{count(overall.profile)}</td>
+      </tr></tfoot>
+    </table>
   </section>
 }
 
-function CoverageComposition({
-  composition,
-  feedback,
-  windowKey,
-}: {
+function CoverageComposition({ composition, feedback, windowKey }: {
   composition?: CoverageComposition
   feedback?: ReactNode
   windowKey: string
 }) {
-  const hasConfirmed = (composition?.types ?? []).some(row => row.count > 0)
-  const hasInferred = (composition?.candidate_types ?? []).some(row => row.count > 0)
-  const hasIpProduct = Boolean(composition?.ip_product_types?.length)
-  const confirmedTotal = (composition?.types ?? []).reduce((sum, row) => sum + row.count, 0)
-  const inferredTotal = (composition?.candidate_types ?? []).reduce((sum, row) => sum + row.count, 0)
-  const ipProductTotal = (composition?.ip_product_types ?? []).reduce((sum, row) => sum + row.count, 0)
-  const compositionSum = confirmedTotal + inferredTotal + ipProductTotal
-  const dumbCount = composition?.dumb_terminals ?? composition?.overview?.dumb_terminals
-  const columnCount = Math.max(1, Number(hasConfirmed) + Number(hasInferred) + Number(hasIpProduct))
+  const groups = composition ? groupTypeCounts(composition) : []
+  const ipProducts = composition?.ip_product_types ?? []
 
   return <section className="coverage-panel coverage-composition-panel" aria-labelledby="coverage-types-heading">
     <header className="coverage-panel-heading">
-      <div>
-        <h4 id="coverage-types-heading">识别出了什么</h4>
-        <p>{composition?.count_unit === 'cross_vlan_discovery_identity' ? '同一采集域内，地址一致且类型无冲突的全局 MAC 跨 VLAN 计一次。' : '按设备记录计数，同一设备在不同 VLAN 会分别计数'}</p>
-      </div>
+      <h4 id="coverage-types-heading">识别出了什么</h4>
       <ReportLink to={discoveryListUrl(windowKey)} className="report-inline-link">发现列表 <ArrowRightOutlined aria-hidden="true" /></ReportLink>
     </header>
     {feedback}
-    {composition && compositionSum > 0 && (confirmedTotal > 0 || inferredTotal > 0) && (
-      <div className="report-confidence-strip" aria-label="类型依据层级分布">
-        <FunnelBar
-          label={`硬件规则确认 ${count(confirmedTotal)}，画像识别 ${count(inferredTotal)}${ipProductTotal > 0 ? `，IP 自报 ${count(ipProductTotal)}` : ''}`}
-          segments={[
-            { value: 100 * confirmedTotal / compositionSum, tone: 'teal' },
-            { value: 100 * inferredTotal / compositionSum, tone: 'blue' },
-            { value: 100 * ipProductTotal / compositionSum, tone: 'amber' },
-          ]}
-        />
-        <div className="report-confidence-legend">
-          {confirmedTotal > 0 && <span><i className="coverage-chart-key coverage-chart-teal" aria-hidden="true" />硬件规则确认 {count(confirmedTotal)}</span>}
-          {inferredTotal > 0 && <span><i className="coverage-chart-key coverage-chart-blue" aria-hidden="true" />画像识别 {count(inferredTotal)}</span>}
-          {ipProductTotal > 0 && <span><i className="coverage-chart-key coverage-chart-amber" aria-hidden="true" />IP 自报线索 {count(ipProductTotal)}</span>}
-        </div>
-      </div>
-    )}
-    {!composition ? (!feedback && <p className="coverage-empty">正在读取类型构成…</p>)
-      : !hasConfirmed && !hasInferred && !hasIpProduct ? <p className="coverage-empty">选定范围内暂无类型结论。</p>
-        : <>
-          {!hasConfirmed && !hasInferred && <p className="coverage-empty">选定范围内暂无类型结论。</p>}
-          <div className={`coverage-composition-columns coverage-composition-cols-${columnCount}`}>
-            <TypeGroups
-              label="硬件规则确认"
-              basis="按设备协议、产品或型号等证据匹配硬件规则。"
-              rows={composition.types}
-              tone="teal"
-              windowKey={windowKey}
-              drillState="identified"
-              footnote={dumbCount !== undefined && dumbCount > 0 ? <>其中哑终端 <strong>{count(dumbCount)}</strong> 个，包括打印机、摄像机、门禁、话机等。</> : undefined}
-            />
-            <TypeGroups label="画像识别" basis="按 DHCP 指纹等终端画像特征判断设备类型。" rows={composition.candidate_types} tone="blue" windowKey={windowKey} drillState="profile_typed" />
-            {hasIpProduct && <section className="coverage-type-block" aria-label="IP 自报的产品类型">
-              <h5>IP 自报的产品类型<span>{count(ipProductTotal)} 条线索</span></h5>
-              <p className="coverage-footnote">产品或型号来自该 IP 的协议报文，设备归属仍待核实。同一地址可能自报多种类型，各类型分别计数。</p>
-              <ul className="coverage-type-groups">{composition.ip_product_types!.map(row =>
-                <li className="coverage-type-group-head" key={row.device_type}>
-                  <span>{deviceTypeLabel(row.device_type)}</span>
-                  <strong>{count(row.count)}</strong>
-                </li>)}</ul>
-            </section>}
-          </div>
-        </>}
+    {!composition && !feedback && <p className="coverage-empty">正在读取类型构成…</p>}
+    {composition && groups.length === 0 && ipProducts.length === 0 && <p className="coverage-empty">选定范围内暂无类型结论。</p>}
+    {groups.length > 0 && <CoverageTypeTable groups={groups} windowKey={windowKey} />}
+    {ipProducts.length > 0 && <section className="coverage-type-block" aria-label="IP 自报的产品类型">
+      <h5>IP 自报的产品类型</h5>
+      <p className="coverage-footnote">设备归属待核实，各类型分别计数。</p>
+      <ul className="coverage-type-groups">{ipProducts.map(row =>
+        <li className="coverage-type-group-head" key={row.device_type}>
+          <span>{compositionTypeLabels[row.device_type] ?? deviceTypeLabel(row.device_type)}</span>
+          <strong>{count(row.count)}</strong>
+        </li>)}</ul>
+    </section>}
   </section>
 }
 
