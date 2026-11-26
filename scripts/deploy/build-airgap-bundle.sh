@@ -2,15 +2,16 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: build-airgap-bundle.sh --version VERSION --dependency-host user@host --output FILE" >&2
+  echo "usage: build-airgap-bundle.sh --version VERSION --dependency-host user@host --output FILE [--profile full|passive-assets-204]" >&2
 }
 
-version=""; dependency_host=""; output=""
+version=""; dependency_host=""; output=""; profile="full"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version) version="${2:-}"; shift 2 ;;
     --dependency-host) dependency_host="${2:-}"; shift 2 ;;
     --output) output="${2:-}"; shift 2 ;;
+    --profile) profile="${2:-}"; shift 2 ;;
     *) usage; exit 2 ;;
   esac
 done
@@ -41,7 +42,7 @@ progress() { step=$((step + 1)); printf '\n[%d/6] %s\n' "$step" "$*"; }
 
 mkdir -p "$stage/rpms"
 progress "构建 Linux amd64 应用与前端发布包"
-"$repo_root/scripts/deploy/build-release.sh" --version "$version" --output "$stage/proxy-sentinel-$version.tar.gz"
+"$repo_root/scripts/deploy/build-release.sh" --version "$version" --profile "$profile" --output "$stage/proxy-sentinel-$version.tar.gz"
 
 progress "从 openEuler 依赖机收集精确版本 RPM"
 ssh "${ssh_options[@]}" "$dependency_host" bash -s > "$stage/runtime-rpms.tar.gz" <<'REMOTE'

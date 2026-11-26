@@ -558,9 +558,12 @@ PrivateTmp=true
 WantedBy=multi-user.target
 EOF
 
-for unit in proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-inventory.service proxy-sentinel-inventory-backfill.service proxy-sentinel-identity-materializer.service proxy-sentinel-proxy-source-refresh.service proxy-sentinel-proxy-source-refresh.timer; do
-  sed "s#/opt/proxy-sentinel#$root#g" "$release_dir/deploy/systemd/$unit" > "/etc/systemd/system/$unit"
+for unit in proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-inventory.service proxy-sentinel-inventory-backfill.service proxy-sentinel-identity-materializer.service proxy-sentinel-proxy-source-refresh.service proxy-sentinel-proxy-source-refresh.timer proxy-sentinel-passive-health.service proxy-sentinel-passive-health.timer proxy-sentinel-zeek-log-prune.service proxy-sentinel-zeek-log-prune.timer proxy-sentinel-device-retention.service proxy-sentinel-device-retention.timer; do
+  if [[ -f "$release_dir/deploy/systemd/$unit" ]]; then
+    sed "s#/opt/proxy-sentinel#$root#g" "$release_dir/deploy/systemd/$unit" > "/etc/systemd/system/$unit"
+  fi
 done
+mkdir -p -m 0755 "$root/data/passive-health"
 
 if [[ "$ingest_enabled" == true ]]; then
   mkdir -p "$(dirname "$eve_path")"
@@ -844,6 +847,11 @@ if [[ "$manage_device_signals" == true ]]; then systemctl enable --now proxy-sen
 if [[ "$ingest_enabled" == true ]]; then systemctl enable --now proxy-sentinel-ingest.service; else disable_installer_units proxy-sentinel-ingest.service; fi
 systemctl disable --now proxy-sentinel-risk-materializer.service proxy-sentinel-shadow.timer >/dev/null 2>&1 || true
 systemctl enable --now proxy-sentinel-read-model-realtime.service proxy-sentinel-read-model-coarse.service proxy-sentinel-recognition-materializer.service proxy-sentinel-inventory.service proxy-sentinel-inventory-backfill.service proxy-sentinel-identity-materializer.service proxy-sentinel-control-plane.service
+for timer_unit in proxy-sentinel-passive-health.timer proxy-sentinel-zeek-log-prune.timer proxy-sentinel-device-retention.timer; do
+  if [[ -f "/etc/systemd/system/$timer_unit" ]]; then
+    systemctl enable --now "$timer_unit" >/dev/null 2>&1 || true
+  fi
+done
 # `enable --now` does not restart an already running service during an
 # in-place upgrade. Restart each enabled long-running worker so no process
 # keeps executing the binary from the previous release symlink.

@@ -111,6 +111,8 @@ func run(args []string) error {
 		return runRouter(args[1:])
 	case "migrate":
 		return runMigrate(args[1:])
+	case "doctor":
+		return runDoctor(args[1:])
 	case "version":
 		fmt.Println(version)
 		return nil

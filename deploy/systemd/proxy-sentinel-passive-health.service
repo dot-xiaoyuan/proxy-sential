@@ -12,6 +12,6 @@ Nice=10
 UMask=0022
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=/opt/proxy-sentinel/data/passive-health
+ReadWritePaths=-/opt/proxy-sentinel/data/passive-health
 ProtectHome=true
 PrivateTmp=true

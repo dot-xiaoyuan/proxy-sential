@@ -114,6 +114,8 @@ PROXY_SENTINEL_EVE_PATH='/var/log/suricata/eve.json'
 PROXY_SENTINEL_ZEEK_LOG_DIR='/opt/proxy-sentinel/data/zeek/logs/current'
 PROXY_SENTINEL_ZEEK_DHCP_PATH='/opt/proxy-sentinel/data/zeek/logs/current/dhcp.log'
 PROXY_SENTINEL_ZEEK_SOFTWARE_PATH='/opt/proxy-sentinel/data/zeek/logs/current/software.log'
+PROXY_SENTINEL_ZEEK_SSH_PATH='/opt/proxy-sentinel/data/zeek/logs/current/ssh.log'
+PROXY_SENTINEL_ASSET_ANNOTATIONS_WRITE='true'
 PROXY_SENTINEL_OFFLINE='true'
 POSTGRES_HOST_PORT='25432'
 POSTGRES_DB='proxy_sentinel'
@@ -130,7 +132,7 @@ PROXY_SENTINEL_IDENTITY_INGEST_KEY='$identity_key'
 PROXY_SENTINEL_ACTION_MASTER_KEY='$action_key'
 PROXY_SENTINEL_ADMIN_USERNAME='admin'
 PROXY_SENTINEL_ADMIN_DISPLAY_NAME='系统管理员'
-PROXY_SENTINEL_MIN_FREE_KB='5242880'
+PROXY_SENTINEL_MIN_FREE_KB='104857600'
 EOF
 
 stage "安装 Proxy Sentinel、数据库和 systemd 服务"
