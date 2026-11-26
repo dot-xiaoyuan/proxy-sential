@@ -86,7 +86,9 @@ func resolveHardwareOwnershipBatch(ctx context.Context, db passiveDiscoveryDB, o
 			continue
 		case o.Origin == "snmp" && (o.Evidence.Payload["is_response"] != true || passiveString(o.Evidence.Payload, "response_source_ip") != o.IP):
 			observations[ordinal].MAC = ""
-		case o.Origin == "arp" || o.Origin == "ndp" || o.Origin == "dhcp" || o.Origin == "sadp" || passiveDirectResponderIdentity(o):
+		case o.Origin == "arp" || o.Origin == "ndp" || o.Origin == "dhcp" || o.Origin == "sadp" ||
+			((o.Origin == "capwap" || o.Origin == "dahua_discovery") && passiveString(o.Evidence.Payload, "identity_status") == "direct_l2") ||
+			passiveDirectResponderIdentity(o):
 			continue
 		case o.IP != "" && o.Node != "" && o.Site != "" && o.Domain != "":
 			probes = append(probes, hardwareBindingProbe{ordinal, o.Node, o.IP, o.ObservedAt, o.Site, o.Domain, o.VLAN, o.VRF})

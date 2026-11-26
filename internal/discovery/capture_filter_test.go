@@ -48,7 +48,7 @@ func TestDiscoveryFilterRejectsUnrelatedTaggedTraffic(t *testing.T) {
 		t.Fatal(e)
 	}
 	for _, tags := range []int{0, 1, 2} {
-		for _, port := range []int{443, 53, 5353, 1900, 3702, 37020, 161, 5683, 47808} {
+		for _, port := range []int{443, 53, 5353, 1900, 3702, 37020, 5246, 37810, 161, 5683, 47808} {
 			off := 14 + tags*4
 			f := make([]byte, off+28)
 			binary.BigEndian.PutUint16(f[12:14], 0x0800)

@@ -69,6 +69,8 @@ func DefaultCollectionConfig() CollectionConfig {
 		c.Protocols = append(c.Protocols, ProtocolOwner{p, "discovery-worker", true})
 	}
 	c.Protocols = append(c.Protocols, ProtocolOwner{"sadp", "device-signal", true})
+	c.Protocols = append(c.Protocols, ProtocolOwner{"capwap", "device-signal", true})
+	c.Protocols = append(c.Protocols, ProtocolOwner{"dahua_discovery", "device-signal", true})
 	c.Protocols = append(c.Protocols, ProtocolOwner{"dhcp", "zeek", true})
 	for _, p := range []string{"ipp", "rtsp", "http", "tls", "mqtt"} {
 		c.Protocols = append(c.Protocols, ProtocolOwner{p, "zeek", false})

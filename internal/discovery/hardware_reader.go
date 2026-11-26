@@ -115,6 +115,9 @@ func attachHardwareCurrent(ctx context.Context, db indexedQueryer, items []Devic
 		if s.Manufacturer != "" {
 			v.Manufacturer = s.Manufacturer
 		}
+		if s.HardwareTypeStatus != "identified" && s.HardwareTypeStatus != "conflict" && v.MAC != "" {
+			v.CrossVerification = crossVerifyDeviceView(*v)
+		}
 	}
 	return nil
 }

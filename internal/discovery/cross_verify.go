@@ -214,3 +214,60 @@ func IsL3ManagedEntity(item DeviceView) bool {
 	}
 	return false
 }
+
+// crossVerifyDeviceView 汇总单页设备视图上的当前非撤销观测维度，执行有界内存内多源交叉确认。
+// 绝不替代硬件规则单源强确认，也不执行额外数据库查询。
+func crossVerifyDeviceView(view DeviceView) *CrossVerificationResult {
+	in := CrossVerificationInput{
+		Vendor:            view.Manufacturer,
+		Brand:             view.Manufacturer,
+		DHCPCandidateType: view.CandidateDeviceType,
+		Protocols:         view.Protocols,
+	}
+	for _, obs := range view.Observations {
+		if obs.Withdrawn {
+			continue
+		}
+		p := obs.Evidence.Payload
+		if obs.Origin == "dhcp" || obs.Origin == "dhcp_client" {
+			if vc := str(p, "vendor_class"); vc != "" && in.DHCPVendorClass == "" {
+				in.DHCPVendorClass = vc
+			}
+			if ro := str(p, "requested_options"); ro != "" && in.DHCPRequestedOptions == "" {
+				in.DHCPRequestedOptions = ro
+			}
+			if dc := str(p, "dhcp_candidate_type"); dc != "" && in.DHCPCandidateType == "" {
+				in.DHCPCandidateType = dc
+			}
+		}
+		if obs.Origin == "capwap" {
+			in.ObservedResponsePorts = append(in.ObservedResponsePorts, "udp/5246")
+		}
+		if obs.Origin == "dahua_discovery" {
+			in.ObservedResponsePorts = append(in.ObservedResponsePorts, "udp/37777")
+			in.SNIEcosystems = append(in.SNIEcosystems, "Dahua")
+		}
+		if obs.Origin == "ipp" {
+			in.ObservedResponsePorts = append(in.ObservedResponsePorts, "tcp/631")
+		}
+		if obs.Origin == "rtsp" {
+			in.ObservedResponsePorts = append(in.ObservedResponsePorts, "tcp/554")
+		}
+		if ua := str(p, "user_agent"); ua != "" && len(in.UserAgents) < 8 {
+			in.UserAgents = append(in.UserAgents, ua)
+		}
+		if sni := str(p, "sni"); sni != "" {
+			if match, ok := deviceSNILibrary.MatchDomain(sni); ok {
+				in.SNIEcosystems = append(in.SNIEcosystems, match.Ecosystem)
+				if match.BrandEligible && in.SNIBrandHint == "" {
+					in.SNIBrandHint = match.Ecosystem
+				}
+			}
+		}
+	}
+	res := EvaluateCrossVerification(in)
+	if res.Status == "" {
+		return nil
+	}
+	return &res
+}

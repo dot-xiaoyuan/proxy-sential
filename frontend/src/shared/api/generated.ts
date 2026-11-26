@@ -7870,6 +7870,15 @@ export interface components {
             /** @description Opaque keys for opted-in behavior evidence. */
             behavior_keys?: string[];
             product_clues?: components["schemas"]["DiscoveryProductClue"][];
+            /** @description 多源独立交叉确认结果（仅在硬件规则未单源确认时作为二级高置信依据展示） */
+            cross_verification?: {
+                status?: string;
+                device_type?: string;
+                rule_id?: string;
+                independent_sources?: string[];
+                explanation?: string;
+                conflicting_types?: string[];
+            };
             /** @description 可信作用域身份的持久硬件类型；服务 TTL 到期不清除 */
             hardware_type?: string;
             /** @description Number of matching scopes represented by this row. Details refer to the displayed scope. */

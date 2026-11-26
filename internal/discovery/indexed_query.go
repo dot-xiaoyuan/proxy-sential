@@ -52,7 +52,7 @@ func buildIndexedDeviceSelection(query DeviceQuery) (indexedDeviceSelection, err
 		// A response can keep a trusted hardware identity observable after its
 		// address advertisement expires. List, metadata and export share this
 		// admission; the 184/default reader retains its original source set.
-		origins = append(origins, "snmp", "bacnet", "modbus", "http_device", "rtsp", "sip", "tls_device", "ipp", "onvif", "dhcp_client", "ieee1905")
+		origins = append(origins, "snmp", "bacnet", "modbus", "http_device", "rtsp", "sip", "tls_device", "ipp", "onvif", "dhcp_client", "ieee1905", "capwap", "dahua_discovery", "ssh_banner")
 	}
 	args := []any{}
 	baseWhere := []string{"l.observed_at<=now()", "NOT l.withdrawn"}

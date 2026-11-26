@@ -280,7 +280,8 @@ type HistoricalAddress struct {
 
 type DeviceView struct {
 	HardwareDetails
-	ProductClues         []IPProductClue `json:"product_clues,omitempty"`
+	CrossVerification    *CrossVerificationResult `json:"cross_verification,omitempty"`
+	ProductClues         []IPProductClue          `json:"product_clues,omitempty"`
 	BehaviorKeys         []string        `json:"behavior_keys,omitempty"`
 	reviewProjectionAt   *time.Time
 	indexedIdentityKey   string

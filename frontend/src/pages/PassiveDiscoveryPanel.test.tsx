@@ -932,3 +932,24 @@ it('renders L3 managed entity badge and manufacturer from product clues without 
   expect(screen.getByText('H3C')).toBeInTheDocument()
   expect(screen.getByText('E528C-PWR')).toBeInTheDocument()
 })
+
+it('renders cross-verified tier and new CAPWAP/Dahua/SSH protocol labels', async () => {
+  mockReads({ items: {} }, {
+    ...device,
+    mac: '70:f9:6d:11:22:33',
+    hardware_type_status: 'candidate',
+    protocols: ['capwap', 'dahua_discovery', 'ssh_banner'],
+    cross_verification: {
+      status: 'cross_verified',
+      device_type: 'access_point',
+      rule_id: 'cross:ap-dhcp138-capwap',
+      independent_sources: ['dhcp_option_138', 'port:udp/5246_5247'],
+      explanation: 'DHCP Option 138（CAPWAP AC）与 CAPWAP 控制端口（UDP 5246/5247）独立互证为无线接入点',
+    },
+  } as never)
+  renderPanel()
+  expect(await screen.findByText('多源交叉确认')).toBeInTheDocument()
+  expect(screen.getByText('CAPWAP')).toBeInTheDocument()
+  expect(screen.getByText('大华发现')).toBeInTheDocument()
+  expect(screen.getByText('SSH')).toBeInTheDocument()
+})

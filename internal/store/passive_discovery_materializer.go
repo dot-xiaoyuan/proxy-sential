@@ -35,7 +35,7 @@ func passiveDiscoverySources() []string {
 	if os.Getenv("PROXY_SENTINEL_PASSIVE_DISCOVERY_DHCP_ONLY") == "true" {
 		return []string{"dhcp"}
 	}
-	return []string{"dhcp", "arp", "ndp", "mdns", "ssdp", "ws_discovery", "sadp", "lldp", "cdp", "ieee1905_client_association", "ieee1905_topology", "ttl", "http-device", "snmp", "tls", "ssl", "x509", "sip", "rtsp", "bacnet", "modbus"}
+	return []string{"dhcp", "arp", "ndp", "mdns", "ssdp", "ws_discovery", "sadp", "capwap", "dahua_discovery", "lldp", "cdp", "ieee1905_client_association", "ieee1905_topology", "ttl", "http-device", "snmp", "tls", "ssl", "x509", "sip", "rtsp", "bacnet", "modbus", "ssh"}
 }
 
 type passiveDiscoveryRow struct {
@@ -610,6 +610,58 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 				o.ModelName = model
 			}
 		}
+	case "capwap":
+		if ip != "" && !scope.allows(ip) {
+			return discovery.Observation{}, "capwap_out_of_scope"
+		}
+		if ip == "" && mac == "" {
+			return discovery.Observation{}, "capwap_without_identity"
+		}
+		model := discovery.CleanReportedText(passiveString(event.Payload, "product_model"))
+		manufacturer := discovery.CleanReportedText(passiveString(event.Payload, "manufacturer"))
+		name := discovery.CleanReportedText(passiveString(event.Payload, "name"))
+		status := passiveString(event.Payload, "identity_status")
+		o.Origin, o.ValidUntil = "capwap", at.Add(30*time.Minute)
+		o.DeviceType, o.Capabilities = "access_point", []string{"wireless_access"}
+		o.Manufacturer, o.ModelName, o.Name = manufacturer, model, name
+		if status == "direct_l2" && mac != "" {
+			o.Confidence, o.Explanation = "strong", "CAPWAP 控制报文自报无线接入点且二层来源一致"
+		} else {
+			o.Confidence, o.Explanation = "clue", "CAPWAP 控制报文自报无线接入点（跨三层归属待核实）"
+		}
+	case "dahua_discovery":
+		if ip != "" && !scope.allows(ip) {
+			return discovery.Observation{}, "dahua_out_of_scope"
+		}
+		model := discovery.CleanReportedText(passiveString(event.Payload, "product_model"))
+		manufacturer := discovery.CleanReportedText(passiveString(event.Payload, "manufacturer"))
+		status := passiveString(event.Payload, "identity_status")
+		if model == "" || (ip == "" && mac == "") {
+			return discovery.Observation{}, "invalid_dahua_response"
+		}
+		if manufacturer == "" {
+			manufacturer = "Dahua"
+		}
+		o.Origin, o.Manufacturer, o.ModelName, o.ValidUntil = "dahua_discovery", manufacturer, model, at.Add(30*time.Minute)
+		o.DeviceType, o.Capabilities = dahuaModelDeviceType(model)
+		if status == "direct_l2" && mac != "" {
+			o.Confidence, o.Explanation = "strong", "大华设备发现响应自报型号且二层来源一致"
+		} else {
+			o.Confidence, o.Explanation = "clue", "大华设备发现响应自报型号；设备归属待核实"
+		}
+	case "ssh":
+		if ip != "" && !scope.allows(ip) {
+			return discovery.Observation{}, "ssh_out_of_scope"
+		}
+		banner := discovery.CleanReportedText(passiveString(event.Payload, "ssh_server_banner"))
+		if ip == "" || banner == "" {
+			return discovery.Observation{}, "ssh_without_banner"
+		}
+		o.Origin, o.ValidUntil = "ssh_banner", at.Add(30*time.Minute)
+		o.Confidence, o.Explanation = "clue", "SSH 服务端 Banner 被动指纹"
+		if kind, brand, osHint := discovery.SSHBannerIdentity(banner); kind != "" || brand != "" || osHint != "" {
+			o.DeviceType, o.Manufacturer, o.OSHint = kind, brand, osHint
+		}
 	case "ssdp":
 		if !scope.allows(ip) {
 			return discovery.Observation{}, "ssdp_out_of_scope"
@@ -700,6 +752,21 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 	return o, ""
 }
 
+// dahuaModelDeviceType 根据大华设备发现自报机型前缀映射初始设备品类与能力。
+func dahuaModelDeviceType(model string) (string, []string) {
+	upper := strings.ToUpper(strings.TrimSpace(model))
+	switch {
+	case strings.HasPrefix(upper, "IPC"), strings.HasPrefix(upper, "DH-IPC"), strings.HasPrefix(upper, "SD"), strings.HasPrefix(upper, "DH-SD"), strings.HasPrefix(upper, "HAC"), strings.HasPrefix(upper, "DH-HAC"):
+		return "camera", []string{"network_video"}
+	case strings.HasPrefix(upper, "NVR"), strings.HasPrefix(upper, "DH-NVR"), strings.HasPrefix(upper, "DVR"), strings.HasPrefix(upper, "XVR"), strings.HasPrefix(upper, "IVSS"):
+		return "recorder", []string{"network_video"}
+	case strings.HasPrefix(upper, "ASI"), strings.HasPrefix(upper, "DH-ASI"), strings.HasPrefix(upper, "VTO"), strings.HasPrefix(upper, "VTH"):
+		return "access_control", nil
+	default:
+		return "", nil
+	}
+}
+
 // passiveRepeatableFactID collapses repeated address claims into one row per
 // fact. A frame-per-second ARP or NDP stream would otherwise insert a row, an
 // identity link and a recognition job for every frame. The raw frames stay in
@@ -717,7 +784,7 @@ func passiveRepeatableFactID(o discovery.Observation) string {
 		}
 		sum := sha256.Sum256([]byte(strings.Join([]string{o.Origin, o.SourceID, o.MAC, o.IP, service}, "\x00")))
 		return "fact-" + hex.EncodeToString(sum[:16])
-	case "ssdp", "sip", "snmp", "rtsp", "ttl", "tls_device", "ws_discovery", "lldp", "cdp", "sadp", "ieee1905_client", "bacnet", "modbus":
+	case "ssdp", "sip", "snmp", "rtsp", "ttl", "tls_device", "ws_discovery", "lldp", "cdp", "sadp", "capwap", "dahua_discovery", "ssh_banner", "ieee1905_client", "bacnet", "modbus":
 		sum := sha256.Sum256([]byte(strings.Join([]string{o.Origin, o.SourceID, o.MAC, o.IP}, "\x00")))
 		return "fact-" + hex.EncodeToString(sum[:16])
 	default:

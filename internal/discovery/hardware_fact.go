@@ -137,6 +137,10 @@ func hardwareDirectOwnership(o Observation) bool {
 			strings.EqualFold(str(o.Evidence.Subject, "mac"), o.MAC) && clientAddress
 	case "sadp":
 		return p["is_response"] == true && (str(p, "identity_status") == "direct_l2" || str(p, "identity_status") == "arp_binding") && strings.EqualFold(str(p, "claimed_mac"), o.MAC) && str(p, "claimed_ip") == o.IP
+	case "capwap":
+		return p["is_request"] == true && str(p, "identity_status") == "direct_l2" && strings.EqualFold(str(p, "claimed_mac"), o.MAC) && o.MAC != ""
+	case "dahua_discovery":
+		return p["is_response"] == true && str(p, "identity_status") == "direct_l2" && strings.EqualFold(str(p, "claimed_mac"), o.MAC) && str(p, "claimed_ip") == o.IP
 	case "dns_sd":
 		return p["l2_source_mac_direct"] == true && strings.EqualFold(str(p, "responder_l2_mac"), o.MAC)
 	case "ieee1905":

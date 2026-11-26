@@ -202,6 +202,8 @@ func (p logParser) convertLine(raw []byte, lineOffset int, opts Options) (normal
 		return sipServerEventFromFields(raw, fields, lineOffset, opts)
 	case "rtsp-device":
 		return rtspDeviceEventFromFields(raw, fields, lineOffset, opts)
+	case "ssh":
+		return sshDiscoveryEventFromFields(raw, fields, lineOffset, opts)
 	}
 	if isSoftwareFields(fields) {
 		return softwareEventFromFields(raw, fields, lineOffset, opts)
@@ -466,6 +468,34 @@ func infrastructureDiscoveryEventFromFields(raw []byte, fields map[string]string
 	event := zeekNetworkEvent(raw, fields, lineOffset, opts, "discovery", opts.LogKind, timestamp, srcIP, dstIP, zeekFlow(fields, srcIP, dstIP), payload)
 	event.Subject = subject
 	event.Confidence = 0.85
+	return event, nil
+}
+
+// sshDiscoveryEventFromFields 从 Zeek ssh.log 提取服务端 SSH Banner，严格归属响应端 IP（id.resp_h），
+// 绝不将客户端 Banner 或传输层网关 MAC 误归属给服务端设备。
+func sshDiscoveryEventFromFields(raw []byte, fields map[string]string, lineOffset int, opts Options) (normalized.Event, error) {
+	timestamp := normalizeTimestamp(first(fields, "ts", "timestamp"))
+	srcIP := first(fields, "id.orig_h", "src_ip")
+	dstIP := first(fields, "id.resp_h", "dst_ip")
+	banner := strings.TrimSpace(first(fields, "server", "ssh_server_banner"))
+	if timestamp == "" || dstIP == "" || banner == "" || !strings.HasPrefix(strings.ToUpper(banner), "SSH-") || len(banner) > 256 {
+		return normalized.Event{}, fmt.Errorf("missing or invalid Zeek SSH server banner")
+	}
+	payload := map[string]any{
+		"origin":             "ssh_banner",
+		"ssh_server_banner":  banner,
+		"attribution_side":   "server",
+		"is_response":        true,
+		"response_source_ip": dstIP,
+		"ttl":                1800,
+	}
+	if client := strings.TrimSpace(fields["client"]); client != "" && len(client) <= 256 {
+		payload["ssh_client_banner"] = client
+	}
+	copyPayload(payload, fields, "vlan", "vlan")
+	event := zeekNetworkEvent(raw, fields, lineOffset, opts, "discovery", "ssh", timestamp, srcIP, dstIP, zeekFlow(fields, srcIP, dstIP), payload)
+	event.Subject = map[string]any{"ip": dstIP}
+	event.Confidence = 0.65
 	return event, nil
 }
 

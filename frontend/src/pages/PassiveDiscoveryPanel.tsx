@@ -77,7 +77,7 @@ function dhcpFieldEvidenceFor(signal?: PassiveSignal) {
     .map(([field, ref]) => ({ field, label: dhcpEvidenceLabels[field] ?? field, value: values[field], ref }))
 }
 type HandshakeClue = components['schemas']['DiscoveryHandshakeClue']
-const protocols: Record<string, string> = { dhcp: 'DHCP', dhcp_client: 'DHCP 客户端特征', dhcpv6: 'DHCPv6', sip: 'SIP', sadp: 'SADP', dns_sd: 'DNS-SD', ssdp: 'SSDP', ws_discovery: 'WS-Discovery', arp: 'ARP', ndp: 'NDP', ieee1905: 'IEEE 1905', ieee1905_client: 'IEEE 1905', ieee1905_client_association: 'IEEE 1905', lldp: 'LLDP', cdp: 'CDP', snmp: 'SNMP', ipp: 'IPP', onvif: 'ONVIF', nbns: 'NBNS', llmnr: 'LLMNR', bacnet: 'BACnet/IP', modbus: 'Modbus', coap: 'CoAP', mqtt: 'MQTT', http: 'HTTP', tls: 'TLS', rtsp: 'RTSP', fdb: '交换机 MAC 表', neighbor: '邻居表', active: '探测响应' }
+const protocols: Record<string, string> = { dhcp: 'DHCP', dhcp_client: 'DHCP 客户端特征', dhcpv6: 'DHCPv6', sip: 'SIP', sadp: 'SADP', capwap: 'CAPWAP', dahua_discovery: '大华发现', ssh_banner: 'SSH', dns_sd: 'DNS-SD', ssdp: 'SSDP', ws_discovery: 'WS-Discovery', arp: 'ARP', ndp: 'NDP', ieee1905: 'IEEE 1905', ieee1905_client: 'IEEE 1905', ieee1905_client_association: 'IEEE 1905', lldp: 'LLDP', cdp: 'CDP', snmp: 'SNMP', ipp: 'IPP', onvif: 'ONVIF', nbns: 'NBNS', llmnr: 'LLMNR', bacnet: 'BACnet/IP', modbus: 'Modbus', coap: 'CoAP', mqtt: 'MQTT', http: 'HTTP', tls: 'TLS', rtsp: 'RTSP', fdb: '交换机 MAC 表', neighbor: '邻居表', active: '探测响应' }
 const capabilities: Record<string, string> = { printing: '打印', scanning: '扫描', casting: '投屏', network_video: '网络视频', media_rendering: '媒体播放', voice: '语音通话' }
 function discoveryAddressClue(item: Device) {
   return item.hardware_type_status && !item.mac && !item.endpoint_id
@@ -88,6 +88,9 @@ function discoveryAddressClue(item: Device) {
 function hardwareStatusLabel(item: Device): string {
   const evidence = deviceTypeEvidenceState(item)
   if (hasVirtualizationClue(item)) return '画像线索'
+  if (evidence !== 'identified' && item.cross_verification?.status === 'cross_verified' && item.cross_verification.device_type) {
+    return '多源交叉确认'
+  }
   if (evidence === 'ip_product_only') return item.product_clues?.some(clue => clue.product_status === 'conflict')
     ? 'IP 自报产品有冲突' : 'IP 自报 · 归属待核实'
   return typeEvidenceLabels[evidence] ?? ''
@@ -130,6 +133,9 @@ function typeLabel(item: Device, types: Record<string, string>) {
     if (item.hardware_type_status === 'conflict') return hardwareStates.conflict
     const hardware = confirmedDeviceType(item)
     if (hardware) return types[hardware] ?? deviceTypeLabel(hardware)
+    if (item.cross_verification?.status === 'cross_verified' && item.cross_verification.device_type) {
+      return types[item.cross_verification.device_type] ?? deviceTypeLabel(item.cross_verification.device_type)
+    }
     return profileCandidateLabel(item, types)
   }
   if (item.classification_status === 'conflict') return '类型证据冲突'
@@ -549,6 +555,7 @@ export function PassiveDiscoveryPanel({ view }: { view: 'iot' | 'records' }) {
     if (item.hardware_type_status) {
       const evidence = deviceTypeEvidenceState(item)
       if (evidence === 'identified') return 'ok'
+      if (item.cross_verification?.status === 'cross_verified' && item.cross_verification.device_type) return 'info'
       if (evidence === 'profile_typed') return 'info'
       if (item.hardware_type_status === 'conflict' || evidence === 'revoked' || item.product_clues?.some(c => c.product_status === 'conflict')) return 'warn'
       return 'neutral'
@@ -565,6 +572,7 @@ export function PassiveDiscoveryPanel({ view }: { view: 'iot' | 'records' }) {
         : states[item.classification_status ?? ''] ?? (item.current ? '证据有效' : '证据已过期')
     return <div className="discovery-status-details">
       {primaryLabel && <StatusDot tone={statusDotTone(item)}>{primaryLabel}</StatusDot>}
+      {item.hardware_type_status && item.cross_verification?.status === 'cross_verified' && item.cross_verification.explanation && !confirmedDeviceType(item) && <Typography.Text type="secondary" title={item.cross_verification.explanation}>{item.cross_verification.explanation}</Typography.Text>}
       {item.hardware_type_status && item.activity_status && <Typography.Text type="secondary">{activityStates[item.activity_status]}</Typography.Text>}
       {item.hardware_type_status && item.type_evidence_at && <Typography.Text type="secondary" title={observedTimeTitle(item.type_evidence_at)}>类型依据 {observedTimeLabel(item.type_evidence_at)}</Typography.Text>}
       {item.hardware_type_status && item.hardware_model_status === 'conflict' && <Typography.Text type="warning">型号证据冲突</Typography.Text>}

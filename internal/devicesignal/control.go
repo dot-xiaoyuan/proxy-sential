@@ -152,6 +152,18 @@ func parseControlFrames(frame []byte) []controlSignal {
 		}
 		return nil
 	}
+	if destinationPort == 5246 {
+		if signal, found := parseCAPWAP(ethernet, source, destination, udpPayload); found {
+			return []controlSignal{signal}
+		}
+		return nil
+	}
+	if sourcePort == 37810 || destinationPort == 37810 {
+		if signal, found := parseDahuaDiscovery(ethernet, source, destination, udpPayload); found {
+			return []controlSignal{signal}
+		}
+		return nil
+	}
 	// IPv4 HSRP uses UDP 1985 at both ends. Matching either endpoint (or the
 	// IPv6 HSRP port 2029 in this IPv4 parser) turns ordinary client traffic
 	// whose ephemeral source port happens to be 1985/2029 into router evidence.
@@ -593,10 +605,17 @@ func writeControlBucket(path, sensorID, interfaceName, instance string, scope *n
 			flow["dst_ip"] = signal.Destination
 		}
 		event := normalized.Event{SchemaVersion: "v1", EventID: "control-" + hex.EncodeToString(sum[:16]), Source: "packet-sidecar", SourceEventType: signal.Kind, Type: "device", Timestamp: bucket.UTC().Format(time.RFC3339Nano), Observer: map[string]any{"sensor_id": sensorID, "interface": interfaceName}, Subject: subject, Flow: flow, Payload: signal.Payload, Confidence: 0.95}
-		if signal.Kind == "sadp" {
+		if signal.Kind == "sadp" || signal.Kind == "capwap" || signal.Kind == "dahua_discovery" {
 			subject["entity_role"] = "endpoint"
 			flow["proto"] = "udp"
-			flow["src_port"] = 37020
+			switch signal.Kind {
+			case "sadp":
+				flow["src_port"] = 37020
+			case "capwap":
+				flow["dst_port"] = 5246
+			case "dahua_discovery":
+				flow["src_port"] = 37810
+			}
 			if digest, ok := signal.Payload["payload_sha256"].(string); ok {
 				event.RawRef = map[string]any{"payload_sha256": digest}
 			}

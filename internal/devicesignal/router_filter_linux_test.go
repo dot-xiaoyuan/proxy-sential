@@ -75,6 +75,18 @@ func TestRouterProtocolFilterRetainsDeviceDiscoveryProtocols(t *testing.T) {
 		if got := runRouterProtocolFilter(t, mdns); got == 0 {
 			t.Fatalf("mDNS with %d tags was rejected", tags)
 		}
+		capwap, offset := discoveryFrame(tags, 0x0800)
+		capwap[offset], capwap[offset+9] = 0x45, 17
+		binary.BigEndian.PutUint16(capwap[offset+22:], 5246)
+		if got := runRouterProtocolFilter(t, capwap); got == 0 {
+			t.Fatalf("CAPWAP with %d tags was rejected", tags)
+		}
+		dahua, offset := discoveryFrame(tags, 0x0800)
+		dahua[offset], dahua[offset+9] = 0x45, 17
+		binary.BigEndian.PutUint16(dahua[offset+22:], 37810)
+		if got := runRouterProtocolFilter(t, dahua); got == 0 {
+			t.Fatalf("Dahua discovery with %d tags was rejected", tags)
+		}
 		bulk, offset := discoveryFrame(tags, 0x0800)
 		bulk[offset], bulk[offset+9] = 0x45, 6
 		binary.BigEndian.PutUint16(bulk[offset+22:], 443)
