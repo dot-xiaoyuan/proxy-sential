@@ -2,6 +2,16 @@
 
 本页只记录当前版本和未完成事项。现场数值以每次只读检查为准；旧发布、验收和方案演进记录留在 Git 历史中。
 
+## 204 被动资产发现中长期路线图（阶段一至五收官，11 月 26 日 17:07）
+
+- **当前 204 现场版本**：`2026.11.26-b8f04b6a`（`passive-assets-204` Profile，提交 `b8f04b6a`，固定包 `/opt/proxy-sentinel/proxy-sentinel-current.tar.gz` SHA-256 为 `34cdb954f788680866fce33aed4ebdb669c0177ad0ea66447a00c6f9a09d1514`）。10 个核心应用进程均运行于新版本，控制面保持 `--read-only=true`，`/readyz` 返回 HTTP 200，`runtime.env` SHA-256 保持 `f6244f950d098368db027a52653cae8fdde24e2c3596ee2ca30ee42725216020` 不变。
+- **迁移账本与旧版本清理**：PostgreSQL 257 项（新增 `258_discovery_list_ieee1905_refresh.sql`、`259_discovery_list_capwap_dahua.sql`），ClickHouse 74 项（新增 `076_passive_discovery_capwap_dahua_ssh.sql`，`071`/`072` 继续按 204 Profile 排除）。无引用旧发布目录 `2026.11.26-6f37e5f1`、`2026.11.26-2292f4f0`、`2026.11.26-5ed297a4`、`2026.11.26-7928731d` 均已清理；现场保留 `current`=`2026.11.26-b8f04b6a`、`previous`=`2026.11.26-2c9fa1f8`、`frontend-previous`=`2026.11.26-e24ac7dc`。
+- **核心现场实测成效（17:07 只读验收）**：
+  - **CAPWAP 在线瘦 AP 全链路实测闭环**：BPF 捕获 UDP 5246/5247 + Echo Request (`MsgType=13`) / Data Keep-Alive (`K=1`, Session ID Type 35) + ClickHouse `076` 接纳 + `BuildIPProductClue`（`request_ip` 归属，不捏造跨三层物理 MAC）已全面生效。`discovery_observation_latest` 与 `discovery_list_observation` 实时落盘 **472 / 472 台在线瘦 AP**（100% 标记 `product_status=identified`、`type=access_point`，其中 `discovery_request` 样本提取华为厂商 `vendor_enterprise_id=2011`）。24 小时 IP 自报已识别产品类型由基线 **77 台**（交换机 68、话机 8、无线分布式主机 1）跃升至 **551 台**（无线接入点 472、交换机 68、话机 10、无线分布式主机 1，**增幅 615.6%**）。
+  - **双表口径收敛与随机 MAC（LAA）摸底**：纯二层 `ieee1905` 心跳修复后（`10:5d:dc:9b:13:b1` 已在 24h/168h/720h 发现列表可见），双表“仅终端列表”差异由阶段一基线 768 收敛至 562（终端列表 4,750、发现列表 4,273、两表交集 4,188）；硬件投影已确认身份 344（去重 MAC 342，冲突 1）。`proxy-sentinel discovery mine-gaps` 首次量化 204 校园网 24 小时发现列表中 **随机 MAC（LAA）占比高达 67.8%（2,896 / 4,273）**，全球唯一 OUI 仅 1,377 个（32.2%）。
+  - **双视图融合与多源交叉确认**：发现设备 ↔ 终端列表 ↔ 终端详情已建立双向检索与档案直达入口；详情及列表按「硬件规则确认 > 多源交叉确认 > 画像识别」三层呈现，交叉确认已覆盖 AP（DHCP Option 138 + CAPWAP）、安防摄像机（海康/大华 + 专有端口）、打印机（厂商 + 9100/631）、Windows 桌面及 LAA 随机 MAC 移动终端（华为鸿蒙/安卓/小米/OPPO/vivo/Apple Option 55 + 生态 SNI/UA）。
+- **验证与遗留观察项**：Go 单元测试（含新增 204 全周期脱敏回归套件 [campus204_regression_test.go](../internal/discovery/campus204_regression_test.go)）、Linux amd64 BPF 编译校验、`go vet` 与二进制构建全通过；前端 77 项相关单测、API 契约与 `tsc -b`、生产构建及 Playwright 三视口（390×844 / 1280×800 / 1440×900）验收全通过。204 现场 `proxy-sentinel-ingest` 当前未启用 `--zeek-ssh`，SSH Banner 识别为代码就绪待现场开启采集源；大华 37810 解析已上线，窗口内 204 镜像未观测到活跃大华广播响应。
+
 ## 204 发现类型展示和统计（11 月 26 日）
 
 11:14:50 最终切换为 `2026.11.26-e56c8bf3`，固定包 SHA-256 为 `4ce7c6884c36bacb6f19c38e8ba74e92c31c440fedccd77889cb89ff888f9622`。列表、详情与本页统计统一计入有画像类型的设备，硬件规则确认证据单列。IP 自报显示待核实的是设备归属，缺少类型线索单列。11:15 的近 24 小时报表有 4,522 个发现身份，1,761 个已有类型判断（硬件规则确认 340、画像识别 1,421），IP 自报 77、缺少类型线索 2,643、类型冲突 1、硬件结论已撤销 40。OPPO Reno14 在三个视口均显示「手机 · 画像识别」，单条筛选的页脚和总览均计 1。三个视口、三个入口、142 个静态资源和六份自然发布快照验收通过。迁移账本仍为 PostgreSQL 255 项、ClickHouse 73 项。回退版本为 `5902e1c0`。[发布与验收记录](../artifacts/204-type-display-20261126/README.md)
