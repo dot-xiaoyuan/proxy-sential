@@ -80,6 +80,9 @@ func TestPassiveSNIBrandNeedsScopedCorroboration(t *testing.T) {
 		"dev.hik-connect.com": "dev.hik-connect.com", "ingress.did.mysystems.axis.com": "ingress.did.mysystems.axis.com",
 		"www.apple.com": "", "gdmf.apple.com.example": "", "fakepush.apple.com": "", "gdmf.apple.com:443": "",
 		"omada.tplinkcloud.com": "", "metrics.hicloud.com": "", "www.hik-connect.com": "",
+		"connectivitycheck.platform.hicloud.com": "connectivitycheck.platform.hicloud.com",
+		"connectivitycheck.vivo.com.cn":          "connectivitycheck.vivo.com.cn",
+		"settings-win.data.microsoft.com":        "settings-win.data.microsoft.com",
 	} {
 		if got := PassiveDeviceSNI(input); got != want {
 			t.Errorf("PassiveDeviceSNI(%q)=%q want %q", input, got, want)

@@ -740,6 +740,9 @@ func deviceCategory(deviceType string) string {
 }
 
 func deviceIdentityKind(item DeviceView) string {
+	if IsL3ManagedEntity(item) {
+		return "l3_managed_entity"
+	}
 	if len(item.Addresses) > 0 {
 		return "network_address"
 	}

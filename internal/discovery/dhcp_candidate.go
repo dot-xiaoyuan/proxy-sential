@@ -41,6 +41,25 @@ func PassiveDHCPClientCandidate(vendor, hostname, requestList string) string {
 			return rule.kind
 		}
 	}
+	// RFC 5417 定义的 DHCP Option 138 专用于无线接入点（WTP）发现 CAPWAP AC 地址；
+	// 结合 Option 43/66/67/150 中至少两项且排除 PC/移动端常见 Vendor Class，可作为高置信 AP 线索。
+	if options[138] {
+		apSupportCount := 0
+		for _, code := range []int{43, 66, 67, 150} {
+			if options[code] {
+				apSupportCount++
+			}
+		}
+		lowerVendor := strings.ToLower(strings.TrimSpace(vendor))
+		excludedClient := strings.HasPrefix(lowerVendor, "msft ") ||
+			strings.HasPrefix(lowerVendor, "android-dhcp-") ||
+			strings.HasPrefix(lowerVendor, "dhcpcd-") ||
+			strings.HasPrefix(lowerVendor, "huawei:android:") ||
+			strings.HasPrefix(lowerVendor, "huawei:openharmony:")
+		if apSupportCount >= 2 && !excludedClient {
+			return "access_point"
+		}
+	}
 	return ""
 }
 

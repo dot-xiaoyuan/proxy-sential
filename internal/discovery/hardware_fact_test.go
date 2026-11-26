@@ -127,3 +127,45 @@ func TestHardwareV2QueryAdmitsIEEE1905ActivityWithoutChanging184Default(t *testi
 		t.Fatalf("default 184 read path must not change origins, args=%v", legacy.Args)
 	}
 }
+
+func TestSNMPSelfMACDirectHardwareOwnership(t *testing.T) {
+	now := time.Date(2026, 11, 26, 8, 0, 0, 0, time.UTC)
+	o := Observation{
+		ID:         "snmp-self-1",
+		EventID:    "snmp-self-1",
+		SourceID:   "zeek",
+		Node:       "campus-204",
+		Site:       "campus-204",
+		Domain:     "mirror",
+		VLAN:       "4005",
+		IP:         "10.131.253.10",
+		MAC:        "aa:bb:cc:dd:ee:01",
+		Origin:     "snmp",
+		ObservedAt: now,
+		ValidUntil: now.Add(24 * time.Hour),
+		Evidence: normalized.Event{
+			EventID: "snmp-self-1",
+			Payload: map[string]any{
+				"is_response":        true,
+				"response_source_ip": "10.131.253.10",
+				"snmp_self_mac":      "aa:bb:cc:dd:ee:01",
+				"hardware_identity":  "snmp_self_mac",
+				"system_description": "Ruijie 10G Ethernet Switch(S2910-24GT4XS-E) By Ruijie Networks",
+			},
+		},
+	}
+	fact, err := HardwareFactFromObservation(o)
+	if err != nil || fact == nil || fact.MAC != "aa:bb:cc:dd:ee:01" {
+		t.Fatalf("expected SNMP self-MAC hardware fact, got %+v %v", fact, err)
+	}
+	state, err := EvaluateHardwareFacts([]HardwareFact{*fact}, nil, now)
+	if err != nil || state.HardwareType != "switch" || state.HardwareTypeStatus != "identified" {
+		t.Fatalf("expected identified switch from SNMP self-MAC, got %+v %v", state, err)
+	}
+
+	// MAC 不一致时必须拒绝归属
+	o.Evidence.Payload["snmp_self_mac"] = "11:22:33:44:55:66"
+	if mismatch, err := HardwareFactFromObservation(o); err != nil || mismatch != nil {
+		t.Fatalf("mismatched snmp_self_mac must be rejected, got %+v %v", mismatch, err)
+	}
+}

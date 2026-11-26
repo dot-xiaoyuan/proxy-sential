@@ -47,6 +47,17 @@ func snmpProductPayload(packet *gosnmp.SnmpPacket) map[string]any {
 			p["product_model"] = value
 		case strings.HasPrefix(oid, "1.3.6.1.2.1.47.1.1.1.1.12."):
 			p["manufacturer"] = value
+		case oid == "1.3.6.1.2.1.17.1.1.0" || oid == "1.0.8802.1.1.2.1.3.2.0":
+			if b, ok := v.Value.([]byte); ok && len(b) == 6 && b[0]&1 == 0 {
+				mac := strings.ToLower(net.HardwareAddr(b).String())
+				if mac != "00:00:00:00:00:00" {
+					if prev, exists := p["snmp_self_mac"].(string); exists && prev != mac {
+						delete(p, "snmp_self_mac")
+					} else {
+						p["snmp_self_mac"] = mac
+					}
+				}
+			}
 		}
 	}
 	// Community strings, authentication values and unrestricted variable values

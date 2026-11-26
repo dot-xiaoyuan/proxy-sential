@@ -163,3 +163,30 @@ func TestSNMPTSVPreservesQuotedAndMultilineDescription(t *testing.T) {
 		t.Fatalf("description changed: %+v", e.Payload)
 	}
 }
+
+func TestSNMPSelfMACExtractionAndConflictProtection(t *testing.T) {
+	r := identityRow("snmp")
+	r["system_description"] = "H3C Comware Switch"
+	r["snmp_varbinds"] = map[string]string{
+		"1.3.6.1.2.1.1.1.0":      "H3C Comware Switch",
+		"1.3.6.1.2.1.17.1.1.0":   "aabbccddeeff",
+		"1.0.8802.1.1.2.1.3.2.0": "aa:bb:cc:dd:ee:ff",
+	}
+	e, s := convertIdentity(t, "snmp", r)
+	if s.Emitted != 1 || e.Payload["snmp_self_mac"] != "aa:bb:cc:dd:ee:ff" {
+		t.Fatalf("expected snmp_self_mac aa:bb:cc:dd:ee:ff, got %+v", e.Payload)
+	}
+
+	// 若两个 OID 冲突，不得输出 snmp_self_mac
+	rConflict := identityRow("snmp")
+	rConflict["system_description"] = "H3C Comware Switch"
+	rConflict["snmp_varbinds"] = map[string]string{
+		"1.3.6.1.2.1.1.1.0":      "H3C Comware Switch",
+		"1.3.6.1.2.1.17.1.1.0":   "aabbccddeeff",
+		"1.0.8802.1.1.2.1.3.2.0": "00:22:33:44:55:66",
+	}
+	eConflict, sConflict := convertIdentity(t, "snmp", rConflict)
+	if sConflict.Emitted != 1 || eConflict.Payload["snmp_self_mac"] != nil {
+		t.Fatalf("conflicting SNMP MAC OIDs must not set snmp_self_mac: %+v", eConflict.Payload)
+	}
+}

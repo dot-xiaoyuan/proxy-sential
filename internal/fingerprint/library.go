@@ -326,10 +326,48 @@ func (l *Library) identifySignalsMeasured(signals Signals, observe func(string, 
 	}
 	// A device-reported Android DHCP class still identifies its OS when a more
 	// specific hostname rule wins brand and model selection.
-	if result.OSFamily == "" && strings.HasPrefix(strings.ToLower(strings.TrimSpace(signals.DHCPVendorClass)), "android-dhcp-") {
+	vendorClassTrimmed := strings.TrimSpace(signals.DHCPVendorClass)
+	vendorClassLower := strings.ToLower(vendorClassTrimmed)
+	if result.OSFamily == "" && strings.HasPrefix(vendorClassLower, "android-dhcp-") {
 		result.OSFamily = "Android"
 		result.OSFamilyConfidence = .82
 		result.Evidence = append(result.Evidence, "DHCP vendor class: Android")
+	}
+	// 华为 OpenHarmony / HarmonyOS 与 Android 终端 DHCP Vendor Class 补充识别（不依赖未被修改的主机名）。
+	if strings.HasPrefix(vendorClassLower, "huawei:openharmony:") {
+		mergeDimension(&result, "brand", "Huawei", .85, .85)
+		mergeDimension(&result, "os_family", "HarmonyOS", .85, .85)
+		result.Evidence = append(result.Evidence, "DHCP vendor class: Huawei HarmonyOS")
+		recordDimensionEvidence(&result, "dhcp_vendor_class", "dhcp_vendor_class", "huawei-openharmony", ruleValues{brand: "Huawei", osFamily: "HarmonyOS"}, .85)
+		if result.DeviceType == "" {
+			if code := strings.TrimSpace(vendorClassTrimmed[len("HUAWEI:openharmony:"):]); code != "" {
+				if kind := huaweiDHCPModelType(code); kind != "" {
+					mergeDimension(&result, "device_type", kind, .80, .85)
+					recordDimensionEvidence(&result, "dhcp_vendor_class", "dhcp_vendor_class", "huawei-openharmony-model", ruleValues{deviceType: kind}, .80)
+				}
+			}
+		}
+	} else if strings.HasPrefix(vendorClassLower, "huawei:android:") {
+		mergeDimension(&result, "brand", "Huawei", .82, .85)
+		mergeDimension(&result, "os_family", "Android", .82, .85)
+		result.Evidence = append(result.Evidence, "DHCP vendor class: Huawei Android")
+		recordDimensionEvidence(&result, "dhcp_vendor_class", "dhcp_vendor_class", "huawei-android", ruleValues{brand: "Huawei", osFamily: "Android"}, .82)
+	}
+	// 新版 Android 移动端（Android 13~17）常以纯版本形式上报 dhcpcd-13..17（不带 :Linux- 嵌入式后缀）。
+	if result.OSFamily == "" && isAndroidModernDHCPCD(vendorClassLower) {
+		result.OSFamily = "Android"
+		result.OSFamilyConfidence = .72
+		result.Evidence = append(result.Evidence, "DHCP vendor class: "+vendorClassTrimmed+" (Android)")
+		recordDimensionEvidence(&result, "dhcp_vendor_class", "dhcp_vendor_class", "android-dhcpcd-modern", ruleValues{osFamily: "Android"}, .72)
+	}
+	// RFC 5417 DHCP Option 138（CAPWAP AC 地址）与 43/66/67/150 组合为无线接入点典型指纹。
+	if result.DeviceType == "" && hasCAPWAPAPOptionProfile(signals.DHCPRequestedOptions, vendorClassLower) {
+		mergeDimension(&result, "device_type", "access_point", .78, .85)
+		if result.Source == "" || result.Source == "ieee_oui" {
+			result.Source, result.Confidence = "dhcp_capwap_option138", .78
+		}
+		result.Evidence = append(result.Evidence, "DHCP Option 138 (CAPWAP AC) + 43/66/67/150 → 无线接入点")
+		recordDimensionEvidence(&result, "dhcp_option_profile", "dhcp_requested_options", "rfc5417-option138-ap", ruleValues{deviceType: "access_point"}, .78)
 	}
 	// Darwin alone does not distinguish Apple's operating systems. A Mac hostname
 	// corroborates only a tentative macOS clue; neither signal establishes brand.
@@ -692,6 +730,62 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// huaweiDHCPModelType 根据华为官方机型编码区分手机与平板（仅用于画像层补全，不替代硬件单源确认）。
+func huaweiDHCPModelType(code string) string {
+	upper := strings.ToUpper(strings.TrimSpace(code))
+	switch upper {
+	case "ADA-AL00", "ADA-AL00U", "ADY-AL00", "ALN-AL00", "ALN-AL80", "ALT-AL10",
+		"BLK-AL00", "BLK-AL80", "BRA-AL00", "CLS-AL00", "CLS-AL30", "CRS-AL00",
+		"DEL-AL10", "EMA-AL00U", "HBN-AL00", "HBN-AL80", "HBP-AL00", "HED-AL00",
+		"HOP-AL10", "ICL-AL10", "ICL-AL20", "KEE-AL00", "LEM-AL00", "LMR-AL00",
+		"LMR-AL10", "MIA-AL00", "MIS-AL00", "MLN-AL00", "MRT-AL10", "PLA-AL10",
+		"PLR-AL00", "PLR-AL30", "PLR-AL50", "SCA-AL00", "SGT-AL00", "SGT-AL10",
+		"SGT-AL50", "SLY-AL00", "TLR-AL00", "VDE-AL00", "VDE-AL10", "VOL-AL00",
+		"VYG-AL00", "VYG-AL30":
+		return "mobile"
+	case "GEM-W00", "LRT-W00", "LRT-W20", "MRDI-W00", "MRDI-W10", "PCE-W30",
+		"SLG-W10", "SLG-W50", "TXZ-W10", "TXZ-W20", "WKI-W10", "XYAO-W00":
+		return "tablet"
+	}
+	return ""
+}
+
+// isAndroidModernDHCPCD 识别 Android 12~19 移动终端无嵌入式 Linux 后缀的纯 dhcpcd-<ver> 标识。
+func isAndroidModernDHCPCD(vendorLower string) bool {
+	if !strings.HasPrefix(vendorLower, "dhcpcd-1") || strings.Contains(vendorLower, ":") || strings.Contains(vendorLower, "linux") {
+		return false
+	}
+	ver := strings.TrimPrefix(vendorLower, "dhcpcd-")
+	return len(ver) == 2 && ver[0] == '1' && ver[1] >= '2' && ver[1] <= '9'
+}
+
+// hasCAPWAPAPOptionProfile 匹配 RFC 5417 DHCP Option 138（CAPWAP AC）+ 至少两项 43/66/67/150 的无线 AP 选项组合。
+func hasCAPWAPAPOptionProfile(requestedOptions, vendorLower string) bool {
+	if strings.TrimSpace(requestedOptions) == "" {
+		return false
+	}
+	if strings.HasPrefix(vendorLower, "msft ") ||
+		strings.HasPrefix(vendorLower, "android-dhcp-") ||
+		strings.HasPrefix(vendorLower, "dhcpcd-") ||
+		strings.HasPrefix(vendorLower, "huawei:android:") ||
+		strings.HasPrefix(vendorLower, "huawei:openharmony:") {
+		return false
+	}
+	has6, has138 := false, false
+	support := map[string]bool{}
+	for _, token := range strings.FieldsFunc(requestedOptions, func(r rune) bool { return r == ',' || r == ' ' }) {
+		switch token {
+		case "6":
+			has6 = true
+		case "138":
+			has138 = true
+		case "43", "66", "67", "150":
+			support[token] = true
+		}
+	}
+	return has6 && has138 && len(support) >= 2
 }
 
 func (l *Library) normalizedBrand(vendor string) string {

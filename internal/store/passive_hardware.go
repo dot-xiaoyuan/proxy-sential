@@ -137,9 +137,21 @@ func applyHardwareBindings(ctx context.Context, db passiveDiscoveryDB, observati
 		o.Evidence.Payload = payload
 		switch resolved := validPassiveMAC(mac.String); {
 		case !mac.Valid || resolved == "":
-			o.MAC = ""
-			payload["hardware_identity"] = "ambiguous_or_missing"
+			selfMAC := ""
+			if o.Origin == "snmp" && o.Evidence.Payload["is_response"] == true && passiveString(o.Evidence.Payload, "response_source_ip") == o.IP {
+				selfMAC = validPassiveMAC(passiveString(o.Evidence.Payload, "snmp_self_mac"))
+			}
+			if selfMAC != "" {
+				o.MAC = selfMAC
+				payload["hardware_identity"] = "snmp_self_mac"
+			} else {
+				o.MAC = ""
+				payload["hardware_identity"] = "ambiguous_or_missing"
+			}
 		case o.MAC != "" && !strings.EqualFold(o.MAC, mac.String):
+			o.MAC = ""
+			payload["hardware_identity"] = "conflicting_mac"
+		case o.Origin == "snmp" && passiveString(o.Evidence.Payload, "snmp_self_mac") != "" && !strings.EqualFold(passiveString(o.Evidence.Payload, "snmp_self_mac"), resolved):
 			o.MAC = ""
 			payload["hardware_identity"] = "conflicting_mac"
 		default:

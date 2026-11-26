@@ -471,7 +471,8 @@ export function PassiveDiscoveryPanel({ view }: { view: 'iot' | 'records' }) {
   const identity = (item: Device) => {
     const addressClue = discoveryAddressClue(item)
     const mac = item.mac?.toLowerCase()
-    const title = mac || (addressClue ? '地址线索' : item.endpoint_id)
+    const isL3Managed = !mac && item.identity_kind === 'l3_managed_entity'
+    const title = mac || (isL3Managed ? '三层受管网元' : addressClue ? '地址线索' : item.endpoint_id)
     const name = item.name?.trim()
     const sameMAC = mac && name?.replace(/[.:-]/g, '').toLowerCase() === mac.replace(/:/g, '')
     const secondary = name && name !== addressClue && !sameMAC ? name : ''
@@ -490,7 +491,7 @@ export function PassiveDiscoveryPanel({ view }: { view: 'iot' | 'records' }) {
           title={secondary}>{secondary}</Typography.Text>}
         {nameClue && <Typography.Text type="secondary" className="terminal-kind-caption" title={nameClue.detail}>{nameClue.label}</Typography.Text>}
         {mac && isLocallyAdministeredMAC(mac) && <span className="terminal-kind-caption">本地管理</span>}
-        {addressClue && item.product_clues?.length ? <span className="terminal-kind-caption">产品线索 · 归属待核实</span> : null}
+        {isL3Managed ? <span className="terminal-kind-caption">跨三层自报 · 无源 MAC</span> : addressClue && item.product_clues?.length ? <span className="terminal-kind-caption">产品线索 · 归属待核实</span> : null}
       </div>
     </div>
   }
@@ -510,10 +511,15 @@ export function PassiveDiscoveryPanel({ view }: { view: 'iot' | 'records' }) {
     return <Typography.Text strong={Boolean(confirmedDeviceType(item))} title={title}>{label}</Typography.Text>
   }
   const vendor = (item: Device) => {
-    const manufacturer = item.manufacturer || ((item.recognition?.confidence ?? 0) >= .8 ? item.recognition?.brand : '')
+    const isL3Managed = !item.mac && item.identity_kind === 'l3_managed_entity'
+    const productClues = discoveryAddressClue(item) ? item.product_clues ?? [] : []
+    const observedManufacturers = isL3Managed && !productClues.some(clue => clue.product_status === 'conflict')
+      ? [...new Set(productClues.map(clue => clue.manufacturer).filter(Boolean))]
+      : []
+    const observedManufacturer = observedManufacturers.length === 1 ? observedManufacturers[0] : ''
+    const manufacturer = item.manufacturer || ((item.recognition?.confidence ?? 0) >= .8 ? item.recognition?.brand : '') || observedManufacturer
     const brand = resolveDeviceBrand({ brand: manufacturer })
     const brandLabel = brand.key === 'unknown' ? brand.name : brand.nameEn
-    const productClues = discoveryAddressClue(item) ? item.product_clues ?? [] : []
     const observedModels = productClues.some(clue => clue.product_status === 'conflict')
       ? []
       : [...new Set(productClues.map(clue => clue.model).filter(Boolean))]

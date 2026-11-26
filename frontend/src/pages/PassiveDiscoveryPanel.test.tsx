@@ -905,3 +905,30 @@ it('renders IEEE 1905 protocol label for layer-2 topology activity', async () =>
   renderPanel()
   expect(await screen.findByText('IEEE 1905')).toBeInTheDocument()
 })
+
+it('renders L3 managed entity badge and manufacturer from product clues without physical MAC', async () => {
+  mockReads({ items: {} }, {
+    ...device,
+    mac: undefined,
+    primary_ip: '10.131.253.1',
+    current_addresses: ['10.131.253.1'],
+    identity_kind: 'l3_managed_entity',
+    hardware_type_status: 'candidate',
+    protocols: ['snmp'],
+    product_clues: [{
+      ip: '10.131.253.1',
+      type: 'switch',
+      manufacturer: 'H3C',
+      model: 'E528C-PWR',
+      product_status: 'identified',
+      attribution: 'response_ip',
+      observed_at: '2026-11-01T12:00:00Z',
+      event_id: 'snmp-1',
+    }],
+  } as never)
+  renderPanel()
+  expect(await screen.findByRole('button', { name: '三层受管网元' })).toBeInTheDocument()
+  expect(screen.getByText('跨三层自报 · 无源 MAC')).toBeInTheDocument()
+  expect(screen.getByText('H3C')).toBeInTheDocument()
+  expect(screen.getByText('E528C-PWR')).toBeInTheDocument()
+})

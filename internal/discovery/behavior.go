@@ -61,7 +61,21 @@ type passiveBehaviorRule struct {
 // product port anchors the inference; an outbound attempt may be a viewer.
 var passiveBehaviorRules = []passiveBehaviorRule{
 	{"hikvision.com", "tcp/554", "video_device"},
+	{"hikvision.com", "tcp/8000", "video_device"},
+	{"hik-connect.com", "tcp/554", "video_device"},
+	{"hik-connect.com", "tcp/8000", "video_device"},
+	{"dahuasecurity.com", "tcp/554", "video_device"},
+	{"dahuasecurity.com", "tcp/37777", "video_device"},
+	{"easy4ipcloud.com", "tcp/554", "video_device"},
+	{"easy4ipcloud.com", "tcp/37777", "video_device"},
 	{"canon.com", "tcp/9100", "printer"},
+	{"canon.com", "tcp/631", "printer"},
+	{"hp.com", "tcp/9100", "printer"},
+	{"hp.com", "tcp/631", "printer"},
+	{"brother.com", "tcp/9100", "printer"},
+	{"brother.com", "tcp/631", "printer"},
+	{"epson.com", "tcp/9100", "printer"},
+	{"epson.com", "tcp/631", "printer"},
 }
 
 func PassiveBehaviorDomain(query string) string {

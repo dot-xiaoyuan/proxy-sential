@@ -30,8 +30,9 @@ export {
 # Keep this allowlist aligned with internal/adapter/zeek/passive_identity.go.
 function allowed_identity_oid(oid: string): bool
     {
-    return oid in set("1.3.6.1.2.1.1.1.0", "1.3.6.1.2.1.1.2.0", "1.3.6.1.2.1.1.5.0", "1.3.6.1.4.1.39165.1.1.0",
-        "1.3.6.1.4.1.318.1.4.2.2.1.2.1", "1.3.6.1.4.1.21239.5.2.1.8.0") ||
+    return oid in set("1.3.6.1.2.1.1.1.0", "1.3.6.1.2.1.1.2.0", "1.3.6.1.2.1.1.5.0",
+        "1.3.6.1.2.1.17.1.1.0", "1.0.8802.1.1.2.1.3.2.0",
+        "1.3.6.1.4.1.39165.1.1.0", "1.3.6.1.4.1.318.1.4.2.2.1.2.1", "1.3.6.1.4.1.21239.5.2.1.8.0") ||
         /^1\.3\.6\.1\.2\.1\.47\.1\.1\.1\.1\.(2|12|13)\.[0-9]+$/ in oid ||
         /^1\.3\.6\.1\.2\.1\.43\.5\.1\.1\.16\.[0-9]+$/ in oid;
     }
@@ -67,7 +68,13 @@ event snmp_response(c: connection, is_orig: bool, header: SNMP::Header, pdu: SNM
         local b = pdu$bindings[i];
         if ( ! allowed_identity_oid(b$oid) ) next;
         local value = "";
-        if ( b$value$tag == SNMP::OBJ_OCTETSTRING_TAG && b$value?$octets ) value = b$value$octets;
+        if ( b$value$tag == SNMP::OBJ_OCTETSTRING_TAG && b$value?$octets )
+            {
+            if ( (b$oid == "1.3.6.1.2.1.17.1.1.0" || b$oid == "1.0.8802.1.1.2.1.3.2.0") && |b$value$octets| == 6 )
+                value = bytestring_to_hexstr(b$value$octets);
+            else
+                value = b$value$octets;
+            }
         else if ( b$value$tag == SNMP::OBJ_OID_TAG && b$value?$oid ) value = b$value$oid;
         else next;
         if ( |value| == 0 ) next;

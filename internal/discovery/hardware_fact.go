@@ -120,6 +120,11 @@ func hardwareDirectOwnership(o Observation) bool {
 	if str(p, "hardware_identity") == "unique_binding" && o.MAC != "" {
 		return true
 	}
+	if o.Origin == "snmp" && str(p, "hardware_identity") == "snmp_self_mac" &&
+		p["is_response"] == true && o.IP != "" && str(p, "response_source_ip") == o.IP &&
+		o.MAC != "" && strings.EqualFold(str(p, "snmp_self_mac"), o.MAC) {
+		return true
+	}
 	switch o.Origin {
 	case "arp", "ndp", "dhcp":
 		return true

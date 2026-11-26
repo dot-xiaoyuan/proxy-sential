@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -42,7 +43,9 @@ func unescapeIdentityTSV(value string) string {
 // assets/zeek/snmp-device-signals.zeek. Never retain arbitrary management OIDs.
 func identitySNMPOID(oid string) bool {
 	switch oid {
-	case "1.3.6.1.2.1.1.1.0", "1.3.6.1.2.1.1.2.0", "1.3.6.1.2.1.1.5.0", "1.3.6.1.4.1.39165.1.1.0", "1.3.6.1.4.1.318.1.4.2.2.1.2.1", "1.3.6.1.4.1.21239.5.2.1.8.0":
+	case "1.3.6.1.2.1.1.1.0", "1.3.6.1.2.1.1.2.0", "1.3.6.1.2.1.1.5.0",
+		"1.3.6.1.2.1.17.1.1.0", "1.0.8802.1.1.2.1.3.2.0",
+		"1.3.6.1.4.1.39165.1.1.0", "1.3.6.1.4.1.318.1.4.2.2.1.2.1", "1.3.6.1.4.1.21239.5.2.1.8.0":
 		return true
 	}
 	for _, prefix := range []string{"1.3.6.1.2.1.47.1.1.1.1.2.", "1.3.6.1.2.1.47.1.1.1.1.12.", "1.3.6.1.2.1.47.1.1.1.1.13.", "1.3.6.1.2.1.43.5.1.1.16."} {
@@ -70,6 +73,50 @@ func validOID(value string) bool {
 		}
 	}
 	return parts[0] == "0" || parts[0] == "1" || parts[0] == "2"
+}
+
+// extractSNMPSelfMAC 从 SNMP 响应的桥接基础 MAC 或 LLDP 本地机箱 ID 中提取单播非零 MAC。
+// 若两个 OID 同时出现但值不一致，则拒绝归属以避免跨设备误绑。
+func extractSNMPSelfMAC(varbinds map[string]string) string {
+	candidates := make([]string, 0, 2)
+	for _, oid := range []string{"1.3.6.1.2.1.17.1.1.0", "1.0.8802.1.1.2.1.3.2.0"} {
+		if raw := strings.TrimSpace(varbinds[oid]); raw != "" {
+			if mac := parseSNMPUnicastMAC(raw); mac != "" {
+				candidates = append(candidates, mac)
+			}
+		}
+	}
+	if len(candidates) == 0 {
+		return ""
+	}
+	if len(candidates) == 2 && candidates[0] != candidates[1] {
+		return ""
+	}
+	return candidates[0]
+}
+
+func parseSNMPUnicastMAC(raw string) string {
+	cleaned := strings.TrimSpace(raw)
+	if cleaned == "" {
+		return ""
+	}
+	var hw net.HardwareAddr
+	if len(cleaned) == 12 {
+		if decoded, err := hex.DecodeString(cleaned); err == nil && len(decoded) == 6 {
+			hw = net.HardwareAddr(decoded)
+		}
+	}
+	if len(hw) == 0 {
+		parsed, err := net.ParseMAC(cleaned)
+		if err != nil || len(parsed) != 6 {
+			return ""
+		}
+		hw = parsed
+	}
+	if hw[0]&1 != 0 || hw.String() == "00:00:00:00:00:00" {
+		return ""
+	}
+	return strings.ToLower(hw.String())
 }
 
 func identityText(value string, limit int) bool {
@@ -215,6 +262,9 @@ func snmpResponseEvent(raw []byte, fields map[string]string, line int, opts Opti
 		return normalized.Event{}, fmt.Errorf("no allowed SNMP identity values")
 	}
 	payload := map[string]any{"parser_version": "snmp-device/v1", "snmp_varbinds": filtered}
+	if selfMAC := extractSNMPSelfMAC(filtered); selfMAC != "" {
+		payload["snmp_self_mac"] = selfMAC
+	}
 	if descr != "" {
 		payload["system_description"] = descr
 	}
