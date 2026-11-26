@@ -884,3 +884,24 @@ it('distinguishes personal computer profile clues from confirmed hardware in the
   expect(option).toHaveTextContent('已确认 1')
   expect(option).toHaveTextContent('画像识别 1,317')
 })
+
+it('shows cross-window and terminal-list guidance when search returns empty', async () => {
+  mockReads()
+  const base = request.getMockImplementation()!
+  request.mockImplementation((path: string) => path.startsWith('/discovery/devices?')
+    ? Promise.resolve({ items: [], total: 0, has_more: false, freshness: { status: 'ready', lag_seconds: 10, result_version: 1 } })
+    : base(path))
+  renderPanel(['/?discovery_search=10:5d:dc:9b:13:b1'])
+  expect(await screen.findByText('当前筛选下暂无符合条件的设备')).toBeInTheDocument()
+  const switch7d = screen.getByRole('button', { name: '切换至近 7 天' })
+  expect(screen.getByRole('button', { name: '切换至近 30 天' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '在终端列表搜索' })).toBeInTheDocument()
+  fireEvent.click(switch7d)
+  await waitFor(() => expect(request.mock.calls.some(([path]) => String(path).startsWith('/discovery/devices?') && String(path).includes('window=168h'))).toBe(true))
+})
+
+it('renders IEEE 1905 protocol label for layer-2 topology activity', async () => {
+  mockReads({ items: {} }, { ...device, mac: '10:5d:dc:9b:13:b1', protocols: ['ieee1905'] })
+  renderPanel()
+  expect(await screen.findByText('IEEE 1905')).toBeInTheDocument()
+})

@@ -22,6 +22,7 @@ import (
 	"proxy-sentinel/internal/adapter/zeek"
 	"proxy-sentinel/internal/controlplane"
 	"proxy-sentinel/internal/devicesignal"
+	"proxy-sentinel/internal/discovery"
 	"proxy-sentinel/internal/evaluation"
 	"proxy-sentinel/internal/evidence"
 	"proxy-sentinel/internal/fingerprint"
@@ -104,6 +105,8 @@ func run(args []string) error {
 		return fmt.Errorf("inventory-audit is retired with the trigger-driven inventory projection")
 	case "device-census":
 		return runDeviceCensus(args[1:])
+	case "discovery":
+		return runDiscoveryCLI(args[1:])
 	case "router":
 		return runRouter(args[1:])
 	case "migrate":
@@ -606,6 +609,48 @@ func runRouterProber(args []string) error {
 // runDeviceCensus prints the passive device census for one sensor. It is
 // read-only: it never writes events, profiles or actions, so it can run
 // repeatedly during field sampling.
+func runDiscoveryCLI(args []string) error {
+	if len(args) < 1 || args[0] != "mine-gaps" {
+		return fmt.Errorf("usage: proxy-sentinel discovery mine-gaps --postgres-dsn <dsn> --clickhouse-dsn <dsn> [--sensor-id campus-204] [--window 24h] [--top 50] [--format markdown|json]")
+	}
+	fs := flag.NewFlagSet("discovery mine-gaps", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	sensorID := fs.String("sensor-id", "campus-204", "sensor identifier")
+	postgresDSN := fs.String("postgres-dsn", os.Getenv("PROXY_SENTINEL_POSTGRES_DSN"), "PostgreSQL DSN")
+	clickhouseDSN := fs.String("clickhouse-dsn", os.Getenv("PROXY_SENTINEL_CLICKHOUSE_DSN"), "ClickHouse HTTP DSN")
+	window := fs.Duration("window", 24*time.Hour, "observation window (1h..168h)")
+	top := fs.Int("top", 50, "top N features per category (1..100)")
+	format := fs.String("format", "markdown", "output format: markdown or json")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*postgresDSN) == "" || strings.TrimSpace(*clickhouseDSN) == "" {
+		return fmt.Errorf("--postgres-dsn and --clickhouse-dsn are required")
+	}
+	backend, err := store.NewDBStore(store.Options{Mode: store.ModeDB, SensorID: *sensorID, CollectorKind: "discovery-gap-miner", PostgresDSN: *postgresDSN, ClickHouseDSN: *clickhouseDSN, RequestTimeout: 90 * time.Second})
+	if err != nil {
+		return err
+	}
+	defer backend.Close()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	report, err := backend.MineDiscoveryGaps(ctx, discovery.GapMineOptions{
+		SensorID: *sensorID,
+		Window:   *window,
+		Top:      *top,
+	})
+	if err != nil {
+		return err
+	}
+	if strings.EqualFold(*format, "json") {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(report)
+	}
+	fmt.Print(discovery.RenderGapReportMarkdown(report))
+	return nil
+}
+
 func runDeviceCensus(args []string) error {
 	fs := flag.NewFlagSet("device-census", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)

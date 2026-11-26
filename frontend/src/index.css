@@ -16057,6 +16057,26 @@ pre.wrap-code {
   flex-shrink: 0;
 }
 
+.discovery-empty-guidance {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.discovery-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 12px;
+}
+
+.discovery-empty-actions .ant-btn {
+  padding-inline: 2px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 /* 终端列表与发现设备列表统一排版与密度优化 */
 .device-inventory-toolbar {
   display: flex;

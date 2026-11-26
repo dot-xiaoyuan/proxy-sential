@@ -134,6 +134,14 @@ func hardwareDirectOwnership(o Observation) bool {
 		return p["is_response"] == true && (str(p, "identity_status") == "direct_l2" || str(p, "identity_status") == "arp_binding") && strings.EqualFold(str(p, "claimed_mac"), o.MAC) && str(p, "claimed_ip") == o.IP
 	case "dns_sd":
 		return p["l2_source_mac_direct"] == true && strings.EqualFold(str(p, "responder_l2_mac"), o.MAC)
+	case "ieee1905":
+		// IEEE 1905 拓扑声明来自设备自身 AL MAC 的二层帧，仅用于刷新发现活跃心跳，不形成硬件类型确认。
+		return o.MAC != "" && o.IP == "" && !o.Withdrawn && p["discovery_scope_conflict"] != true &&
+			strings.EqualFold(str(o.Evidence.Subject, "mac"), o.MAC)
+	case "ieee1905_client":
+		// IEEE 1905 客户关联公告仅刷新关联终端的活跃心跳，不形成硬件类型确认。
+		return o.MAC != "" && o.IP == "" && !o.Withdrawn && p["discovery_scope_conflict"] != true &&
+			strings.EqualFold(str(p, "client_mac"), o.MAC)
 	}
 	return false
 }
@@ -266,7 +274,7 @@ func HardwareFactFromObservation(o Observation) (*HardwareFact, error) {
 			return nil, nil
 		}
 	}
-	f := &HardwareFact{SensorID: o.Node, CampusID: o.Site, AccessDomain: o.Domain, VLAN: o.VLAN, VRF: o.VRF, MAC: strings.ToLower(mac.String()), DeviceKey: o.Key(), Source: o.Origin, FirstSeen: o.ObservedAt, ObservedAt: o.ObservedAt, ActiveUntil: o.ValidUntil, Revoked: o.Withdrawn, EvidenceID: firstText(o.EventID, o.ID), RawRef: o.Evidence.RawRef, Signals: []StoredHardwareSignal{}, AddressOnly: o.Origin == "arp" || o.Origin == "ndp"}
+	f := &HardwareFact{SensorID: o.Node, CampusID: o.Site, AccessDomain: o.Domain, VLAN: o.VLAN, VRF: o.VRF, MAC: strings.ToLower(mac.String()), DeviceKey: o.Key(), Source: o.Origin, FirstSeen: o.ObservedAt, ObservedAt: o.ObservedAt, ActiveUntil: o.ValidUntil, Revoked: o.Withdrawn, EvidenceID: firstText(o.EventID, o.ID), RawRef: o.Evidence.RawRef, Signals: []StoredHardwareSignal{}, AddressOnly: o.Origin == "arp" || o.Origin == "ndp" || o.Origin == "ieee1905" || o.Origin == "ieee1905_client"}
 	f.IdentityKey = HardwareIdentityKey(o.Node, o.Site, o.Domain, o.VLAN, o.VRF, f.MAC)
 	f.ClaimKey = hardwareHash([]string{o.SourceID, o.Origin, str(p, "service_instance"), str(p, "usn"), str(p, "bacnet_device_id"), str(p, "modbus_unit_id")})
 	f.Signals, err = hardwareObservationSignals(o)
