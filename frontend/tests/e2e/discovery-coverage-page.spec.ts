@@ -19,7 +19,7 @@ async function assertCoverageLayout(page: Page) {
     return {
       overflow:document.documentElement.scrollWidth>innerWidth+2,
       badControls:[...document.querySelectorAll('.discovery-coverage-page .ant-btn,.discovery-coverage-page .ant-tag')].filter(visible).filter(element=>{const style=getComputedStyle(element);return style.whiteSpace!=='nowrap'||style.flexShrink!=='0'}).length,
-      clipped:[...document.querySelectorAll('.coverage-metric,.coverage-panel,.discovery-diagnostics-stage,.discovery-diagnostics-table tr')].filter(visible).filter(element=>element.getBoundingClientRect().right>innerWidth+2||element.scrollWidth>element.clientWidth+2).length,
+      clipped:[...document.querySelectorAll('.coverage-metric,.coverage-panel,.coverage-composition-columns .coverage-type-block')].filter(visible).filter(element=>element.getBoundingClientRect().right>innerWidth+2||element.scrollWidth>element.clientWidth+2).length,
       selected:[...document.querySelectorAll('.ant-menu-item-selected')].map(element=>element.textContent?.trim()),
       contrast:(Math.max(foregroundLight, backgroundLight)+.05)/(Math.min(foregroundLight, backgroundLight)+.05),
     }
@@ -117,13 +117,7 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
     await page.screenshot({path:info.outputPath(`coverage-mirror-${viewport.width}.png`),fullPage:true,animations:'disabled'})
     await page.getByText('镜像明细与台账对照').click()
     await expect(page.getByLabel('镜像可见标识统计')).toBeVisible()
-
-    await page.getByRole('tab',{name:'历史核查'}).click()
-    await expect(page.getByLabel('历史现场核查')).toContainText('11 月 15 日')
-    await page.getByText('设备协议回放明细 · 11 月 23 日 18:54').click()
-    await expect(page.getByRole('progressbar',{name:'协议响应缺可信 MAC'})).toHaveAttribute('value','129')
-    await expect(page.locator('.discovery-diagnostics-table tbody tr')).toHaveCount(46)
-    await assertCoverageLayout(page)
+    await expect(page.getByRole('tab',{name:'历史核查'})).toHaveCount(0)
     expect(errors).toEqual([])
   })
 }

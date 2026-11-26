@@ -143,20 +143,6 @@ function CoveragePendingTable({ rows }: { rows: PendingRow[] }) {
   </table>
 }
 
-export function CoverageProtocolReplay() {
-  return <details className="coverage-panel coverage-protocol-replay">
-    <summary>设备协议回放明细 · 11 月 23 日 18:54</summary>
-    <p className="coverage-footnote">2026/11/23 18:54 的固定 24 小时快照。从 1,062 条回放观测中追查 197 个已有归属和设备协议报文、当时未获硬件规则确认的 IPv4 地址。</p>
-    <CoverageRows total={197} unit="个 IP" rows={[
-      { label: '协议响应缺可信 MAC', value: 129, color: 'slate' },
-      { label: '已归属，缺规则可用字段', value: 24 },
-      { label: '有字段，单条回放未形成类型', value: 42 },
-      { label: '曾确认后撤回或类型冲突', value: 2, color: 'amber' },
-    ]} />
-    <p className="coverage-footnote">缺可信 MAC 的地址中，66 个已有交换机产品线索，1 个已有无线分布式主机产品线索。</p>
-  </details>
-}
-
 function PlannedIPv4Panel({ report }: { report: NonNullable<CoverageReport['planned_ipv4']> }) {
   const status = {
     ready: '', partial: '投影仅覆盖部分时间或仍有积压。', delayed: '镜像地址投影更新延迟。',
@@ -444,6 +430,7 @@ function TypeGroups({
   tone,
   windowKey,
   drillState,
+  footnote,
 }: {
   label: string
   basis: string
@@ -451,6 +438,7 @@ function TypeGroups({
   tone: Tone
   windowKey: string
   drillState?: 'identified' | 'profile_typed'
+  footnote?: ReactNode
 }) {
   const { groups, total } = groupTypes(rows)
   if (total === 0) return null
@@ -478,6 +466,7 @@ function TypeGroups({
         </p>
       </li>)}
     </ul>
+    {footnote && <p className="coverage-footnote">{footnote}</p>}
   </section>
 }
 
@@ -492,13 +481,15 @@ function CoverageComposition({
 }) {
   const hasConfirmed = (composition?.types ?? []).some(row => row.count > 0)
   const hasInferred = (composition?.candidate_types ?? []).some(row => row.count > 0)
+  const hasIpProduct = Boolean(composition?.ip_product_types?.length)
   const confirmedTotal = (composition?.types ?? []).reduce((sum, row) => sum + row.count, 0)
   const inferredTotal = (composition?.candidate_types ?? []).reduce((sum, row) => sum + row.count, 0)
   const ipProductTotal = (composition?.ip_product_types ?? []).reduce((sum, row) => sum + row.count, 0)
   const compositionSum = confirmedTotal + inferredTotal + ipProductTotal
   const dumbCount = composition?.dumb_terminals ?? composition?.overview?.dumb_terminals
+  const columnCount = Math.max(1, Number(hasConfirmed) + Number(hasInferred) + Number(hasIpProduct))
 
-  return <section className="coverage-panel" aria-labelledby="coverage-types-heading">
+  return <section className="coverage-panel coverage-composition-panel" aria-labelledby="coverage-types-heading">
     <header className="coverage-panel-heading">
       <div>
         <h4 id="coverage-types-heading">识别出了什么</h4>
@@ -525,22 +516,31 @@ function CoverageComposition({
       </div>
     )}
     {!composition ? (!feedback && <p className="coverage-empty">正在读取类型构成…</p>)
-      : !hasConfirmed && !hasInferred ? <p className="coverage-empty">选定范围内暂无类型结论。</p>
+      : !hasConfirmed && !hasInferred && !hasIpProduct ? <p className="coverage-empty">选定范围内暂无类型结论。</p>
         : <>
-          <TypeGroups label="硬件规则确认" basis="按设备协议、产品或型号等证据匹配硬件规则。" rows={composition.types} tone="teal" windowKey={windowKey} drillState="identified" />
-          {dumbCount !== undefined && dumbCount > 0 &&
-            <p className="coverage-footnote">其中哑终端 <strong>{count(dumbCount)}</strong> 个，包括打印机、摄像机、门禁、话机等。</p>}
-          <TypeGroups label="画像识别" basis="按 DHCP 指纹等终端画像特征判断设备类型。" rows={composition.candidate_types} tone="blue" windowKey={windowKey} drillState="profile_typed" />
+          {!hasConfirmed && !hasInferred && <p className="coverage-empty">选定范围内暂无类型结论。</p>}
+          <div className={`coverage-composition-columns coverage-composition-cols-${columnCount}`}>
+            <TypeGroups
+              label="硬件规则确认"
+              basis="按设备协议、产品或型号等证据匹配硬件规则。"
+              rows={composition.types}
+              tone="teal"
+              windowKey={windowKey}
+              drillState="identified"
+              footnote={dumbCount !== undefined && dumbCount > 0 ? <>其中哑终端 <strong>{count(dumbCount)}</strong> 个，包括打印机、摄像机、门禁、话机等。</> : undefined}
+            />
+            <TypeGroups label="画像识别" basis="按 DHCP 指纹等终端画像特征判断设备类型。" rows={composition.candidate_types} tone="blue" windowKey={windowKey} drillState="profile_typed" />
+            {hasIpProduct && <section className="coverage-type-block" aria-label="IP 自报的产品类型">
+              <h5>IP 自报的产品类型<span>{count(ipProductTotal)} 条线索</span></h5>
+              <p className="coverage-footnote">产品或型号来自该 IP 的协议报文，设备归属仍待核实。同一地址可能自报多种类型，各类型分别计数。</p>
+              <ul className="coverage-type-groups">{composition.ip_product_types!.map(row =>
+                <li className="coverage-type-group-head" key={row.device_type}>
+                  <span>{deviceTypeLabel(row.device_type)}</span>
+                  <strong>{count(row.count)}</strong>
+                </li>)}</ul>
+            </section>}
+          </div>
         </>}
-    {!!composition?.ip_product_types?.length && <section className="coverage-type-block" aria-label="IP 自报的产品类型">
-      <h5>IP 自报的产品类型</h5>
-      <p className="coverage-footnote">产品或型号来自该 IP 的协议报文，设备归属仍待核实。同一地址可能自报多种类型，各类型分别计数。</p>
-      <ul className="coverage-type-groups">{composition.ip_product_types.map(row =>
-        <li className="coverage-type-group-head" key={row.device_type}>
-          <span>{deviceTypeLabel(row.device_type)}</span>
-          <strong>{count(row.count)}</strong>
-        </li>)}</ul>
-    </section>}
   </section>
 }
 
@@ -619,30 +619,26 @@ export function DiscoveryCoverageReport({
         : <>硬件规则已确认 <strong>{count(confirmed)}</strong> 个地址的类型；本次报表缺少画像识别明细。</>)}
     </p>}
     <CoverageFunnel summary={summary} plannedVisible={report.planned_ipv4?.visible_ipv4} />
-    <div className="coverage-panels">
-      <CoverageComposition composition={composition} feedback={compositionFeedback} windowKey={windowKey} />
-      <CoverageReasons summary={summary} />
-    </div>
+    <CoverageComposition composition={composition} feedback={compositionFeedback} windowKey={windowKey} />
     {(hasDailyTrend || hasBrands) && (
-      <div className={hasDailyTrend && hasBrands ? 'coverage-panels' : 'coverage-panels coverage-panels-single'}>
+      <div className={hasDailyTrend && hasBrands ? 'coverage-panels coverage-panels-equal' : 'coverage-panels coverage-panels-single'}>
         {hasDailyTrend && <DailyNewTrendChart days={trendDays} totalSevenDays={composition?.overview?.new_seven_days} />}
         {hasBrands && <BrandTypeChart brands={brandRows} windowKey={windowKey} />}
       </div>
     )}
-    {(hasHotspots || report.hardware_trend) && (
-      <div className={hasHotspots && report.hardware_trend ? 'coverage-panels' : 'coverage-panels coverage-panels-single'}>
-        {hasHotspots && (
-          <NetworkHotspotsPanel
-            subnets={composition?.overview?.subnets}
-            vlans={composition?.vlans}
-            plannedRanges={report.planned_ipv4?.ranges}
-            windowKey={windowKey}
-            onOpenNetworks={onOpenNetworks}
-          />
-        )}
-        {report.hardware_trend && <HardwareTrendPanel trend={report.hardware_trend} />}
-      </div>
-    )}
+    <div className={hasHotspots ? 'coverage-panels coverage-panels-equal' : 'coverage-panels coverage-panels-single'}>
+      <CoverageReasons summary={summary} />
+      {hasHotspots && (
+        <NetworkHotspotsPanel
+          subnets={composition?.overview?.subnets}
+          vlans={composition?.vlans}
+          plannedRanges={report.planned_ipv4?.ranges}
+          windowKey={windowKey}
+          onOpenNetworks={onOpenNetworks}
+        />
+      )}
+    </div>
+    {report.hardware_trend && <HardwareTrendPanel trend={report.hardware_trend} />}
     <ul className="coverage-scope-notes" aria-label="统计口径">
       <li>地址数不等于设备台数：同一设备可能使用多个地址，同一地址也可能被不同设备先后使用。</li>
       {deviceOutsideMirror !== undefined && deviceOutsideMirror > 0 && <li>有 {count(deviceOutsideMirror)} 个有设备层报文的地址未出现在本窗口的镜像统计中，已计入共发现总数。</li>}

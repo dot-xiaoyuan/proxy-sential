@@ -9,8 +9,7 @@ import { useSession } from '../shared/api/queries'
 import { AppLoadingState } from '../shared/ui'
 import { observedTimeTitle } from '../shared/ui/observedTime'
 import { CensusPanel } from './CensusPanel'
-import { DiscoveryCoverageDiagnostics } from './DiscoveryCoverageDiagnostics'
-import { CoverageProtocolReplay, DiscoveryCoverageReport, DiscoveryMirrorCoverage, type CoverageReport } from './DiscoveryCoverageReport'
+import { DiscoveryCoverageReport, DiscoveryMirrorCoverage, type CoverageReport } from './DiscoveryCoverageReport'
 import { DiscoverySupplementaryPanels } from './DiscoverySupplementaryPanels'
 import { TruthReviewPanel } from './TruthReviewPanel'
 
@@ -24,7 +23,6 @@ const sections = [
   { key: 'overview', label: '覆盖总览' },
   { key: 'networks', label: '网段与 VLAN' },
   { key: 'mirror', label: '镜像与配对' },
-  { key: 'history', label: '历史核查' },
   { key: 'review', label: '人工核实' },
 ] as const
 
@@ -146,7 +144,7 @@ export function DiscoveryCoveragePage() {
           <Typography.Title level={3}>设备发现覆盖报表</Typography.Title>
         )}
       </div>
-      {section !== 'history' && section !== 'review' && <div className="discovery-report-page-actions">
+      {section !== 'review' && <div className="discovery-report-page-actions">
         <Segmented
           className="discovery-report-window-switch"
           aria-label="统计时间范围"
@@ -157,7 +155,7 @@ export function DiscoveryCoveragePage() {
         <Button icon={<ReloadOutlined aria-hidden="true"/>} onClick={refresh} loading={isFetching}>刷新</Button>
       </div>}
     </header>
-    <Tabs className="coverage-tabs" aria-busy={section !== 'history' && section !== 'review' && isFetching} activeKey={section} onChange={value => changeParam('section', value)} items={sections.map(item => ({
+    <Tabs className="coverage-tabs" aria-busy={section !== 'review' && isFetching} activeKey={section} onChange={value => changeParam('section', value)} items={sections.map(item => ({
       ...item,
       children: item.key === 'overview' ? <>
         {section === 'overview' && feedback('覆盖总览')}
@@ -181,11 +179,7 @@ export function DiscoveryCoveragePage() {
           <summary>镜像明细与台账对照</summary>
           {censusOpened && <CensusPanel />}
         </details>
-      </> : item.key === 'review' ? <TruthReviewPanel /> : <section className="coverage-content" aria-label="历史现场核查">
-        <p className="coverage-empty">以下是固定日期的核查快照，不随时间范围变化。</p>
-        <CoverageProtocolReplay />
-        <DiscoveryCoverageDiagnostics />
-      </section>,
+      </> : <TruthReviewPanel />,
     }))} />
   </main>
 }
