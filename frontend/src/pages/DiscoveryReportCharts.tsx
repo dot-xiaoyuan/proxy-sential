@@ -146,10 +146,7 @@ export function BrandTypeChart({ brands, windowKey }: { brands: BrandTypeRow[]; 
   return (
     <section className="coverage-panel report-chart-panel" aria-labelledby="report-brand-heading">
       <header className="coverage-panel-heading">
-        <div>
-          <h4 id="report-brand-heading">已确认设备品牌分布</h4>
-          <p>按硬件规则确认的厂商与大类堆叠，点击品牌可查看设备明细</p>
-        </div>
+        <h4 id="report-brand-heading">已确认设备品牌分布</h4>
         <span className="report-panel-badge">前 {summary.length} 品牌</span>
       </header>
       <Suspense fallback={<p className="coverage-empty">正在加载品牌分布图…</p>}>
@@ -231,10 +228,7 @@ export function DailyNewTrendChart({ days, totalSevenDays }: { days: DailyNewRow
   return (
     <section className="coverage-panel report-chart-panel" aria-labelledby="report-trend-heading">
       <header className="coverage-panel-heading">
-        <div>
-          <h4 id="report-trend-heading">近 7 天每日新发现</h4>
-          <p>按首次纳入发现投影的日期统计新增设备身份</p>
-        </div>
+        <h4 id="report-trend-heading">近 7 天每日新发现</h4>
         <span className="report-panel-badge">合计 {countFormat(total)} 个</span>
       </header>
       <Suspense fallback={<p className="coverage-empty">正在加载趋势图…</p>}>
@@ -315,10 +309,7 @@ export function NetworkHotspotsPanel({
   return (
     <section className="coverage-panel report-hotspots-panel" aria-labelledby="report-hotspots-heading">
       <header className="coverage-panel-heading">
-        <div>
-          <h4 id="report-hotspots-heading">网段与 VLAN 热点</h4>
-          <p>{mode === 'planned' ? '规划设备网段内的镜像可见 IPv4 排行' : '按发现身份数排序，点击可筛选对应列表'}</p>
-        </div>
+        <h4 id="report-hotspots-heading">网段与 VLAN 热点</h4>
         {modes.length > 1 && (
           <Segmented<'subnet' | 'vlan' | 'planned'>
             size="small"
