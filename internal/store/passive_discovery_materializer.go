@@ -731,7 +731,7 @@ func passiveObservation(event normalized.Event, scope passiveDiscoveryScope) (di
 	}
 	discovery.NormalizeObservationClassification(&o)
 	discovery.NormalizeObservationName(&o)
-	if discovery.HardwareProjectionEnabled() && (o.Origin == "snmp" || o.Origin == "sip" || o.Origin == "rtsp") {
+	if discovery.HardwareProjectionEnabled() && (o.Origin == "snmp" || o.Origin == "sip" || o.Origin == "rtsp" || o.Origin == "capwap" || o.Origin == "dahua_discovery") {
 		if o.Origin == "snmp" {
 			o.LatestPartition = discovery.SNMPProductPartition(o)
 		}

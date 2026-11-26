@@ -207,7 +207,7 @@ func coveragePerIPSQL(sensor, from, until, profileJoin, hasProfile string) strin
   bool_or(withdrawn_confirmation) withdrawn_confirmation,bool_or(type_conflict) type_conflict,bool_or(typed_active) typed_active,
   bool_or(has_profile) has_profile,
   bool_or(origin='dhcp') dhcp,
-  bool_or(origin IN ('snmp','http_device','tls_device','dns_sd','ssdp','sadp','rtsp','sip','ws_discovery')) app,
+  bool_or(origin IN ('snmp','http_device','tls_device','dns_sd','ssdp','sadp','capwap','dahua_discovery','ssh_banner','rtsp','sip','ws_discovery')) app,
   bool_and(origin IN ('arp','ttl','ndp')) network_only,
   max(observed_at) latest
  FROM classified WHERE ip IS NOT NULL GROUP BY ip

@@ -62,3 +62,43 @@ func TestSIPIPProductRequiresClientOwnershipAndUniqueSource(t *testing.T) {
 		t.Fatal("legacy nonunique SIP reference accepted")
 	}
 }
+
+func TestCAPWAPAndDahuaIPProductClues(t *testing.T) {
+	now := time.Now().UTC()
+	sha := "1b74a264007a827aa9fa28d7ce4a8a9a2bedf9c0c23ba61e7c92730871120341"
+
+	capwap := hardwareTestObservation(now.Add(-time.Minute))
+	capwap.Origin, capwap.MAC, capwap.DeviceType, capwap.Manufacturer = "capwap", "", "access_point", "Huawei"
+	capwap.Evidence.Payload = map[string]any{
+		"is_request":     true,
+		"message_type":   "echo_request",
+		"manufacturer":   "Huawei",
+		"payload_sha256": sha,
+	}
+	capwap.Evidence.Flow = map[string]any{"src_ip": capwap.IP, "dst_ip": "10.126.1.10"}
+	clue, err := BuildIPProductClue(capwap, now)
+	if err != nil || clue == nil || clue.Type != "access_point" || clue.ProductStatus != "identified" || clue.Attribution != "request_ip" || clue.Manufacturer != "Huawei" {
+		t.Fatalf("unexpected CAPWAP IP product clue: %+v err=%v", clue, err)
+	}
+	if fact, err := HardwareFactFromObservation(capwap); err != nil || fact != nil {
+		t.Fatalf("cross-L3 CAPWAP must not invent physical MAC identity: %+v err=%v", fact, err)
+	}
+	capwap.Evidence.Payload["is_request"] = false
+	if clue, _ := BuildIPProductClue(capwap, now); clue != nil {
+		t.Fatalf("AC response must not become AP product clue: %+v", clue)
+	}
+
+	dahua := hardwareTestObservation(now.Add(-time.Minute))
+	dahua.Origin, dahua.MAC, dahua.DeviceType, dahua.Manufacturer, dahua.ModelName = "dahua_discovery", "", "camera", "Dahua", "DH-IPC-HFW5241E"
+	dahua.Evidence.Payload = map[string]any{
+		"is_response":    true,
+		"manufacturer":   "Dahua",
+		"product_model":  "DH-IPC-HFW5241E",
+		"payload_sha256": sha,
+	}
+	dahua.Evidence.Flow = map[string]any{"src_ip": dahua.IP, "dst_ip": "239.255.255.251"}
+	dClue, err := BuildIPProductClue(dahua, now)
+	if err != nil || dClue == nil || dClue.Type != "camera" || dClue.ProductStatus != "identified" || dClue.Attribution != "response_ip" || dClue.Model != "DH-IPC-HFW5241E" {
+		t.Fatalf("unexpected Dahua IP product clue: %+v err=%v", dClue, err)
+	}
+}

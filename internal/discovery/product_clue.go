@@ -48,6 +48,58 @@ func BuildIPProductClue(o Observation, now time.Time) (*IPProductClue, error) {
 		str(o.Evidence.Observer, "capture_scope_issue") != "" {
 		return nil, nil
 	}
+	if o.Origin == "capwap" || o.Origin == "dahua_discovery" {
+		p := o.Evidence.Payload
+		kind := o.DeviceType
+		if o.Origin == "capwap" {
+			kind = "access_point"
+		}
+		status := "no_type_match"
+		if kind != "" {
+			status = "identified"
+		}
+		ruleVersion := "capwap-rfc5415/v1"
+		ruleID := "capwap:" + firstText(str(p, "message_type"), "control")
+		if o.Origin == "dahua_discovery" {
+			ruleVersion = "dahua-discovery/v1"
+			ruleID = "dahua:udp-37810"
+		}
+		fields := map[string]string{}
+		if m := firstText(o.Manufacturer, str(p, "manufacturer")); m != "" {
+			fields["manufacturer"] = m
+		}
+		if model := firstText(o.ModelName, str(p, "product_model")); model != "" {
+			fields["product_model"] = model
+		}
+		if msg := str(p, "message_type"); msg != "" {
+			fields["message_type"] = msg
+		}
+		clue := &IPProductClue{
+			IP: o.IP, SensorID: o.Node, Site: o.Site, Domain: o.Domain, VLAN: o.VLAN, VRF: o.VRF,
+			Type:          kind,
+			Manufacturer:  firstText(o.Manufacturer, str(p, "manufacturer")),
+			Model:         firstText(o.ModelName, str(p, "product_model")),
+			ProductStatus: status,
+			Attribution:   attribution,
+			ObservedAt:    o.ObservedAt,
+			EventID:       o.EventID,
+			RuleVersion:   ruleVersion,
+			SourceSHA256:  str(p, "payload_sha256"),
+			Sources: []fingerprint.HardwareSource{{
+				Source:      o.Origin,
+				RuleID:      ruleID,
+				RuleVersion: ruleVersion,
+				EvidenceID:  o.EventID,
+				ObservedAt:  o.ObservedAt,
+				Fields:      fields,
+			}},
+			RawRef: o.Evidence.RawRef,
+		}
+		if raw, err := json.Marshal(clue); err != nil || len(raw) > 16384 {
+			return nil, fmt.Errorf("IP product result exceeds 16 KiB bound")
+		}
+		return clue, nil
+	}
 	signals, err := hardwareObservationSignals(o)
 	if err != nil {
 		return nil, err
@@ -94,6 +146,18 @@ func IPProductAttribution(o Observation) string {
 	p := o.Evidence.Payload
 	if o.Origin == "snmp" && p["is_response"] == true && str(p, "response_source_ip") == o.IP {
 		return "response_ip"
+	}
+	if o.Origin == "capwap" && p["is_request"] == true && o.IP != "" && str(o.Evidence.Flow, "src_ip") == o.IP {
+		if digest, err := hex.DecodeString(str(p, "payload_sha256")); err == nil && len(digest) == 32 {
+			return "request_ip"
+		}
+		return ""
+	}
+	if o.Origin == "dahua_discovery" && p["is_response"] == true && o.IP != "" && str(o.Evidence.Flow, "src_ip") == o.IP {
+		if digest, err := hex.DecodeString(str(p, "payload_sha256")); err == nil && len(digest) == 32 {
+			return "response_ip"
+		}
+		return ""
 	}
 	if (o.Origin != "sip" && o.Origin != "rtsp") || o.IP == "" || o.IP != str(o.Evidence.Flow, "src_ip") ||
 		str(o.Evidence.Flow, "direction") != "client" || str(p, "method") == "" || str(p, "user_agent") == "" ||
