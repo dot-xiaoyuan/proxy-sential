@@ -42,7 +42,7 @@ type ConnectorForm = {
   action_mapping: string
 }
 
-export function ActionsPage() {
+export function ActionsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const connectors = useActionConnectors(true, true)
   const fourKIntegrations = useQuery({
     queryKey: ['srun4k-integrations'],
@@ -233,8 +233,8 @@ export function ActionsPage() {
     },
   ]
 
-  return (
-    <main className="page actions-page">
+  const content = (
+    <>
       <AppPageHeader
         title="认证与处置接入"
         subtitle="认证同步（4K）和处置连接器（HMAC）分开维护；4K 接入配置用于授权库与目录，处置连接器用于发送处置动作。"
@@ -424,6 +424,11 @@ export function ActionsPage() {
           </Form.Item>
         </Form>
       </Modal>
-    </main>
+    </>
+  )
+  return embedded ? (
+    <div className="actions-page">{content}</div>
+  ) : (
+    <main className="page actions-page">{content}</main>
   )
 }

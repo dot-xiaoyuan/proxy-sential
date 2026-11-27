@@ -4,7 +4,6 @@ import { LegacyRedirect, LegacySettingsEntry, LegacyDiscoveryRedirect } from './
 import { AppShell } from './AppShell'
 import {
   ActionRecordsRoute,
-  CampusExceptionsRoute,
   WhitelistRoute,
   SourcesRoute,
   PoliciesRoute,
@@ -26,13 +25,9 @@ import {
   RulesRoute,
   CasesRoute,
   CaseDetailsRoute,
-  OrganizationRoute,
-  ActionsRoute,
   SecuritySettingsRoute,
   NotificationsRoute,
   BlacklistRoute,
-  DestinationTargetsRoute,
-  BehaviorReportsRoute,
 } from './routePages'
 
 export const router = createBrowserRouter([
@@ -77,12 +72,15 @@ export const router = createBrowserRouter([
       { path: 'shared-access/reviews/:id', element: <SharedReviewDetailsRoute /> },
       { path: 'policies', element: <PoliciesRoute /> },
       { path: 'settings/rules', element: <RulesRoute /> },
-      { path: 'settings/organization', element: <OrganizationRoute /> },
+      {
+        path: 'settings/organization',
+        element: <Navigate replace to="/settings/security?tab=organization" />,
+      },
       { path: 'actions', element: <ActionRecordsRoute /> },
       { path: 'policies/whitelist', element: <WhitelistRoute /> },
       { path: 'policies/blacklist', element: <BlacklistRoute /> },
-      { path: 'policies/destination-targets', element: <DestinationTargetsRoute /> },
-      { path: 'policies/exceptions', element: <CampusExceptionsRoute /> },
+      { path: 'policies/destination-targets', element: <Navigate replace to="/policies" /> },
+      { path: 'policies/exceptions', element: <Navigate replace to="/policies" /> },
       { path: 'settings/sources', element: <SourcesRoute /> },
       {
         path: 'settings/sources/diagnostics/:diagnosticId',
@@ -92,7 +90,7 @@ export const router = createBrowserRouter([
         path: 'settings/actions',
         element: (
           <LegacySettingsEntry kind="actions">
-            <ActionsRoute />
+            <Navigate replace to="/settings/sources?tab=actions" />
           </LegacySettingsEntry>
         ),
       },
@@ -105,7 +103,10 @@ export const router = createBrowserRouter([
         ),
       },
       { path: 'settings/notifications', element: <NotificationsRoute /> },
-      { path: 'settings/behavior-reports', element: <BehaviorReportsRoute /> },
+      {
+        path: 'settings/behavior-reports',
+        element: <Navigate replace to="/settings/notifications?tab=reports" />,
+      },
     ],
   },
 ])

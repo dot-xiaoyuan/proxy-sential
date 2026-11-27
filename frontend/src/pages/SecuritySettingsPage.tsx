@@ -1,11 +1,12 @@
 import '../styles/pages/system.css'
 import { AppListHeader, AppTable } from '../shared/ui'
 import { useState } from 'react'
-import { Button, Card, Form, Input, Modal, Select, Space, Tag, message } from 'antd'
+import { Button, Card, Form, Input, Modal, Select, Space, Tabs, Tag, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 
-import { useUserMutation, useUsers } from '../shared/api/queries'
+import { useSession, useUserMutation, useUsers } from '../shared/api/queries'
 import type { LocalUser, UserMutation } from '../shared/api/types'
+import { can } from '../shared/auth/permissions'
 import {
   AppErrorAlert,
   AppLoadingState,
@@ -13,6 +14,8 @@ import {
   useServerPagination,
 } from '../shared/ui'
 import { statusColor } from '../shared/ui/status'
+import { useUrlState } from '../shared/ui/useUrlState'
+import { OrganizationPage } from './OrganizationPage'
 
 const roleLabels: Record<string, string> = {
   viewer: '只读查看',
@@ -21,7 +24,32 @@ const roleLabels: Record<string, string> = {
   admin: '系统管理员',
 }
 
+// 组织与权限整合页：合并原“用户权限”与“校区与网络区域”。
 export function SecuritySettingsPage() {
+  const session = useSession()
+  const canManageUsers = can(session.data, 'users:manage')
+  const canReadOrganization = can(session.data, 'organization:read')
+  const defaultSection = canManageUsers ? 'users' : 'organization'
+  const [section, setSection] = useUrlState('tab', defaultSection, ['users', 'organization'])
+  const sectionItems = [
+    ...(canManageUsers ? [{ key: 'users', label: '用户权限' }] : []),
+    ...(canReadOrganization ? [{ key: 'organization', label: '校区与网络区域' }] : []),
+  ]
+  const activeSection = sectionItems.some((item) => item.key === section)
+    ? section
+    : (sectionItems[0]?.key ?? 'users')
+
+  return (
+    <main className="page">
+      <section className="surface">
+        <Tabs activeKey={activeSection} onChange={setSection} items={sectionItems} />
+      </section>
+      {activeSection === 'organization' ? <OrganizationPage embedded /> : <UsersPanel />}
+    </main>
+  )
+}
+
+function UsersPanel() {
   const userPage = useServerPagination('users_')
   const users = useUsers({ limit: userPage.pageSize, cursor: userPage.cursor })
   const userMutation = useUserMutation()
@@ -97,9 +125,9 @@ export function SecuritySettingsPage() {
     },
   ]
   return (
-    <main className="page">
+    <>
       <Card>
-        <AppListHeader title="用户权限" count={`${users.data?.page.total ?? 0} 条`} />{' '}
+        <AppListHeader title="用户权限" count={`${users.data?.page.total ?? 0} 条`} />
         <div className="tab-toolbar">
           <Button type="primary" onClick={() => setUserOpen(true)}>
             新建用户
@@ -119,7 +147,7 @@ export function SecuritySettingsPage() {
           total={users.data?.page.total}
           onChange={userPage.update}
         />
-      </Card>{' '}
+      </Card>
       <Modal
         title="新建本地用户"
         open={userOpen}
@@ -155,6 +183,6 @@ export function SecuritySettingsPage() {
           </Form.Item>
         </Form>
       </Modal>
-    </main>
+    </>
   )
 }

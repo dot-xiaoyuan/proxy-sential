@@ -21,8 +21,7 @@ export function LegacySettingsEntry({
   const tab = new URLSearchParams(location.search).get('tab')
   if (kind === 'actions' && ['actions', 'executions'].includes(tab || ''))
     return <LegacyRedirect to="/actions" />
-  if (kind === 'security' && tab === 'exceptions')
-    return <LegacyRedirect to="/policies/exceptions" />
+  if (kind === 'security' && tab === 'exceptions') return <Navigate replace to="/policies" />
   return children
 }
 
@@ -32,11 +31,7 @@ export function LegacyDiscoveryRedirect() {
   const tab = params.get('tab')
   params.set(
     'tab',
-    tab === 'iot'
-      ? 'iot'
-      : ['routers', 'network', 'infrastructure'].includes(tab || '')
-        ? 'network'
-        : 'discovery',
+    ['routers', 'network', 'infrastructure'].includes(tab || '') ? 'network' : 'terminal',
   )
   params.delete('page')
   params.delete('cursor')

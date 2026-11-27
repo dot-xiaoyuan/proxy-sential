@@ -12,19 +12,16 @@ test.describe('Automated UI/UX Designer Probe & Design System Audit', () => {
     '/ai-relay',
     '/devices',
     '/devices?tab=network',
-    '/discovery',
     '/policies',
     '/policies/whitelist',
-    '/policies/exceptions',
     '/policies/blacklist',
-    '/policies/destination-targets',
     '/settings/notifications',
-    '/settings/behavior-reports',
+    '/settings/notifications?tab=reports',
     '/settings/rules',
     '/settings/sources',
-    '/settings/actions',
-    '/settings/organization',
+    '/settings/sources?tab=actions',
     '/settings/security',
+    '/settings/security?tab=organization',
     '/audit',
   ]
   const viewports = [
@@ -148,7 +145,6 @@ test.describe('Automated UI/UX Designer Probe & Design System Audit', () => {
       { route: '/actions?tab=decisions', selector: '.compact-list-table' },
       { route: '/cases', selector: '.compact-list-table' },
       { route: '/audit', selector: '.compact-list-table' },
-      { route: '/discovery', selector: '.passive-ledger-table' },
     ]
     for (const viewport of [
       { width: 390, height: 844 },

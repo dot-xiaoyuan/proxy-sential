@@ -61,9 +61,12 @@ function saveError(error: unknown) {
   }
 }
 
-export function OrganizationPage() {
+export function OrganizationPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [messageApi, messageContext] = message.useMessage()
-  const [activeTab, setActiveTab] = useUrlState('tab', 'campuses', ['campuses', 'zones'])
+  const [activeTab, setActiveTab] = useUrlState(embedded ? 'org_tab' : 'tab', 'campuses', [
+    'campuses',
+    'zones',
+  ])
   const campusPage = useServerPagination('campuses_')
   const zonePage = useServerPagination('zones_')
   const query = useOrganization()
@@ -240,8 +243,8 @@ export function OrganizationPage() {
       render: (_, zone) => editButton('network-zones', zone, '编辑映射'),
     },
   ]
-  return (
-    <main className="page organization-page">
+  const content = (
+    <>
       {messageContext}
       <AppPageHeader
         extra={
@@ -584,6 +587,11 @@ export function OrganizationPage() {
           )}
         </Form>
       </Modal>
-    </main>
+    </>
+  )
+  return embedded ? (
+    <div className="organization-page">{content}</div>
+  ) : (
+    <main className="page organization-page">{content}</main>
   )
 }

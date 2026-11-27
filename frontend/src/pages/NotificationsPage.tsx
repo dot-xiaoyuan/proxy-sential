@@ -28,7 +28,6 @@ import {
   AppListHeader,
   AppListSection,
   AppLoadingState,
-  AppPageHeader,
   AppServerPagination,
   AppTable,
   formatDateTime,
@@ -37,6 +36,7 @@ import {
 import { statusText, statusColor } from '../shared/ui/status'
 import { useUrlState } from '../shared/ui/useUrlState'
 import type { components } from '../shared/api/generated'
+import { BehaviorReportsPage } from './BehaviorReportsPage'
 
 type Template = components['schemas']['NotificationTemplate']
 type TemplatePage = components['schemas']['NotificationTemplatePage']
@@ -65,11 +65,42 @@ const emptyChannel: Partial<Channel> = {
   config: { timeout_seconds: 10 },
 }
 
+// 通知与上报整合页：合并原“通知模板与通道”与“上报通道配置”。
 export function NotificationsPage() {
+  const session = useSession()
+  const canReadNotifications = can(session.data, 'notifications:read')
+  const canReadReports =
+    can(session.data, 'behavior-reports:read') || can(session.data, 'behavior-reports:manage')
+  const defaultSection = canReadNotifications ? 'notifications' : 'reports'
+  const [section, setSection] = useUrlState('tab', defaultSection, ['notifications', 'reports'])
+  const sectionItems = [
+    ...(canReadNotifications ? [{ key: 'notifications', label: '通知模板与通道' }] : []),
+    ...(canReadReports ? [{ key: 'reports', label: '上报通道配置' }] : []),
+  ]
+  const activeSection = sectionItems.some((item) => item.key === section)
+    ? section
+    : (sectionItems[0]?.key ?? 'notifications')
+
+  return (
+    <main className="page notifications-page">
+      <section className="surface">
+        <Tabs activeKey={activeSection} onChange={setSection} items={sectionItems} />
+      </section>
+      {activeSection === 'reports' ? <BehaviorReportsPage embedded /> : <NotificationsSection />}
+    </main>
+  )
+}
+
+function NotificationsSection() {
   const session = useSession()
   const writable = can(session.data, 'notifications:manage')
   const cache = useQueryClient()
-  const [tab, setTab] = useUrlState('tab', 'templates', ['templates', 'channels', 'outbox', 'test'])
+  const [tab, setTab] = useUrlState('sub_tab', 'templates', [
+    'templates',
+    'channels',
+    'outbox',
+    'test',
+  ])
 
   const templates = useQuery({
     queryKey: ['notifications', 'templates'],
@@ -85,8 +116,7 @@ export function NotificationsPage() {
   }
 
   return (
-    <main className="page notifications-page">
-      <AppPageHeader />
+    <>
       <AppFactBar
         label="通知投递规则"
         items={[
@@ -137,7 +167,7 @@ export function NotificationsPage() {
           ]}
         />
       </Card>
-    </main>
+    </>
   )
 }
 

@@ -122,12 +122,14 @@ const origins: Record<string, string> = {
 export function DiscoveryPage({
   configuration = false,
   embedded = false,
+  tabParamKey = 'tab',
 }: {
   configuration?: boolean
   embedded?: boolean
+  tabParamKey?: string
 }) {
   const [tab, setTab] = useUrlState(
-    'tab',
+    tabParamKey,
     configuration ? 'sources' : 'routers',
     configuration ? ['sources', 'scan', 'tasks'] : ['routers', 'devices'],
   )

@@ -17,14 +17,10 @@ export type NavigationGroup = {
   hidden?: boolean
 }
 
-export const deviceCenterTabs = ['terminal', 'network', 'discovery'] as const
+export const deviceCenterTabs = ['terminal', 'network'] as const
 export type DeviceCenterTab = (typeof deviceCenterTabs)[number]
 export const deviceCenterTab = (params: URLSearchParams): DeviceCenterTab =>
-  params.get('tab') === 'network'
-    ? 'network'
-    : ['discovery', 'records', 'iot'].includes(params.get('tab') || '')
-      ? 'discovery'
-      : 'terminal'
+  params.get('tab') === 'network' ? 'network' : 'terminal'
 
 const item = (
   key: string,
@@ -86,7 +82,8 @@ export const navigation: NavigationGroup[] = [
         ...item('devices', '终端列表', '/devices?tab=terminal', 'identity:read'),
         owns: (p, q) =>
           (p === '/devices' && deviceCenterTab(q) === 'terminal') ||
-          (p.startsWith('/devices/') && !p.startsWith('/devices/network/')),
+          (p.startsWith('/devices/') && !p.startsWith('/devices/network/')) ||
+          p === '/discovery',
       },
       {
         ...item('routers', '路由器', '/devices?tab=network', 'identity:read'),
@@ -94,11 +91,6 @@ export const navigation: NavigationGroup[] = [
           (p === '/devices' && deviceCenterTab(q) === 'network') ||
           p.startsWith('/devices/network/') ||
           p.startsWith('/discovery/routers/'),
-      },
-      {
-        ...item('discovered-devices', '发现设备', '/devices?tab=discovery', 'identity:read'),
-        owns: (p, q) =>
-          (p === '/devices' && deviceCenterTab(q) === 'discovery') || p === '/discovery',
       },
     ],
   },
@@ -109,18 +101,6 @@ export const navigation: NavigationGroup[] = [
       item('policies', '防代理策略', '/policies', 'policies:read'),
       item('whitelist', '白名单', '/policies/whitelist', 'policies:read'),
       item('blacklist', '黑名单', '/policies/blacklist', 'policies:read'),
-      {
-        ...item(
-          'destination-targets',
-          '内网目标访问',
-          '/policies/destination-targets',
-          'destination-targets:read',
-        ),
-        readAlternatives: [
-          { permission: 'destination-targets:manage', to: '/policies/destination-targets' },
-        ],
-      },
-      item('exceptions', '校园例外', '/policies/exceptions', 'risks:read'),
       {
         ...item('rules', '规则与特征库', '/settings/rules', 'risks:read'),
         readAlternatives: [
@@ -135,24 +115,37 @@ export const navigation: NavigationGroup[] = [
     title: '系统运维',
     items: [
       {
-        ...item('sources', '数据源与采集', '/settings/sources', 'ingest:read'),
-        readAlternatives: [{ permission: 'identity:read', to: '/settings/sources?tab=sources' }],
-      },
-      item('integrations', '认证与处置接入', '/settings/actions', 'actions:read'),
-      item('notifications', '通知模板与通道', '/settings/notifications', 'notifications:read'),
-      {
-        ...item(
-          'behavior-reports',
-          '上报通道配置',
-          '/settings/behavior-reports',
-          'behavior-reports:read',
-        ),
+        ...item('sources', '采集与接入', '/settings/sources', 'ingest:read'),
         readAlternatives: [
-          { permission: 'behavior-reports:manage', to: '/settings/behavior-reports' },
+          { permission: 'identity:read', to: '/settings/sources?tab=sources&source_tab=sources' },
+          { permission: 'actions:read', to: '/settings/sources?tab=actions' },
         ],
+        owns: (p) =>
+          p === '/settings/sources' ||
+          p.startsWith('/settings/sources/') ||
+          p === '/settings/actions',
       },
-      item('organization', '校区与网络区域', '/settings/organization', 'organization:read'),
-      item('users', '用户权限', '/settings/security', 'users:manage'),
+      {
+        ...item('notifications', '通知与上报', '/settings/notifications', 'notifications:read'),
+        readAlternatives: [
+          { permission: 'behavior-reports:read', to: '/settings/notifications?tab=reports' },
+          { permission: 'behavior-reports:manage', to: '/settings/notifications?tab=reports' },
+        ],
+        owns: (p) =>
+          p === '/settings/notifications' ||
+          p.startsWith('/settings/notifications/') ||
+          p === '/settings/behavior-reports',
+      },
+      {
+        ...item('users', '组织与权限', '/settings/security', 'users:manage'),
+        readAlternatives: [
+          { permission: 'organization:read', to: '/settings/security?tab=organization' },
+        ],
+        owns: (p) =>
+          p === '/settings/security' ||
+          p.startsWith('/settings/security/') ||
+          p === '/settings/organization',
+      },
       item('audit', '审计日志', '/audit', 'audit:read'),
     ],
   },
@@ -241,20 +234,32 @@ export function routeOwner(path: string, search: string) {
 }
 
 export function routePermission(path: string, search: string): Permission | undefined {
-  const tab = new URLSearchParams(search).get('tab')
+  const params = new URLSearchParams(search)
+  const tab = params.get('tab')
+  const sourceTab = params.get('source_tab')
   if (path === '/settings/rules' && tab === 'application-domains') return 'dpi:read'
   if (path === '/settings/rules' && tab === 'fingerprints') return 'identity:read'
-  if (path === '/settings/security' && tab === 'exceptions') return 'risks:read'
+  if (path === '/settings/security' && tab === 'organization') return 'organization:read'
+  if (path === '/settings/security' && tab === 'exceptions') return 'policies:read'
+  if (path === '/settings/organization') return 'organization:read'
+  if (path === '/settings/notifications' && tab === 'reports') return 'behavior-reports:read'
+  if (path === '/settings/behavior-reports') return 'behavior-reports:read'
   if (path === '/settings/actions' && tab === 'executions') return 'policies:read'
-  if (path.startsWith('/ips/')) return 'risks:read'
-  if (path.startsWith('/events/')) return 'events:read'
-  if (path.startsWith('/ingest')) return 'ingest:read'
+  if (path === '/settings/actions') return 'actions:read'
+  if (path === '/settings/sources' && tab === 'actions') return 'actions:read'
   if (
     path === '/settings/sources' &&
-    ['sources', 'scan', 'tasks'].includes(new URLSearchParams(search).get('tab') || '')
+    (['sources', 'scan', 'tasks'].includes(sourceTab || '') ||
+      ['scan', 'tasks'].includes(tab || ''))
   ) {
     return 'identity:read'
   }
+  if (path === '/policies/exceptions' || path === '/policies/destination-targets') {
+    return 'policies:read'
+  }
+  if (path.startsWith('/ips/')) return 'risks:read'
+  if (path.startsWith('/events/')) return 'events:read'
+  if (path.startsWith('/ingest')) return 'ingest:read'
   if (path === '/actions') {
     return tab === 'actions'
       ? 'actions:read'
@@ -272,10 +277,7 @@ export function visibleNavigation(session: Session) {
     .map((group) => ({
       ...group,
       items: group.items.flatMap((entry) => {
-        if (
-          entry.hidden ||
-          (entry.key === 'discovered-devices' && session.device_discovery_menu_hidden)
-        ) {
+        if (entry.hidden) {
           return []
         }
         if (!entry.permission || can(session, entry.permission)) return [entry]

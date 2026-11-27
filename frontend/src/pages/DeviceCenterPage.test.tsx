@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { DeviceCenterPage } from './DeviceCenterPage'
 
 vi.mock('./DevicesPage', () => ({
@@ -10,16 +10,12 @@ vi.mock('./RouterObservationsPanel', () => ({
   RouterObservationsPanel: () => <div data-testid="network-panel">路由器列表</div>,
 }))
 
-vi.mock('./PassiveDiscoveryPanel', () => ({
-  PassiveDiscoveryPanel: ({ view }: { view: string }) => (
-    <div data-testid="discovery-panel">{view}</div>
-  ),
-}))
-
 const renderAt = (path: string) =>
   render(
     <MemoryRouter initialEntries={[path]}>
-      <DeviceCenterPage />
+      <Routes>
+        <Route path="/devices" element={<DeviceCenterPage />} />
+      </Routes>
     </MemoryRouter>,
   )
 
@@ -37,13 +33,10 @@ describe('设备中心子菜单页面', () => {
     renderAt('/devices?tab=ip&ip=10.157.2.191')
     expect(screen.getByTestId('terminal-panel')).toBeVisible()
   })
-  it('发现设备及旧链接展示发现面板', () => {
+  it('旧的发现设备参数自动重定向到终端列表', () => {
     for (const tab of ['discovery', 'iot', 'records']) {
       const { unmount } = renderAt(`/devices?tab=${tab}`)
-      expect(screen.getByTestId('discovery-panel')).toHaveTextContent(
-        tab === 'iot' ? 'iot' : 'records',
-      )
-      expect(screen.queryByTestId('terminal-panel')).toBeNull()
+      expect(screen.getByTestId('terminal-panel')).toBeVisible()
       unmount()
     }
   })

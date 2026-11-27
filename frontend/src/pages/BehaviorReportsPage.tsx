@@ -66,19 +66,22 @@ const defaultMapping = {
   target: 'target',
 }
 
-export function BehaviorReportsPage() {
+export function BehaviorReportsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const session = useSession()
   const writable = can(session.data, 'behavior-reports:manage')
   const cache = useQueryClient()
-  const [tab, setTab] = useUrlState('tab', 'channels', ['channels', 'outbox'])
+  const [tab, setTab] = useUrlState(embedded ? 'report_tab' : 'tab', 'channels', [
+    'channels',
+    'outbox',
+  ])
   const channels = useQuery({
     queryKey: ['behavior-reports', 'channels'],
     queryFn: () => request<ChannelPage>('/behavior-reports/channels'),
   })
   const invalidate = () => void cache.invalidateQueries({ queryKey: ['behavior-reports'] })
-  return (
-    <section className="page behavior-reports-page">
-      <AppPageHeader />
+  const content = (
+    <>
+      {!embedded && <AppPageHeader />}
       <AppFactBar
         label="上报通道配置"
         items={[
@@ -107,7 +110,12 @@ export function BehaviorReportsPage() {
           ]}
         />
       </Card>
-    </section>
+    </>
+  )
+  return embedded ? (
+    <div className="behavior-reports-page">{content}</div>
+  ) : (
+    <section className="page behavior-reports-page">{content}</section>
   )
 }
 
