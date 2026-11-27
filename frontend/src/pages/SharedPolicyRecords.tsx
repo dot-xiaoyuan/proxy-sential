@@ -14,6 +14,7 @@ import {
   AppLoadingState,
   AppTable,
   AppTableBar,
+  SubjectIdentityCell,
 } from '../shared/ui'
 import type { ColumnsType } from 'antd/es/table'
 import { formatDateTime } from '../shared/ui/format'
@@ -266,16 +267,17 @@ export function SharedPolicyRecords() {
     {
       title: '用户与位置',
       key: 'subject',
-      width: 205,
-      render: (_, item) => (
-        <div className="shared-record-subject">
-          <strong>{item.account_id || item.ip}</strong>
-          <span className="shared-access-muted">{item.account_id ? `IP ${item.ip}` : ''}</span>
-          <span className="shared-access-muted">
-            {[item.campus_id, item.access_domain].filter(Boolean).join(' / ')}
-          </span>
-        </div>
-      ),
+      width: 215,
+      render: (_, item) => {
+        const scope = [item.campus_id, item.access_domain].filter(Boolean).join(' / ')
+        return (
+          <SubjectIdentityCell
+            accountId={item.account_id}
+            ip={item.ip}
+            extra={scope ? <span className="shared-access-muted">{scope}</span> : undefined}
+          />
+        )
+      },
     },
     {
       title: '共享行为',

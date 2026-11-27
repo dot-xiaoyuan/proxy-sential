@@ -45,6 +45,7 @@ import {
   AppServerPagination,
   AppTable,
   AppTableBar,
+  SubjectIdentityCell,
   formatDateTime,
   useServerPagination,
   useCursorPagePosition,
@@ -536,17 +537,13 @@ export function SharedAccessPage() {
     {
       title: '账号 / 出口 IP',
       key: 'identity',
-      width: 170,
+      width: 196,
       render: (_, item) => (
-        <div className="shared-behavior-identity">
-          {item.account_id && (
-            <strong className="shared-behavior-account">{item.account_id}</strong>
-          )}
-          <strong className="shared-behavior-ip">{item.ip}</strong>
-          {item.endpoint_id && (
-            <Typography.Text type="secondary">{item.endpoint_id}</Typography.Text>
-          )}
-        </div>
+        <SubjectIdentityCell
+          accountId={item.account_id}
+          ip={item.ip}
+          endpointId={item.endpoint_id}
+        />
       ),
     },
     {

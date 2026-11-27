@@ -18,7 +18,7 @@ func (s *Server) handleRouterObservationReport(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusServiceUnavailable, "router_report_unavailable", "路由器统计不可用")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 	report, err := reader.GetRouterObservationReport(ctx)
 	if err != nil {
@@ -38,7 +38,7 @@ func (s *Server) handleSharedBehaviorReport(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusServiceUnavailable, "shared_behavior_report_unavailable", "共享观测统计不可用")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 	var report store.SharedBehaviorReport
 	var err error
@@ -113,7 +113,7 @@ func (s *Server) handleSharedDecisionTrend(w http.ResponseWriter, r *http.Reques
 	for i := range result.Buckets {
 		result.Buckets[i].From = from.Add(time.Duration(i) * interval)
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 	// 优先读取极轻量的 5 分钟聚合桶表，避免扫描千万级 policy_decision_records；若该窗口尚无桶数据则回退旧明细表。
 	usedBuckets := false

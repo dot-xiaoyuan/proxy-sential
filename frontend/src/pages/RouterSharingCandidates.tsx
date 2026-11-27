@@ -2,7 +2,7 @@ import { Notice as Alert } from '../shared/ui/Notice'
 import { useEffect, useEffectEvent, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Segmented, Select, Tag } from 'antd'
+import { Segmented, Select, Tag, Tooltip } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { request } from '../shared/api/client'
 import type { components } from '../shared/api/generated'
@@ -12,6 +12,7 @@ import {
   AppServerPagination,
   AppTable,
   AppTableBar,
+  SubjectIdentityCell,
   formatDateTime,
   useServerPagination,
 } from '../shared/ui'
@@ -95,7 +96,11 @@ export function RouterSharingCandidates() {
                 ? '身份证据已过期'
                 : routerStatusLabels[item.router_status || ''] || '身份待确认'}
             </Tag>
-            {item.identity_conflict && <Tag color="warning">身份存在冲突</Tag>}
+            {item.identity_conflict && (
+              <Tooltip title="同一物理标识（MAC/IP/VLAN）关联到多个设备档案，或协议/型号证据之间存在矛盾，系统已保守降级处理">
+                <Tag color="warning">身份存在冲突</Tag>
+              </Tooltip>
+            )}
           </div>
         )
       },
@@ -103,22 +108,18 @@ export function RouterSharingCandidates() {
     {
       title: '观测地址 / 关联账号',
       key: 'account',
-      width: 280,
+      width: 260,
       render: (_, item) => (
-        <div className="router-sharing-account">
-          {item.ip && (
-            <span className="router-sharing-ip" title={item.ip}>
-              {item.ip}
-            </span>
-          )}
-          {item.latest_account_id?.trim() ? (
-            <span className="shared-access-id">关联账号：{item.latest_account_id}</span>
-          ) : (
-            <Tag>无认证账号</Tag>
-          )}
-          {item.account_conflict && <Tag color="warning">账号关联有冲突</Tag>}
-          <span className="shared-access-muted">观测地址不代表已验证的共享出口</span>
-        </div>
+        <SubjectIdentityCell
+          accountId={item.latest_account_id}
+          ip={item.ip}
+          extra={
+            <>
+              {item.account_conflict && <Tag color="warning">账号关联有冲突</Tag>}
+              <span className="shared-access-muted">观测地址不代表已验证的共享出口</span>
+            </>
+          }
+        />
       ),
     },
     {
