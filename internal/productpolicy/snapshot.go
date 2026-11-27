@@ -358,7 +358,9 @@ func ReadRedisSnapshot(ctx context.Context, client *RedisCatalogClient, source s
 	if instance == "" {
 		return Snapshot{}, fmt.Errorf("redis source instance unavailable")
 	}
-	snapshot := Snapshot{SchemaVersion: SchemaVersion, Source: source, InstanceID: instance, ObservedAt: observed.Val().UTC().Truncate(time.Microsecond), Complete: true, Products: []Product{}, Controls: []Control{}}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	observedAt := normalizeCatalogObservedAt(observed.Val(), now)
+	snapshot := Snapshot{SchemaVersion: SchemaVersion, Source: source, InstanceID: instance, ObservedAt: observedAt, Complete: true, Products: []Product{}, Controls: []Control{}}
 	for _, id := range products {
 		values := productRows[id].Val()
 		stringAt := func(index int) string { value, _ := values[index].(string); return value }
@@ -403,13 +405,27 @@ func ReadRedisSnapshot(ctx context.Context, client *RedisCatalogClient, source s
 		}
 		snapshot.Controls = append(snapshot.Controls, Control{ID: id, Name: name, MaxOnlineNum: maxOnline, DisableProxy: disableProxy, ProxyTimes: proxyTimes, ProxyDisableTime: proxyDisableTime, Reference: reference})
 	}
-	if err = snapshot.NormalizeAndValidate(time.Now().UTC()); err != nil {
+	if err = snapshot.NormalizeAndValidate(now); err != nil {
 		return Snapshot{}, err
 	}
 	if err := ctx.Err(); err != nil {
 		return Snapshot{}, err
 	}
 	return snapshot, nil
+}
+
+// normalizeCatalogObservedAt 对本机直连 4K Redis 拉取的产品目录观测时间做跨机时钟漂移归一化：
+// 统一截断至微秒精度；当远端 Redis 时钟超前于本机或滞后超过 7 天时，回落为本机抓取时间 now。
+func normalizeCatalogObservedAt(observedAt, now time.Time) time.Time {
+	now = now.UTC().Truncate(time.Microsecond)
+	if observedAt.IsZero() {
+		return now
+	}
+	ts := observedAt.UTC().Truncate(time.Microsecond)
+	if ts.After(now) || ts.Before(now.Add(-7*24*time.Hour)) {
+		return now
+	}
+	return ts
 }
 
 func equalStrings(a, b []string) bool {

@@ -36,3 +36,18 @@ func TestSnapshotRejectsMissingControlAndNegativeQuota(t *testing.T) {
 		t.Fatal("expected negative quota rejection")
 	}
 }
+
+func TestNormalizeCatalogObservedAtClampsClockSkew(t *testing.T) {
+	now := time.Date(2026, 11, 27, 10, 30, 0, 987654321, time.UTC)
+	wantNow := now.Truncate(time.Microsecond)
+	if got := normalizeCatalogObservedAt(now.Add(10*time.Second), now); !got.Equal(wantNow) || got.Nanosecond()%1000 != 0 {
+		t.Fatalf("future clock skew not clamped: got=%v want=%v", got, wantNow)
+	}
+	past := now.Add(-5 * time.Second)
+	if got := normalizeCatalogObservedAt(past, now); !got.Equal(past.Truncate(time.Microsecond)) || got.Nanosecond()%1000 != 0 {
+		t.Fatalf("recent past time altered: got=%v want=%v", got, past.Truncate(time.Microsecond))
+	}
+	if got := normalizeCatalogObservedAt(now.Add(-8*24*time.Hour), now); !got.Equal(wantNow) {
+		t.Fatalf("stale clock not clamped: got=%v want=%v", got, wantNow)
+	}
+}
