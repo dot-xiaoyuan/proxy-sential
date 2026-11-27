@@ -349,7 +349,7 @@ export function FourKDatabaseModal({
               placeholder={
                 integration?.credentials?.certificate_configured
                   ? '已配置，留空沿用'
-                  : '自签名证书场景填写可信 PEM'
+                  : '选填；留空默认忽略北向 HTTPS 证书校验'
               }
             />
           </Form.Item>

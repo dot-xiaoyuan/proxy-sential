@@ -711,6 +711,9 @@ func (s *Server) srunClientWithCredentials(item srun4KIntegration, appID, secret
 		if err != nil {
 			return nil, fmt.Errorf("4K北向接口部署证书无效: %w", err)
 		}
+	} else if strings.EqualFold(defaults.APIScheme, "https") {
+		// 内网深澜 4K 北向接口默认采用自签证书，未配置固定 PEM 时自动忽略 HTTPS 证书校验。
+		httpClient = srunapi.NewInsecureHTTPSClient()
 	}
 	return srunapi.New(endpoint, appID, secret, httpClient)
 }

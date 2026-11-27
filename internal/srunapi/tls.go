@@ -64,3 +64,18 @@ func NewCertificatePinnedClient(raw []byte) (*http.Client, error) {
 	}
 	return &http.Client{Transport: &pinnedTransport{base: transport}, Timeout: 7 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, nil
 }
+
+// NewInsecureHTTPSClient 用于内网深澜 4K 北向接口（自签证书或 IP 不匹配场景），忽略服务端 HTTPS 证书校验。
+func NewInsecureHTTPSClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	transport.TLSClientConfig = &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: true,
+	}
+	return &http.Client{
+		Transport:     transport,
+		Timeout:       7 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
