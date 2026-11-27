@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { AppServerPagination } from './AppServerPagination'
+import { RecordCursorPagination } from './RecordCursorPagination'
 
 describe('AppServerPagination', () => {
   it('统一显示总数、页码和20/50页长', () => {
@@ -9,15 +10,18 @@ describe('AppServerPagination', () => {
     render(<AppServerPagination page={2} pageSize={20} total={88} onChange={onChange} />)
     expect(screen.getByText('共 88 条')).toBeInTheDocument()
     expect(screen.getByTitle('2')).toHaveClass('ant-pagination-item-active')
+    expect(document.querySelector('.app-server-pagination')).toHaveClass('ps-pagination-bar')
     fireEvent.click(screen.getByTitle('3'))
     expect(onChange).toHaveBeenCalledWith(3, 20)
   })
 
-  it('服务端分页加载期间禁用翻页操作', () => {
+  it('服务端分页加载期间禁用翻页操作并标注 aria-busy', () => {
     render(
       <AppServerPagination disabled page={2} pageSize={20} total={88} onChange={() => undefined} />,
     )
-    expect(document.querySelector('.app-server-pagination')).toHaveClass('ant-pagination-disabled')
+    const nav = document.querySelector('.app-server-pagination')
+    expect(nav).toHaveClass('ant-pagination-disabled')
+    expect(nav).toHaveAttribute('aria-busy', 'true')
   })
 
   it('直接跳到尚未访问的第42页', () => {
@@ -61,5 +65,89 @@ describe('AppServerPagination', () => {
     render(<AppServerPagination page={1} pageSize={20} total={0} onChange={() => undefined} />)
     expect(screen.getByText('共 0 条')).toBeVisible()
     expect(screen.getByTitle('Next Page')).toHaveClass('ant-pagination-disabled')
+  })
+})
+
+describe('RecordCursorPagination', () => {
+  it('统一展示汇总、首页/上一页/页码徽标/下一页与每页条数', () => {
+    const onFirst = vi.fn()
+    const onPrevious = vi.fn()
+    const onNext = vi.fn()
+    const onPageSizeChange = vi.fn()
+
+    render(
+      <RecordCursorPagination
+        page={3}
+        pageSize={20}
+        count={20}
+        nextCursor="cursor-4"
+        fetching={false}
+        onFirst={onFirst}
+        onPrevious={onPrevious}
+        onNext={onNext}
+        onPageSizeChange={onPageSizeChange}
+      />,
+    )
+
+    const nav = screen.getByRole('navigation', { name: '列表分页' })
+    expect(nav).toHaveClass('ps-pagination-bar', 'ps-cursor-pagination')
+    expect(nav).toHaveAttribute('aria-busy', 'false')
+    expect(screen.getByText('第 3 页 · 本页 20 条')).toBeVisible()
+    expect(screen.getByText('第 3 页')).toHaveAttribute('aria-current', 'page')
+
+    fireEvent.click(screen.getByRole('button', { name: '首页' }))
+    expect(onFirst).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: '上一页' }))
+    expect(onPrevious).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: '下一页' }))
+    expect(onNext).toHaveBeenCalledTimes(1)
+
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: '每页条数' }))
+    fireEvent.click(screen.getByText('50 条/页'))
+    expect(onPageSizeChange).toHaveBeenCalledWith(50, expect.anything())
+  })
+
+  it('首页及加载态下正确禁用对应按钮与选择器', () => {
+    const { rerender } = render(
+      <RecordCursorPagination
+        page={1}
+        pageSize={20}
+        count={5}
+        nextCursor=""
+        fetching={false}
+        onFirst={() => undefined}
+        onPrevious={() => undefined}
+        onNext={() => undefined}
+        onPageSizeChange={() => undefined}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: '首页' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '上一页' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '下一页' })).toBeDisabled()
+
+    rerender(
+      <RecordCursorPagination
+        page={2}
+        pageSize={20}
+        count={20}
+        nextCursor="cursor-3"
+        fetching
+        onFirst={() => undefined}
+        onPrevious={() => undefined}
+        onNext={() => undefined}
+        onPageSizeChange={() => undefined}
+      />,
+    )
+
+    expect(screen.getByRole('navigation', { name: '列表分页' })).toHaveAttribute(
+      'aria-busy',
+      'true',
+    )
+    expect(screen.getByRole('button', { name: '首页' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '上一页' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '下一页' })).toBeDisabled()
   })
 })

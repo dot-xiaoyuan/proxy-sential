@@ -7,24 +7,82 @@
   margin-bottom: 8px;
 }
 
-.app-server-pagination {
+/* 统一分页条规范：AppServerPagination 与 RecordCursorPagination 共用底部对齐、左侧汇总与响应式折行 */
+.app-server-pagination,
+.ps-pagination-bar {
+  display: flex;
   flex-wrap: wrap;
   align-items: center;
-  row-gap: 8px;
-  position: sticky;
-  bottom: 0;
-  z-index: 2;
-  padding: 10px 0 2px;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-top: 12px;
+  padding: 12px 0 2px;
+  border-top: 1px solid var(--ps-border-subtle);
   background: var(--ps-bg-surface);
 }
 
-.app-server-pagination .ant-pagination-total-text {
+.app-server-pagination {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+}
+
+.app-server-pagination .ant-pagination-total-text,
+.ps-pagination-summary {
+  margin-inline-end: auto;
+  color: var(--ps-text-secondary);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
   flex-shrink: 0;
 }
 
+.app-server-pagination.ant-pagination-disabled .ant-pagination-total-text,
+.ps-cursor-pagination[aria-busy='true'] .ps-pagination-summary {
+  opacity: 0.72;
+}
+
+.ps-pagination-bar.ps-cursor-pagination {
+  justify-content: space-between;
+}
+
+.ps-pagination-controls {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ps-pagination-controls .ant-btn,
+.ps-pagination-controls .ant-select,
+.ps-pagination-page-badge {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.ps-pagination-page-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--ps-border-color);
+  border-radius: 6px;
+  background: #f8fafc;
+  color: var(--ps-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ps-pagination-size-select {
+  min-width: 102px;
+}
+
 @media (max-width: 560px) {
-  .app-server-pagination {
+  .app-server-pagination,
+  .ps-pagination-bar {
     display: flex;
     align-items: center;
     justify-content: flex-end;
@@ -32,7 +90,8 @@
     gap: 8px;
     overflow: visible;
   }
-  .app-server-pagination .ant-pagination-total-text {
+  .app-server-pagination .ant-pagination-total-text,
+  .ps-pagination-summary {
     flex: 1 0 100%;
     margin: 0;
     white-space: nowrap;
@@ -41,13 +100,15 @@
     flex-shrink: 0;
     margin-inline-end: 0;
   }
-  .app-server-pagination .ant-pagination-options {
+  .app-server-pagination .ant-pagination-options,
+  .ps-pagination-controls {
     display: flex;
     align-items: center;
     justify-content: flex-end;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 6px;
     margin-inline-start: 0;
+    width: 100%;
   }
   .app-server-pagination .ant-pagination-options-quick-jumper {
     display: inline-flex;
@@ -1333,6 +1394,19 @@ pre.wrap-code {
 .compact-list-table .ant-table-cell {
   overflow: hidden;
   white-space: nowrap;
+}
+
+.compact-list-table .ant-table-cell .ant-btn,
+.compact-list-table .ant-table-cell .ant-tag,
+.app-table-bar .ant-btn,
+.app-table-bar .ant-tag {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.compact-list-table .ant-table-cell .mono,
+.compact-list-table .ant-table-cell .wrap-text {
+  overflow-wrap: anywhere;
 }
 
 :where(.ps-list) {

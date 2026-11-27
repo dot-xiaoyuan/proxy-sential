@@ -359,6 +359,7 @@ export function RouterAssetsPanel() {
                 count={items.length}
                 nextCursor={devices.data?.next_cursor ?? ''}
                 fetching={devices.isFetching}
+                onFirst={() => setPaging({ key: filterKey, page: 1, cursors: [''] })}
                 onNext={() => {
                   const next = devices.data?.next_cursor
                   if (next)

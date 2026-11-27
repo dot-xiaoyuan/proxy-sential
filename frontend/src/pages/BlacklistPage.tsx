@@ -14,6 +14,7 @@ import {
   AppServerPagination,
   AppTable,
   AppTableBar,
+  SubjectIdentityCell,
   formatDate,
   formatDateTime,
   useServerPagination,
@@ -131,19 +132,28 @@ export function BlacklistPage() {
     {
       title: '匹配值',
       dataIndex: 'value',
-      width: 200,
-      render: (value: string) => (
-        <Typography.Text className="mono list-cell-nowrap" title={value}>
-          {value}
-        </Typography.Text>
-      ),
+      width: 220,
+      render: (value: string, row) =>
+        row.type === 'account' ? (
+          <SubjectIdentityCell accountId={value} />
+        ) : row.type === 'ip' ? (
+          <SubjectIdentityCell ip={value} />
+        ) : row.type === 'mac' ? (
+          <SubjectIdentityCell mac={value} />
+        ) : (
+          <Typography.Text className="mono list-cell-nowrap" title={value}>
+            {value}
+          </Typography.Text>
+        ),
     },
     {
       title: '状态',
       key: 'state',
       width: 88,
       render: (_, row) => (
-        <Tag color={statusColor(state(row, now))}>{stateNames[state(row, now)]}</Tag>
+        <Tag className="compact-tag" color={statusColor(state(row, now))}>
+          {stateNames[state(row, now)]}
+        </Tag>
       ),
     },
     {
@@ -272,9 +282,11 @@ export function BlacklistPage() {
           />
         </AppListSection>
         <AppServerPagination
+          disabled={entries.isFetching}
           page={pagination.page}
           pageSize={pagination.pageSize}
           total={entries.data?.page.total}
+          totalText={entries.isError ? '数量读取失败' : undefined}
           onChange={pagination.update}
         />
       </section>

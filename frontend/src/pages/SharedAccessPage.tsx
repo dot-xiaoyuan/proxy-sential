@@ -477,6 +477,7 @@ export function SharedAccessPage() {
       width: 180,
       render: (_, review) => (
         <Link
+          className="mono wrap-text"
           to={detailPath(
             `/shared-access/reviews/${review.review_id}`,
             location.pathname + location.search,
@@ -801,6 +802,7 @@ export function SharedAccessPage() {
               count={behaviorItems.length}
               nextCursor={behavior.data?.page.next_cursor ?? ''}
               fetching={behavior.isFetching}
+              onFirst={behaviorPagination.first}
               onNext={() => behaviorPagination.next(behavior.data?.page.next_cursor ?? '')}
               onPrevious={behaviorPagination.previous}
               onPageSizeChange={behaviorPagination.changePageSize}

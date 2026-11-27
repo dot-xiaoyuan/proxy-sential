@@ -25,7 +25,9 @@ export function AppServerPagination({
   const hasTotal = typeof total === 'number' && Number.isFinite(total) && total >= 0
   return (
     <Pagination
-      className="list-pagination app-server-pagination"
+      aria-busy={disabled}
+      aria-label="列表分页"
+      className="list-pagination app-server-pagination ps-pagination-bar"
       current={page}
       disabled={disabled || !hasTotal}
       pageSize={pageSize}

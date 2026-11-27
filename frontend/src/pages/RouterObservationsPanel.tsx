@@ -1,11 +1,6 @@
 import { observedTimeLabel, observedTimeTitle } from '../shared/ui/observedTime'
 import { DeviceAddress } from '../entities/device/DeviceAddress'
 import { detailPath } from '../app/navigation'
-import { AppTable } from '../shared/ui'
-import {
-  RecordCursorPagination,
-  useRecordCursorPagination,
-} from '../shared/ui/RecordCursorPagination'
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Button, Checkbox, Form, Input, InputNumber, Select, Switch, Tag, Tooltip } from 'antd'
@@ -19,9 +14,13 @@ import {
   AppErrorAlert,
   AppListHeader,
   AppLoadingState,
+  AppTable,
   AppTableBar,
+  RecordCursorPagination,
+  SubjectIdentityCell,
   formatDateTime,
   useMediaQuery,
+  useRecordCursorPagination,
 } from '../shared/ui'
 import { BrandLogo } from '../entities/device/BrandLogo'
 import { routerLibraryLabels } from '../entities/device/libraryLabels'
@@ -365,7 +364,6 @@ function RouterRoleObservationsPanel() {
               rowKey="assessment_id"
               columns={columns}
               dataSource={items}
-              pagination={false}
               tableLayout="fixed"
               scroll={{ x: showAuth ? 865 : 720 }}
               locale={{ emptyText: view === 'ap' ? '暂无匹配的接入点' : '暂无匹配的路由器' }}
@@ -377,6 +375,7 @@ function RouterRoleObservationsPanel() {
                 count={items.length}
                 nextCursor={observations.data?.page?.next_cursor ?? ''}
                 fetching={observations.isFetching}
+                onFirst={pagination.first}
                 onNext={() => pagination.next(observations.data?.page?.next_cursor ?? '')}
                 onPrevious={pagination.previous}
                 onPageSizeChange={pagination.changePageSize}
@@ -498,10 +497,14 @@ function AuthIdentity({ item }: { item: RouterAssessment }) {
     )
   const binding = certain[0]
   return (
-    <div className="router-auth-identity">
-      <strong>{binding.account_id}</strong>
-      <span>{binding.match_basis === 'exact_endpoint' ? '终端标识精确匹配' : 'MAC 精确匹配'}</span>
-    </div>
+    <SubjectIdentityCell
+      accountId={binding.account_id}
+      extra={
+        <span className="shared-access-muted">
+          {binding.match_basis === 'exact_endpoint' ? '终端标识精确匹配' : 'MAC 精确匹配'}
+        </span>
+      }
+    />
   )
 }
 

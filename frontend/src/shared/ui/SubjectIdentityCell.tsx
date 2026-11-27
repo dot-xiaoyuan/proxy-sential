@@ -48,6 +48,13 @@ export function SubjectIdentityCell({
           </span>
           <Typography.Text className="ps-subject-copy" copyable={{ text: address }} />
         </div>
+      ) : hardware ? (
+        <div className="ps-subject-primary-row">
+          <span className="ps-subject-ip-primary mono" title={hardware}>
+            {hardware}
+          </span>
+          <Typography.Text className="ps-subject-copy" copyable={{ text: hardware }} />
+        </div>
       ) : null}
 
       {account && address && (
@@ -59,7 +66,7 @@ export function SubjectIdentityCell({
         </div>
       )}
 
-      {hardware && (
+      {(account || address) && hardware && (
         <div className="ps-subject-meta-row">
           <span className="ps-subject-mac mono" title={hardware}>
             {hardware}

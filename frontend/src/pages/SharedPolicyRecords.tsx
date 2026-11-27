@@ -14,6 +14,7 @@ import {
   AppLoadingState,
   AppTable,
   AppTableBar,
+  RecordCursorPagination,
   SubjectIdentityCell,
 } from '../shared/ui'
 import type { ColumnsType } from 'antd/es/table'
@@ -261,6 +262,9 @@ export function SharedPolicyRecords() {
   }
   const previousPage = () => {
     if (page > 1) setPaging({ ...currentPaging, page: page - 1 })
+  }
+  const firstPage = () => {
+    if (page > 1) setPaging({ ...currentPaging, page: 1 })
   }
   const moreCount = [ip, from, to].filter(Boolean).length
   const columns: ColumnsType<SharedPolicyDecision> = [
@@ -566,26 +570,17 @@ export function SharedPolicyRecords() {
             </>
           )}
         </AppDetailDrawer>
-        <div className="shared-policy-cursor-pagination">
-          <span>
-            第 {page} 页 · 本页 {items.length} 条
-          </span>
-          <Select
-            aria-label="每页条数"
-            value={pageSize}
-            options={[
-              { value: 20, label: '每页 20 条' },
-              { value: 50, label: '每页 50 条' },
-            ]}
-            onChange={changePageSize}
-          />
-          <Button disabled={page === 1 || query.isFetching} onClick={previousPage}>
-            上一页
-          </Button>
-          <Button disabled={!query.data?.next_cursor || query.isFetching} onClick={nextPage}>
-            下一页
-          </Button>
-        </div>
+        <RecordCursorPagination
+          page={page}
+          pageSize={pageSize}
+          count={items.length}
+          nextCursor={query.data?.next_cursor ?? ''}
+          fetching={query.isFetching}
+          onFirst={firstPage}
+          onNext={nextPage}
+          onPrevious={previousPage}
+          onPageSizeChange={changePageSize}
+        />
         <details
           className="shared-record-processing"
           onToggle={(e) => setProcessingOpen(e.currentTarget.open)}

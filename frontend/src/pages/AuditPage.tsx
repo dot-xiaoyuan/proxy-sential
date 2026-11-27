@@ -15,12 +15,10 @@ import {
   AppLoadingState,
   AppTable,
   AppTableBar,
-  formatDateTime,
-} from '../shared/ui'
-import {
   RecordCursorPagination,
+  formatDateTime,
   useRecordCursorPagination,
-} from '../shared/ui/RecordCursorPagination'
+} from '../shared/ui'
 
 export function AuditPage() {
   const location = useLocation()
@@ -62,7 +60,11 @@ export function AuditPage() {
       title: '动作',
       dataIndex: 'action',
       width: 180,
-      render: (value: string) => <Tag color="purple">{value}</Tag>,
+      render: (value: string) => (
+        <Tag className="compact-tag" color="purple">
+          {value}
+        </Tag>
+      ),
     },
     {
       title: '目标',
@@ -103,13 +105,10 @@ export function AuditPage() {
       <section className="surface">
         <AppListHeader title="审计日志" count={`${logs.data?.logs.length ?? 0} 条`} />
         <AppTable
-          className="compact-list-table"
           columns={columns}
           dataSource={logs.data?.logs ?? []}
-          pagination={false}
           rowKey="audit_id"
           scroll={{ x: 900 }}
-          size="small"
         />
         <RecordCursorPagination
           page={pagination.page}
@@ -117,6 +116,7 @@ export function AuditPage() {
           count={logs.data?.logs.length ?? 0}
           nextCursor={nextCursor}
           fetching={logs.isFetching}
+          onFirst={pagination.first}
           onNext={() => pagination.next(nextCursor)}
           onPrevious={pagination.previous}
           onPageSizeChange={pagination.changePageSize}

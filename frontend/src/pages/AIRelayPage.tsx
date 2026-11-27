@@ -9,6 +9,7 @@ import {
   AppServerPagination,
   AppTable,
   AppTableBar,
+  SubjectIdentityCell,
   formatDateTime,
   useMediaQuery,
   useCursorPagePosition,
@@ -59,7 +60,7 @@ function RelayDetail({
       <div className="ai-relay-detail-head">
         <div>
           <strong className="mono">{item.ip}</strong>
-          <span>{item.account_id ? `最近观测账号 ${item.account_id}` : '无认证账号'}</span>
+          {item.account_id && <span>最近观测账号 {item.account_id}</span>}
         </div>
         <Tag>{item.event_count} 条记录</Tag>
       </div>
@@ -174,10 +175,10 @@ export function AIRelayPage() {
   }
   const narrowColumns: ColumnsType<Usage> = [
     {
-      title: '源 IP',
-      key: 'ip',
-      width: 170,
-      render: (_, item) => <span className="ai-relay-ip mono">{item.ip}</span>,
+      title: '账号 / 源 IP',
+      key: 'identity',
+      width: 210,
+      render: (_, item) => <SubjectIdentityCell accountId={item.account_id} ip={item.ip} />,
     },
     { title: '观测记录', dataIndex: 'event_count', width: 100 },
     {
@@ -192,23 +193,16 @@ export function AIRelayPage() {
       width: 170,
       render: (value: string) => time(value),
     },
-    { title: '最近观测账号', dataIndex: 'account_id', width: 170 },
     { title: '命中域名', key: 'domains', render: (_, item) => domainSummary(item) },
   ]
   const wideColumns: ColumnsType<Usage> = [
     {
-      title: '源 IP',
-      key: 'ip',
-      width: 180,
-      render: (_, item) => <span className="ai-relay-ip mono">{item.ip}</span>,
+      title: '账号 / 源 IP',
+      key: 'identity',
+      width: 220,
+      render: (_, item) => <SubjectIdentityCell accountId={item.account_id} ip={item.ip} />,
     },
     { title: '观测记录', dataIndex: 'event_count', width: 100 },
-    {
-      title: '最近观测账号',
-      dataIndex: 'account_id',
-      width: 190,
-      render: (value?: string) => value || <span className="account-placeholder">无认证账号</span>,
-    },
     { title: '命中域名', key: 'domains', render: (_, item) => domainSummary(item) },
     {
       title: '最近观测',
