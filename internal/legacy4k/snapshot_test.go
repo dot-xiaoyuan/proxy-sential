@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -140,5 +141,41 @@ func TestReadOnlineMembersDedupHandlesShiftAndDuplicates(t *testing.T) {
 	}
 	if _, err := readOnlineMembersDedup(context.Background(), oversized, "list:rad_online", 1, 1, 100); !errors.Is(err, ErrOnlineResourceLimit) {
 		t.Fatalf("expected ErrOnlineResourceLimit, got %v", err)
+	}
+}
+
+func TestFilterValidStabilizedRowsSkipsIncompleteAndDuplicateRecords(t *testing.T) {
+	observed := time.Date(2026, 11, 27, 10, 0, 0, 0, time.UTC)
+	skewLogin := observed.Add(3 * time.Second).Unix()
+	farFutureLogin := observed.Add(30 * time.Minute).Unix()
+	rows := []map[string]string{
+		{"rad_online_id": "1", "user_name": "alice", "ip": "10.0.0.1", "add_time": "1764237000"},
+		// 缺少账号
+		{"rad_online_id": "2", "user_name": "", "ip": "10.0.0.2"},
+		// 缺少有效 IP（全零）
+		{"rad_online_id": "3", "user_name": "bob", "ip": "0.0.0.0"},
+		// 非法 IP 字段
+		{"rad_online_id": "4", "user_name": "carol", "ip": "10.0.0.4", "ip6": "bad-ip"},
+		// 重复 session_id + add_time
+		{"rad_online_id": "5", "session_id": "1", "user_name": "alice-dup", "ip": "10.0.0.5", "add_time": "1764237000"},
+		// 认证机与 Redis 存在 3 秒轻微时钟偏差
+		{"rad_online_id": "6", "user_name": "dave", "ip": "10.0.0.6", "add_time": strconv.FormatInt(skewLogin, 10)},
+		// 远未来非法时间戳（超过 10 分钟）
+		{"rad_online_id": "7", "user_name": "eve", "ip": "10.0.0.7", "add_time": strconv.FormatInt(farFutureLogin, 10)},
+	}
+
+	valid, adjustedObserved, skipped := filterValidStabilizedRows(rows, "redis-epoch", observed)
+	if len(valid) != 2 || skipped != 5 {
+		t.Fatalf("unexpected filter result: valid=%d skipped=%d", len(valid), skipped)
+	}
+	if valid[0]["rad_online_id"] != "1" || valid[1]["rad_online_id"] != "6" {
+		t.Fatalf("unexpected valid rows: %+v", valid)
+	}
+	if !adjustedObserved.Equal(time.Unix(skewLogin, 0).UTC()) {
+		t.Fatalf("expected observed time to absorb small clock skew, got %v", adjustedObserved)
+	}
+	inv := OnlineInventory{InstanceID: "redis-epoch", ObservedAt: adjustedObserved, Rows: valid, SkippedInvalid: skipped}
+	if _, err := inv.IdentityRecords(); err != nil {
+		t.Fatalf("filtered stabilized inventory failed validation: %v", err)
 	}
 }

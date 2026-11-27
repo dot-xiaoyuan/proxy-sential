@@ -437,7 +437,18 @@ func ReadOnlineInventoryStabilized(ctx context.Context, client *RedisOnlineClien
 				continue
 			}
 		}
-		candidate := OnlineInventory{CaptureStartedAt: &captureStarted, InstanceID: instance, ObservedAt: observed.UTC(), Rows: rows, SkippedInvalid: len(ids) - len(rows)}
+		validRows, adjustedObserved, invalidRows := filterValidStabilizedRows(rows, instance, observed.UTC())
+		skippedInvalid := (len(ids) - len(rows)) + invalidRows
+		if len(ids) > 0 && len(validRows) == 0 && pass < maxPasses-1 {
+			continue
+		}
+		candidate := OnlineInventory{
+			CaptureStartedAt: &captureStarted,
+			InstanceID:       instance,
+			ObservedAt:       adjustedObserved,
+			Rows:             validRows,
+			SkippedInvalid:   skippedInvalid,
+		}
 		if _, readErr = candidate.StatsContext(readCtx); readErr != nil {
 			if errors.Is(readErr, ErrOnlineInventoryChanged) {
 				continue
@@ -447,6 +458,83 @@ func ReadOnlineInventoryStabilized(ctx context.Context, client *RedisOnlineClien
 		return candidate, nil
 	}
 	return OnlineInventory{}, ErrOnlineInventoryChanged
+}
+
+// filterValidStabilizedRows 过滤真实 4K Redis 中偶发的半残/占位/脏在线记录（如正在认证中尚未分配 IP、
+// 缺少账号、非法 IP 字段或重复 session_key），避免单条异常记录导致整批几万条在线清单同步失败。
+// 若认证机与 Redis 存在轻微时钟偏差（<=10 分钟）导致 add_time 略晚于 Redis Time，则顺延 observedAt 以保留近期登录会话。
+func filterValidStabilizedRows(rows []map[string]string, instanceID string, observedAt time.Time) ([]map[string]string, time.Time, int) {
+	const maxClockSkew = 10 * time.Minute
+	adjustedObserved := observedAt
+	for _, row := range rows {
+		if login := row["add_time"]; login != "" {
+			if seconds, err := strconv.ParseInt(login, 10, 64); err == nil && seconds > 0 && strconv.FormatInt(seconds, 10) == login {
+				t := time.Unix(seconds, 0).UTC()
+				if t.After(adjustedObserved) && t.Sub(observedAt) <= maxClockSkew {
+					adjustedObserved = t
+				}
+			}
+		}
+	}
+	valid := make([]map[string]string, 0, len(rows))
+	seen := make(map[string]struct{}, len(rows))
+	addressTotal := 0
+	skipped := 0
+	for _, row := range rows {
+		id := first(row, "session_id", "rad_online_id")
+		account := first(row, "user_name", "username")
+		login := row["add_time"]
+		if id == "" || account == "" {
+			skipped++
+			continue
+		}
+		var addresses [3]netip.Addr
+		addrCount := 0
+		badIP := false
+		for _, field := range []string{"ip", "ipv6", "ip6"} {
+			value := row[field]
+			if value == "" {
+				continue
+			}
+			ip, err := netip.ParseAddr(value)
+			if err != nil || ip.Zone() != "" || ip.IsMulticast() {
+				badIP = true
+				break
+			}
+			if ip.IsUnspecified() {
+				continue
+			}
+			ip = ip.Unmap()
+			if !slices.Contains(addresses[:addrCount], ip) {
+				addresses[addrCount] = ip
+				addrCount++
+			}
+		}
+		if badIP || addrCount == 0 {
+			skipped++
+			continue
+		}
+		if login != "" {
+			seconds, err := strconv.ParseInt(login, 10, 64)
+			if err != nil || seconds <= 0 || strconv.FormatInt(seconds, 10) != login || time.Unix(seconds, 0).After(adjustedObserved) {
+				skipped++
+				continue
+			}
+		}
+		key := OnlineSessionID(instanceID, id, login)
+		if _, exists := seen[key]; exists {
+			skipped++
+			continue
+		}
+		if addrCount > MaxIdentityAddressRecords-addressTotal {
+			skipped++
+			continue
+		}
+		seen[key] = struct{}{}
+		addressTotal += addrCount
+		valid = append(valid, row)
+	}
+	return valid, adjustedObserved, skipped
 }
 
 // readOnlineRowsPartial omits list members whose hash was removed or reused
