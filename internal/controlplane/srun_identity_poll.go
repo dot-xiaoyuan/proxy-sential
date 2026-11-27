@@ -27,14 +27,31 @@ func (s *Server) readSRunIdentitySnapshot(ctx context.Context, item srun4KIntegr
 	if err != nil {
 		return empty, stats, identityLocalWorkError(err)
 	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	observedAt := normalizeSRunObservedAt(inventory.ObservedAt, now)
 	count := len(records)
-	request := identitySnapshotRequest{IdentityScope: store.IdentityScope{Source: item.Source, SensorID: item.SensorID}, ObservedAt: inventory.ObservedAt, IntervalSeconds: item.ReconcileIntervalHours * 3600, Complete: true, ExpectedCount: &count, Records: records}
+	request := identitySnapshotRequest{IdentityScope: store.IdentityScope{Source: item.Source, SensorID: item.SensorID}, ObservedAt: observedAt, IntervalSeconds: item.ReconcileIntervalHours * 3600, Complete: true, ExpectedCount: &count, Records: records}
 	id, err := srunIdentitySnapshotIDContext(ctx, request)
 	if err != nil {
 		return empty, stats, identityLocalWorkError(err)
 	}
-	snapshot, err := prepareIdentitySnapshotContext(ctx, request, id, time.Now().UTC(), legacy4k.MaxIdentityAddressRecords)
+	snapshot, err := prepareIdentitySnapshotContext(ctx, request, id, now, legacy4k.MaxIdentityAddressRecords)
 	return snapshot, stats, identityLocalWorkError(err)
+}
+
+// normalizeSRunObservedAt 对本机主动拉取的 4K 在线快照观测时间进行跨机时钟漂移归一化：
+// 统一截断至微秒精度；若深澜 Redis 时钟快于本机或严重滞后（超出 7 天窗口），
+// 则以本机实际拉取完成时间 now 作为快照观测时间，避免内网服务器未同步 NTP 导致整批入库失败。
+func normalizeSRunObservedAt(observedAt, now time.Time) time.Time {
+	now = now.UTC().Truncate(time.Microsecond)
+	if observedAt.IsZero() {
+		return now
+	}
+	ts := observedAt.UTC().Truncate(time.Microsecond)
+	if ts.After(now) || ts.Before(now.Add(-7*24*time.Hour)) {
+		return now
+	}
+	return ts
 }
 
 // Compare standardized membership, including login generation and source

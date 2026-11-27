@@ -95,3 +95,21 @@ func TestSRunIdentityPollCommitOnlyChangesCurrentGateway(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeSRunObservedAtClampsClockSkew(t *testing.T) {
+	now := time.Date(2026, 11, 27, 10, 30, 0, 123456789, time.UTC)
+	wantNow := now.Truncate(time.Microsecond)
+	// 远端 4K Redis 时钟快于本机 5 秒：钳位到本机时间并保持微秒精度
+	if got := normalizeSRunObservedAt(now.Add(5*time.Second), now); !got.Equal(wantNow) || got.Nanosecond()%1000 != 0 {
+		t.Fatalf("future clock skew not clamped: got=%v want=%v", got, wantNow)
+	}
+	// 远端时钟落后 2 秒：保留远端时间并截断到微秒精度
+	past := now.Add(-2 * time.Second)
+	if got := normalizeSRunObservedAt(past, now); !got.Equal(past.Truncate(time.Microsecond)) || got.Nanosecond()%1000 != 0 {
+		t.Fatalf("recent past time altered: got=%v want=%v", got, past.Truncate(time.Microsecond))
+	}
+	// 远端时钟异常落后超过 7 天：回落到本机时间
+	if got := normalizeSRunObservedAt(now.Add(-8*24*time.Hour), now); !got.Equal(wantNow) {
+		t.Fatalf("stale clock not clamped: got=%v want=%v", got, wantNow)
+	}
+}
