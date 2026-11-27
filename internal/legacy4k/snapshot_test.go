@@ -1,8 +1,14 @@
 package legacy4k
 
 import (
+	"context"
+	"errors"
+	"slices"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 func TestOnlineSnapshotValidation(t *testing.T) {
@@ -92,5 +98,47 @@ func TestDualStackSnapshotKeepsBothAddresses(t *testing.T) {
 	in.Rows[0]["ipv6"] = "ff02::1"
 	if _, err = in.IdentityRecords(); err == nil {
 		t.Fatal("multicast identity accepted")
+	}
+}
+
+type stubLRangeCmdable struct {
+	redis.Cmdable
+	pages [][]string
+	call  int
+}
+
+func (s *stubLRangeCmdable) LRange(_ context.Context, _ string, _, _ int64) *redis.StringSliceCmd {
+	if s.call >= len(s.pages) {
+		return redis.NewStringSliceResult(nil, nil)
+	}
+	res := s.pages[s.call]
+	s.call++
+	return redis.NewStringSliceResult(res, nil)
+}
+
+func TestReadOnlineMembersDedupHandlesShiftAndDuplicates(t *testing.T) {
+	// 模拟分页期间头部 LPUSH 导致第二页出现第一页末尾的重复 ID，以及列表缩短和空项。
+	stub := &stubLRangeCmdable{
+		pages: [][]string{
+			{"101", "102", "103"},
+			{"103", "104", ""},
+			{"104", "105"},
+		},
+	}
+	got, err := readOnlineMembersDedup(context.Background(), stub, "list:rad_online", 9, 3, 100)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"101", "102", "103", "104", "105"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("dedup mismatch: got=%v want=%v", got, want)
+	}
+
+	// 验证超长字段仍受资源上限保护。
+	oversized := &stubLRangeCmdable{
+		pages: [][]string{{strings.Repeat("a", MaxOnlineFieldBytes+1)}},
+	}
+	if _, err := readOnlineMembersDedup(context.Background(), oversized, "list:rad_online", 1, 1, 100); !errors.Is(err, ErrOnlineResourceLimit) {
+		t.Fatalf("expected ErrOnlineResourceLimit, got %v", err)
 	}
 }

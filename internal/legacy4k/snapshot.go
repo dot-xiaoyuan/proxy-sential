@@ -348,45 +348,66 @@ func ReadOnlineInventoryStabilized(ctx context.Context, client *RedisOnlineClien
 		if count < 0 || count > int64(maxRecords) {
 			return OnlineInventory{}, ErrOnlineResourceLimit
 		}
-		ids, readErr := readOnlineMembers(readCtx, conn, list, int(count), pageSize)
+		ids, readErr := readOnlineMembersDedup(readCtx, conn, list, int(count), pageSize, maxRecords)
 		if readErr != nil {
 			if errors.Is(readErr, ErrOnlineInventoryChanged) {
 				continue
 			}
 			return OnlineInventory{}, readErr
 		}
-		members := make(map[string]struct{}, len(ids))
-		missing := make([]string, 0)
-		for _, id := range ids {
-			members[id] = struct{}{}
-			if _, present := rowsByID[id]; !present {
-				missing = append(missing, id)
+		syncOnlineRows := func(targetIDs []string) error {
+			members := make(map[string]struct{}, len(targetIDs))
+			missing := make([]string, 0)
+			for _, id := range targetIDs {
+				members[id] = struct{}{}
+				if _, present := rowsByID[id]; !present {
+					missing = append(missing, id)
+				}
 			}
+			for id := range rowsByID {
+				if _, present := members[id]; !present {
+					delete(rowsByID, id)
+				}
+			}
+			if len(missing) > 0 {
+				newRows, rowsErr := readOnlineRowsPartial(readCtx, conn, missing, pageSize)
+				if rowsErr != nil {
+					return rowsErr
+				}
+				for id, row := range newRows {
+					rowsByID[id] = row
+				}
+			}
+			return nil
 		}
-		for id := range rowsByID {
-			if _, present := members[id]; !present {
-				delete(rowsByID, id)
-			}
-		}
-		if len(missing) > 0 {
-			newRows, rowsErr := readOnlineRowsPartial(readCtx, conn, missing, pageSize)
-			if rowsErr != nil {
-				return OnlineInventory{}, rowsErr
-			}
-			for id, row := range newRows {
-				rowsByID[id] = row
-			}
+		if rowsErr := syncOnlineRows(ids); rowsErr != nil {
+			return OnlineInventory{}, rowsErr
 		}
 		verifiedCount, readErr := conn.LLen(readCtx, list).Result()
 		if readErr != nil {
 			return OnlineInventory{}, readErr
 		}
-		if verifiedCount != int64(len(ids)) {
+		if verifiedCount < 0 || verifiedCount > int64(maxRecords) {
+			return OnlineInventory{}, ErrOnlineResourceLimit
+		}
+		verifiedIDs, readErr := readOnlineMembersDedup(readCtx, conn, list, int(verifiedCount), pageSize, maxRecords)
+		if readErr != nil {
+			if errors.Is(readErr, ErrOnlineInventoryChanged) {
+				continue
+			}
+			return OnlineInventory{}, readErr
+		}
+		stable := slices.Equal(ids, verifiedIDs)
+		if !stable && pass < maxPasses-1 {
 			continue
 		}
-		verifiedIDs, readErr := readOnlineMembers(readCtx, conn, list, len(ids), pageSize)
-		if readErr != nil || !slices.Equal(ids, verifiedIDs) {
-			continue
+		if !stable {
+			// 高并发校园网环境下列表持续有上下线波动：在最后一轮基于最新去重清单补齐新增成员，
+			// 剔除已离线成员，以有效活跃快照收口，避免因持续并发写入导致同步永远无法完成。
+			ids = verifiedIDs
+			if rowsErr := syncOnlineRows(ids); rowsErr != nil {
+				return OnlineInventory{}, rowsErr
+			}
 		}
 		observed, readErr := conn.Time(readCtx).Result()
 		if readErr != nil {
@@ -551,6 +572,51 @@ func readOnlineMembers(ctx context.Context, client redis.Cmdable, list string, c
 			}
 			seen[id] = struct{}{}
 			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
+// readOnlineMembersDedup 按页读取活跃在线列表并自动去重。
+// 在高频上下线的深澜 4K Redis 环境中，分页 LRANGE 期间头部插入或列表自身偶发重复 ID
+// 都会导致同一 rad_online_id 在不同页重复出现，或列表长度短暂收缩；此函数跳过空项与重复项，
+// 同时严格保留字段长度与最大记录数边界检查。
+func readOnlineMembersDedup(ctx context.Context, client redis.Cmdable, list string, count, pageSize, maxRecords int) ([]string, error) {
+	if count <= 0 {
+		return []string{}, nil
+	}
+	ids := make([]string, 0, count)
+	seen := make(map[string]struct{}, count)
+	for start := 0; start < count; start += pageSize {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		end := min(start+pageSize, count)
+		page, err := client.LRange(ctx, list, int64(start), int64(end-1)).Result()
+		if err != nil {
+			return nil, err
+		}
+		if len(page) == 0 {
+			break
+		}
+		for _, id := range page {
+			if len(id) > MaxOnlineFieldBytes {
+				return nil, ErrOnlineResourceLimit
+			}
+			if id == "" {
+				continue
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			if len(ids) >= maxRecords {
+				return nil, ErrOnlineResourceLimit
+			}
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+		}
+		if len(page) < end-start {
+			break
 		}
 	}
 	return ids, nil
