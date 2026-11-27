@@ -64,6 +64,10 @@ const componentNames: Record<string, string> = {
   identity_ingest: '身份同步',
   statistics_read_model: '统计模型',
   application_read_model: '应用模型',
+  discovery_pipeline: '被动发现链路',
+  identity_pipeline: '身份派生链路',
+  inventory_projection: '终端台账投影',
+  passive_stream_capture: '镜像流采集',
 }
 
 const statusNames: Record<string, string> = {
@@ -76,6 +80,7 @@ const statusNames: Record<string, string> = {
   idle: '空闲',
   no_data: '无数据',
   unavailable: '异常',
+  initializing: '初始化中',
 }
 
 function formatDuration(seconds: number) {
@@ -134,7 +139,7 @@ export function OverviewPage() {
   const [campusId, setCampusId] = useUrlState('campus_id', '')
   const [sensorId] = useUrlState('sensor_id', '')
   const session = useSession()
-  const [healthOpen, setHealthOpen] = useState(false)
+  const [healthOpen, setHealthOpen] = useState(true)
 
   const context = new URLSearchParams({
     window: quickWindow,

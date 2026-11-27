@@ -35,6 +35,7 @@
 .overview-load-label,
 .overview-evidence-label,
 .overview-health-item,
+.overview-health-row,
 .overview-activity-metrics {
   display: flex;
   align-items: center;
@@ -235,13 +236,52 @@
   font-size: 11px;
 }
 
+.overview-runtime-metrics {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.overview-runtime-stat {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 8px 0;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 13px;
+}
+
+.overview-runtime-stat:first-child {
+  padding-top: 0;
+}
+
+.overview-runtime-stat:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.overview-runtime-stat > span {
+  color: #475569;
+  white-space: nowrap;
+}
+
+.overview-runtime-stat > strong {
+  color: #0f172a;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .overview-health-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
-.overview-health-item {
+.overview-health-item,
+.overview-health-row {
   justify-content: space-between;
   gap: 8px;
   min-width: 0;
@@ -252,7 +292,8 @@
   font-size: 12px;
 }
 
-.overview-health-item > span:first-child {
+.overview-health-item > span:first-child,
+.overview-health-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -275,7 +316,8 @@
 .overview-health-state-delayed,
 .overview-health-state-stale,
 .overview-health-state-idle,
-.overview-health-state-no_data {
+.overview-health-state-no_data,
+.overview-health-state-initializing {
   color: #b45309;
 }
 

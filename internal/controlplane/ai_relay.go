@@ -51,7 +51,7 @@ func (s *Server) handleAIRelayUsages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if !q.From.Before(q.To) || q.To.After(now.Add(time.Minute)) || q.To.Sub(q.From) > 7*24*time.Hour || q.From.Before(now.Add(-7*24*time.Hour-time.Minute)) {
+	if !q.From.Before(q.To) || q.To.After(now.Add(5*time.Minute)) || q.To.Sub(q.From) > 7*24*time.Hour || q.From.Before(now.Add(-7*24*time.Hour-5*time.Minute)) {
 		writeError(w, http.StatusBadRequest, "bad_time_range", "range must be within retained 7 days")
 		return
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -53,6 +54,11 @@ func (r *auxiliaryPaginationReader) PositionStreamRiskCurrent(_ context.Context,
 	r.riskSensor = sensor
 	return pagination.Position{Page: page, Limit: limit, Cursor: "boundary", AsOf: time.Now().UTC()}, r.err
 }
+func (r *auxiliaryPaginationReader) PositionAIRelayUsage(_ context.Context, q store.AIRelayUsageQuery, page int) (pagination.Position, error) {
+	r.page = page
+	r.limit = q.Limit
+	return pagination.Position{Page: page, Limit: q.Limit, Cursor: "boundary", AsOf: time.Now().UTC()}, r.err
+}
 
 func TestAuxiliaryEndpointPaginationPreservesSnapshotAndRejectsMissingPage(t *testing.T) {
 	r := &auxiliaryPaginationReader{}
@@ -93,5 +99,27 @@ func TestAuxiliaryCurrentPaginationKeepsSensorAndObservationScope(t *testing.T) 
 	s.handleStreamRiskCurrentPagination(w, httptest.NewRequest(http.MethodGet, "/risks/stream-current/metadata?sensor_id=other&subject_type=account&level=high", nil))
 	if w.Code != 200 || r.riskSensor != "sensor-a" {
 		t.Fatalf("risk scope changed: %d %s", w.Code, r.riskSensor)
+	}
+}
+
+func TestAuxiliaryAIRelayPositionAllowsClockSkewTolerance(t *testing.T) {
+	r := &auxiliaryPaginationReader{}
+	s := &Server{reader: r}
+	now := time.Now().UTC()
+
+	fromOK := now.Add(-7*24*time.Hour - 3*time.Minute).Format(time.RFC3339Nano)
+	toOK := now.Add(-3 * time.Minute).Format(time.RFC3339Nano)
+	w := httptest.NewRecorder()
+	s.handleAIRelayUsagePosition(w, httptest.NewRequest(http.MethodGet, "/ai-relay/usages/position?from="+url.QueryEscape(fromOK)+"&to="+url.QueryEscape(toOK)+"&page=2&limit=20", nil))
+	if w.Code != 200 || r.page != 2 {
+		t.Fatalf("expected 200 within 5m tolerance, got %d: %s", w.Code, w.Body.String())
+	}
+
+	fromExpired := now.Add(-7*24*time.Hour - 6*time.Minute).Format(time.RFC3339Nano)
+	toExpired := now.Add(-6 * time.Minute).Format(time.RFC3339Nano)
+	w = httptest.NewRecorder()
+	s.handleAIRelayUsagePosition(w, httptest.NewRequest(http.MethodGet, "/ai-relay/usages/position?from="+url.QueryEscape(fromExpired)+"&to="+url.QueryEscape(toExpired)+"&page=2&limit=20", nil))
+	if w.Code != 400 || !strings.Contains(w.Body.String(), "bad_time_range") {
+		t.Fatalf("expected 400 beyond 5m tolerance, got %d: %s", w.Code, w.Body.String())
 	}
 }

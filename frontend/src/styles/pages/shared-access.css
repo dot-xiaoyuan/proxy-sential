@@ -1002,22 +1002,6 @@
   margin-top: 12px;
 }
 
-.shared-policy-cursor-pagination {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 16px;
-}
-
-.shared-policy-cursor-pagination > span,
-.shared-policy-cursor-pagination .ant-btn,
-.shared-policy-cursor-pagination .ant-select {
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
 .shared-record-facts {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

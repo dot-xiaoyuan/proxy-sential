@@ -16,7 +16,6 @@ test.describe('运营工作台布局与运行负载', () => {
 
       await expect(page.getByRole('heading', { name: '运营工作台', level: 1 })).toBeVisible()
       await expect(page.getByText('观察期 · 仅记录未执行')).toBeVisible()
-      await page.getByText('平台健康与运行负载').click()
       await expect(page.getByRole('heading', { name: '服务器资源' })).toBeVisible()
       await expect(page.getByRole('heading', { name: '服务运行态' })).toBeVisible()
       await expect(page.getByRole('heading', { name: '核心组件健康' })).toBeVisible()

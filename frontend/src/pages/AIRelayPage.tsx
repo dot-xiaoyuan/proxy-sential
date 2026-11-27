@@ -146,9 +146,10 @@ export function AIRelayPage() {
     setSelectedIP('')
   }
   const hours = ranges.find((item) => item.value === range)?.hours ?? 168
+  const spanMs = range === '7d' ? Math.max(1, hours * 3600000 - 5 * 60_000) : hours * 3600000
   const query: AIRelayUsageQuery = useMemo(
     () => ({
-      from: new Date(anchor - hours * 3600000).toISOString(),
+      from: new Date(anchor - spanMs).toISOString(),
       to: new Date(anchor).toISOString(),
       ip: ip.trim() || undefined,
       domain: domain.trim() || undefined,
@@ -156,7 +157,7 @@ export function AIRelayPage() {
       sensor_id: sensor.trim() || undefined,
       limit: pageSize,
     }),
-    [anchor, hours, ip, domain, campus, sensor, pageSize],
+    [anchor, spanMs, ip, domain, campus, sensor, pageSize],
   )
   const position = useCursorPagePosition({
     path: '/ai-relay/usages/position',

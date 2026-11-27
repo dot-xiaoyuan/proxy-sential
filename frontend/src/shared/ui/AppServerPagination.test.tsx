@@ -69,7 +69,7 @@ describe('AppServerPagination', () => {
 })
 
 describe('RecordCursorPagination', () => {
-  it('统一展示汇总、首页/上一页/页码徽标/下一页与每页条数', () => {
+  it('统一展示汇总、紧凑方块翻页按钮、首页跳回省略与每页条数', () => {
     const onFirst = vi.fn()
     const onPrevious = vi.fn()
     const onNext = vi.fn()
@@ -93,9 +93,15 @@ describe('RecordCursorPagination', () => {
     expect(nav).toHaveClass('ps-pagination-bar', 'ps-cursor-pagination')
     expect(nav).toHaveAttribute('aria-busy', 'false')
     expect(screen.getByText('第 3 页 · 本页 20 条')).toBeVisible()
-    expect(screen.getByText('第 3 页')).toHaveAttribute('aria-current', 'page')
 
-    fireEvent.click(screen.getByRole('button', { name: '首页' }))
+    const currentPage = screen.getByText('3')
+    expect(currentPage).toHaveAttribute('aria-current', 'page')
+    expect(currentPage).toHaveClass('ps-pagination-item-active')
+    expect(screen.getByText('•••')).toBeVisible()
+
+    const firstBtn = screen.getByRole('button', { name: '首页' })
+    expect(firstBtn).toHaveTextContent('1')
+    fireEvent.click(firstBtn)
     expect(onFirst).toHaveBeenCalledTimes(1)
 
     fireEvent.click(screen.getByRole('button', { name: '上一页' }))
@@ -109,7 +115,7 @@ describe('RecordCursorPagination', () => {
     expect(onPageSizeChange).toHaveBeenCalledWith(50, expect.anything())
   })
 
-  it('首页及加载态下正确禁用对应按钮与选择器', () => {
+  it('首页、第2页及加载态下正确控制首页跳回显示与按钮禁用', () => {
     const { rerender } = render(
       <RecordCursorPagination
         page={1}
@@ -124,9 +130,10 @@ describe('RecordCursorPagination', () => {
       />,
     )
 
-    expect(screen.getByRole('button', { name: '首页' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: '首页' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '上一页' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '下一页' })).toBeDisabled()
+    expect(screen.getByText('1')).toHaveAttribute('aria-current', 'page')
 
     rerender(
       <RecordCursorPagination
@@ -146,6 +153,24 @@ describe('RecordCursorPagination', () => {
       'aria-busy',
       'true',
     )
+    expect(screen.queryByRole('button', { name: '首页' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '上一页' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '下一页' })).toBeDisabled()
+
+    rerender(
+      <RecordCursorPagination
+        page={3}
+        pageSize={20}
+        count={20}
+        nextCursor="cursor-4"
+        fetching
+        onFirst={() => undefined}
+        onPrevious={() => undefined}
+        onNext={() => undefined}
+        onPageSizeChange={() => undefined}
+      />,
+    )
+
     expect(screen.getByRole('button', { name: '首页' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '上一页' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '下一页' })).toBeDisabled()

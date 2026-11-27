@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Button, Select } from 'antd'
+import { LeftOutlined, RightOutlined } from '@ant-design/icons'
+import { Select } from 'antd'
 
 /**
  * 纯游标分页状态管理：按查询范围（scope）隔离页码与游标栈，
@@ -47,8 +48,8 @@ export type RecordCursorPaginationProps = {
 }
 
 /**
- * 统一游标分页栏：与 AppServerPagination 共享底部对齐与汇总视觉规范，
- * 左侧展示当前页与本页条数，右侧提供首页、上一页、当前页码徽标、下一页与每页条数选择。
+ * 统一游标分页栏：视觉与 Ant Design Pagination 保持完全一致，
+ * 左侧展示当前页与本页条数，右侧提供紧凑方块翻页按钮、高亮当前页码与每页条数选择。
  */
 export function RecordCursorPagination({
   page,
@@ -62,6 +63,7 @@ export function RecordCursorPagination({
   onPageSizeChange,
 }: RecordCursorPaginationProps) {
   const isFirstPage = page <= 1
+  const showFirstJump = Boolean(onFirst) && page > 2
   return (
     <nav
       aria-busy={fetching}
@@ -72,25 +74,49 @@ export function RecordCursorPagination({
         第 {page} 页 · 本页 {count} 条
       </span>
       <div className="ps-pagination-controls">
-        {onFirst && (
-          <Button
-            aria-label="首页"
-            autoInsertSpace={false}
-            disabled={isFirstPage || fetching}
-            onClick={onFirst}
-          >
-            首页
-          </Button>
+        <button
+          aria-label="上一页"
+          className="ps-pagination-btn ps-pagination-nav-btn"
+          disabled={isFirstPage || fetching}
+          title="上一页"
+          type="button"
+          onClick={onPrevious}
+        >
+          <LeftOutlined />
+        </button>
+        {showFirstJump && (
+          <>
+            <button
+              aria-label="首页"
+              className="ps-pagination-btn ps-pagination-item tabular-num"
+              disabled={fetching}
+              title="第 1 页"
+              type="button"
+              onClick={onFirst}
+            >
+              1
+            </button>
+            <span aria-hidden="true" className="ps-pagination-ellipsis">
+              •••
+            </span>
+          </>
         )}
-        <Button aria-label="上一页" disabled={isFirstPage || fetching} onClick={onPrevious}>
-          上一页
-        </Button>
-        <span aria-current="page" className="ps-pagination-page-badge tabular-num">
-          第 {page} 页
+        <span
+          aria-current="page"
+          className="ps-pagination-item ps-pagination-item-active tabular-num"
+        >
+          {page}
         </span>
-        <Button aria-label="下一页" disabled={!nextCursor || fetching} onClick={onNext}>
-          下一页
-        </Button>
+        <button
+          aria-label="下一页"
+          className="ps-pagination-btn ps-pagination-nav-btn"
+          disabled={!nextCursor || fetching}
+          title="下一页"
+          type="button"
+          onClick={onNext}
+        >
+          <RightOutlined />
+        </button>
         <Select
           aria-label="每页条数"
           className="ps-pagination-size-select"
