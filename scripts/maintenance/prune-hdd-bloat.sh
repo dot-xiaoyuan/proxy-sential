@@ -33,9 +33,11 @@ if docker ps --format '{{.Names}}' | grep -qx "$CH_CONTAINER"; then
   echo "=== [CH] system.query_log 当前体积 ==="
   docker exec "$CH_CONTAINER" clickhouse-client --query "SELECT table, formatReadableSize(sum(bytes_on_disk)) AS size, sum(rows) AS rows FROM system.parts WHERE active AND database='system' AND table LIKE '%log%' GROUP BY table ORDER BY sum(bytes_on_disk) DESC"
   if [[ "$MODE" == "execute" ]]; then
-    echo "=== [CH] 为 system.query_log 设置 3 天 TTL 并清理 3 天前历史运维日志 ==="
-    docker exec "$CH_CONTAINER" clickhouse-client --query "ALTER TABLE system.query_log MODIFY TTL event_date + INTERVAL 3 DAY" || true
-    docker exec "$CH_CONTAINER" clickhouse-client --query "ALTER TABLE system.query_log DELETE WHERE event_date < today() - 3 SETTINGS mutations_sync = 1" || true
+    echo "=== [CH] 为 system 运维日志表设置 3 天 TTL 并清理超期日志 ==="
+    for ch_log in query_log processors_profile_log trace_log part_log metric_log asynchronous_metric_log; do
+      docker exec "$CH_CONTAINER" clickhouse-client --query "ALTER TABLE system.${ch_log} MODIFY TTL event_date + INTERVAL 3 DAY" >/dev/null 2>&1 || true
+      docker exec "$CH_CONTAINER" clickhouse-client --query "ALTER TABLE system.${ch_log} DELETE WHERE event_date < today() - 3" >/dev/null 2>&1 || true
+    done
   fi
 fi
 

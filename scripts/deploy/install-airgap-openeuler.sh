@@ -266,10 +266,10 @@ PROXY_SENTINEL_OFFLINE=true "$bundle_dir/install-openeuler.sh" \
 
 stage "收敛 ClickHouse 运维日志 TTL（防止单机 HDD 膨胀）"
 if docker ps --format '{{.Names}}' | grep -qx 'proxy-sentinel-clickhouse'; then
-  docker exec proxy-sentinel-clickhouse clickhouse-client --query \
-    "ALTER TABLE system.query_log MODIFY TTL event_date + INTERVAL 3 DAY" >/dev/null 2>&1 || true
-  docker exec proxy-sentinel-clickhouse clickhouse-client --query \
-    "ALTER TABLE system.trace_log MODIFY TTL event_date + INTERVAL 3 DAY" >/dev/null 2>&1 || true
+  for ch_log in query_log processors_profile_log trace_log part_log metric_log asynchronous_metric_log; do
+    docker exec proxy-sentinel-clickhouse clickhouse-client --query \
+      "ALTER TABLE system.${ch_log} MODIFY TTL event_date + INTERVAL 3 DAY" >/dev/null 2>&1 || true
+  done
 fi
 
 stage "配置防火墙与本机访问边界"
