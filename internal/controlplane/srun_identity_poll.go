@@ -19,7 +19,7 @@ func (s *Server) readSRunIdentitySnapshot(ctx context.Context, item srun4KIntegr
 	defaults := s.srun4KDefaults.normalized()
 	client := s.srunRedis(item)
 	defer client.Close()
-	inventory, err := legacy4k.ReadOnlineInventoryPaged(ctx, client, "list:rad_online", defaults.MaxSessions, defaults.PageSize)
+	inventory, err := legacy4k.ReadOnlineInventoryStabilized(ctx, client, "list:rad_online", defaults.MaxSessions, defaults.PageSize, 5)
 	if err != nil {
 		return empty, legacy4k.InventoryStats{}, fmt.Errorf("读取4K完整在线清单失败: %w", err)
 	}

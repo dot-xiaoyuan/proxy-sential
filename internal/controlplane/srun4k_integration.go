@@ -1285,7 +1285,7 @@ func (s *Server) refreshSRunConnector(ctx context.Context, id string) {
 		runtime = &NativeActionRuntime{CredentialsFrom4K: false, Probe: client.OnlineTotal, Client: client, CampusID: "", AccessDomain: "", DropType: "radius", Read: func(readCtx context.Context) (legacy4k.OnlineInventory, error) {
 			redisClient := s.srunRedis(item)
 			defer redisClient.Close()
-			return legacy4k.ReadOnlineInventoryPaged(readCtx, redisClient, "list:rad_online", s.srun4KDefaults.normalized().MaxSessions, s.srun4KDefaults.normalized().PageSize)
+			return legacy4k.ReadOnlineInventoryStabilized(readCtx, redisClient, "list:rad_online", s.srun4KDefaults.normalized().MaxSessions, s.srun4KDefaults.normalized().PageSize, 5)
 		}}
 	}
 	// Keep the established operations -> registry lock order used by native
