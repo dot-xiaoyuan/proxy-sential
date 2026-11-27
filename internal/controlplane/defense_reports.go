@@ -115,30 +115,57 @@ func (s *Server) handleSharedDecisionTrend(w http.ResponseWriter, r *http.Reques
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
-	// Use the shared result/time index across one fixed, bounded window.
-	// No policy documents or account identifiers are needed for the report.
-	rows, err := s.productPolicies.db.QueryContext(ctx, `SELECT date_bin($3::interval,evaluated_at,$1::timestamptz),
+	// 优先读取极轻量的 5 分钟聚合桶表，避免扫描千万级 policy_decision_records；若该窗口尚无桶数据则回退旧明细表。
+	usedBuckets := false
+	bucketRows, bucketErr := s.productPolicies.db.QueryContext(ctx, `SELECT date_bin($3::interval,bucket_start,$1::timestamptz),
+ coalesce(sum(matched_count),0), coalesce(sum(insufficient_count),0), coalesce(sum(expired_count),0)
+ FROM shared_decision_trend_buckets
+ WHERE bucket_start >= $1 AND bucket_start < $2 GROUP BY 1`, from, to, minutes)
+	if bucketErr == nil {
+		defer bucketRows.Close()
+		for bucketRows.Next() {
+			var bucket sharedDecisionTrendBucket
+			if err := bucketRows.Scan(&bucket.From, &bucket.Matched, &bucket.Insufficient, &bucket.Expired); err != nil {
+				writeError(w, http.StatusServiceUnavailable, "shared_trend_unavailable", "共享判定统计读取失败")
+				return
+			}
+			i := int(bucket.From.Sub(from) / interval)
+			if i >= 0 && i < len(result.Buckets) {
+				result.Buckets[i] = bucket
+				usedBuckets = true
+			}
+		}
+		if bucketRows.Err() != nil {
+			writeError(w, http.StatusServiceUnavailable, "shared_trend_unavailable", "共享判定统计读取失败")
+			return
+		}
+	}
+	if !usedBuckets {
+		rows, err := s.productPolicies.db.QueryContext(ctx, `SELECT date_bin($3::interval,evaluated_at,$1::timestamptz),
  count(*) FILTER(WHERE result='matched'), count(*) FILTER(WHERE result='insufficient'), count(*) FILTER(WHERE result='expired')
  FROM policy_decision_records
  WHERE trigger_type='shared_access' AND result IN ('matched','insufficient','expired')
  AND evaluated_at >= $1 AND evaluated_at < $2 GROUP BY 1`, from, to, minutes)
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "shared_trend_unavailable", "共享判定统计读取失败")
-		return
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var bucket sharedDecisionTrendBucket
-		if err := rows.Scan(&bucket.From, &bucket.Matched, &bucket.Insufficient, &bucket.Expired); err != nil {
+		if err != nil {
 			writeError(w, http.StatusServiceUnavailable, "shared_trend_unavailable", "共享判定统计读取失败")
 			return
 		}
-		i := int(bucket.From.Sub(from) / interval)
-		result.Buckets[i] = bucket
-	}
-	if rows.Err() != nil {
-		writeError(w, http.StatusServiceUnavailable, "shared_trend_unavailable", "共享判定统计读取失败")
-		return
+		defer rows.Close()
+		for rows.Next() {
+			var bucket sharedDecisionTrendBucket
+			if err := rows.Scan(&bucket.From, &bucket.Matched, &bucket.Insufficient, &bucket.Expired); err != nil {
+				writeError(w, http.StatusServiceUnavailable, "shared_trend_unavailable", "共享判定统计读取失败")
+				return
+			}
+			i := int(bucket.From.Sub(from) / interval)
+			if i >= 0 && i < len(result.Buckets) {
+				result.Buckets[i] = bucket
+			}
+		}
+		if rows.Err() != nil {
+			writeError(w, http.StatusServiceUnavailable, "shared_trend_unavailable", "共享判定统计读取失败")
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, result)
 }

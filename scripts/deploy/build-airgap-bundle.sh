@@ -2,15 +2,16 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: build-airgap-bundle.sh --version VERSION --dependency-host user@host --output FILE" >&2
+  echo "usage: build-airgap-bundle.sh --version VERSION --dependency-host user@host --output FILE [--lightweight]" >&2
 }
 
-version=""; dependency_host=""; output=""
+version=""; dependency_host=""; output=""; lightweight="false"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version) version="${2:-}"; shift 2 ;;
     --dependency-host) dependency_host="${2:-}"; shift 2 ;;
     --output) output="${2:-}"; shift 2 ;;
+    --lightweight) lightweight="true"; shift ;;
     *) usage; exit 2 ;;
   esac
 done
@@ -66,10 +67,14 @@ REMOTE
 tar -C "$stage/rpms" -xzf "$stage/runtime-rpms.tar.gz"
 rm -f "$stage/runtime-rpms.tar.gz"
 
-progress "打包 Suricata、Zeek 与现场验证配置"
-ssh "${ssh_options[@]}" "$dependency_host" \
-  'test -x /usr/bin/suricata; test -x /usr/local/bin/zeek; tar -C / -czf - usr/bin/suricata usr/lib/libhtp.so usr/lib/libhtp.so.2 usr/lib/libhtp.so.2.0.0 etc/suricata usr/local/zeek usr/local/bin/zeek' \
-  > "$stage/collectors.tar.gz"
+if [[ "$lightweight" == "true" ]]; then
+  progress "轻量防代理档位：跳过 Suricata/Zeek 收集（仅使用内置 device-signal）"
+else
+  progress "打包 Suricata、Zeek 与现场验证配置"
+  ssh "${ssh_options[@]}" "$dependency_host" \
+    'test -x /usr/bin/suricata; test -x /usr/local/bin/zeek; tar -C / -czf - usr/bin/suricata usr/lib/libhtp.so usr/lib/libhtp.so.2 usr/lib/libhtp.so.2.0.0 etc/suricata usr/local/zeek usr/local/bin/zeek' \
+    > "$stage/collectors.tar.gz"
+fi
 
 progress "导出 digest 固定的 PostgreSQL 与 ClickHouse 镜像"
 ssh "${ssh_options[@]}" "$dependency_host" "docker image inspect '$postgres_local_image' '$clickhouse_local_image' >/dev/null; docker save '$postgres_local_image' '$clickhouse_local_image'" \
@@ -81,6 +86,7 @@ cp "$repo_root/scripts/deploy/install-openeuler.sh" "$stage/install-openeuler.sh
 chmod 0755 "$stage/install.sh" "$stage/install-openeuler.sh"
 cat > "$stage/bundle.env" <<EOF
 BUNDLE_VERSION='$version'
+BUNDLE_LIGHTWEIGHT='$lightweight'
 POSTGRES_IMAGE='$postgres_image'
 CLICKHOUSE_IMAGE='$clickhouse_image'
 POSTGRES_IMAGE_ID='$postgres_image_id'
@@ -89,7 +95,11 @@ DEPENDENCY_PLATFORM='openEuler-x86_64'
 EOF
 (
   cd "$stage"
-  sha256sum bundle.env collectors.tar.gz storage-images.tar.gz proxy-sentinel-"$version".tar.gz proxy-sentinel-"$version".tar.gz.sha256 rpms/*.rpm > SHA256SUMS
+  sum_targets=(bundle.env storage-images.tar.gz "proxy-sentinel-${version}.tar.gz" "proxy-sentinel-${version}.tar.gz.sha256" rpms/*.rpm)
+  if [[ -f collectors.tar.gz ]]; then
+    sum_targets+=(collectors.tar.gz)
+  fi
+  sha256sum "${sum_targets[@]}" > SHA256SUMS
 )
 
 progress "生成最终离线包并校验"

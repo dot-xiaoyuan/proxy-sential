@@ -684,14 +684,45 @@ func sharedObservationNewDependency(lane string, marked bool) bool {
 	return !sharedObservationExpiryLane(lane) && marked
 }
 
+// compactPolicyDecisionsEnabled 控制是否跳过将高频未命中（insufficient/expired）大文档写入 policy_decision_records，
+// 开启后仅落库有效命中/豁免等业务决策，同时所有判定计数仍精确累加到 shared_decision_trend_buckets 供趋势报表使用。
+func compactPolicyDecisionsEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("PROXY_SENTINEL_COMPACT_POLICY_DECISIONS")), "true")
+}
+
+func recordSharedDecisionTrendBucket(ctx context.Context, tx *sql.Tx, d *sharedaccess.ObservationDecision) error {
+	var matched, insufficient, expired int64
+	switch d.Result {
+	case "matched":
+		matched = 1
+	case "insufficient":
+		insufficient = 1
+	case "expired":
+		expired = 1
+	default:
+		return nil
+	}
+	bucketStart := d.EvaluatedAt.UTC().Truncate(5 * time.Minute)
+	_, err := tx.ExecContext(ctx, `INSERT INTO shared_decision_trend_buckets(bucket_start,matched_count,insufficient_count,expired_count,updated_at)
+ VALUES($1,$2,$3,$4,now())
+ ON CONFLICT(bucket_start) DO UPDATE SET
+  matched_count=shared_decision_trend_buckets.matched_count+EXCLUDED.matched_count,
+  insufficient_count=shared_decision_trend_buckets.insufficient_count+EXCLUDED.insufficient_count,
+  expired_count=shared_decision_trend_buckets.expired_count+EXCLUDED.expired_count,
+  updated_at=now()`, bucketStart, matched, insufficient, expired)
+	return err
+}
+
 func persistSharedObservationDecision(ctx context.Context, tx *sql.Tx, d *sharedaccess.ObservationDecision) error {
 	newEpisode, err := ensureSharedObservationEpisode(ctx, tx, d)
 	if err != nil {
 		return err
 	}
-	raw, err := json.Marshal(d)
-	if err != nil {
-		return err
+	compact := compactPolicyDecisionsEnabled()
+	if compact {
+		if err := recordSharedDecisionTrendBucket(ctx, tx, d); err != nil {
+			return err
+		}
 	}
 	if d.Result == "expired" {
 		_, err = tx.ExecContext(ctx, `UPDATE shared_observation_executions e SET state='expired',document=jsonb_set(e.document,'{state}','"expired"')
@@ -700,6 +731,13 @@ func persistSharedObservationDecision(ctx context.Context, tx *sql.Tx, d *shared
 		if err != nil {
 			return err
 		}
+	}
+	if compact && (d.Result == "insufficient" || d.Result == "expired") {
+		return nil
+	}
+	raw, err := json.Marshal(d)
+	if err != nil {
+		return err
 	}
 	inserted, err := tx.ExecContext(ctx, `INSERT INTO policy_decision_records(decision_id,execution_id,policy_id,policy_revision,account_id,known,violated,evaluated_at,document,trigger_type,subject_ip,result,observation_id,evidence_version)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'shared_access',$10::inet,$11,$12,$13) ON CONFLICT(decision_id) DO NOTHING`, d.DecisionID, d.ExecutionID, d.PolicyID, d.PolicyRevision, d.AccountID, d.Known, d.Violated, d.EvaluatedAt, raw, d.IP, d.Result, d.ObservationID, d.EvidenceVersion)
