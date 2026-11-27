@@ -109,12 +109,24 @@ func (s *DBStore) claimSharedDeviceProfileJob(ctx context.Context, worker string
 	if _, err = tx.ExecContext(ctx, `SET LOCAL synchronous_commit = off`); err != nil {
 		return sharedDeviceProfileJob{}, false, err
 	}
-	row := tx.QueryRowContext(ctx, `WITH picked AS (
- SELECT subject_key FROM shared_device_profile_jobs
- WHERE ((processed_generation<dirty_generation AND not_before<=now()) OR next_run_at<=now())
- AND lease_until<now() ORDER BY CASE WHEN processed_generation<dirty_generation THEN 0 ELSE 1 END,
- CASE WHEN processed_generation<dirty_generation THEN dirty_since ELSE next_run_at END,subject_key
- FOR UPDATE SKIP LOCKED LIMIT 1)
+	// 将 dirty 与 due 拆为两个独立的索引扫描分支（先查待刷新脏任务，再查定时复检任务），消除 OR+CASE 触发的全表扫描。
+	row := tx.QueryRowContext(ctx, `WITH dirty_pick AS (
+ SELECT subject_key, 0 AS prio, dirty_since AS sort_at FROM shared_device_profile_jobs
+ WHERE processed_generation<dirty_generation AND not_before<=now() AND lease_until<now()
+ ORDER BY dirty_since,subject_key
+ FOR UPDATE SKIP LOCKED LIMIT 1
+), due_pick AS (
+ SELECT subject_key, 1 AS prio, next_run_at AS sort_at FROM shared_device_profile_jobs
+ WHERE next_run_at IS NOT NULL AND next_run_at<=now() AND lease_until<now()
+   AND NOT EXISTS (SELECT 1 FROM dirty_pick)
+ ORDER BY next_run_at,subject_key
+ FOR UPDATE SKIP LOCKED LIMIT 1
+), picked AS (
+ SELECT subject_key FROM dirty_pick
+ UNION ALL
+ SELECT subject_key FROM due_pick
+ LIMIT 1
+)
 UPDATE shared_device_profile_jobs j SET lease_owner=$1,lease_until=now()+interval '1 minute',
  dirty_generation=CASE WHEN j.next_run_at<=now() AND j.processed_generation>=j.dirty_generation THEN j.dirty_generation+1 ELSE j.dirty_generation END,
  dirty_since=CASE WHEN j.next_run_at<=now() AND j.processed_generation>=j.dirty_generation THEN now() ELSE j.dirty_since END,

@@ -1,6 +1,8 @@
 package controlplane
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -73,7 +75,15 @@ func (s *Server) handleSharedBehavior(w http.ResponseWriter, r *http.Request, pa
 	}
 	page, err := reader.ListSharedBehavior(ctx, query)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "shared_behavior_query_invalid", err.Error())
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			writeError(w, http.StatusGatewayTimeout, "shared_behavior_timeout", "共享行为观察查询超时，请缩小范围或稍后重试")
+			return
+		}
+		if strings.HasPrefix(err.Error(), "invalid ") {
+			writeError(w, http.StatusBadRequest, "shared_behavior_query_invalid", err.Error())
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "shared_behavior_unavailable", "共享行为观察读取失败")
 		return
 	}
 	if !canReadAccount {

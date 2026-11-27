@@ -110,7 +110,8 @@ func sharedBehaviorWhere(query SharedBehaviorQuery) (string, []any, error) {
 		strong = "(" + strong + " OR (status='confirmed' AND COALESCE(observation->>'confirmation_basis','')='authenticated_router'))"
 		switch query.HistoryBasis {
 		case "", "shared":
-			clauses = append(clauses, strong)
+			// 显式限定非当前且状态为 confirmed/candidate，使 PostgreSQL 命中 shared_behavior_history_strong_idx 部分索引。
+			clauses = append(clauses, "NOT current", "status IN ('confirmed','candidate')", strong)
 		case "clues":
 			clauses = append(clauses, "NOT "+strong)
 		default:
@@ -231,13 +232,14 @@ func (s *PostgresStore) ListSharedBehavior(ctx context.Context, query SharedBeha
 		where += fmt.Sprintf(" AND (last_seen,observation_id)<($%d,$%d)", len(args)-1, len(args))
 	}
 	args = append(args, query.Limit+1)
-	// current is maintained as one row per gateway. Historical observations
-	// retain their immutable windows; both views read a bounded index page.
-	selectList := "observation,last_seen,observation_id"
+	// 先按索引有序分页取出最多 Limit+1 行，再仅对本页结果关联案件/处置文档，避免扫描阶段逐行执行相关子查询。
+	sqlQuery := `SELECT observation,last_seen,observation_id FROM shared_behavior_observations ` + where + fmt.Sprintf(` ORDER BY last_seen DESC,observation_id DESC LIMIT $%d`, len(args))
 	if query.View == "traffic" || query.Status == "confirmed" || query.View == "period" {
-		selectList = sharedFindingDocument + ",last_seen,observation_id"
+		sqlQuery = `WITH paged AS (SELECT observation_id,observation,last_seen,current FROM shared_behavior_observations ` + where + fmt.Sprintf(` ORDER BY last_seen DESC,observation_id DESC LIMIT $%d) SELECT `, len(args)) +
+			strings.ReplaceAll(sharedFindingDocument, "shared_behavior_observations.observation_id", "paged.observation_id") +
+			`,last_seen,observation_id FROM paged ORDER BY last_seen DESC,observation_id DESC`
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT `+selectList+` FROM shared_behavior_observations `+where+fmt.Sprintf(` ORDER BY last_seen DESC,observation_id DESC LIMIT $%d`, len(args)), args...)
+	rows, err := s.db.QueryContext(ctx, sqlQuery, args...)
 	if err != nil {
 		return SharedBehaviorPage{}, err
 	}
