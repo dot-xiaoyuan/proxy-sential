@@ -130,7 +130,7 @@ for (const [width, height] of [
           overflow: document.documentElement.scrollWidth > innerWidth + 2,
           controls: [
             ...document.querySelectorAll(
-              '.shared-access-page .ant-btn,.shared-access-page .ant-tag',
+              '.shared-access-page .ant-btn,.shared-access-page .ant-tag,.device-center-page .ant-btn,.device-center-page .ant-tag',
             ),
           ]
             .filter(visible)
@@ -141,10 +141,18 @@ for (const [width, height] of [
             )
             .map((element) => element.textContent),
           contrast: (levels[1] + 0.05) / (levels[0] + 0.05),
-          tableDisplay: [...document.querySelectorAll('.shared-access-page .ant-table-tbody > tr')]
+          tableDisplay: [
+            ...document.querySelectorAll(
+              '.shared-access-page .ant-table-tbody > tr,.device-center-page .ant-table-tbody > tr',
+            ),
+          ]
             .filter(visible)
             .map((element) => getComputedStyle(element).display),
-          surfaces: [...document.querySelectorAll('.shared-access-page > .surface')]
+          surfaces: [
+            ...document.querySelectorAll(
+              '.shared-access-page > .surface,.device-center-network > .surface',
+            ),
+          ]
             .filter(visible)
             .map((element) => ({
               radius: getComputedStyle(element).borderRadius,
@@ -182,7 +190,7 @@ for (const [width, height] of [
     await page.getByRole('combobox', { name: '路由身份状态' }).click()
     await page.getByTitle('身份已确认', { exact: true }).click()
     await expect(page.getByText(/当前筛选下暂无路由器记录/)).toBeVisible()
-    await page.getByRole('tab', { name: '共享终端档案', exact: true }).click()
+    await page.getByRole('tab', { name: '涉共享设备档案', exact: true }).click()
     await page.getByRole('combobox', { name: '账号关联范围' }).click()
     await page.getByTitle('有关联账号', { exact: true }).click()
     await expect(page.getByText('student-1', { exact: true })).toBeVisible()
@@ -190,7 +198,7 @@ for (const [width, height] of [
     await expect(page.getByText('NoAccount', { exact: false })).toHaveCount(0)
     await audit('profiles')
     await page.goto('/shared-access?tab=reviews')
-    await expect(page.getByText(/只读观察模式不生成此队列/)).toBeVisible()
+    await expect(page.getByText('暂无人工账号归属复核记录')).toBeVisible()
     await audit('reviews')
   })
 }

@@ -5,13 +5,15 @@ test.describe('Automated UI/UX Designer Probe & Design System Audit', () => {
     '/overview',
     '/reports',
     '/shared-access?tab=associations',
-    '/shared-access?tab=devices',
+    '/shared-access?tab=associations&behavior_view=history',
     '/shared-access?tab=reviews',
     '/actions?tab=decisions',
     '/actions?tab=actions',
     '/ai-relay',
     '/devices',
     '/devices?tab=network',
+    '/devices?tab=network&network_view=candidates',
+    '/devices?tab=network&network_view=profiles',
     '/policies',
     '/policies/whitelist',
     '/policies/blacklist',
@@ -140,7 +142,7 @@ test.describe('Automated UI/UX Designer Probe & Design System Audit', () => {
   }) => {
     test.setTimeout(120_000)
     const probes = [
-      { route: '/shared-access?tab=devices', selector: '.compact-list-table' },
+      { route: '/devices?tab=network&network_view=profiles', selector: '.compact-list-table' },
       { route: '/devices', selector: '.device-inventory-surface' },
       { route: '/actions?tab=decisions', selector: '.compact-list-table' },
       { route: '/cases', selector: '.compact-list-table' },
@@ -189,7 +191,7 @@ test.describe('Automated UI/UX Designer Probe & Design System Audit', () => {
     }
 
     await page.setViewportSize({ width: 390, height: 844 })
-    await page.goto('/shared-access?tab=devices')
+    await page.goto('/shared-access?tab=associations')
     await page.getByRole('button', { name: '打开导航' }).click()
     const drawer = page.locator('.mobile-nav .ant-drawer-content-wrapper')
     await expect(drawer).toBeVisible()
@@ -214,7 +216,9 @@ test.describe('Automated UI/UX Designer Probe & Design System Audit', () => {
       { width: 1440, height: 900 },
     ]) {
       await page.setViewportSize(viewport)
-      await page.goto('/shared-access?tab=devices', { waitUntil: 'domcontentloaded' })
+      await page.goto('/devices?tab=network&network_view=profiles', {
+        waitUntil: 'domcontentloaded',
+      })
       const table = page.locator('.compact-list-table')
       await expect(table).toBeVisible()
       await expect(table.locator('.ant-table-row').first()).toBeVisible()

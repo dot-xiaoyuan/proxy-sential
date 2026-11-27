@@ -2,6 +2,18 @@
   min-width: 0;
 }
 
+.device-center-network {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.device-center-network .ant-btn,
+.device-center-network .ant-tag {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .device-center-panel {
   min-width: 0;
 }

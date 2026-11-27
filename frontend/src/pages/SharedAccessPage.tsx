@@ -1,15 +1,13 @@
 import '../styles/pages/shared-access.css'
 import '../styles/pages/devices.css'
 import { Notice as Alert } from '../shared/ui/Notice'
-import { RouterSharingCandidates } from './RouterSharingCandidates'
 import { StreamRiskCutoverNotice } from '../widgets/StreamRiskCutoverNotice'
 import { useUrlState } from '../shared/ui/useUrlState'
 import { detailPath, safeReturnTo } from '../app/navigation'
-import { SharedDeviceProfiles } from './SharedDeviceProfiles'
 import { SharedDisconnectPanel } from './SharedDisconnectPanel'
 import { routerStatusLabels } from './routerLabels'
 import { useEffect, useState } from 'react'
-import { Link, useParams, useSearchParams, useLocation } from 'react-router-dom'
+import { Link, Navigate, useParams, useSearchParams, useLocation } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Button,
@@ -18,6 +16,7 @@ import {
   Input,
   Modal,
   Popover,
+  Segmented,
   Select,
   Space,
   Tabs,
@@ -380,12 +379,45 @@ function SharedBehaviorEvidence({
 }
 
 export function SharedAccessPage() {
+  const [searchParams] = useSearchParams()
+  const rawTab = searchParams.get('tab')
+  // 兼容旧书签与跳转链接：将路由器核验、共享终端档案重定向至资产台账路由器视图，将历史观察切至共享行为历史视图。
+  if (rawTab === 'routers' || rawTab === 'devices') {
+    const next = new URLSearchParams(searchParams)
+    next.set('tab', 'network')
+    next.set('network_view', rawTab === 'routers' ? 'candidates' : 'profiles')
+    return <Navigate replace to={`/devices?${next.toString()}`} />
+  }
+  if (rawTab === 'history') {
+    const next = new URLSearchParams(searchParams)
+    next.set('tab', 'associations')
+    next.set('behavior_view', 'history')
+    return <Navigate replace to={`/shared-access?${next.toString()}`} />
+  }
+  return <SharedAccessContent />
+}
+
+function SharedAccessContent() {
   const [tab, setTab] = useUrlState(
     'tab',
     'associations',
-    ['devices', 'routers', 'associations', 'history', 'reviews'],
+    ['associations', 'reviews'],
+    [
+      'behavior_view',
+      'status',
+      'history_basis',
+      'observations_cursors',
+      'observations_page',
+      'observations_limit',
+    ],
+  )
+  const [behaviorView, setBehaviorView] = useUrlState(
+    'behavior_view',
+    'active',
+    ['active', 'history'],
     ['status', 'history_basis', 'observations_cursors', 'observations_page', 'observations_limit'],
   )
+  const isHistory = tab === 'associations' && behaviorView === 'history'
   const location = useLocation()
   const session = useSession()
   const [healthOpen, setHealthOpen] = useState(false)
@@ -406,7 +438,7 @@ export function SharedAccessPage() {
   ])
   const period = new URLSearchParams(location.search)
   const periodQuery =
-    tab === 'associations' && period.has('from') && period.has('to')
+    tab === 'associations' && !isHistory && period.has('from') && period.has('to')
       ? new URLSearchParams({
           from: period.get('from')!,
           to: period.get('to')!,
@@ -414,7 +446,7 @@ export function SharedAccessPage() {
         }).toString()
       : ''
   const behaviorPagination = useRecordCursorPagination(
-    `${tab}:${behaviorStatus}:${historyBasis}:${behaviorKeyword}:${periodQuery}`,
+    `${tab}:${behaviorView}:${behaviorStatus}:${historyBasis}:${behaviorKeyword}:${periodQuery}`,
   )
   const [inspectObservationId, setInspectObservationId] = useState<string | null>(null)
   const [inspectReviewId, setInspectReviewId] = useState<string | null>(null)
@@ -448,15 +480,16 @@ export function SharedAccessPage() {
       behaviorStatus,
       behaviorKeyword,
       tab,
+      behaviorView,
       historyBasis,
       periodQuery,
     ],
     queryFn: () =>
       request<CursorPage<SharedBehavior>>(
-        `/shared-access/observations?limit=${behaviorPagination.pageSize}&cursor=${encodeURIComponent(behaviorPagination.cursor)}&view=${periodQuery ? 'period&' + periodQuery : tab === 'history' ? 'history' : 'traffic'}${tab === 'history' ? `&history_basis=${encodeURIComponent(historyBasis)}` : ''}&status=${encodeURIComponent(behaviorStatus)}&keyword=${encodeURIComponent(behaviorKeyword)}`,
+        `/shared-access/observations?limit=${behaviorPagination.pageSize}&cursor=${encodeURIComponent(behaviorPagination.cursor)}&view=${periodQuery ? 'period&' + periodQuery : isHistory ? 'history' : 'traffic'}${isHistory ? `&history_basis=${encodeURIComponent(historyBasis)}` : ''}&status=${encodeURIComponent(behaviorStatus)}&keyword=${encodeURIComponent(behaviorKeyword)}`,
       ),
     refetchInterval: 30000,
-    enabled: tab === 'associations' || tab === 'history',
+    enabled: tab === 'associations',
   })
   const behaviorItems = behavior.data?.items ?? []
   const inspectObservationIndex = inspectObservationId
@@ -555,7 +588,7 @@ export function SharedAccessPage() {
         <div className="shared-behavior-verdict">
           <Tag
             color={
-              tab === 'history'
+              isHistory
                 ? undefined
                 : item.status === 'confirmed'
                   ? 'gold'
@@ -564,7 +597,7 @@ export function SharedAccessPage() {
                     : 'default'
             }
           >
-            {tab === 'history' ? historicalBehaviorLabel(item) : currentBehaviorLabel(item)}
+            {isHistory ? historicalBehaviorLabel(item) : currentBehaviorLabel(item)}
           </Tag>
         </div>
       ),
@@ -577,23 +610,23 @@ export function SharedAccessPage() {
         <div className="shared-behavior-signal-cell">
           <Space wrap size={[4, 4]}>
             {item.signal_groups
-              .filter((signal) => tab === 'history' || visibleBehaviorSignal(item, signal))
+              .filter((signal) => isHistory || visibleBehaviorSignal(item, signal))
               .map((signal) => (
                 <Tag key={signal}>
-                  {tab === 'history' && signal === 'router_identity'
+                  {isHistory && signal === 'router_identity'
                     ? '历史路由画像'
                     : behaviorSignals[signal] || signal}
                 </Tag>
               ))}
           </Space>
-          {tab !== 'history' &&
+          {!isHistory &&
             item.status !== 'confirmed' &&
             item.signal_groups.includes('router_identity') &&
             item.review_reason &&
             item.review_reason !== currentBehaviorLabel(item) && (
               <span className="shared-access-muted">{item.review_reason}</span>
             )}
-          {tab !== 'history' && item.strong_anchor && (item.device_lower_bound || 0) > 1 && (
+          {!isHistory && item.strong_anchor && (item.device_lower_bound || 0) > 1 && (
             <Typography.Text type="secondary">
               关联终端下界：{item.device_lower_bound} 台
             </Typography.Text>
@@ -607,11 +640,9 @@ export function SharedAccessPage() {
       width: 125,
       render: (_, item) => (
         <Tag
-          color={
-            tab === 'history' ? undefined : item.coverage_state === 'verified' ? 'green' : 'orange'
-          }
+          color={isHistory ? undefined : item.coverage_state === 'verified' ? 'green' : 'orange'}
         >
-          {tab === 'history'
+          {isHistory
             ? `当时覆盖${item.coverage_state === 'verified' ? '已验证' : '待完善'}`
             : item.coverage_state === 'verified'
               ? '采集覆盖已验证'
@@ -693,11 +724,8 @@ export function SharedAccessPage() {
           activeKey={tab}
           onChange={setTab}
           items={[
-            { key: 'associations', label: '共享行为观察' },
-            { key: 'routers', label: '路由器核验' },
-            { key: 'devices', label: '共享终端档案' },
-            { key: 'history', label: '历史观察' },
-            { key: 'reviews', label: '账号归属核验' },
+            { key: 'associations', label: '共享行为' },
+            { key: 'reviews', label: '人工核验' },
           ]}
         />
         {can(session.data, 'risks:read') && (
@@ -719,42 +747,52 @@ export function SharedAccessPage() {
           </Popover>
         )}
       </div>
-      {tab === 'devices' && <SharedDeviceProfiles />}
-      {tab === 'routers' && <RouterSharingCandidates />}
-      {(tab === 'associations' || tab === 'history') && (
+      {tab === 'associations' && (
         <>
           <AppTableBar
             searchPlaceholder={
-              tab === 'associations' && can(session.data, 'identity:read')
+              !isHistory && can(session.data, 'identity:read')
                 ? '账号、IP 或终端'
                 : 'IP、终端、品牌或型号'
             }
             searchValue={behaviorSearchInput}
             onSearchChange={setBehaviorSearchInput}
             filters={
-              <Select
-                aria-label={tab === 'history' ? '历史证据范围' : '判定状态'}
-                allowClear={tab !== 'history'}
-                placeholder="全部判定状态"
-                value={tab === 'history' ? historyBasis : behaviorStatus || undefined}
-                onChange={(value) =>
-                  tab === 'history' ? setHistoryBasis(value) : setBehaviorStatus(value || '')
-                }
-                options={
-                  tab === 'history'
-                    ? [
-                        { value: 'shared', label: '历史多终端证据' },
-                        { value: 'clues', label: '旧规则线索复核' },
-                      ]
-                    : Object.entries(behaviorStates).map(([value, label]) => ({ value, label }))
-                }
-              />
+              <>
+                <Segmented
+                  className="shared-account-range"
+                  aria-label="共享行为视图"
+                  value={behaviorView}
+                  options={[
+                    { label: '当前活跃', value: 'active' },
+                    { label: '历史记录', value: 'history' },
+                  ]}
+                  onChange={(value) => setBehaviorView(String(value))}
+                />
+                <Select
+                  aria-label={isHistory ? '历史证据范围' : '判定状态'}
+                  allowClear={!isHistory}
+                  placeholder="全部判定状态"
+                  value={isHistory ? historyBasis : behaviorStatus || undefined}
+                  onChange={(value) =>
+                    isHistory ? setHistoryBasis(value) : setBehaviorStatus(value || '')
+                  }
+                  options={
+                    isHistory
+                      ? [
+                          { value: 'shared', label: '历史多终端证据' },
+                          { value: 'clues', label: '旧规则线索复核' },
+                        ]
+                      : Object.entries(behaviorStates).map(([value, label]) => ({ value, label }))
+                  }
+                />
+              </>
             }
           />
           <section className="surface">
             <AppListHeader
               title={
-                tab === 'history'
+                isHistory
                   ? historyBasis === 'clues'
                     ? '旧规则线索复核'
                     : '历史共享观察'
@@ -763,7 +801,7 @@ export function SharedAccessPage() {
               count={behavior.data ? `本页 ${behavior.data.items.length} 条` : undefined}
               actions={<Tag color="blue">仅记录，未执行</Tag>}
             />
-            {tab === 'history' && historyBasis === 'clues' && (
+            {isHistory && historyBasis === 'clues' && (
               <Alert
                 type="warning"
                 showIcon
@@ -782,7 +820,7 @@ export function SharedAccessPage() {
               loadingRows={4}
               isEmpty={!behaviorItems.length}
               emptyText={
-                tab === 'history'
+                isHistory
                   ? historyBasis === 'clues'
                     ? '暂无旧规则复核线索'
                     : '暂无有明确多终端证据的历史记录'
@@ -856,20 +894,20 @@ export function SharedAccessPage() {
             <Space wrap size={[6, 6]}>
               <Tag
                 color={
-                  tab === 'history'
+                  isHistory
                     ? undefined
                     : inspectObservation.status === 'confirmed'
                       ? 'gold'
                       : 'default'
                 }
               >
-                {tab === 'history'
+                {isHistory
                   ? historicalBehaviorLabel(inspectObservation)
                   : currentBehaviorLabel(inspectObservation)}
               </Tag>
               <Tag
                 color={
-                  tab === 'history'
+                  isHistory
                     ? undefined
                     : inspectObservation.coverage_state === 'verified'
                       ? 'green'
@@ -938,7 +976,7 @@ export function SharedAccessPage() {
                 </div>
                 {inspectObservation.router?.assessment_id && (
                   <div className="app-detail-kv">
-                    <dt>{tab === 'history' ? '当时关联画像' : '关联路由画像'}</dt>
+                    <dt>{isHistory ? '当时关联画像' : '关联路由画像'}</dt>
                     <dd>
                       <Link
                         to={detailPath(
@@ -948,7 +986,7 @@ export function SharedAccessPage() {
                       >
                         {routerProfileLabel(
                           inspectObservation.router,
-                          tab !== 'history' && inspectObservation.current !== false,
+                          !isHistory && inspectObservation.current !== false,
                         ) || '查看画像记录'}
                       </Link>
                     </dd>
@@ -960,7 +998,7 @@ export function SharedAccessPage() {
               <h3 className="app-detail-section-title">判定依据与溯源</h3>
               <SharedBehaviorEvidence
                 item={inspectObservation}
-                historical={tab === 'history'}
+                historical={isHistory}
                 locationPath={location.pathname + location.search}
               />
             </section>

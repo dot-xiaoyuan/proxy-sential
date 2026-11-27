@@ -75,7 +75,7 @@ export function RouterSharingCandidates() {
     )
       pagination.reset()
   }, [profiles.data, profiles.isFetching, pagination])
-  const total = profiles.data?.page.total
+  const total = profiles.data?.page?.total
   const columns: ColumnsType<Profile> = [
     {
       title: '路由器身份',

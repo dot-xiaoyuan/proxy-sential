@@ -32,9 +32,15 @@ for (const viewport of [
       if (viewport.width >= 1280)
         await expect(page.getByRole('menuitem', { name: label, exact: true })).toBeVisible()
       await expect(page.getByRole('heading', { name: label, exact: true })).toBeVisible()
-      await expect(page.getByRole('tab')).toHaveCount(0)
-      if (label === '路由器')
+      if (label === '路由器') {
+        await expect(page.getByRole('tab')).toHaveCount(3)
+        await expect(page.getByRole('tab', { name: '路由器台账', exact: true })).toBeVisible()
+        await expect(page.getByRole('tab', { name: '路由器核验', exact: true })).toBeVisible()
+        await expect(page.getByRole('tab', { name: '涉共享设备档案', exact: true })).toBeVisible()
         await expect(page.locator('.router-observations-panel')).toContainText('Huawei')
+      } else {
+        await expect(page.getByRole('tab')).toHaveCount(0)
+      }
       if (label === '终端列表') await expect(page.locator('.device-inventory-page')).toBeVisible()
       await expect(page.locator('.ant-spin-spinning')).toHaveCount(0)
       const probe = await page.evaluate(() => ({
@@ -61,6 +67,14 @@ for (const viewport of [
         animations: 'disabled',
       })
     }
+    // 路由器页内切换到路由器核验与涉共享设备档案
+    await page.goto('/devices?tab=network')
+    await page.getByRole('tab', { name: '路由器核验', exact: true }).click()
+    await expect(page).toHaveURL(/\/devices\?.*tab=network.*network_view=candidates/)
+    await expect(page.getByText('路由器共享核验', { exact: true })).toBeVisible()
+    await page.getByRole('tab', { name: '涉共享设备档案', exact: true }).click()
+    await expect(page).toHaveURL(/\/devices\?.*tab=network.*network_view=profiles/)
+    await expect(page.locator('.compact-list-table')).toBeVisible()
     // 旧链接 /devices?tab=iot 自动回落到终端列表
     await page.goto('/devices?tab=iot')
     await expect(page).toHaveURL(/\/devices\?tab=terminal/)

@@ -205,7 +205,8 @@ for (const [width, height] of [
             created_at: new Date().toISOString(),
           }
           value = { enforcement_ready: false }
-        } else if (url.includes('/reviews?')) value = { items: [review], next_cursor: '' }
+        } else if (url.includes('/devices')) value = { items: [], page: { limit: 20, total: 0 } }
+        else if (url.includes('/reviews?')) value = { items: [review], next_cursor: '' }
         else value = review
         return new Response(JSON.stringify(value), {
           status: 200,
@@ -214,6 +215,11 @@ for (const [width, height] of [
       }
     })
     await page.goto('/shared-access?tab=associations')
+    await expect(page.getByRole('tab')).toHaveCount(2)
+    await expect(page.getByRole('tab', { name: '共享行为', exact: true })).toBeVisible()
+    await expect(page.getByRole('tab', { name: '人工核验', exact: true })).toBeVisible()
+    await expect(page.getByText('当前活跃', { exact: true })).toBeVisible()
+    await expect(page.getByText('历史记录', { exact: true })).toBeVisible()
     await page.getByText('链路与处置说明').click()
     await expect(page.getByText('清单完整性尚未证明')).toBeVisible()
     await expect(page.getByText('172.21.20.171')).toBeVisible()
@@ -320,7 +326,15 @@ for (const [width, height] of [
       animations: 'disabled',
     })
     await dialog.getByRole('button', { name: '保存结论' }).click()
-    expect(errors).toEqual([])
     await expect(dialog).toHaveCount(0)
     await expect(page.getByText('隔离回放，采集覆盖尚未验证')).toBeVisible()
+    // 兼容旧链接：history -> 共享行为历史记录，routers/devices -> 资产台账路由器对应视图
+    await page.goto('/shared-access?tab=history')
+    await expect(page).toHaveURL(/\/shared-access\?.*tab=associations.*behavior_view=history/)
+    await expect(page.getByRole('combobox', { name: '历史证据范围' })).toBeVisible()
+    await page.goto('/shared-access?tab=routers')
+    await expect(page).toHaveURL(/\/devices\?.*tab=network.*network_view=candidates/)
+    await page.goto('/shared-access?tab=devices')
+    await expect(page).toHaveURL(/\/devices\?.*tab=network.*network_view=profiles/)
+    expect(errors).toEqual([])
   })

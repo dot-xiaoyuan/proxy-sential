@@ -99,7 +99,7 @@ for (const viewport of [
       if (tab === 'associations') {
         await expect(page.getByText('路由器身份依据', { exact: true }).first()).toBeVisible()
         await expect(page.getByText('共享行为待核验', { exact: true })).toBeVisible()
-        await expect(page.getByText(/认证出口接入可明确识别的路由器即可确认共享/)).toBeVisible()
+        await expect(page.getByText('镜像流量中的共享行为')).toBeVisible()
       } else {
         await expect(page.getByText('TP-Link TL-WDR5620', { exact: true })).toBeVisible()
         await expect(page.getByText('已确认当前共享', { exact: true })).toHaveCount(0)
@@ -112,7 +112,7 @@ for (const viewport of [
         )
       }
       const probe = await page.evaluate(() => {
-        const panel = document.querySelector('.shared-access-page')!
+        const panel = document.querySelector('.shared-access-page, .device-center-page')!
         const controls = [
           ...panel.querySelectorAll('.ant-btn,.ant-tag,.ant-segmented-item'),
         ].filter((element) => element.getBoundingClientRect().width > 0)
@@ -177,7 +177,8 @@ for (const viewport of [
           url.searchParams.get('router_accounts') === scope.value &&
           !url.searchParams.has('router_sharing_page') &&
           url.searchParams.get('router_sharing_limit') === '50' &&
-          url.searchParams.get('tab') === 'routers',
+          url.searchParams.get('tab') === 'network' &&
+          url.searchParams.get('network_view') === 'candidates',
       )
       for (const name of ['TP-Link TL-WDR5620', 'TP-Link TL-WR886N']) {
         await expect(page.getByText(name, { exact: true })).toHaveCount(
@@ -186,7 +187,6 @@ for (const viewport of [
       }
     }
     if (viewport.width < 560) await page.getByRole('button', { name: '打开导航' }).click()
-    await page.getByRole('menuitem', { name: /设备中心$/ }).click()
     await expect(page.getByRole('link', { name: '终端列表', exact: true })).toBeVisible()
     await expect(page.getByRole('link', { name: '路由器', exact: true })).toBeVisible()
     await expect(page.getByRole('link', { name: '发现设备', exact: true })).toHaveCount(0)
