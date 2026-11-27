@@ -214,7 +214,7 @@ function RouterRoleObservationsPanel() {
     },
   ]
   return (
-    <div className="router-observations-panel">
+    <div className="router-observations-shell">
       {/* Filters and the list identity share one card so the table is not pushed down. */}
       <Form form={form} className="router-filter-form" layout="vertical" onFinish={submit}>
         <AppTableBar

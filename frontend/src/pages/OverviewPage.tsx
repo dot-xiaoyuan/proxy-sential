@@ -15,7 +15,6 @@ import {
 } from '@ant-design/icons'
 import { Card, Progress, Select, Tag, Typography } from 'antd'
 
-import { ActiveRiskIps } from './ActiveRiskIps'
 import { routerStatusLabels } from './routerLabels'
 import {
   RootFilesystemCapacity,
@@ -23,13 +22,7 @@ import {
 } from '../entities/system/RootFilesystemCapacity'
 import { request } from '../shared/api/client'
 import type { components } from '../shared/api/generated'
-import {
-  useActivityOverview,
-  useOrganization,
-  useOverview,
-  useSession,
-  useSystemStatus,
-} from '../shared/api/queries'
+import { useOrganization, useOverview, useSession, useSystemStatus } from '../shared/api/queries'
 import type { RiskLevel } from '../shared/api/types'
 import { can } from '../shared/auth/permissions'
 import {
@@ -160,10 +153,6 @@ export function OverviewPage() {
     sensor_id: sensorId || undefined,
     campus_id: campusId || undefined,
   })
-  const activity = useActivityOverview(
-    { window: quickWindow, sensor_id: sensorId || undefined, campus_id: campusId || undefined },
-    can(session.data, 'dpi:read'),
-  )
   const system = useSystemStatus()
 
   const routerSummary = useQuery({
@@ -172,6 +161,7 @@ export function OverviewPage() {
       request<RouterObservationReport>('/router-observations/summary', { signal }),
     enabled: canReadIdentity,
     staleTime: 60_000,
+    retry: 0,
   })
 
   const sharedTrend = useQuery({
@@ -180,6 +170,7 @@ export function OverviewPage() {
       request<SharedDecisionTrend>('/policy-decisions/shared-trend?window=1h', { signal }),
     enabled: canReadPolicies,
     staleTime: 60_000,
+    retry: 0,
   })
 
   if (overview.isLoading) {
@@ -196,14 +187,16 @@ export function OverviewPage() {
   const overdueCases = overview.data.overdue_case_count ?? 0
 
   const routerTotal = routerSummary.data
-    ? routerSummary.data.candidate + routerSummary.data.likely + routerSummary.data.confirmed
+    ? (routerSummary.data.candidate ?? 0) +
+      (routerSummary.data.likely ?? 0) +
+      (routerSummary.data.confirmed ?? 0)
     : undefined
 
-  const trendTotals = sharedTrend.data?.buckets.reduce(
+  const trendTotals = (sharedTrend.data?.buckets ?? []).reduce(
     (acc, item) => ({
-      matched: acc.matched + item.matched,
-      insufficient: acc.insufficient + item.insufficient,
-      expired: acc.expired + item.expired,
+      matched: acc.matched + (item.matched ?? 0),
+      insufficient: acc.insufficient + (item.insufficient ?? 0),
+      expired: acc.expired + (item.expired ?? 0),
     }),
     { matched: 0, insufficient: 0, expired: 0 },
   )
@@ -369,26 +362,26 @@ export function OverviewPage() {
                   {[
                     {
                       label: routerStatusLabels.confirmed,
-                      value: routerSummary.data.confirmed,
+                      value: routerSummary.data.confirmed ?? 0,
                       tone: 'blue',
                     },
                     {
                       label: routerStatusLabels.likely,
-                      value: routerSummary.data.likely,
+                      value: routerSummary.data.likely ?? 0,
                       tone: 'amber',
                     },
                     {
                       label: routerStatusLabels.candidate,
-                      value: routerSummary.data.candidate,
+                      value: routerSummary.data.candidate ?? 0,
                       tone: 'slate',
                     },
                   ].map((item) => (
                     <div className={`report-meter tone-${item.tone}`} key={item.label}>
                       <div className="report-meter-label">
                         <span>{item.label}</span>
-                        <strong>{item.value.toLocaleString('zh-CN')}</strong>
+                        <strong>{(item.value ?? 0).toLocaleString('zh-CN')}</strong>
                       </div>
-                      <meter min={0} max={Math.max(routerTotal ?? 1, 1)} value={item.value} />
+                      <meter min={0} max={Math.max(routerTotal ?? 1, 1)} value={item.value ?? 0} />
                     </div>
                   ))}
                 </div>
@@ -425,12 +418,6 @@ export function OverviewPage() {
               </div>
             </div>
           </Card>
-        </section>
-      )}
-
-      {activity.data && (activity.data.top_active_risk_ips?.length ?? 0) > 0 && (
-        <section className="surface">
-          <ActiveRiskIps items={activity.data.top_active_risk_ips} />
         </section>
       )}
 

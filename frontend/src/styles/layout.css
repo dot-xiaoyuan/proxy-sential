@@ -901,3 +901,11 @@ body {
 .sources-page > .surface {
   margin-bottom: 16px;
 }
+
+/* 全局品牌 Logo 尺寸保障，防止任意页面首屏 SVG 闪烁放大。 */
+.brand-logo-svg {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  color: var(--ps-brand);
+}

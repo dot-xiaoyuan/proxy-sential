@@ -3012,3 +3012,62 @@ pre.wrap-code {
 .ant-select-dropdown {
   max-width: calc(100vw - 16px);
 }
+
+/* === 同步 204 克制状态胶囊与指标卡视觉体系 === */
+.ps-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #334155;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.ps-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #94a3b8;
+}
+
+.ps-status-ok .ps-status-dot {
+  background: var(--ps-ok);
+}
+
+.ps-status-info .ps-status-dot {
+  background: var(--ps-brand);
+}
+
+.ps-status-warn .ps-status-dot {
+  background: var(--ps-warn);
+}
+
+.ps-status-danger .ps-status-dot {
+  background: var(--ps-danger);
+}
+
+.ps-status-neutral .ps-status-dot {
+  background: #94a3b8;
+}
+
+.ps-neutral-pill,
+.ps-code-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--ps-radius-sm);
+  border: 1px solid var(--ps-border-color);
+  background: #f1f5f9;
+  color: #334155;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.tabular-num {
+  font-variant-numeric: tabular-nums;
+}

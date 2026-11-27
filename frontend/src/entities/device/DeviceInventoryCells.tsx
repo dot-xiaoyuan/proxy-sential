@@ -521,24 +521,36 @@ export function DeviceLedgerRecognition({
       ? device.model
       : ''
   const clues = [
-    device.brand_inference?.status === 'inferred' &&
-    !isEmptyRecognition(device.brand_inference.brand)
-      ? `${device.brand_inference.brand} · 品牌推测（${Math.round(device.brand_inference.confidence * 100)}%）`
-      : '',
-    device.brand_reference && !isEmptyRecognition(device.brand_reference.brand)
-      ? `${device.brand_reference.brand} · MAC 厂商线索：${device.brand_reference.explanation}`
-      : '',
-    !recognitionDimensionConflict(device, 'os_family') &&
-    (device.os_family_confidence ?? 0) < 0.8 &&
-    !isEmptyRecognition(device.os_family)
-      ? `${device.os_family} · 系统线索（${Math.round((device.os_family_confidence ?? 0) * 100)}%）`
-      : '',
     !recognitionDimensionConflict(device, 'device_type') &&
     (device.device_type_confidence ?? 0) < 0.8 &&
     !isEmptyRecognition(device.device_type)
-      ? `${deviceTypeLabel(device.device_type!)} · 类型线索`
-      : '',
-  ].filter(Boolean)
+      ? {
+          label: `${deviceTypeLabel(device.device_type!)} · 类型线索`,
+          detail: `${deviceTypeLabel(device.device_type!)} · 类型线索`,
+        }
+      : undefined,
+    device.brand_inference?.status === 'inferred' &&
+    !isEmptyRecognition(device.brand_inference.brand)
+      ? {
+          label: `${resolveDeviceBrand({ brand: device.brand_inference.brand }).name || device.brand_inference.brand} · 品牌推测`,
+          detail: `${device.brand_inference.brand} · 品牌推测（${Math.round(device.brand_inference.confidence * 100)}%）`,
+        }
+      : undefined,
+    device.brand_reference && !isEmptyRecognition(device.brand_reference.brand)
+      ? {
+          label: `${resolveDeviceBrand({ brand: device.brand_reference.brand }).name || device.brand_reference.brand} · MAC 厂商线索`,
+          detail: `${device.brand_reference.brand} · MAC 厂商线索：${device.brand_reference.explanation}`,
+        }
+      : undefined,
+    !recognitionDimensionConflict(device, 'os_family') &&
+    (device.os_family_confidence ?? 0) < 0.8 &&
+    !isEmptyRecognition(device.os_family)
+      ? {
+          label: `${device.os_family} · 系统线索`,
+          detail: `${device.os_family} · 系统线索（${Math.round((device.os_family_confidence ?? 0) * 100)}%）`,
+        }
+      : undefined,
+  ].filter((item): item is { label: string; detail: string } => Boolean(item))
   return (
     <div className="device-ledger-recognition">
       {type && <Typography.Text>{type}</Typography.Text>}
@@ -577,14 +589,18 @@ export function DeviceLedgerRecognition({
             title={
               <div>
                 {clues.map((clue) => (
-                  <div key={clue}>{clue}</div>
+                  <div key={clue.detail}>{clue.detail}</div>
                 ))}
               </div>
             }
           >
-            <Typography.Text className="device-ledger-clues" tabIndex={0}>
-              识别线索 {clues.length}
-            </Typography.Text>
+            <span className="device-ledger-clues" tabIndex={0}>
+              <span className="device-ledger-clue-dot" aria-hidden="true" />
+              <span className="device-ledger-clue-text">{clues[0].label}</span>
+              {clues.length > 1 && (
+                <span className="device-ledger-clue-more">+{clues.length - 1}</span>
+              )}
+            </span>
           </Tooltip>
         )}
       </div>

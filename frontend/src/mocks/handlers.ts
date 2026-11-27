@@ -1264,7 +1264,9 @@ export const handlers = [
   http.get('/api/v1/device-inventory/:endpointId', () =>
     HttpResponse.json({
       profile: {
+        ...macOSProfile,
         recognition: {
+          ...macOSProfile.recognition,
           source_matches: [
             {
               source_id: 'satori',
@@ -1279,6 +1281,7 @@ export const handlers = [
           ],
         },
       },
+      state: { complete: true },
       associations: [],
     }),
   ),

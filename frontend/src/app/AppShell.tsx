@@ -18,6 +18,7 @@ import type { MenuProps } from 'antd'
 import { useLogout, useSession } from '../shared/api/queries'
 import { LoginPage } from '../pages/LoginPage'
 import { can } from '../shared/auth/permissions'
+import { BrandLogo } from '../shared/ui'
 import { routeOwner, routePermission, visibleNavigation } from './navigation'
 import { prefetchRoute } from './routePages'
 import type { Session } from '../shared/api/types'
@@ -57,26 +58,7 @@ function buildNavItems(session: Session): MenuProps['items'] {
 }
 
 function SentinelLogo() {
-  return (
-    <svg
-      aria-label="Proxy Sentinel"
-      role="img"
-      className="brand-logo-svg"
-      fill="none"
-      viewBox="0 0 32 32"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <path
-        d="M16 3L5 7V14C5 20.5 9.7 26.5 16 29C22.3 26.5 27 20.5 27 14V7L16 3Z"
-        stroke="#2257a7"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="2.5"
-      />
-      <circle cx="16" cy="15" r="5" stroke="#3b82f6" strokeWidth="2" />
-      <circle cx="16" cy="15" fill="#2257a7" r="2" />
-    </svg>
-  )
+  return <BrandLogo className="brand-logo-svg" size={26} />
 }
 
 export function AppShell() {

@@ -61,9 +61,9 @@ for (const viewport of [
         animations: 'disabled',
       })
     }
-    // 哑终端与发现线索暂停：旧链接回落到终端列表
+    // 旧链接 /devices?tab=iot 展示发现设备面板
     await page.goto('/devices?tab=iot')
-    await expect(page.getByRole('heading', { name: '终端列表', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '发现设备', exact: true })).toBeVisible()
     await writeFile(path.join(dir, 'dom.json'), JSON.stringify({ probes, errors }, null, 2))
     expect(errors).toEqual([])
   })

@@ -543,3 +543,18 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+@media (max-width: 560px) {
+  .overview-page .ant-segmented {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .overview-page .overview-metric-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .overview-page .overview-panel-header {
+    flex-wrap: wrap;
+  }
+}

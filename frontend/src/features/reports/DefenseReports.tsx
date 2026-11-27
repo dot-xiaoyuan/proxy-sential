@@ -104,12 +104,12 @@ function MeterChart({ label, items, max }: { label: string; items: Metric[]; max
         <div className={`report-meter tone-${item.tone ?? 'blue'}`} key={item.label}>
           <div className="report-meter-label">
             <span id={`${label}-${index}`}>{item.label}</span>
-            <strong>{item.value.toLocaleString('zh-CN')}</strong>
+            <strong>{(item.value ?? 0).toLocaleString('zh-CN')}</strong>
           </div>
           <meter
             min={0}
-            max={Math.max(max, 1)}
-            value={item.value}
+            max={Math.max(max || 1, 1)}
+            value={item.value ?? 0}
             aria-labelledby={`${label}-${index}`}
           />
         </div>
@@ -124,7 +124,7 @@ export function RouterReport() {
   )
   return (
     <ReportPanel title="路由器识别分布" query={query}>
-      {({ as_of, candidate, likely, confirmed }) => {
+      {({ as_of, candidate = 0, likely = 0, confirmed = 0 }) => {
         const total = candidate + likely + confirmed
         return (
           <>

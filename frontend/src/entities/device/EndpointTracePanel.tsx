@@ -24,7 +24,7 @@ const labels = { account: '账号', ip: 'IP', access: '接入位置' }
 const time = formatDateTime
 
 export function AssociationOverview({ detail }: { detail?: InventoryDetail }) {
-  if (!detail?.state.complete)
+  if (!detail?.state?.complete)
     return (
       <Alert
         showIcon

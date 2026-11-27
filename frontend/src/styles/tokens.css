@@ -15,13 +15,21 @@
   --ps-text-secondary: #475569;
   --ps-text-muted: #64748b;
 
-  /* 统一品牌主色（沉稳安全深蓝） */
+  /* 统一品牌主色（沉稳安全深蓝，与 204 设计系统一致） */
+  --ps-brand: #2257a7;
+  --ps-brand-hover: #1b4688;
+  --ps-brand-soft: #eef4fb;
   --ps-primary-color: #2257a7;
   --ps-primary-hover: #1b4688;
   --ps-primary-active: #163a72;
-  --ps-primary-bg: #eff6ff;
-  --ps-primary-border: #bfdbfe;
+  --ps-primary-bg: #eef4fb;
+  --ps-primary-border: #b8cde8;
   --ps-primary-ring: rgba(34, 87, 167, 0.16);
+
+  /* 状态语义色 */
+  --ps-ok: #15803d;
+  --ps-warn: #b45309;
+  --ps-danger: #dc2626;
 
   /* 登录页统一配色 */
   --ps-login-bg-start: #f8fafc;
@@ -48,6 +56,7 @@
   --ps-risk-normal-border: #bbf7d0;
 
   /* 布局与阴影令牌 */
+  --ps-radius-lg: 10px;
   --ps-radius-md: 8px;
   --ps-radius-sm: 6px;
   --ps-shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04);

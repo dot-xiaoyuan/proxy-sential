@@ -759,18 +759,25 @@ export function PassiveDiscoveryPanel({ view }: { view: 'iot' | 'records' }) {
     clue.connection_outcome === 'syn_ack_observed'
       ? `见 TCP SYN-ACK ${clue.dst_port}`
       : `尝试连接 ${clue.proto.toUpperCase()} ${clue.dst_port}`
-  const clues = (item: Device) => (
-    <Space wrap>
-      {(item.capabilities ?? [])
-        .filter((c) => capabilities[c])
-        .map((c) => (
-          <Tag key={c}>{capabilities[c]}</Tag>
+  const clues = (item: Device) => {
+    const capItems = (item.capabilities ?? []).filter((c) => capabilities[c])
+    const protoItems = item.protocols ?? []
+    if (!capItems.length && !protoItems.length) return null
+    return (
+      <div className="discovery-clue-tags">
+        {capItems.map((c) => (
+          <Tag key={c} className="discovery-clue-tag">
+            {capabilities[c]}
+          </Tag>
         ))}
-      {(item.protocols ?? []).map((p) => (
-        <Tag key={p}>{protocols[p] ?? p}</Tag>
-      ))}
-    </Space>
-  )
+        {protoItems.map((p) => (
+          <Tag key={p} className="discovery-clue-tag">
+            {protocols[p] ?? p}
+          </Tag>
+        ))}
+      </div>
+    )
+  }
   const state = (item: Device) => (
     <Typography.Text type={item.classification_status === 'conflict' ? 'warning' : 'secondary'}>
       {item.classification_status === 'candidate' && !typeLabel(item, types)

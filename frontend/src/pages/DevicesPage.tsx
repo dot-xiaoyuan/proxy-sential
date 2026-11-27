@@ -8,7 +8,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { isIPAddress } from '../shared/ipAddress'
 import { can } from '../shared/auth/permissions'
 import { IpTrafficObservations } from '../widgets/IpTrafficObservations'
-import { InfoCircleOutlined, SettingOutlined } from '@ant-design/icons'
+import { InfoCircleOutlined, ReloadOutlined, SettingOutlined } from '@ant-design/icons'
 
 import {
   TerminalInventoryIdentity,
@@ -26,7 +26,6 @@ import type { DeviceInventoryListItem, DeviceQuery } from '../shared/api/types'
 import {
   AppDetailDrawer,
   AppErrorAlert,
-  AppListHeader,
   AppLoadingState,
   AppServerPagination,
   AppTable,
@@ -438,34 +437,54 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
           </div>
         </header>
       )}
-      {inlineBar}
-      {searchType === 'account' && (
-        <Typography.Text className="device-list-note" type="secondary">
-          账号精确匹配最新观测候选，不代表在线或登记责任人；历史账号请进入详情溯源。
-        </Typography.Text>
-      )}
 
       <section className="surface device-inventory-surface">
-        <AppListHeader
-          title="终端列表"
-          count={
-            total !== undefined ? (
-              <Tooltip
-                title={
-                  metadata.data?.as_of
-                    ? `统计时间：${formatDateTime(metadata.data.as_of)}`
-                    : undefined
-                }
-              >
-                <span>{total} 个终端身份</span>
-              </Tooltip>
-            ) : undefined
-          }
-          actions={
-            <>
+        <div className="device-inventory-toolbar">
+          <div className="device-inventory-summary-bar">
+            <div className="device-inventory-summary-main">
+              {!embedded && <h4 className="app-list-title">终端列表</h4>}
+              {total !== undefined && (
+                <Tooltip
+                  title={
+                    metadata.data?.as_of
+                      ? `统计时间：${formatDateTime(metadata.data.as_of)}`
+                      : undefined
+                  }
+                >
+                  <strong className="device-inventory-total tabular-num">{total} 个终端身份</strong>
+                </Tooltip>
+              )}
+              <div className="device-list-freshness">
+                {devices.dataUpdatedAt > 0 && (
+                  <Typography.Text type="secondary">
+                    列表刷新{' '}
+                    {new Date(devices.dataUpdatedAt).toLocaleTimeString('zh-CN', { hour12: false })}
+                  </Typography.Text>
+                )}
+                {devices.data?.as_of && (
+                  <Typography.Text type="secondary">
+                    画像更新时间 {shortTime(devices.data.as_of)}
+                  </Typography.Text>
+                )}
+                {devices.data?.read_model_updating && (
+                  <Typography.Text className="device-read-model-state">
+                    画像摘要更新中
+                  </Typography.Text>
+                )}
+                {metadata.isError && (
+                  <Typography.Text className="device-read-model-state">
+                    统计读取失败{' '}
+                    <Button type="link" size="small" onClick={() => void metadata.refresh()}>
+                      重试统计
+                    </Button>
+                  </Typography.Text>
+                )}
+              </div>
+            </div>
+            <div className="device-inventory-summary-actions">
               {embedded && scopeControls}
               <Tooltip title="近期观测不等于在线，终端身份数不等于物理终端数；账号和接入位置为观测关联。">
-                <InfoCircleOutlined aria-label="列表说明" />
+                <InfoCircleOutlined className="device-info-icon" aria-label="列表说明" />
               </Tooltip>
               <Popover
                 trigger="click"
@@ -486,30 +505,23 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
                   列设置
                 </Button>
               </Popover>
-            </>
-          }
-        />
-        <div className="device-list-freshness">
-          {devices.dataUpdatedAt > 0 && (
-            <Typography.Text type="secondary">
-              列表刷新{' '}
-              {new Date(devices.dataUpdatedAt).toLocaleTimeString('zh-CN', { hour12: false })}
-            </Typography.Text>
-          )}
-          {devices.data?.as_of && (
-            <Typography.Text type="secondary">
-              画像更新时间 {shortTime(devices.data.as_of)}
-            </Typography.Text>
-          )}
-          {devices.data?.read_model_updating && (
-            <Typography.Text className="device-read-model-state">画像摘要更新中</Typography.Text>
-          )}
-          {metadata.isError && (
-            <Typography.Text className="device-read-model-state">
-              统计读取失败{' '}
-              <Button type="link" size="small" onClick={() => void metadata.refresh()}>
-                重试统计
+              <Button
+                icon={<ReloadOutlined aria-hidden="true" />}
+                aria-label="刷新数据"
+                loading={devices.isFetching}
+                onClick={() => {
+                  void devices.refetch()
+                  void metadata.refresh()
+                }}
+              >
+                刷新
               </Button>
+            </div>
+          </div>
+          {inlineBar}
+          {searchType === 'account' && (
+            <Typography.Text className="device-list-note" type="secondary">
+              账号精确匹配最新观测候选，不代表在线或登记责任人；历史账号请进入详情溯源。
             </Typography.Text>
           )}
         </div>
@@ -790,6 +802,7 @@ export function DevicesPage({ embedded = false }: { embedded?: boolean }) {
 }
 
 function OwnershipAccess({ device }: { device: DeviceInventoryListItem }) {
+  if (!device.current_account_conflict && !device.current_account) return null
   return (
     <div className="device-context-cell">
       {device.current_account_conflict && (
@@ -800,20 +813,10 @@ function OwnershipAccess({ device }: { device: DeviceInventoryListItem }) {
           </Typography.Text>
         </div>
       )}
-      {device.current_account ? (
-        <div>
-          <Typography.Text type="secondary">关联账号</Typography.Text>
-          <Typography.Text className="brand-evidence-wrap">
-            {device.current_account}
-          </Typography.Text>
-        </div>
-      ) : (
-        !device.current_account_conflict && (
-          <div>
-            <Typography.Text type="secondary">关联账号</Typography.Text>
-            <span className="account-placeholder">无认证账号</span>
-          </div>
-        )
+      {device.current_account && (
+        <Typography.Text className="brand-evidence-wrap mono">
+          {device.current_account}
+        </Typography.Text>
       )}
     </div>
   )

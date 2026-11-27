@@ -151,7 +151,18 @@ export function EndpointDetailsPage() {
   )
   const session = useSession()
 
-  const profile = identity.data ?? fallbackEndpointProfile(endpointId)
+  const fallbackProfile = fallbackEndpointProfile(endpointId)
+  const profile: EndpointIdentityProfile = identity.data
+    ? {
+        ...fallbackProfile,
+        ...identity.data,
+        endpoint: identity.data.endpoint ?? fallbackProfile.endpoint,
+        accounts: identity.data.accounts ?? [],
+        sessions: identity.data.sessions ?? [],
+        ip_history: identity.data.ip_history ?? [],
+        access_history: identity.data.access_history ?? [],
+      }
+    : fallbackProfile
   const canUpdateRegistration = can(session.data, 'endpoints:write')
   const latestIP = profile?.recognition?.current_ip ?? profile?.ip_history?.[0]?.ip ?? ''
   const latestAccess = profile?.recognition?.current_access_id ?? ''
@@ -203,7 +214,9 @@ export function EndpointDetailsPage() {
     recognition?.discovery?.capabilities?.length ||
     recognition?.recognition_conflict,
   )
-  const associationCounts = detail.data?.state.complete ? detail.data.association_counts : undefined
+  const associationCounts = detail.data?.state?.complete
+    ? detail.data.association_counts
+    : undefined
 
   if (identity.isLoading) {
     return <Skeleton active />
@@ -244,15 +257,15 @@ export function EndpointDetailsPage() {
         <section className="surface endpoint-summary" aria-label="终端关联摘要">
           <div className="endpoint-summary-item">
             <span>关联账号</span>
-            <strong>{associationCounts?.account ?? (detail.data?.state.complete ? 0 : '')}</strong>
+            <strong>{associationCounts?.account ?? (detail.data?.state?.complete ? 0 : '')}</strong>
           </div>
           <div className="endpoint-summary-item">
             <span>历史 IP</span>
-            <strong>{associationCounts?.ip ?? (detail.data?.state.complete ? 0 : '')}</strong>
+            <strong>{associationCounts?.ip ?? (detail.data?.state?.complete ? 0 : '')}</strong>
           </div>
           <div className="endpoint-summary-item">
             <span>接入位置</span>
-            <strong>{associationCounts?.access ?? (detail.data?.state.complete ? 0 : '')}</strong>
+            <strong>{associationCounts?.access ?? (detail.data?.state?.complete ? 0 : '')}</strong>
           </div>
           <div className="endpoint-summary-item endpoint-summary-confidence">
             <span>身份置信度</span>

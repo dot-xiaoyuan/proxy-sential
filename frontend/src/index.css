@@ -1,6 +1,7 @@
-/* 全局基础样式入口：按 令牌 -> 基础 -> 壳层布局 -> 共享组件 顺序加载。
- * 各页面专属样式位于 src/styles/pages/*.css，由对应路由页面按需引入。 */
+/* 全局基础样式入口：按 令牌 -> 基础 -> 壳层布局 -> 共享组件 -> 登录页 顺序加载。
+ * 各业务页面专属样式位于 src/styles/pages/*.css，由对应路由页面按需引入。 */
 @import './styles/tokens.css';
 @import './styles/base.css';
 @import './styles/layout.css';
 @import './styles/components.css';
+@import './styles/pages/login.css';
