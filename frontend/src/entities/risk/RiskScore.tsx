@@ -1,7 +1,8 @@
 import { Progress, Space, Typography } from 'antd'
 
 export function RiskScore({ score }: { score: number }) {
-  const strokeColor = score >= 80 ? '#d4380d' : score >= 60 ? '#fa8c16' : score >= 30 ? '#d4b106' : '#389e0d'
+  const strokeColor =
+    score >= 80 ? '#d4380d' : score >= 60 ? '#fa8c16' : score >= 30 ? '#d4b106' : '#389e0d'
 
   return (
     <Space className="risk-score" size={10}>

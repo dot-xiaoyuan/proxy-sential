@@ -26,7 +26,10 @@ for (const viewport of viewports) {
     const errors: string[] = []
     page.on('pageerror', (error) => errors.push(error.message))
     await page.setViewportSize(viewport)
-    const dir = path.resolve('../artifacts/releases/policy-form-shell-20261014', `mock-${viewport.width}`)
+    const dir = path.resolve(
+      '../artifacts/releases/policy-form-shell-20261014',
+      `mock-${viewport.width}`,
+    )
     await mkdir(dir, { recursive: true })
     const probes: unknown[] = []
     const isSheet = viewport.width <= 560
@@ -48,11 +51,21 @@ for (const viewport of viewports) {
         overflow: await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 2),
         // offsetHeight is layout height: getBoundingClientRect would report the
         // mid-flight value while the dialog is still scaling in.
-        contentHeight: await dialog.locator('.ant-modal-container').evaluate((el) => (el as HTMLElement).offsetHeight),
-        bodyOverflow: await dialog.locator('.ant-modal-body').evaluate((el) => el.scrollWidth > el.clientWidth + 2),
-        bodyScrolls: await dialog.locator('.ant-modal-body').evaluate((el) => el.scrollHeight > el.clientHeight),
-        headerPosition: await dialog.locator('.ant-modal-header').evaluate((el) => getComputedStyle(el).position),
-        placeholders: await dialog.evaluate((el) => /未识别|未获取|未关联|未观测/.test(el.textContent ?? '')),
+        contentHeight: await dialog
+          .locator('.ant-modal-container')
+          .evaluate((el) => (el as HTMLElement).offsetHeight),
+        bodyOverflow: await dialog
+          .locator('.ant-modal-body')
+          .evaluate((el) => el.scrollWidth > el.clientWidth + 2),
+        bodyScrolls: await dialog
+          .locator('.ant-modal-body')
+          .evaluate((el) => el.scrollHeight > el.clientHeight),
+        headerPosition: await dialog
+          .locator('.ant-modal-header')
+          .evaluate((el) => getComputedStyle(el).position),
+        placeholders: await dialog.evaluate((el) =>
+          /未识别|未获取|未关联|未观测/.test(el.textContent ?? ''),
+        ),
       }
 
       expect(probe.overflow, '页面级横向溢出').toBe(false)
@@ -60,9 +73,15 @@ for (const viewport of viewports) {
       expect(probe.placeholders, '出现了禁用占位文案').toBe(false)
       if (isSheet) {
         // Full-height sheet: one scroll container, header and footer on screen.
-        expect(probe.contentHeight, `小屏未使用整屏工作表：${form.name} 高 ${probe.contentHeight} / 视口 ${probe.viewportHeight}`).toBeGreaterThanOrEqual(probe.viewportHeight - 2)
+        expect(
+          probe.contentHeight,
+          `小屏未使用整屏工作表：${form.name} 高 ${probe.contentHeight} / 视口 ${probe.viewportHeight}`,
+        ).toBeGreaterThanOrEqual(probe.viewportHeight - 2)
       } else {
-        expect(probe.contentHeight, `宽屏不应占满整屏：${form.name} 高 ${probe.contentHeight} / 视口 ${probe.viewportHeight}`).toBeLessThan(probe.viewportHeight - 20)
+        expect(
+          probe.contentHeight,
+          `宽屏不应占满整屏：${form.name} 高 ${probe.contentHeight} / 视口 ${probe.viewportHeight}`,
+        ).toBeLessThan(probe.viewportHeight - 20)
       }
 
       probes.push({ form: form.name, ...probe })

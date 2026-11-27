@@ -1,0 +1,376 @@
+@media (max-width: 560px) {
+  .case-layout,
+  .organization-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ai-relay-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 1920px;
+  width: 100%;
+  margin-inline: auto;
+}
+
+.ai-relay-wide-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+  gap: 16px;
+  align-items: start;
+  min-width: 0;
+}
+
+.ai-relay-table-wrap {
+  min-width: 0;
+}
+
+.ai-relay-table-wrap .ant-table-tbody > tr.ant-table-row {
+  cursor: pointer;
+}
+
+.ai-relay-table-wrap .ant-table-tbody > tr.ai-relay-row-active > td {
+  background: #eff6ff;
+}
+
+.ai-relay-detail {
+  border-left: 1px solid #e2e8f0;
+  padding-left: 16px;
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  max-height: calc(100vh - 240px);
+  overflow: auto;
+}
+
+.ai-relay-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ai-relay-detail-head strong {
+  display: block;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.ai-relay-detail-head span {
+  display: block;
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.ai-relay-detail-facts {
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.ai-relay-detail-facts > div {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+}
+
+.ai-relay-detail-facts dt {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.ai-relay-detail-facts dd {
+  margin: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.ai-relay-detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ai-relay-detail-section h5 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.ai-relay-detail-domains {
+  display: grid;
+  gap: 6px;
+}
+
+.ai-relay-detail-domain {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.ai-relay-detail-domain strong {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.ai-relay-detail-events {
+  display: grid;
+  gap: 6px;
+}
+
+.ai-relay-detail-event {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  padding: 6px 0;
+  border-top: 1px solid #f1f5f9;
+  font-size: 12px;
+  color: #475569;
+  align-items: baseline;
+}
+
+.ai-relay-detail-event .ai-relay-domain {
+  overflow-wrap: anywhere;
+}
+
+.ai-relay-detail-event a {
+  white-space: nowrap;
+}
+
+@media (max-width: 1799px) {
+  .ai-relay-wide-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ai-relay-detail {
+    border-left: 0;
+    padding-left: 0;
+  }
+}
+
+.ai-relay-note {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.ai-relay-note a {
+  margin-left: 12px;
+  white-space: nowrap;
+}
+
+.ai-relay-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 20px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.ai-relay-filters .ant-select,
+.ai-relay-filters .ant-input-affix-wrapper {
+  width: 180px;
+  min-width: 0;
+}
+
+.ai-relay-list {
+  display: grid;
+  gap: 14px;
+}
+
+.ai-relay-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.ai-relay-ip,
+.ai-relay-domain {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.ai-relay-summary,
+.ai-relay-domains,
+.ai-relay-event,
+.ai-relay-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  align-items: center;
+}
+
+.ai-relay-summary {
+  margin-bottom: 12px;
+  color: #475569;
+}
+
+.ai-relay-domains {
+  margin-bottom: 12px;
+}
+
+.ai-relay-domain {
+  color: #334155;
+}
+
+.ai-relay-domain-entry {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ai-relay-domain-entry strong {
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.ai-relay-domain-entry .ai-relay-domain {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.ai-relay-details summary {
+  cursor: pointer;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ai-relay-events {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.ai-relay-event {
+  padding: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.ai-relay-event a,
+.ai-relay-pagination button {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.ai-relay-pagination {
+  justify-content: flex-end;
+}
+
+@media (max-width: 560px) {
+  .ai-relay-filters {
+    padding: 14px;
+  }
+
+  .ai-relay-filters .ant-select,
+  .ai-relay-filters .ant-input-affix-wrapper {
+    width: 100%;
+  }
+
+  .ai-relay-card .ant-card-head {
+    flex-wrap: wrap;
+  }
+
+  .ai-relay-card .ant-card-extra {
+    margin-inline-start: 0;
+  }
+}
+
+.ai-relay-page .ant-btn {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.ai-relay-library {
+  display: grid;
+  gap: 12px;
+}
+
+.ai-relay-library-meta,
+.ai-relay-library-filters,
+.ai-relay-library-details {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 18px;
+}
+
+.ai-relay-library-meta {
+  color: #475569;
+}
+
+.ai-relay-library-details {
+  color: #475569;
+}
+
+.ai-relay-library-names {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin-bottom: 8px;
+  overflow-wrap: anywhere;
+}
+
+.ai-relay-library-names strong {
+  font-size: 16px;
+  color: #0f172a;
+}
+
+.ai-relay-library .ant-table .ai-relay-library-names {
+  margin-bottom: 0;
+}
+
+.ai-relay-library .ant-table .ai-relay-library-names strong {
+  font-size: 13px;
+}
+
+.ai-relay-library-names span {
+  color: #64748b;
+}
+
+.ai-relay-library-source {
+  margin-top: 10px;
+  overflow-wrap: anywhere;
+}
+
+.ai-relay-library-official summary {
+  cursor: pointer;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ai-relay-library-official > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.ai-relay-domain-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ai-relay-expanded {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}

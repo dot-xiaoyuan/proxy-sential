@@ -1,28 +1,19 @@
-import {
-  Notice as Alert } from '../shared/ui/Notice'
+import '../styles/pages/devices.css'
+import '../styles/pages/shared-access.css'
+import { Notice as Alert } from '../shared/ui/Notice'
 import { safeReturnTo } from '../app/navigation'
 import { useUrlState } from '../shared/ui/useUrlState'
-import { ApplicationActivity } from "../features/applications/ApplicationActivity";
+import { ApplicationActivity } from '../features/applications/ApplicationActivity'
 import { IpTrafficObservations } from '../widgets/IpTrafficObservations'
 
-import { Link,
-  useParams,
-  useSearchParams } from "react-router-dom";
-import {Descriptions,
-  Progress,
-  Skeleton,
-  Space,
-  Statistic,
-  Tabs,
-  Tag,
-  Typography,
-} from "antd";
+import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Descriptions, Progress, Skeleton, Space, Statistic, Tabs, Tag, Typography } from 'antd'
 
-import { EvidenceList } from "../entities/evidence/EvidenceList";
-import { RiskLevelTag } from "../entities/risk/RiskLevelTag";
-import { RiskScore } from "../entities/risk/RiskScore";
-import { ReviewStatusTag } from "../entities/risk/ReviewStatusTag";
-import { LabelPanel } from "../features/labels/LabelPanel";
+import { EvidenceList } from '../entities/evidence/EvidenceList'
+import { RiskLevelTag } from '../entities/risk/RiskLevelTag'
+import { RiskScore } from '../entities/risk/RiskScore'
+import { ReviewStatusTag } from '../entities/risk/ReviewStatusTag'
+import { LabelPanel } from '../features/labels/LabelPanel'
 import {
   useIpActivity,
   useIpDevices,
@@ -30,7 +21,7 @@ import {
   useIpEvents,
   useIpRisk,
   useSession,
-} from "../shared/api/queries";
+} from '../shared/api/queries'
 import type {
   ActivityAccess,
   ActivityCount,
@@ -41,37 +32,55 @@ import type {
   DeviceQuery,
   NormalizedEventSummary,
   ObservedDevice,
-} from "../shared/api/types";
-import { can } from "../shared/auth/permissions";
-import { displayField, statusText } from "../shared/ui/status";
+} from '../shared/api/types'
+import { can } from '../shared/auth/permissions'
+import { displayField, statusText } from '../shared/ui/status'
 import { AppErrorAlert, AppFactBar, AppListHeader, AppTable, formatDateTime } from '../shared/ui'
 
 export function IpDetailsPage() {
-  const rawIp = useParams().ip ?? "";
-  const ip = decodeURIComponent(rawIp);
-  const [params]=useSearchParams();const [activeTab,setActiveTab]=useUrlState("tab","devices",["devices","activity","applications","evidence"]);
-  const session = useSession();
-  const risk = useIpRisk(ip);
-  const evidence = useIpEvidence(ip, { limit: 20 }, activeTab === "evidence" && can(session.data,"evidence:read"));
-  const activity = useIpActivity(ip, activeTab === "activity" && can(session.data,"dpi:read"));
-  const devices = useIpDevices(ip, { window: (params.get("window")||"24h") as DeviceQuery["window"],sensor_id:params.get("sensor_id")||undefined,campus_id:params.get("campus_id")||undefined }, activeTab === "devices" && can(session.data,"identity:read"));
-  const events = useIpEvents(ip, 20, activeTab === "evidence" && can(session.data,"events:read"));
-  const canLabel = can(session.data, "labels:create");
+  const rawIp = useParams().ip ?? ''
+  const ip = decodeURIComponent(rawIp)
+  const [params] = useSearchParams()
+  const [activeTab, setActiveTab] = useUrlState('tab', 'devices', [
+    'devices',
+    'activity',
+    'applications',
+    'evidence',
+  ])
+  const session = useSession()
+  const risk = useIpRisk(ip)
+  const evidence = useIpEvidence(
+    ip,
+    { limit: 20 },
+    activeTab === 'evidence' && can(session.data, 'evidence:read'),
+  )
+  const activity = useIpActivity(ip, activeTab === 'activity' && can(session.data, 'dpi:read'))
+  const devices = useIpDevices(
+    ip,
+    {
+      window: (params.get('window') || '24h') as DeviceQuery['window'],
+      sensor_id: params.get('sensor_id') || undefined,
+      campus_id: params.get('campus_id') || undefined,
+    },
+    activeTab === 'devices' && can(session.data, 'identity:read'),
+  )
+  const events = useIpEvents(ip, 20, activeTab === 'evidence' && can(session.data, 'events:read'))
+  const canLabel = can(session.data, 'labels:create')
 
   if (risk.isLoading) {
-    return <Skeleton active />;
+    return <Skeleton active />
   }
 
   if (risk.isError || !risk.data) {
-    return <AppErrorAlert title="IP 详情读取失败" />;
+    return <AppErrorAlert title="IP 详情读取失败" />
   }
 
-  const evidenceItems = evidence.data?.evidence ?? [];
-  const eventItems = events.data?.events ?? [];
-  const profile = activity.data;
-  const deviceInventory = devices.data;
-  const recentAccesses = profile?.recent_accesses.slice(0, 8) ?? [];
-  const hasRiskAssessment = Boolean(risk.data.window) && risk.data.window !== "none";
+  const evidenceItems = evidence.data?.evidence ?? []
+  const eventItems = events.data?.events ?? []
+  const profile = activity.data
+  const deviceInventory = devices.data
+  const recentAccesses = profile?.recent_accesses.slice(0, 8) ?? []
+  const hasRiskAssessment = Boolean(risk.data.window) && risk.data.window !== 'none'
 
   return (
     <main className="page ip-details-page">
@@ -95,61 +104,89 @@ export function IpDetailsPage() {
         <div className="surface">
           <Typography.Title level={4}>风险摘要与置信度</Typography.Title>
           <Descriptions column={1} size="small">
-            {hasRiskAssessment && <>
-            <Descriptions.Item label="置信度">
-              <Typography.Text strong className="text-light-blue">
-                {Math.round(risk.data.confidence * 100)}%
-              </Typography.Text>
-            </Descriptions.Item>
-            <Descriptions.Item label="窗口">
-              {risk.data.window}
-            </Descriptions.Item>
-            <Descriptions.Item label="检测依据">
-              <Space wrap>
-                <Tag>{({ explicit_tunnel: "明确隧道协议", shared_device_divergence: "共享设备分歧", behavioral_only: "仅行为线索" } as Record<string, string>)[risk.data.detection_basis ?? "behavioral_only"]}</Tag>
-                {(risk.data.independent_signal_groups ?? []).map((group) => <Tag key={group} title={group}>{({ protocol_rule: '协议规则', ttl_path: 'TTL 路径线索', tls_client_stack: 'TLS 客户端线索', ua_os: '软件系统线索', device_profile_reference: '设备画像线索', identity_mac_reference: 'MAC 身份线索', identity_access_reference: '接入身份线索' } as Record<string,string>)[group] ?? group}</Tag>)}
-              </Space>
-            </Descriptions.Item>
-            {(risk.data.raw_score || risk.data.raw_level) && (
-              <Descriptions.Item label="原始风险">
-                <Space wrap>
-                  {risk.data.raw_level && (
-                    <RiskLevelTag level={risk.data.raw_level} />
-                  )}
-                  {typeof risk.data.raw_score === "number" && (
-                    <RiskScore score={risk.data.raw_score} />
-                  )}
-                </Space>
-              </Descriptions.Item>
-            )}
-            <Descriptions.Item label="建议动作">
-              {risk.data.recommended_action && <Tag>{statusText(risk.data.recommended_action)}</Tag>}
-            </Descriptions.Item>
-            <Descriptions.Item label="复核状态">
-              <Space wrap>
-                <ReviewStatusTag
-                  reason={risk.data.review_reason}
-                  status={risk.data.review_status}
-                />
-                {risk.data.reviewed_by && (
-                  <Typography.Text type="secondary">
-                    {risk.data.reviewed_by}
-                    {risk.data.reviewed_at
-                      ? ` / ${formatDateTime(risk.data.reviewed_at)}`
-                      : ""}
+            {hasRiskAssessment && (
+              <>
+                <Descriptions.Item label="置信度">
+                  <Typography.Text strong className="text-light-blue">
+                    {Math.round(risk.data.confidence * 100)}%
                   </Typography.Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="窗口">{risk.data.window}</Descriptions.Item>
+                <Descriptions.Item label="检测依据">
+                  <Space wrap>
+                    <Tag>
+                      {
+                        (
+                          {
+                            explicit_tunnel: '明确隧道协议',
+                            shared_device_divergence: '共享设备分歧',
+                            behavioral_only: '仅行为线索',
+                          } as Record<string, string>
+                        )[risk.data.detection_basis ?? 'behavioral_only']
+                      }
+                    </Tag>
+                    {(risk.data.independent_signal_groups ?? []).map((group) => (
+                      <Tag key={group} title={group}>
+                        {(
+                          {
+                            protocol_rule: '协议规则',
+                            ttl_path: 'TTL 路径线索',
+                            tls_client_stack: 'TLS 客户端线索',
+                            ua_os: '软件系统线索',
+                            device_profile_reference: '设备画像线索',
+                            identity_mac_reference: 'MAC 身份线索',
+                            identity_access_reference: '接入身份线索',
+                          } as Record<string, string>
+                        )[group] ?? group}
+                      </Tag>
+                    ))}
+                  </Space>
+                </Descriptions.Item>
+                {(risk.data.raw_score || risk.data.raw_level) && (
+                  <Descriptions.Item label="原始风险">
+                    <Space wrap>
+                      {risk.data.raw_level && <RiskLevelTag level={risk.data.raw_level} />}
+                      {typeof risk.data.raw_score === 'number' && (
+                        <RiskScore score={risk.data.raw_score} />
+                      )}
+                    </Space>
+                  </Descriptions.Item>
                 )}
-              </Space>
-            </Descriptions.Item>
-            <Descriptions.Item label="更新时间">
-              {risk.data.updated_at && Number.isFinite(Date.parse(risk.data.updated_at)) ? formatDateTime(risk.data.updated_at) : ''}
-            </Descriptions.Item>
-            {risk.data.evidence_ids.length > 0 && <Descriptions.Item label="证据 ID"><Typography.Text className="mono wrap-text">{risk.data.evidence_ids.join(' / ')}</Typography.Text></Descriptions.Item>}
-            </>}
+                <Descriptions.Item label="建议动作">
+                  {risk.data.recommended_action && (
+                    <Tag>{statusText(risk.data.recommended_action)}</Tag>
+                  )}
+                </Descriptions.Item>
+                <Descriptions.Item label="复核状态">
+                  <Space wrap>
+                    <ReviewStatusTag
+                      reason={risk.data.review_reason}
+                      status={risk.data.review_status}
+                    />
+                    {risk.data.reviewed_by && (
+                      <Typography.Text type="secondary">
+                        {risk.data.reviewed_by}
+                        {risk.data.reviewed_at ? ` / ${formatDateTime(risk.data.reviewed_at)}` : ''}
+                      </Typography.Text>
+                    )}
+                  </Space>
+                </Descriptions.Item>
+                <Descriptions.Item label="更新时间">
+                  {risk.data.updated_at && Number.isFinite(Date.parse(risk.data.updated_at))
+                    ? formatDateTime(risk.data.updated_at)
+                    : ''}
+                </Descriptions.Item>
+                {risk.data.evidence_ids.length > 0 && (
+                  <Descriptions.Item label="证据 ID">
+                    <Typography.Text className="mono wrap-text">
+                      {risk.data.evidence_ids.join(' / ')}
+                    </Typography.Text>
+                  </Descriptions.Item>
+                )}
+              </>
+            )}
             <Descriptions.Item label="证据解释">
-              <Typography.Text className="wrap-text">
-                {risk.data.summary}
-              </Typography.Text>
+              <Typography.Text className="wrap-text">{risk.data.summary}</Typography.Text>
             </Descriptions.Item>
           </Descriptions>
           {renderNegativeEvidence(risk.data.negative_evidence ?? [])}
@@ -164,11 +201,15 @@ export function IpDetailsPage() {
               type="warning"
             />
           )}
-          {risk.data.evidence_ids.length === 0 ? <Alert showIcon type="warning" title="当前对象没有可关联证据 ID，暂不能提交复核标注" /> : <LabelPanel
-            disabled={!canLabel}
-            evidenceIds={risk.data.evidence_ids}
-            targetId={risk.data.ip}
-          />}
+          {risk.data.evidence_ids.length === 0 ? (
+            <Alert showIcon type="warning" title="当前对象没有可关联证据 ID，暂不能提交复核标注" />
+          ) : (
+            <LabelPanel
+              disabled={!canLabel}
+              evidenceIds={risk.data.evidence_ids}
+              targetId={risk.data.ip}
+            />
+          )}
         </div>
       </section>
 
@@ -177,17 +218,21 @@ export function IpDetailsPage() {
           activeKey={activeTab}
           onChange={setActiveTab}
           items={[
-            { key: "devices", label: "终端识别" },
-            { key: "activity", label: "访问画像" },
-            { key: "applications", label: "应用访问" },
-            { key: "evidence", label: "证据与技术信息" },
+            { key: 'devices', label: '终端识别' },
+            { key: 'activity', label: '访问画像' },
+            { key: 'applications', label: '应用访问' },
+            { key: 'evidence', label: '证据与技术信息' },
           ]}
         />
       </section>
 
-      {activeTab === "applications" && <section className="surface"><ApplicationActivity ip={ip} /></section>}
+      {activeTab === 'applications' && (
+        <section className="surface">
+          <ApplicationActivity ip={ip} />
+        </section>
+      )}
 
-      {activeTab === "devices" && (
+      {activeTab === 'devices' && (
         <section className="surface">
           <Typography.Title level={4}>IP 维度终端识别</Typography.Title>
           {devices.isLoading ? (
@@ -196,15 +241,20 @@ export function IpDetailsPage() {
             <Alert showIcon title="终端识别读取失败" type="warning" />
           ) : deviceInventory ? (
             renderDeviceInventory(deviceInventory)
-          ) : (
-            null
-          )}
+          ) : null}
         </section>
       )}
 
-      {activeTab === "devices" && can(session.data, 'events:read') && <IpTrafficObservations key={ip} ip={ip} sensorId={params.get('sensor_id') || undefined} identityLastSeen={deviceInventory?.last_seen} />}
+      {activeTab === 'devices' && can(session.data, 'events:read') && (
+        <IpTrafficObservations
+          key={ip}
+          ip={ip}
+          sensorId={params.get('sensor_id') || undefined}
+          identityLastSeen={deviceInventory?.last_seen}
+        />
+      )}
 
-      {activeTab === "activity" && (
+      {activeTab === 'activity' && (
         <section className="surface">
           <Typography.Title level={4}>访问画像</Typography.Title>
           {activity.isLoading ? (
@@ -212,9 +262,7 @@ export function IpDetailsPage() {
           ) : activity.isError ? (
             <Alert showIcon title="访问画像读取失败" type="warning" />
           ) : !profile || profile.event_count === 0 ? (
-            <Typography.Text type="secondary">
-              暂无该 IP 的标准事件画像
-            </Typography.Text>
+            <Typography.Text type="secondary">暂无该 IP 的标准事件画像</Typography.Text>
           ) : (
             <Space className="full-width" orientation="vertical" size="middle">
               <div className="metric-grid">
@@ -222,22 +270,13 @@ export function IpDetailsPage() {
                   <Statistic title="分析样本" value={profile.event_count} />
                 </div>
                 <div className="surface metric-card">
-                  <Statistic
-                    title="访问域名"
-                    value={profile.top_domains.length}
-                  />
+                  <Statistic title="访问域名" value={profile.top_domains.length} />
                 </div>
                 <div className="surface metric-card">
-                  <Statistic
-                    title="目的 IP"
-                    value={profile.top_dst_ips.length}
-                  />
+                  <Statistic title="目的 IP" value={profile.top_dst_ips.length} />
                 </div>
                 <div className="surface metric-card">
-                  <Statistic
-                    title="目的端口"
-                    value={profile.top_dst_ports.length}
-                  />
+                  <Statistic title="目的端口" value={profile.top_dst_ports.length} />
                 </div>
               </div>
 
@@ -249,21 +288,16 @@ export function IpDetailsPage() {
                       Top {Math.min(profile.top_domains.length, 8)}
                     </Typography.Text>
                   </div>
-                  {renderRankList(
-                    profile.top_domains,
-                    "暂无 DNS/HTTP Host/SNI",
-                  )}
+                  {renderRankList(profile.top_domains, '暂无 DNS/HTTP Host/SNI')}
                 </div>
                 <div className="activity-insight-panel">
                   <div className="section-title-row">
                     <Typography.Title level={5}>目的分布</Typography.Title>
-                    <Typography.Text type="secondary">
-                      端口 / 协议
-                    </Typography.Text>
+                    <Typography.Text type="secondary">端口 / 协议</Typography.Text>
                   </div>
                   {renderRankList(
                     [...profile.top_dst_ports, ...profile.protocol_counts],
-                    "暂无端口或协议分布",
+                    '暂无端口或协议分布',
                     6,
                   )}
                 </div>
@@ -272,123 +306,95 @@ export function IpDetailsPage() {
                     <Typography.Title level={5}>客户端特征</Typography.Title>
                     <Typography.Text type="secondary">UA / TLS</Typography.Text>
                   </div>
-                  <Typography.Text
-                    className="activity-subtitle"
-                    type="secondary"
-                  >
+                  <Typography.Text className="activity-subtitle" type="secondary">
                     User-Agent 弱信号
                   </Typography.Text>
-                  {renderRankList(
-                    profile.top_user_agents,
-                    "暂无 User-Agent 弱信号",
-                    4,
-                  )}
-                  <Typography.Text
-                    className="activity-subtitle"
-                    type="secondary"
-                  >
+                  {renderRankList(profile.top_user_agents, '暂无 User-Agent 弱信号', 4)}
+                  <Typography.Text className="activity-subtitle" type="secondary">
                     TLS 指纹
                   </Typography.Text>
-                  {renderRankList(
-                    profile.top_tls_fingerprints,
-                    "暂无 JA3/JA4",
-                    4,
-                  )}
+                  {renderRankList(profile.top_tls_fingerprints, '暂无 JA3/JA4', 4)}
                 </div>
                 <div className="activity-insight-panel">
                   <div className="section-title-row">
                     <Typography.Title level={5}>分协议对象</Typography.Title>
-                    <Typography.Text type="secondary">
-                      HTTP / TLS
-                    </Typography.Text>
+                    <Typography.Text type="secondary">HTTP / TLS</Typography.Text>
                   </div>
-                  <Typography.Text
-                    className="activity-subtitle"
-                    type="secondary"
-                  >
+                  <Typography.Text className="activity-subtitle" type="secondary">
                     HTTP Host
                   </Typography.Text>
-                  {renderRankList(profile.top_http_hosts, "暂无 HTTP Host", 4)}
-                  <Typography.Text
-                    className="activity-subtitle"
-                    type="secondary"
-                  >
+                  {renderRankList(profile.top_http_hosts, '暂无 HTTP Host', 4)}
+                  <Typography.Text className="activity-subtitle" type="secondary">
                     TLS SNI
                   </Typography.Text>
-                  {renderRankList(profile.top_tls_sni, "暂无 TLS SNI", 4)}
+                  {renderRankList(profile.top_tls_sni, '暂无 TLS SNI', 4)}
                 </div>
               </section>
 
               <div>
-                <AppListHeader title="最近访问样本" count={`${recentAccesses.length} 条`} description="仅展示最近记录，完整明细见标准事件样本" />
-                  <AppTable<ActivityAccess>
-                    columns={[
-                      {
-                        title: "时间",
-                        dataIndex: "timestamp",
-                        width: 170,
-                        render: (value: string) =>
-                          formatDateTime(value),
-                      },
-                      {
-                        title: "类型",
-                        dataIndex: "type",
-                        width: 80,
-                        render: (value: string) => (
-                          <Tag className="compact-tag">{value}</Tag>
-                        ),
-                      },
-                      {
-                        title: "访问对象",
-                        dataIndex: "target",
-                        render: (value: string, row) => (
-                          <Space orientation="vertical" size={0}>
-                            <Typography.Text className="mono wrap-text">
-                              {value}
-                            </Typography.Text>
-                            <Typography.Text
-                              type="secondary"
-                              className="font-size-sm"
-                            >
-                              {row.target_kind}
-                            </Typography.Text>
-                          </Space>
-                        ),
-                      },
-                      {
-                        title: "目的",
-                        width: 160,
-                        render: (_, row) => (
-                          <Typography.Text className="mono">
-                            {row.dst_ip ?? ""}
-                            {row.dst_port ? `:${row.dst_port}` : ""}
+                <AppListHeader
+                  title="最近访问样本"
+                  count={`${recentAccesses.length} 条`}
+                  description="仅展示最近记录，完整明细见标准事件样本"
+                />
+                <AppTable<ActivityAccess>
+                  columns={[
+                    {
+                      title: '时间',
+                      dataIndex: 'timestamp',
+                      width: 170,
+                      render: (value: string) => formatDateTime(value),
+                    },
+                    {
+                      title: '类型',
+                      dataIndex: 'type',
+                      width: 80,
+                      render: (value: string) => <Tag className="compact-tag">{value}</Tag>,
+                    },
+                    {
+                      title: '访问对象',
+                      dataIndex: 'target',
+                      render: (value: string, row) => (
+                        <Space orientation="vertical" size={0}>
+                          <Typography.Text className="mono wrap-text">{value}</Typography.Text>
+                          <Typography.Text type="secondary" className="font-size-sm">
+                            {row.target_kind}
                           </Typography.Text>
-                        ),
-                      },
-                      {
-                        title: "UA 弱信号 / 方法",
-                        render: (_, row) => (
-                          <Typography.Text className="wrap-text">
-                            {[row.method, row.user_agent]
-                              .filter(Boolean)
-                              .join(" / ") || ""}
-                          </Typography.Text>
-                        ),
-                      },
-                    ]}
-                    dataSource={recentAccesses}
-                    pagination={false}
-                    rowKey="event_id"
-                    scroll={{ x: 720 }}
-                    size="small"
-                  />
+                        </Space>
+                      ),
+                    },
+                    {
+                      title: '目的',
+                      width: 160,
+                      render: (_, row) => (
+                        <Typography.Text className="mono">
+                          {row.dst_ip ?? ''}
+                          {row.dst_port ? `:${row.dst_port}` : ''}
+                        </Typography.Text>
+                      ),
+                    },
+                    {
+                      title: 'UA 弱信号 / 方法',
+                      render: (_, row) => (
+                        <Typography.Text className="wrap-text">
+                          {[row.method, row.user_agent].filter(Boolean).join(' / ') || ''}
+                        </Typography.Text>
+                      ),
+                    },
+                  ]}
+                  dataSource={recentAccesses}
+                  pagination={false}
+                  rowKey="event_id"
+                  scroll={{ x: 720 }}
+                  size="small"
+                />
               </div>
             </Space>
           )}
         </section>
       )}
 
-      {activeTab === "evidence" && (
+      {activeTab === 'evidence' && (
         <section className="surface">
           <Typography.Title level={4}>证据时间线</Typography.Title>
           <Typography.Text type="secondary">
@@ -398,7 +404,7 @@ export function IpDetailsPage() {
             className="audit-sample-tabs"
             items={[
               {
-                key: "evidence",
+                key: 'evidence',
                 label: `证据摘要 ${evidenceItems.length}`,
                 children: evidence.isLoading ? (
                   <Skeleton active paragraph={{ rows: 4 }} />
@@ -409,7 +415,7 @@ export function IpDetailsPage() {
                 ),
               },
               {
-                key: "events",
+                key: 'events',
                 label: `标准事件 ${eventItems.length}`,
                 children: events.isLoading ? (
                   <Skeleton active paragraph={{ rows: 4 }} />
@@ -424,12 +430,12 @@ export function IpDetailsPage() {
         </section>
       )}
     </main>
-  );
+  )
 }
 
 function renderNegativeEvidence(items: NegativeEvidence[]) {
   if (items.length === 0) {
-    return null;
+    return null
   }
   return (
     <div className="negative-evidence-list">
@@ -437,10 +443,7 @@ function renderNegativeEvidence(items: NegativeEvidence[]) {
         负证据命中
       </Typography.Text>
       {items.map((item) => (
-        <div
-          className="negative-evidence-item"
-          key={`${item.source}-${item.type}`}
-        >
+        <div className="negative-evidence-item" key={`${item.source}-${item.type}`}>
           <Space wrap>
             <Tag className="table-tag" color="green">
               {negativeEvidenceLabel(item.type)}
@@ -449,9 +452,7 @@ function renderNegativeEvidence(items: NegativeEvidence[]) {
               {item.score_delta}
             </Typography.Text>
             {item.level_cap && (
-              <Typography.Text type="secondary">
-                上限 {item.level_cap}
-              </Typography.Text>
+              <Typography.Text type="secondary">上限 {item.level_cap}</Typography.Text>
             )}
           </Space>
           <Typography.Text className="wrap-text" type="secondary">
@@ -460,52 +461,59 @@ function renderNegativeEvidence(items: NegativeEvidence[]) {
         </div>
       ))}
     </div>
-  );
+  )
 }
 
-function negativeEvidenceLabel(type: NegativeEvidence["type"]) {
-  const labels: Record<NegativeEvidence["type"], string> = {
-    manual_false_positive: "人工误报",
-    manual_benign: "人工良性",
-    needs_more_data: "需补数据",
-    whitelist: "白名单",
-    test_device: "测试终端",
-    infrastructure: "基础设施",
-    known_application: "已知应用",
-  };
-  return labels[type] ?? type;
+function negativeEvidenceLabel(type: NegativeEvidence['type']) {
+  const labels: Record<NegativeEvidence['type'], string> = {
+    manual_false_positive: '人工误报',
+    manual_benign: '人工良性',
+    needs_more_data: '需补数据',
+    whitelist: '白名单',
+    test_device: '测试终端',
+    infrastructure: '基础设施',
+    known_application: '已知应用',
+  }
+  return labels[type] ?? type
 }
 
 function renderDeviceInventory(inventory: IpDeviceInventory) {
-  const confidencePercent = Math.round(inventory.confidence * 100);
+  const confidencePercent = Math.round(inventory.confidence * 100)
   const hasDHCPStrongSignal = inventory.signals.some(
-    (signal) => signal.strength === "strong" && signal.source === "dhcp",
-  );
+    (signal) => signal.strength === 'strong' && signal.source === 'dhcp',
+  )
   return (
     <Space className="full-width" orientation="vertical" size="middle">
-      {inventory.last_seen && <Typography.Text type="secondary">设备识别摘要最后观测：{formatDateTime(inventory.last_seen)}</Typography.Text>}
+      {inventory.last_seen && (
+        <Typography.Text type="secondary">
+          设备识别摘要最后观测：{formatDateTime(inventory.last_seen)}
+        </Typography.Text>
+      )}
       <Alert
         showIcon
         description={inventory.summary}
         title={deviceStatusText(inventory.status)}
         type={
-          inventory.status === "multi_candidate"
-            ? "warning"
-            : inventory.status === "weak_signals_only"
-              ? "info"
-              : inventory.status === "single_candidate" ? "success" : "info"
+          inventory.status === 'multi_candidate'
+            ? 'warning'
+            : inventory.status === 'weak_signals_only'
+              ? 'info'
+              : inventory.status === 'single_candidate'
+                ? 'success'
+                : 'info'
         }
       />
       <div className="metric-grid">
-        {inventory.suspected_device_count > 0 && <div className="surface metric-card">
-          <Statistic
-            title="终端候选数"
-            value={inventory.suspected_device_count}
-          />
-        </div>}
-        {inventory.confidence > 0 && <div className="surface metric-card">
-          <Statistic suffix="%" title="设备置信度" value={confidencePercent} />
-        </div>}
+        {inventory.suspected_device_count > 0 && (
+          <div className="surface metric-card">
+            <Statistic title="终端候选数" value={inventory.suspected_device_count} />
+          </div>
+        )}
+        {inventory.confidence > 0 && (
+          <div className="surface metric-card">
+            <Statistic suffix="%" title="设备置信度" value={confidencePercent} />
+          </div>
+        )}
         <div className="surface metric-card">
           <Statistic title="识别信号" value={inventory.signals.length} />
         </div>
@@ -515,13 +523,17 @@ function renderDeviceInventory(inventory: IpDeviceInventory) {
       </div>
 
       {!hasDHCPStrongSignal && (
-        <AppFactBar label="终端识别信号" items={['终端候选主要来自 UA、TLS 或 TCP 栈推断','UA 可伪造，建议等待 Zeek DHCP、mDNS、NBNS 等局域网强信号后再确认']}/>
+        <AppFactBar
+          label="终端识别信号"
+          items={[
+            '终端候选主要来自 UA、TLS 或 TCP 栈推断',
+            'UA 可伪造，建议等待 Zeek DHCP、mDNS、NBNS 等局域网强信号后再确认',
+          ]}
+        />
       )}
 
       {inventory.devices.length === 0 ? (
-        <Typography.Text type="secondary">
-          当前 IP 没有足够信号生成终端候选。
-        </Typography.Text>
+        <Typography.Text type="secondary">当前 IP 没有足够信号生成终端候选。</Typography.Text>
       ) : (
         <div className="device-card-grid">
           {inventory.devices.map((device) => renderObservedDevice(device))}
@@ -532,18 +544,20 @@ function renderDeviceInventory(inventory: IpDeviceInventory) {
         <div>
           <Typography.Title level={5}>冲突信号</Typography.Title>
           <div className="device-conflict-list">
-            {inventory.conflicts.map((conflict) =>
-              renderDeviceConflict(conflict),
-            )}
+            {inventory.conflicts.map((conflict) => renderDeviceConflict(conflict))}
           </div>
         </div>
       )}
     </Space>
-  );
+  )
 }
 
 function renderObservedDevice(device: ObservedDevice) {
-  const historicalHint = (signal: DeviceSignal) => (signal.source === 'dhcp' || signal.source === 'software') && ((signal.kind === 'os_family' || signal.kind === 'device_hint') && !displayField(device.os_family) || signal.kind === 'device_type' && !displayField(device.device_type));
+  const historicalHint = (signal: DeviceSignal) =>
+    (signal.source === 'dhcp' || signal.source === 'software') &&
+    (((signal.kind === 'os_family' || signal.kind === 'device_hint') &&
+      !displayField(device.os_family)) ||
+      (signal.kind === 'device_type' && !displayField(device.device_type)))
   return (
     <div className="device-card" key={device.device_id}>
       <div className="device-card-header">
@@ -577,25 +591,27 @@ function renderObservedDevice(device: ObservedDevice) {
         <Tag color="blue">中 {device.medium_signal_count}</Tag>
         <Tag color="default">弱 {device.weak_signal_count}</Tag>
       </div>
-      {device.signals.some(historicalHint) && <Typography.Paragraph className="device-summary" type="secondary">下方系统、类型提示保留为历史推测，当前画像没有采用该结论。</Typography.Paragraph>}
+      {device.signals.some(historicalHint) && (
+        <Typography.Paragraph className="device-summary" type="secondary">
+          下方系统、类型提示保留为历史推测，当前画像没有采用该结论。
+        </Typography.Paragraph>
+      )}
       <div className="device-signal-list">
         {device.signals.map((signal) => renderDeviceSignal(signal, historicalHint(signal)))}
       </div>
     </div>
-  );
+  )
 }
 
 function DeviceAttribute({ label, value }: { label: string; value: string }) {
-  const content = displayField(value);
-  if (!content) return null;
+  const content = displayField(value)
+  if (!content) return null
   return (
     <div className="device-attribute">
       <Typography.Text type="secondary">{label}</Typography.Text>
-      <Typography.Text className="wrap-text">
-        {content}
-      </Typography.Text>
+      <Typography.Text className="wrap-text">{content}</Typography.Text>
     </div>
-  );
+  )
 }
 
 function renderDeviceSignal(signal: DeviceSignal, historicalInference = false) {
@@ -605,13 +621,25 @@ function renderDeviceSignal(signal: DeviceSignal, historicalInference = false) {
         {historicalInference ? '历史推测' : signalStrengthText(signal.strength)}
       </Tag>
       <Tag>{signalSourceText(signal.source)}</Tag>
-      {signal.seen_count ? <Tag title="同类信号的累计观测次数，不代表报文数或设备数">累计观测 {signal.seen_count} 次</Tag> : null}
-      <Typography.Text className="mono wrap-text" title={signal.event_ids.join(' / ') || undefined} type={historicalInference ? 'secondary' : undefined}>
+      {signal.seen_count ? (
+        <Tag title="同类信号的累计观测次数，不代表报文数或设备数">
+          累计观测 {signal.seen_count} 次
+        </Tag>
+      ) : null}
+      <Typography.Text
+        className="mono wrap-text"
+        title={signal.event_ids.join(' / ') || undefined}
+        type={historicalInference ? 'secondary' : undefined}
+      >
         {signal.kind}: {signal.value}
       </Typography.Text>
-      {signal.last_seen && <Typography.Text className="device-signal-last-seen" type="secondary">最后观测 {formatDateTime(signal.last_seen)}</Typography.Text>}
+      {signal.last_seen && (
+        <Typography.Text className="device-signal-last-seen" type="secondary">
+          最后观测 {formatDateTime(signal.last_seen)}
+        </Typography.Text>
+      )}
     </span>
-  );
+  )
 }
 
 function renderDeviceConflict(conflict: DeviceConflict) {
@@ -626,33 +654,29 @@ function renderDeviceConflict(conflict: DeviceConflict) {
           置信度 {Math.round(conflict.confidence * 100)}%
         </Typography.Text>
       </Space>
-      <Typography.Paragraph className="device-summary" type={conflict.strength === "strong" ? undefined : "secondary"}>
+      <Typography.Paragraph
+        className="device-summary"
+        type={conflict.strength === 'strong' ? undefined : 'secondary'}
+      >
         {conflict.summary}
       </Typography.Paragraph>
       <div className="device-signal-list">
         {conflict.samples.map((sample) => (
-          <span
-            className="sample-token"
-            key={`${conflict.conflict_id}-${sample}`}
-          >
-            <Typography.Text className="mono wrap-text">
-              {sample}
-            </Typography.Text>
+          <span className="sample-token" key={`${conflict.conflict_id}-${sample}`}>
+            <Typography.Text className="mono wrap-text">{sample}</Typography.Text>
           </span>
         ))}
       </div>
     </div>
-  );
+  )
 }
 
 function renderEventSamples(events: NormalizedEventSummary[]) {
   if (events.length === 0) {
-    return (
-      <Typography.Text type="secondary">暂无标准事件样本。</Typography.Text>
-    );
+    return <Typography.Text type="secondary">暂无标准事件样本。</Typography.Text>
   }
-  const visibleEvents = events.slice(0, 6);
-  const hiddenCount = events.length - visibleEvents.length;
+  const visibleEvents = events.slice(0, 6)
+  const hiddenCount = events.length - visibleEvents.length
   return (
     <div className="event-compact-list">
       {visibleEvents.map((event) => (
@@ -661,9 +685,7 @@ function renderEventSamples(events: NormalizedEventSummary[]) {
             <Tag className="compact-tag" color="blue">
               {event.type}
             </Tag>
-            <Typography.Text type="secondary">
-              {formatDateTime(event.timestamp)}
-            </Typography.Text>
+            <Typography.Text type="secondary">{formatDateTime(event.timestamp)}</Typography.Text>
             <Typography.Text type="secondary">
               confidence {Math.round(event.confidence * 100)}%
             </Typography.Text>
@@ -684,127 +706,109 @@ function renderEventSamples(events: NormalizedEventSummary[]) {
         </Typography.Text>
       )}
     </div>
-  );
+  )
 }
 
 function EventField({ label, value }: { label: string; value: string }) {
   return (
     <div className="event-compact-field">
       <Typography.Text type="secondary">{label}</Typography.Text>
-      <Typography.Text className="mono wrap-text">
-        {value || ""}
-      </Typography.Text>
+      <Typography.Text className="mono wrap-text">{value || ''}</Typography.Text>
     </div>
-  );
+  )
 }
 
 function eventTarget(event: NormalizedEventSummary) {
   return (
-    firstString(event.payload, [
-      "query",
-      "host",
-      "sni",
-      "url",
-      "device_hint",
-    ]) || firstString(event.flow, ["dst_ip"])
-  );
+    firstString(event.payload, ['query', 'host', 'sni', 'url', 'device_hint']) ||
+    firstString(event.flow, ['dst_ip'])
+  )
 }
 
 function eventDestination(event: NormalizedEventSummary) {
-  const ip = firstString(event.flow, ["dst_ip"]);
-  const port = firstString(event.flow, ["dst_port"]);
+  const ip = firstString(event.flow, ['dst_ip'])
+  const port = firstString(event.flow, ['dst_port'])
   if (!ip) {
-    return "";
+    return ''
   }
-  return port ? `${ip}:${port}` : ip;
+  return port ? `${ip}:${port}` : ip
 }
 
 function eventSource(event: NormalizedEventSummary) {
-  const ip =
-    firstString(event.flow, ["src_ip"]) || firstString(event.subject, ["ip"]);
-  const port = firstString(event.flow, ["src_port"]);
+  const ip = firstString(event.flow, ['src_ip']) || firstString(event.subject, ['ip'])
+  const port = firstString(event.flow, ['src_port'])
   if (!ip) {
-    return "";
+    return ''
   }
-  return port ? `${ip}:${port}` : ip;
+  return port ? `${ip}:${port}` : ip
 }
 
-function firstString(
-  values: Record<string, unknown> | undefined,
-  keys: string[],
-) {
+function firstString(values: Record<string, unknown> | undefined, keys: string[]) {
   if (!values) {
-    return "";
+    return ''
   }
   for (const key of keys) {
-    const value = values[key];
-    if (typeof value === "string" && value !== "") {
-      return value;
+    const value = values[key]
+    if (typeof value === 'string' && value !== '') {
+      return value
     }
-    if (typeof value === "number") {
-      return String(value);
+    if (typeof value === 'number') {
+      return String(value)
     }
   }
-  return "";
+  return ''
 }
 
 function signalStrengthColor(strength: string) {
-  if (strength === "strong") return "green";
-  if (strength === "medium") return "blue";
-  return "default";
+  if (strength === 'strong') return 'green'
+  if (strength === 'medium') return 'blue'
+  return 'default'
 }
 
 function signalStrengthText(strength: string) {
-  if (strength === "strong") return "强";
-  if (strength === "medium") return "中";
-  return "弱";
+  if (strength === 'strong') return '强'
+  if (strength === 'medium') return '中'
+  return '弱'
 }
 
 function signalSourceText(source: string) {
-  if (source === "dhcp" || source === "device") return "DHCP";
-  if (source === "http_ua") return "UA";
-  if (source === "tls_fingerprint") return "TLS";
-  if (source === "tcp_stack") return "TCP";
-  return source.toUpperCase();
+  if (source === 'dhcp' || source === 'device') return 'DHCP'
+  if (source === 'http_ua') return 'UA'
+  if (source === 'tls_fingerprint') return 'TLS'
+  if (source === 'tcp_stack') return 'TCP'
+  return source.toUpperCase()
 }
 
 function deviceStatusText(status: string) {
   switch (status) {
-    case "non_endpoint_or_weak":
-      return "仅有协议或基础设施线索";
-    case "multi_candidate":
-      return "发现多个终端候选";
-    case "single_candidate":
-      return "单终端候选";
-    case "weak_signals_only":
-      return "仅有弱信号";
+    case 'non_endpoint_or_weak':
+      return '仅有协议或基础设施线索'
+    case 'multi_candidate':
+      return '发现多个终端候选'
+    case 'single_candidate':
+      return '单终端候选'
+    case 'weak_signals_only':
+      return '仅有弱信号'
     default:
-      return "终端信号不足";
+      return '终端信号不足'
   }
 }
 
 function renderRankList(items: ActivityCount[], empty: string, limit = 8) {
   if (items.length === 0) {
-    return (
-      <Typography.Paragraph type="secondary">{empty}</Typography.Paragraph>
-    );
+    return <Typography.Paragraph type="secondary">{empty}</Typography.Paragraph>
   }
-  const visibleItems = items.slice(0, limit);
-  const hiddenCount = items.length - visibleItems.length;
+  const visibleItems = items.slice(0, limit)
+  const hiddenCount = items.length - visibleItems.length
   return (
     <div className="rank-compact-list">
       {visibleItems.map((item, index) => (
         <div className="rank-compact-row" key={`${item.value}-${item.count}`}>
           <span className="rank-compact-index">{index + 1}</span>
-          <Typography.Text
-            className="mono rank-compact-value"
-            ellipsis={{ tooltip: item.value }}
-          >
+          <Typography.Text className="mono rank-compact-value" ellipsis={{ tooltip: item.value }}>
             {item.value}
           </Typography.Text>
-          <Typography.Text className="rank-compact-count">
-            ×{item.count}
-          </Typography.Text>
+          <Typography.Text className="rank-compact-count">×{item.count}</Typography.Text>
         </div>
       ))}
       {hiddenCount > 0 && (
@@ -813,5 +817,5 @@ function renderRankList(items: ActivityCount[], empty: string, limit = 8) {
         </Typography.Text>
       )}
     </div>
-  );
+  )
 }

@@ -3,15 +3,12 @@ import { OperationTaskProgress } from '../shared/ui/OperationTaskProgress'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
-  DashboardOutlined,
-  BarChartOutlined,
   AlertOutlined,
+  DashboardOutlined,
   LaptopOutlined,
-  DeploymentUnitOutlined,
-  ApiOutlined,
-  SafetyCertificateOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  SafetyCertificateOutlined,
   SettingOutlined,
   UserOutlined,
 } from '@ant-design/icons'
@@ -22,32 +19,62 @@ import { useLogout, useSession } from '../shared/api/queries'
 import { LoginPage } from '../pages/LoginPage'
 import { can } from '../shared/auth/permissions'
 import { routeOwner, routePermission, visibleNavigation } from './navigation'
-
+import { prefetchRoute } from './routePages'
 import type { Session } from '../shared/api/types'
 
 const navigationIcons: Record<string, ReactNode> = {
-  workbench: <DashboardOutlined />,
-  reports: <BarChartOutlined />,
-  'ai-relay': <ApiOutlined />,
+  situation: <DashboardOutlined />,
   risk: <AlertOutlined />,
   assets: <LaptopOutlined />,
-  network: <DeploymentUnitOutlined />,
   strategy: <SafetyCertificateOutlined />,
   system: <SettingOutlined />,
 }
 
 function buildNavItems(session: Session): MenuProps['items'] {
-  return visibleNavigation(session).map(group => (group.key === 'workbench' || group.key === 'reports' || group.key === 'ai-relay') ? {
-    key: group.items[0].key, icon: navigationIcons[group.key], label: <NavLink to={group.items[0].to}>{group.title}</NavLink>
-  } : {key:group.key,label:group.title,icon:navigationIcons[group.key],children:group.items.map(entry=>({key:entry.key,label:<NavLink to={entry.to} onClick={()=>{if(entry.to.split('?')[0]==='/devices'){performance.clearMarks('device-inventory-enter');performance.mark('device-inventory-enter')}}}>{entry.title}</NavLink>}))})
+  return visibleNavigation(session).map((group) => ({
+    key: group.key,
+    label: group.title,
+    icon: navigationIcons[group.key],
+    children: group.items.map((entry) => ({
+      key: entry.key,
+      label: (
+        <NavLink
+          to={entry.to}
+          onMouseEnter={() => prefetchRoute(entry.to)}
+          onFocus={() => prefetchRoute(entry.to)}
+          onClick={() => {
+            if (entry.to.split('?')[0] === '/devices') {
+              performance.clearMarks('device-inventory-enter')
+              performance.mark('device-inventory-enter')
+            }
+          }}
+        >
+          {entry.title}
+        </NavLink>
+      ),
+    })),
+  }))
 }
 
 function SentinelLogo() {
   return (
-    <svg aria-label="Proxy Sentinel" role="img" className="brand-logo-svg" fill="none" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
-      <path d="M16 3L5 7V14C5 20.5 9.7 26.5 16 29C22.3 26.5 27 20.5 27 14V7L16 3Z" stroke="#0284c7" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" />
-      <circle cx="16" cy="15" r="5" stroke="#0ea5e9" strokeWidth="2" />
-      <circle cx="16" cy="15" fill="#0284c7" r="2" />
+    <svg
+      aria-label="Proxy Sentinel"
+      role="img"
+      className="brand-logo-svg"
+      fill="none"
+      viewBox="0 0 32 32"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <path
+        d="M16 3L5 7V14C5 20.5 9.7 26.5 16 29C22.3 26.5 27 20.5 27 14V7L16 3Z"
+        stroke="#2257a7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2.5"
+      />
+      <circle cx="16" cy="15" r="5" stroke="#3b82f6" strokeWidth="2" />
+      <circle cx="16" cy="15" fill="#2257a7" r="2" />
     </svg>
   )
 }
@@ -59,18 +86,37 @@ export function AppShell() {
   const location = useLocation()
   const session = useSession()
   const logout = useLogout()
-  const owner = routeOwner(location.pathname,location.search)
-  const [openKeys,setOpenKeys] = useState<string[]>([])
-  useEffect(()=>{if(owner && owner.group.key !== 'workbench')setOpenKeys(keys=>[...new Set([...keys,owner.group.key])])},[owner?.group.key])
+  const owner = routeOwner(location.pathname, location.search)
+  const ownerGroupKey = owner?.group.key
+  const [openKeys, setOpenKeys] = useState<string[]>(() =>
+    ownerGroupKey ? [ownerGroupKey] : ['situation', 'risk'],
+  )
+
+  useEffect(() => {
+    if (ownerGroupKey) {
+      setOpenKeys((keys) => (keys.includes(ownerGroupKey) ? keys : [...keys, ownerGroupKey]))
+    }
+  }, [ownerGroupKey])
+
   const isMockEnabled = !import.meta.env.PROD && import.meta.env.VITE_ENABLE_MOCKS !== 'false'
 
   useEffect(() => {
     contentRef.current?.scrollTo({ top: 0, behavior: 'auto' })
   }, [location.pathname, location.search])
 
-  if (session.isLoading) return <main className="app-bootstrap-loading" aria-busy="true"><SentinelLogo/><Spin size="large"/><Typography.Text type="secondary">正在恢复会话…</Typography.Text></main>
+  if (session.isLoading) {
+    return (
+      <main className="app-bootstrap-loading" aria-busy="true">
+        <SentinelLogo />
+        <Spin size="large" />
+        <Typography.Text type="secondary">正在恢复会话…</Typography.Text>
+      </main>
+    )
+  }
   if (session.isError || !session.data) return <LoginPage />
-	const navItems = buildNavItems(session.data)
+
+  const navItems = buildNavItems(session.data)
+  const requiredPermission = routePermission(location.pathname, location.search)
 
   const menu = (
     <Menu
@@ -78,7 +124,7 @@ export function AppShell() {
       items={navItems}
       mode="inline"
       selectedKeys={owner ? [owner.entry.key] : []}
-      openKeys={openKeys}
+      openKeys={collapsed ? undefined : openKeys}
       onOpenChange={setOpenKeys}
       theme="light"
       onClick={() => setDrawerOpen(false)}
@@ -127,7 +173,7 @@ export function AppShell() {
             {isMockEnabled && <span className="mock-badge">Mock API Active</span>}
             {owner && (
               <div className="app-current-page">
-                {owner.group.title !== owner.entry.title && <span className="app-current-group">{owner.group.title}</span>}
+                <span className="app-current-group">{owner.group.title}</span>
                 <h1 className="app-current-title">{owner.entry.title}</h1>
               </div>
             )}
@@ -136,18 +182,34 @@ export function AppShell() {
             <div className="user-session-badge">
               <UserOutlined className="text-primary-color" />
               <Typography.Text strong className="font-size-md">
-                {session.data?.user.name ?? '加载中...'}
+                {session.data.user.name}
               </Typography.Text>
               <Typography.Text type="secondary" className="font-size-sm">
-                ({session.data?.role ?? 'guest'})
+                ({session.data.role})
               </Typography.Text>
-              <Button loading={logout.isPending} onClick={() => logout.mutate()} size="small" type="text">退出</Button>
+              <Button
+                loading={logout.isPending}
+                onClick={() => logout.mutate()}
+                size="small"
+                type="text"
+              >
+                退出
+              </Button>
             </div>
           </Space>
         </Layout.Header>
         <Layout.Content className="app-content" ref={contentRef}>
           <OperationTaskProgress />
-          {!routePermission(location.pathname,location.search) || can(session.data,routePermission(location.pathname,location.search)!) ? <Outlet /> : <Alert showIcon type="warning" title="没有访问权限" description="当前账号无权读取此功能，请联系管理员调整权限。" />}
+          {!requiredPermission || can(session.data, requiredPermission) ? (
+            <Outlet />
+          ) : (
+            <Alert
+              showIcon
+              type="warning"
+              title="没有访问权限"
+              description="当前账号无权读取此功能，请联系管理员调整权限。"
+            />
+          )}
         </Layout.Content>
       </Layout>
       <Drawer
@@ -156,7 +218,7 @@ export function AppShell() {
         open={drawerOpen}
         placement="left"
         title="Proxy Sentinel"
-        size={320}
+        size={300}
       >
         {menu}
       </Drawer>

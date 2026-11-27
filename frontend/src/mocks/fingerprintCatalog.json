@@ -1,10 +1,7 @@
 {
   "sources": [
     {
-      "license_files": [
-        "recog/LICENSE",
-        "recog/COPYING"
-      ],
+      "license_files": ["recog/LICENSE", "recog/COPYING"],
       "snapshot_url": "https://raw.githubusercontent.com/rapid7/recog/1714aaed118861b4567bb6754920b4b929f59380/",
       "upstream_count": 4679,
       "id": "recog",
@@ -69,9 +66,7 @@
       ]
     },
     {
-      "license_files": [
-        "satori/LICENSE"
-      ],
+      "license_files": ["satori/LICENSE"],
       "snapshot_url": "https://raw.githubusercontent.com/xnih/satori/c5dfcfbff31620e35248aa86da0c67f2ad4982f5/",
       "upstream_count": 1980,
       "id": "satori",
@@ -124,9 +119,7 @@
       ]
     },
     {
-      "license_files": [
-        "librenms/LICENSE.txt"
-      ],
+      "license_files": ["librenms/LICENSE.txt"],
       "snapshot_url": "https://raw.githubusercontent.com/librenms/librenms/4d34094b03c4846e3325a375ca6a94b43f1b1eda/",
       "upstream_count": 815,
       "id": "librenms",
@@ -146,15 +139,11 @@
         "invalid_data": 1,
         "unsupported_input": 222
       },
-      "protocols": [
-        "snmp"
-      ],
+      "protocols": ["snmp"],
       "categories": []
     },
     {
-      "license_files": [
-        "whatweb/LICENSE"
-      ],
+      "license_files": ["whatweb/LICENSE"],
       "snapshot_url": "https://raw.githubusercontent.com/urbanadventurer/WhatWeb/d279d93042d034f3fd29d5a893d44ccc0595d3f8/",
       "upstream_count": 1832,
       "id": "whatweb",
@@ -174,15 +163,11 @@
         "duplicate": 24,
         "unsupported_syntax": 1956
       },
-      "protocols": [
-        "http"
-      ],
+      "protocols": ["http"],
       "categories": []
     },
     {
-      "license_files": [
-        "openwrt/LICENSE"
-      ],
+      "license_files": ["openwrt/LICENSE"],
       "snapshot_url": "https://openwrt.org/toh.json",
       "upstream_count": 3053,
       "id": "openwrt",
@@ -201,16 +186,10 @@
         "dictionary": 3053
       },
       "protocols": [],
-      "categories": [
-        "nas",
-        "router",
-        "switch"
-      ]
+      "categories": ["nas", "router", "switch"]
     },
     {
-      "license_files": [
-        "p0f/COPYING"
-      ],
+      "license_files": ["p0f/COPYING"],
       "snapshot_url": "https://raw.githubusercontent.com/p0f/p0f/4abbd20ecd7421461e360c77a98dff98e08a8b10/",
       "upstream_count": 322,
       "id": "p0f",

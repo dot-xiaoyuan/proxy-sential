@@ -15,6 +15,19 @@ export function AppLoadingState({ rows = 4 }: AppLoadingProps) {
   )
 }
 
+export function AppPageSkeleton() {
+  return (
+    <section className="page app-page-skeleton" aria-busy="true" aria-label="页面加载中">
+      <div className="surface app-page-skeleton-card">
+        <Skeleton active title={{ width: '28%' }} paragraph={{ rows: 2 }} />
+      </div>
+      <div className="surface app-page-skeleton-card">
+        <Skeleton active title={{ width: '20%' }} paragraph={{ rows: 5 }} />
+      </div>
+    </section>
+  )
+}
+
 interface AppErrorAlertProps {
   title?: ReactNode
   message?: ReactNode
@@ -29,7 +42,14 @@ export function AppErrorAlert({
   className,
 }: AppErrorAlertProps) {
   return (
-    <Alert action={action} className={className} description={message} showIcon title={title} type="error" />
+    <Alert
+      action={action}
+      className={className}
+      description={message}
+      showIcon
+      title={title}
+      type="error"
+    />
   )
 }
 

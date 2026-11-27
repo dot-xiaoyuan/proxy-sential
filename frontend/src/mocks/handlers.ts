@@ -1,7 +1,7 @@
 import { auxiliaryPaginationHandlers } from './auxiliaryPagination'
 import { recognitionDimensionConflict } from '../entities/device/recognitionConflict'
 import { freshRecognition } from './freshRecognition'
-import fingerprintCatalog from "./fingerprintCatalog.json"
+import fingerprintCatalog from './fingerprintCatalog.json'
 import { ipTrafficObservationHandlers } from './ipTrafficObservations'
 import { inventoryTraceHandlers } from './inventoryTrace'
 import { sharedAccessHandlers } from './sharedAccess'
@@ -10,7 +10,12 @@ import { macOSDevice, macOSProfile, manufacturerReferenceDevices } from './devic
 import { proxyProof } from './proxyProtocol'
 import { domainOnlyDevice, domainOnlyProfile } from './brandInference'
 import { policyHandlers } from './policies'
-import { behaviorReportHandlers, blacklistHandlers, destinationTargetHandlers, notificationHandlers } from './notifications'
+import {
+  behaviorReportHandlers,
+  blacklistHandlers,
+  destinationTargetHandlers,
+  notificationHandlers,
+} from './notifications'
 import { applicationHandlers } from './applications'
 import { routerObservationHandlers } from './routerObservations'
 import { violationHandlers } from './violation'
@@ -44,12 +49,35 @@ function normalizeIp(value: string) {
 }
 
 const mockSRun4KIntegration = (connectorId: string, values: Record<string, unknown> = {}) => ({
-  connector_id: connectorId, host: '192.168.0.190', authorization_database_host: '192.168.0.224', online_redis_host: '192.168.0.225',
-  catalog_redis_host: '192.168.0.226', event_redis_host: '192.168.0.227', northbound_api_host: '192.168.0.227',
-  authorization_ready: true, authorization_refreshed_at: new Date().toISOString(), source: `srun4k:${connectorId}`,
-  sensor_id: `srun4k-direct:${connectorId}`, reconcile_interval_hours: 6, event_channel_state: 'waiting', connection_state: 'healthy',
-  channels: { authorization_database: 'healthy', online_redis: 'healthy', catalog_redis: 'healthy', event_redis: 'healthy', northbound_api: 'healthy', event_channel: 'waiting' },
-  last_synced_at: new Date().toISOString(), identity_accounts: 12, identity_sessions: 16, products: 3, groups: 2, controls: 4, ...values,
+  connector_id: connectorId,
+  host: '192.168.0.190',
+  authorization_database_host: '192.168.0.224',
+  online_redis_host: '192.168.0.225',
+  catalog_redis_host: '192.168.0.226',
+  event_redis_host: '192.168.0.227',
+  northbound_api_host: '192.168.0.227',
+  authorization_ready: true,
+  authorization_refreshed_at: new Date().toISOString(),
+  source: `srun4k:${connectorId}`,
+  sensor_id: `srun4k-direct:${connectorId}`,
+  reconcile_interval_hours: 6,
+  event_channel_state: 'waiting',
+  connection_state: 'healthy',
+  channels: {
+    authorization_database: 'healthy',
+    online_redis: 'healthy',
+    catalog_redis: 'healthy',
+    event_redis: 'healthy',
+    northbound_api: 'healthy',
+    event_channel: 'waiting',
+  },
+  last_synced_at: new Date().toISOString(),
+  identity_accounts: 12,
+  identity_sessions: 16,
+  products: 3,
+  groups: 2,
+  controls: 4,
+  ...values,
 })
 
 const mockCases: RiskCase[] = proxyReviewResponse.items.map((item, index) => ({
@@ -60,8 +88,8 @@ const mockCases: RiskCase[] = proxyReviewResponse.items.map((item, index) => ({
   account_id: item.account_id,
   endpoint_id: item.endpoint_id,
   campus_id: index === 0 ? 'main' : 'north',
-  status: index === 0 ? 'investigating' as const : 'new' as const,
-  priority: item.risk_score >= 90 ? 'high' as const : 'medium' as const,
+  status: index === 0 ? ('investigating' as const) : ('new' as const),
+  priority: item.risk_score >= 90 ? ('high' as const) : ('medium' as const),
   risk_score: item.risk_score,
   risk_confidence: Math.min(0.99, Math.max(0.5, item.risk_score / 100)),
   assessment_level: item.risk_score >= 90 ? 'high' : 'suspicious',
@@ -71,77 +99,308 @@ const mockCases: RiskCase[] = proxyReviewResponse.items.map((item, index) => ({
   created_at: item.first_seen,
   updated_at: item.last_seen,
   comments: [],
-  timeline: [{ event_id: `timeline-${index}`, actor_id: 'system', type: 'case.created', created_at: item.first_seen }],
+  timeline: [
+    {
+      event_id: `timeline-${index}`,
+      actor_id: 'system',
+      type: 'case.created',
+      created_at: item.first_seen,
+    },
+  ],
   evidence_snapshot: item,
 }))
 
 mockCases.unshift({
-  case_id: 'router-e2e-current', subject_type: 'ip', subject_id: '192.0.2.63', ip: '192.0.2.63',
-  endpoint_id: 'mac:d0:76:e7:fc:03:38', risk_kind: 'router_observation', status: 'new', priority: 'low',
-  risk_score: 82, risk_confidence: .82, assessment_level: 'likely', due_at: '2026-09-30T12:23:35Z',
-  first_seen: '2026-09-30T07:40:00Z', last_seen: '2026-09-30T07:55:00Z', created_at: '2026-09-30T07:40:00Z', updated_at: '2026-09-30T07:55:00Z',
-  comments: [], timeline: [{event_id:'router-timeline-created',actor_id:'system',type:'case.created',created_at:'2026-09-30T07:40:00Z'}],
+  case_id: 'router-e2e-current',
+  subject_type: 'ip',
+  subject_id: '192.0.2.63',
+  ip: '192.0.2.63',
+  endpoint_id: 'mac:d0:76:e7:fc:03:38',
+  risk_kind: 'router_observation',
+  status: 'new',
+  priority: 'low',
+  risk_score: 82,
+  risk_confidence: 0.82,
+  assessment_level: 'likely',
+  due_at: '2026-09-30T12:23:35Z',
+  first_seen: '2026-09-30T07:40:00Z',
+  last_seen: '2026-09-30T07:55:00Z',
+  created_at: '2026-09-30T07:40:00Z',
+  updated_at: '2026-09-30T07:55:00Z',
+  comments: [],
+  timeline: [
+    {
+      event_id: 'router-timeline-created',
+      actor_id: 'system',
+      type: 'case.created',
+      created_at: '2026-09-30T07:40:00Z',
+    },
+  ],
   evidence_snapshot: {
-    case_id: 'router-e2e-current', ip: '192.0.2.63', endpoint_id: 'mac:d0:76:e7:fc:03:38', access_ids: [], destinations: [], destination_ips: [], destination_domains: [],
-    tls_fingerprints: [], protocols: [], rule_matches: [], event_count: 0, tls_count: 0, quic_count: 0, alert_count: 0, confidence_level: 'medium',
-    first_seen: '2026-09-30T07:40:00Z', last_seen: '2026-09-30T07:55:00Z', duration_seconds: 0, evidence_ids: ['router-evidence-dhcp','router-evidence-tls'], risk_score: 82,
-    risk_level: 'suspicious', review_status: 'unreviewed', router_observation: {
-      assessment_id: 'router-assessment-tplink', endpoint_id: 'mac:d0:76:e7:fc:03:38', ip: '192.0.2.63', mac: 'd0:76:e7:fc:03:38',
-      brand: 'TP-Link', model: 'Archer', role: 'router', status: 'likely', confidence: 82, independent_sources: 2,
-      sources: ['dhcp','tls'], infrastructure: false, brand_reference_only: false, association_quality: 'stable', ambiguous: false,
-      confirmed_router: false, rule_version: 'router-v3', first_seen: '2026-09-30T07:40:00Z', last_seen: '2026-09-30T07:55:00Z', expires_at: '2026-09-30T08:55:00Z', conflicts: [],
+    case_id: 'router-e2e-current',
+    ip: '192.0.2.63',
+    endpoint_id: 'mac:d0:76:e7:fc:03:38',
+    access_ids: [],
+    destinations: [],
+    destination_ips: [],
+    destination_domains: [],
+    tls_fingerprints: [],
+    protocols: [],
+    rule_matches: [],
+    event_count: 0,
+    tls_count: 0,
+    quic_count: 0,
+    alert_count: 0,
+    confidence_level: 'medium',
+    first_seen: '2026-09-30T07:40:00Z',
+    last_seen: '2026-09-30T07:55:00Z',
+    duration_seconds: 0,
+    evidence_ids: ['router-evidence-dhcp', 'router-evidence-tls'],
+    risk_score: 82,
+    risk_level: 'suspicious',
+    review_status: 'unreviewed',
+    router_observation: {
+      assessment_id: 'router-assessment-tplink',
+      endpoint_id: 'mac:d0:76:e7:fc:03:38',
+      ip: '192.0.2.63',
+      mac: 'd0:76:e7:fc:03:38',
+      brand: 'TP-Link',
+      model: 'Archer',
+      role: 'router',
+      status: 'likely',
+      confidence: 82,
+      independent_sources: 2,
+      sources: ['dhcp', 'tls'],
+      infrastructure: false,
+      brand_reference_only: false,
+      association_quality: 'stable',
+      ambiguous: false,
+      confirmed_router: false,
+      rule_version: 'router-v3',
+      first_seen: '2026-09-30T07:40:00Z',
+      last_seen: '2026-09-30T07:55:00Z',
+      expires_at: '2026-09-30T08:55:00Z',
+      conflicts: [],
       score_components: [
-        {source_family:'dhcp',evidence_id:'router-evidence-dhcp',score:45,explanation:'DHCP 厂商类标识与路由设备特征一致'},
-        {source_family:'tls',evidence_id:'router-evidence-tls',score:37,explanation:'TLS 管理面证据与设备身份一致'},
+        {
+          source_family: 'dhcp',
+          evidence_id: 'router-evidence-dhcp',
+          score: 45,
+          explanation: 'DHCP 厂商类标识与路由设备特征一致',
+        },
+        {
+          source_family: 'tls',
+          evidence_id: 'router-evidence-tls',
+          score: 37,
+          explanation: 'TLS 管理面证据与设备身份一致',
+        },
       ],
     },
   },
 })
 
 mockCases.unshift({
-  case_id: 'shared-e2e-current', subject_type: 'ip', subject_id: '192.0.2.22', ip: '192.0.2.22',
-  endpoint_id: 'mac:20:3a:eb:e9:de:10', risk_kind: 'shared_access', status: 'new', priority: 'high',
-  risk_score: 90, risk_confidence: .9, assessment_level: 'confirmed', due_at: '2026-09-30T11:23:35Z',
-  first_seen: '2026-09-30T07:45:00Z', last_seen: '2026-09-30T07:55:00Z', created_at: '2026-09-30T07:45:00Z', updated_at: '2026-09-30T07:55:00Z',
-  comments: [], timeline: [{event_id:'shared-timeline-created',actor_id:'system',type:'case.created',created_at:'2026-09-30T07:45:00Z'}],
+  case_id: 'shared-e2e-current',
+  subject_type: 'ip',
+  subject_id: '192.0.2.22',
+  ip: '192.0.2.22',
+  endpoint_id: 'mac:20:3a:eb:e9:de:10',
+  risk_kind: 'shared_access',
+  status: 'new',
+  priority: 'high',
+  risk_score: 90,
+  risk_confidence: 0.9,
+  assessment_level: 'confirmed',
+  due_at: '2026-09-30T11:23:35Z',
+  first_seen: '2026-09-30T07:45:00Z',
+  last_seen: '2026-09-30T07:55:00Z',
+  created_at: '2026-09-30T07:45:00Z',
+  updated_at: '2026-09-30T07:55:00Z',
+  comments: [],
+  timeline: [
+    {
+      event_id: 'shared-timeline-created',
+      actor_id: 'system',
+      type: 'case.created',
+      created_at: '2026-09-30T07:45:00Z',
+    },
+  ],
   evidence_snapshot: {
-    case_id: 'shared-e2e-current', ip: '192.0.2.22', endpoint_id: 'mac:20:3a:eb:e9:de:10', access_ids: [], destinations: [], destination_ips: [], destination_domains: [],
-    tls_fingerprints: [], protocols: [], rule_matches: [], event_count: 2, tls_count: 0, quic_count: 0, alert_count: 0, confidence_level: 'high',
-    first_seen: '2026-09-30T07:45:00Z', last_seen: '2026-09-30T07:55:00Z', duration_seconds: 600, evidence_ids: ['shared-observation'], risk_score: 90,
-    risk_level: 'confirmed', review_status: 'unreviewed', shared_access: {
-      observation_id: 'shared-observation', generation_id: 'shared-generation', status: 'confirmed', confidence: 90,
-      strong_anchor: 'ieee1905_association', device_lower_bound: 2, coverage_state: 'verified', window_start: '2026-09-30T07:45:00Z', window_end: '2026-09-30T07:55:00Z',
-      signal_groups: ['confirmed_same_exit_endpoints','ieee1905_association'], reasons: ['被动 EasyMesh 关联状态确认多个终端同时接入'],
-      source_event_ids: ['control-a','control-b'], anchor_identities: ['aa:aa:aa:aa:aa:aa','bb:bb:bb:bb:bb:bb'], reference_device_count_24h: 1,
+    case_id: 'shared-e2e-current',
+    ip: '192.0.2.22',
+    endpoint_id: 'mac:20:3a:eb:e9:de:10',
+    access_ids: [],
+    destinations: [],
+    destination_ips: [],
+    destination_domains: [],
+    tls_fingerprints: [],
+    protocols: [],
+    rule_matches: [],
+    event_count: 2,
+    tls_count: 0,
+    quic_count: 0,
+    alert_count: 0,
+    confidence_level: 'high',
+    first_seen: '2026-09-30T07:45:00Z',
+    last_seen: '2026-09-30T07:55:00Z',
+    duration_seconds: 600,
+    evidence_ids: ['shared-observation'],
+    risk_score: 90,
+    risk_level: 'confirmed',
+    review_status: 'unreviewed',
+    shared_access: {
+      observation_id: 'shared-observation',
+      generation_id: 'shared-generation',
+      status: 'confirmed',
+      confidence: 90,
+      strong_anchor: 'ieee1905_association',
+      device_lower_bound: 2,
+      coverage_state: 'verified',
+      window_start: '2026-09-30T07:45:00Z',
+      window_end: '2026-09-30T07:55:00Z',
+      signal_groups: ['confirmed_same_exit_endpoints', 'ieee1905_association'],
+      reasons: ['被动 EasyMesh 关联状态确认多个终端同时接入'],
+      source_event_ids: ['control-a', 'control-b'],
+      anchor_identities: ['aa:aa:aa:aa:aa:aa', 'bb:bb:bb:bb:bb:bb'],
+      reference_device_count_24h: 1,
     },
   },
 })
 
 const mockOrganization = {
-  campuses: [{ campus_id: 'main', code: 'MAIN', name: '主校区', enabled: true }, { campus_id: 'north', code: 'NORTH', name: '北校区', enabled: true }],
-  buildings: [{ building_id: 'lib', campus_id: 'main', code: 'LIB', name: '图书馆', enabled: true }],
-  network_zones: [{ network_zone_id: 'student-wifi', campus_id: 'main', name: '学生无线网', cidrs: ['10.20.0.0/16'], ssids: ['Campus-WiFi'], vlans: ['120'], enabled: true }],
-  access_points: [{ access_point_id: 'ap-lib-01', campus_id: 'main', building_id: 'lib', network_zone_id: 'student-wifi', kind: 'ap', name: '图书馆一层 AP', management_ip: '10.1.1.10', enabled: true }],
+  campuses: [
+    { campus_id: 'main', code: 'MAIN', name: '主校区', enabled: true },
+    { campus_id: 'north', code: 'NORTH', name: '北校区', enabled: true },
+  ],
+  buildings: [
+    { building_id: 'lib', campus_id: 'main', code: 'LIB', name: '图书馆', enabled: true },
+  ],
+  network_zones: [
+    {
+      network_zone_id: 'student-wifi',
+      campus_id: 'main',
+      name: '学生无线网',
+      cidrs: ['10.20.0.0/16'],
+      ssids: ['Campus-WiFi'],
+      vlans: ['120'],
+      enabled: true,
+    },
+  ],
+  access_points: [
+    {
+      access_point_id: 'ap-lib-01',
+      campus_id: 'main',
+      building_id: 'lib',
+      network_zone_id: 'student-wifi',
+      kind: 'ap',
+      name: '图书馆一层 AP',
+      management_ip: '10.1.1.10',
+      enabled: true,
+    },
+  ],
 }
 
-const mockConnectors = [{ connector_type: 'srun4k' as const, connector_id: 'portal-gateway', name: '4K 认证系统', endpoint_url: 'https://192.0.2.190:8001', action_mapping: { 'account_policy_v1': 'supported', 'session.disconnect': 'online-drop' }, mode: 'shadow' as const, enabled: true, shadow_ready: false, shadow_candidate_count: 12, shadow_reviewed_count: 10, shadow_accuracy: .9, updated_at: new Date().toISOString() }]
-const mockActions: Array<Record<string, unknown>> = [{ action_id:'shared-record:shared-observe-demo',idempotency_key:'shared-record:shared-observe-demo',action_type:'disconnect',subject_type:'account',subject_id:'campus-student-001',account_id:'campus-student-001',ip:'192.0.2.44',campus_id:'ncu',mode:'record_only',status:'recorded',evidence_review_status:'rule_verified',retry_count:0,evidence_ids:['shared-behavior-test'],policy_parameters:{decision_id:'shared-observe-demo',episode_id:'shared-observe-demo',policy_id:'builtin:shared-access-observe',policy_revision:1,evidence_version:'8e79c1a7fabc0123456789abcdef012345',observation_id:'shared-behavior-test'},created_by:'shared_observation',created_at:new Date().toISOString(),updated_at:new Date().toISOString() }]
-const mockUsers = [{user_id:'admin-1',username:'admin',display_name:'系统管理员',role:'admin',disabled:false},{user_id:'reviewer-1',username:'reviewer',display_name:'风险复核员',role:'reviewer',disabled:false}]
-const mockCampusExceptions = [{exception_id:'exception-webvpn',scope_type:'domain',scope_value:'vpn.henu.edu.cn',reason:'学校 WebVPN',ruleset_version:'campus-exceptions-v1',valid_from:new Date().toISOString(),enabled:true,created_by:'admin-1',created_at:new Date().toISOString()}]
+const mockConnectors = [
+  {
+    connector_type: 'srun4k' as const,
+    connector_id: 'portal-gateway',
+    name: '4K 认证系统',
+    endpoint_url: 'https://192.0.2.190:8001',
+    action_mapping: { account_policy_v1: 'supported', 'session.disconnect': 'online-drop' },
+    mode: 'shadow' as const,
+    enabled: true,
+    shadow_ready: false,
+    shadow_candidate_count: 12,
+    shadow_reviewed_count: 10,
+    shadow_accuracy: 0.9,
+    updated_at: new Date().toISOString(),
+  },
+]
+const mockActions: Array<Record<string, unknown>> = [
+  {
+    action_id: 'shared-record:shared-observe-demo',
+    idempotency_key: 'shared-record:shared-observe-demo',
+    action_type: 'disconnect',
+    subject_type: 'account',
+    subject_id: 'campus-student-001',
+    account_id: 'campus-student-001',
+    ip: '192.0.2.44',
+    campus_id: 'ncu',
+    mode: 'record_only',
+    status: 'recorded',
+    evidence_review_status: 'rule_verified',
+    retry_count: 0,
+    evidence_ids: ['shared-behavior-test'],
+    policy_parameters: {
+      decision_id: 'shared-observe-demo',
+      episode_id: 'shared-observe-demo',
+      policy_id: 'builtin:shared-access-observe',
+      policy_revision: 1,
+      evidence_version: '8e79c1a7fabc0123456789abcdef012345',
+      observation_id: 'shared-behavior-test',
+    },
+    created_by: 'shared_observation',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
+]
+const mockUsers = [
+  {
+    user_id: 'admin-1',
+    username: 'admin',
+    display_name: '系统管理员',
+    role: 'admin',
+    disabled: false,
+  },
+  {
+    user_id: 'reviewer-1',
+    username: 'reviewer',
+    display_name: '风险复核员',
+    role: 'reviewer',
+    disabled: false,
+  },
+]
+const mockCampusExceptions = [
+  {
+    exception_id: 'exception-webvpn',
+    scope_type: 'domain',
+    scope_value: 'vpn.henu.edu.cn',
+    reason: '学校 WebVPN',
+    ruleset_version: 'campus-exceptions-v1',
+    valid_from: new Date().toISOString(),
+    enabled: true,
+    created_by: 'admin-1',
+    created_at: new Date().toISOString(),
+  },
+]
 
 export const handlers = [
   ...auxiliaryPaginationHandlers,
   ...ipTrafficObservationHandlers,
- ...violationHandlers,
- http.get('/api/v1/whitelist',()=>HttpResponse.json({items:[],page:{total:0,limit:20},checked_at:new Date().toISOString()})),
- ...notificationHandlers,
- ...blacklistHandlers,
- ...destinationTargetHandlers,
- ...behaviorReportHandlers,
- ...sharedAccessHandlers,
- ...discoveryHandlers,
- ...routerObservationHandlers,
- http.get("/api/v1/events/proxy-fixture",()=>HttpResponse.json({event_id:"proxy-fixture",type:"proxy_transaction",source:"zeek",timestamp:proxyProof.response_at,proxy_protocol:proxyProof})),
+  ...violationHandlers,
+  http.get('/api/v1/whitelist', () =>
+    HttpResponse.json({
+      items: [],
+      page: { total: 0, limit: 20 },
+      checked_at: new Date().toISOString(),
+    }),
+  ),
+  ...notificationHandlers,
+  ...blacklistHandlers,
+  ...destinationTargetHandlers,
+  ...behaviorReportHandlers,
+  ...sharedAccessHandlers,
+  ...discoveryHandlers,
+  ...routerObservationHandlers,
+  http.get('/api/v1/events/proxy-fixture', () =>
+    HttpResponse.json({
+      event_id: 'proxy-fixture',
+      type: 'proxy_transaction',
+      source: 'zeek',
+      timestamp: proxyProof.response_at,
+      proxy_protocol: proxyProof,
+    }),
+  ),
   ...applicationHandlers,
   http.get('/api/v1/policy-decisions/shared-trend', ({ request }) => {
     const short = new URL(request.url).searchParams.get('window') === '15m'
@@ -152,9 +411,14 @@ export const handlers = [
     const from = to - count * interval
     const time = (value: number) => new Date(value).toISOString()
     return HttpResponse.json({
-      from: time(from), to: time(to), bucket_minutes: bucketMinutes,
+      from: time(from),
+      to: time(to),
+      bucket_minutes: bucketMinutes,
       buckets: Array.from({ length: count }, (_, i) => ({
-        from: time(from + i * interval), matched: i === 8 ? 2 : 0, insufficient: 26 + i * 3, expired: 12 + i % 3 * 7,
+        from: time(from + i * interval),
+        matched: i === 8 ? 2 : 0,
+        insufficient: 26 + i * 3,
+        expired: 12 + (i % 3) * 7,
       })),
     })
   }),
@@ -165,100 +429,434 @@ export const handlers = [
   }),
   http.post('/api/v1/auth/login', () => HttpResponse.json(mockSession)),
   http.post('/api/v1/auth/logout', () => new HttpResponse(null, { status: 204 })),
-  http.get('/api/v1/users', () => HttpResponse.json({items:mockUsers,page:{limit:20,next_cursor:null,total:mockUsers.length}})),
-  http.post('/api/v1/users', async ({request}) => {const payload=await request.json() as Record<string,unknown>;const item={user_id:`user-${Date.now()}`,username:String(payload.username),display_name:String(payload.display_name),role:String(payload.role),disabled:false};mockUsers.push(item);return HttpResponse.json(item,{status:201})}),
-  http.post('/api/v1/users/:userId/:operation', ({params}) => {const item=mockUsers.find(entry=>entry.user_id===params.userId);if(!item)return new HttpResponse(null,{status:404});if(params.operation==='disable')item.disabled=true;if(params.operation==='enable')item.disabled=false;return HttpResponse.json(item)}),
-  http.get('/api/v1/campus-exceptions', () => HttpResponse.json({items:mockCampusExceptions,page:{limit:20,next_cursor:null,total:mockCampusExceptions.length}})),
-  http.post('/api/v1/campus-exceptions', async ({request}) => {const payload=await request.json() as Record<string,unknown>;const item={...payload,exception_id:`exception-${Date.now()}`,enabled:true,created_by:'admin-1',created_at:new Date().toISOString()};mockCampusExceptions.push(item as typeof mockCampusExceptions[number]);return HttpResponse.json(item,{status:201})}),
-  http.post('/api/v1/campus-exceptions/:exceptionId/disable', ({params}) => {const item=mockCampusExceptions.find(entry=>entry.exception_id===params.exceptionId);if(!item)return new HttpResponse(null,{status:404});item.enabled=false;return HttpResponse.json(item)}),
+  http.get('/api/v1/users', () =>
+    HttpResponse.json({
+      items: mockUsers,
+      page: { limit: 20, next_cursor: null, total: mockUsers.length },
+    }),
+  ),
+  http.post('/api/v1/users', async ({ request }) => {
+    const payload = (await request.json()) as Record<string, unknown>
+    const item = {
+      user_id: `user-${Date.now()}`,
+      username: String(payload.username),
+      display_name: String(payload.display_name),
+      role: String(payload.role),
+      disabled: false,
+    }
+    mockUsers.push(item)
+    return HttpResponse.json(item, { status: 201 })
+  }),
+  http.post('/api/v1/users/:userId/:operation', ({ params }) => {
+    const item = mockUsers.find((entry) => entry.user_id === params.userId)
+    if (!item) return new HttpResponse(null, { status: 404 })
+    if (params.operation === 'disable') item.disabled = true
+    if (params.operation === 'enable') item.disabled = false
+    return HttpResponse.json(item)
+  }),
+  http.get('/api/v1/campus-exceptions', () =>
+    HttpResponse.json({
+      items: mockCampusExceptions,
+      page: { limit: 20, next_cursor: null, total: mockCampusExceptions.length },
+    }),
+  ),
+  http.post('/api/v1/campus-exceptions', async ({ request }) => {
+    const payload = (await request.json()) as Record<string, unknown>
+    const item = {
+      ...payload,
+      exception_id: `exception-${Date.now()}`,
+      enabled: true,
+      created_by: 'admin-1',
+      created_at: new Date().toISOString(),
+    }
+    mockCampusExceptions.push(item as (typeof mockCampusExceptions)[number])
+    return HttpResponse.json(item, { status: 201 })
+  }),
+  http.post('/api/v1/campus-exceptions/:exceptionId/disable', ({ params }) => {
+    const item = mockCampusExceptions.find((entry) => entry.exception_id === params.exceptionId)
+    if (!item) return new HttpResponse(null, { status: 404 })
+    item.enabled = false
+    return HttpResponse.json(item)
+  }),
   http.get('/api/v1/cases', ({ request }) => {
     const url = new URL(request.url)
-    const includeRouterObservations = url.searchParams.get('include_router_observations') !== 'false'
-    const result = mockPage(mockCases.filter((item) => (includeRouterObservations || item.risk_kind !== 'router_observation') && (!url.searchParams.get('status') || item.status === url.searchParams.get('status'))), url)
+    const includeRouterObservations =
+      url.searchParams.get('include_router_observations') !== 'false'
+    const result = mockPage(
+      mockCases.filter(
+        (item) =>
+          (includeRouterObservations || item.risk_kind !== 'router_observation') &&
+          (!url.searchParams.get('status') || item.status === url.searchParams.get('status')),
+      ),
+      url,
+    )
     return HttpResponse.json(result)
   }),
-  http.get('/api/v1/cases/:caseId/history/:kind', ({params,request}) => {
-    const item=mockCases.find(entry=>entry.case_id===params.caseId)
-    if(!item)return new HttpResponse(null,{status:404})
-    const evidence=item.evidence_snapshot
-    const rows:CaseHistoryRow[]=params.kind==='evidence'?(evidence?Array.from({length:45},(_,index)=>({snapshot_id:`${item.case_id}-snapshot-${45-index}`,evidence,ruleset_version:'review-v1',created_at:item.created_at})):[]):params.kind==='comments'?(item.comments??[]):(item.timeline??[]).slice().reverse()
-    return HttpResponse.json(mockPage(rows,new URL(request.url)))
+  http.get('/api/v1/cases/:caseId/history/:kind', ({ params, request }) => {
+    const item = mockCases.find((entry) => entry.case_id === params.caseId)
+    if (!item) return new HttpResponse(null, { status: 404 })
+    const evidence = item.evidence_snapshot
+    const rows: CaseHistoryRow[] =
+      params.kind === 'evidence'
+        ? evidence
+          ? Array.from({ length: 45 }, (_, index) => ({
+              snapshot_id: `${item.case_id}-snapshot-${45 - index}`,
+              evidence,
+              ruleset_version: 'review-v1',
+              created_at: item.created_at,
+            }))
+          : []
+        : params.kind === 'comments'
+          ? (item.comments ?? [])
+          : (item.timeline ?? []).slice().reverse()
+    return HttpResponse.json(mockPage(rows, new URL(request.url)))
   }),
   http.get('/api/v1/cases/:caseId', ({ params }) => {
     const item = mockCases.find((entry) => entry.case_id === params.caseId)
     return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 })
   }),
   http.post('/api/v1/cases/batch', async ({ request }) => {
-    const payload = await request.json() as {case_ids:string[];operation:'assign'|'close';assignee_id?:string}
+    const payload = (await request.json()) as {
+      case_ids: string[]
+      operation: 'assign' | 'close'
+      assignee_id?: string
+    }
     const items = mockCases.filter((item) => payload.case_ids.includes(item.case_id))
     for (const item of items) {
-      if (payload.operation === 'assign') Object.assign(item, { assignee_id: payload.assignee_id, status: 'assigned' })
+      if (payload.operation === 'assign')
+        Object.assign(item, { assignee_id: payload.assignee_id, status: 'assigned' })
       else Object.assign(item, { status: 'closed' })
     }
-    return HttpResponse.json({items,updated:items.length})
+    return HttpResponse.json({ items, updated: items.length })
   }),
   http.post('/api/v1/cases/:caseId/:operation', async ({ params, request }) => {
     const item = mockCases.find((entry) => entry.case_id === params.caseId)
     if (!item) return new HttpResponse(null, { status: 404 })
-    const payload = await request.json() as Record<string, string>
-    if (params.operation === 'assign') Object.assign(item, { assignee_id: payload.assignee_id, status: 'assigned' })
+    const payload = (await request.json()) as Record<string, string>
+    if (params.operation === 'assign')
+      Object.assign(item, { assignee_id: payload.assignee_id, status: 'assigned' })
     if (params.operation === 'status') Object.assign(item, { status: payload.status })
     if (params.operation === 'priority') Object.assign(item, { priority: payload.priority })
-    if (params.operation === 'disposition') Object.assign(item, { disposition: payload.disposition, status: 'resolved' })
-    if (params.operation === 'comments') (item.comments ??= []).push({ comment_id: `comment-${Date.now()}`, author_id: mockSession.user.id, body: payload.body, created_at: new Date().toISOString() })
+    if (params.operation === 'disposition')
+      Object.assign(item, { disposition: payload.disposition, status: 'resolved' })
+    if (params.operation === 'comments')
+      (item.comments ??= []).push({
+        comment_id: `comment-${Date.now()}`,
+        author_id: mockSession.user.id,
+        body: payload.body,
+        created_at: new Date().toISOString(),
+      })
     return HttpResponse.json(item)
   }),
-  http.get('/api/v1/organization', ({request}) => { const url=new URL(request.url);const kind=url.searchParams.get('kind') as keyof typeof mockOrganization|null;if(!kind)return HttpResponse.json(mockOrganization);const items=(mockOrganization[kind]??[]) as Array<Record<string,unknown>>;const result=mockPage(items,url);return HttpResponse.json(result) }),
+  http.get('/api/v1/organization', ({ request }) => {
+    const url = new URL(request.url)
+    const kind = url.searchParams.get('kind') as keyof typeof mockOrganization | null
+    if (!kind) return HttpResponse.json(mockOrganization)
+    const items = (mockOrganization[kind] ?? []) as Array<Record<string, unknown>>
+    const result = mockPage(items, url)
+    return HttpResponse.json(result)
+  }),
   http.post('/api/v1/organization/:kind', async ({ params, request }) => {
-    const payload = await request.json() as Record<string, unknown>
-    const collection = params.kind === 'campuses' ? mockOrganization.campuses : params.kind === 'buildings' ? mockOrganization.buildings : params.kind === 'network-zones' ? mockOrganization.network_zones : params.kind === 'access-points' ? mockOrganization.access_points : undefined
+    const payload = (await request.json()) as Record<string, unknown>
+    const collection =
+      params.kind === 'campuses'
+        ? mockOrganization.campuses
+        : params.kind === 'buildings'
+          ? mockOrganization.buildings
+          : params.kind === 'network-zones'
+            ? mockOrganization.network_zones
+            : params.kind === 'access-points'
+              ? mockOrganization.access_points
+              : undefined
     if (!collection) return new HttpResponse(null, { status: 404 })
     collection.push(payload as never)
     return HttpResponse.json(payload, { status: 201 })
   }),
-  http.get('/api/v1/actions/connectors', () => HttpResponse.json({ items: mockConnectors, global_stop: false, read_only: false })),
-  http.post('/api/v1/actions/connectors', async ({request}) => {const payload=await request.json() as typeof mockConnectors[number] & {secret?:string};const existing=mockConnectors.findIndex(item=>item.connector_id===payload.connector_id);const item={...payload,shadow_ready:existing>=0?mockConnectors[existing].shadow_ready:false,updated_at:new Date().toISOString()};delete item.secret;if(existing>=0)mockConnectors[existing]=item;else mockConnectors.push(item);return HttpResponse.json(item)}),
-  http.post('/api/v1/actions/connectors/:connectorId/test', ({params}) => HttpResponse.json({connector_id:params.connectorId,reachable:true,checked_at:new Date().toISOString()})),
-  http.post('/api/v1/actions/connectors/:connectorId/4k-sync', ({params}) => HttpResponse.json({connector_id:params.connectorId,source:'srun-office',online_total:16,identity_accounts:12,identity_sessions:16,products:3,groups:2,controls:4,capabilities:['disconnect'],directory_ready:true})),
-  http.get('/api/v1/integrations/srun4k', () => HttpResponse.json({items:[mockSRun4KIntegration('portal-gateway')]})),
-  http.get('/api/v1/integrations/srun4k/:connectorId', ({params}) => HttpResponse.json(mockSRun4KIntegration(String(params.connectorId)))),
-  http.post('/api/v1/integrations/srun4k', async ({request}) => {const value=await request.json() as Record<string, unknown>;return HttpResponse.json(mockSRun4KIntegration('srun4k-mock', {...value, authorization_ready:false, connection_state:'pending', last_synced_at:undefined, identity_accounts:0, identity_sessions:0, products:0, groups:0, controls:0}))}),
-  http.put('/api/v1/integrations/srun4k/:connectorId', async ({params,request}) => {const value=await request.json() as Record<string, unknown>;return HttpResponse.json(mockSRun4KIntegration(String(params.connectorId), {...value, connection_state:'pending'}))}),
-  http.post('/api/v1/integrations/srun4k/:connectorId/authorization', ({params}) => HttpResponse.json(mockSRun4KIntegration(String(params.connectorId)))),
-  http.post('/api/v1/integrations/srun4k/:connectorId/test', ({params}) => HttpResponse.json({connector_id:params.connectorId,checked_at:new Date().toISOString(),online_total:16,channels:{authorization_database:'healthy',online_redis:'healthy',catalog_redis:'healthy',event_redis:'healthy',northbound_api:'healthy',event_channel:'waiting'},enforcement_ready:false})),
-  http.post('/api/v1/integrations/srun4k/:connectorId/sync', ({params}) => HttpResponse.json({connector_id:params.connectorId,source:`srun4k:${params.connectorId}`,synced_at:new Date().toISOString(),identity_accounts:12,identity_sessions:16,address_records:18,products:3,groups:2,controls:4,event_channel_state:'waiting',enforcement_ready:false})),
-  http.get('/api/v1/integrations/identity/bridge', () => HttpResponse.json({config:{bridge_id:'ncu-legacy-4k',host:'222.204.3.224',config_version:1,online_redis_addr:'222.204.3.224:16380',event_redis_addr:'222.204.3.227:16384',online_list:'list:rad_online',event_list:'list:antiproxy:127.0.0.1',processing_list:'list:antiproxy:127.0.0.1:proxy-sentinel-processing',source:'ncu-srun4k',sensor_id:'ncu-auth-redis',campus_id:'ncu',access_domain:'campus-auth',batch_size:500,reconcile_interval_seconds:1800},runtime:{state:'healthy',active_host:'222.204.3.224',active_config_version:1,active_online_redis_addr:'222.204.3.224:16380',online_channel_state:'healthy',event_channel_state:'healthy',snapshot_state:'healthy',queue_sampled_at:new Date().toISOString(),queue_sample_stale:false,quarantine_queue:0,pipeline:{statistics_at:new Date().toISOString(),accepted_sequence:20,processed_sequence:20,pending_records:0,export_pending_records:0,calibration_state:"completed",last_error:"",derived_cursor_at:new Date().toISOString()},source_queue:0,processing_queue:0,online_members:16266,online_sessions:16266,committed_messages:4468,bad_messages:0,event_consecutive_failures:0,snapshot_consecutive_failures:0,accounts:4476,sessions:8088,last_event_at:new Date().toISOString(),last_snapshot_at:new Date().toISOString()},checked_at:new Date().toISOString()})),
-  http.put('/api/v1/integrations/identity/bridge', async ({request}) => {const value=await request.json() as {host:string};return HttpResponse.json({bridge_id:'ncu-legacy-4k',host:value.host,config_version:2,state:'switching'},{status:202})}),
-  http.get('/api/v1/integrations/identity/bridge/runs', () => HttpResponse.json({items:[{run_id:'snapshot-1',kind:'snapshot',status:'completed',records_read:16266,records_emitted:16266,records_skipped:0,records_malformed:0,retry_count:0,duration_ms:2300,started_at:new Date().toISOString(),completed_at:new Date().toISOString()}],page:{limit:20,next_cursor:null,total:1}})),
-  http.get('/api/v1/actions', ({ request }) => { const result = mockPage(mockActions, new URL(request.url)); return HttpResponse.json(result) }),
+  http.get('/api/v1/actions/connectors', () =>
+    HttpResponse.json({ items: mockConnectors, global_stop: false, read_only: false }),
+  ),
+  http.post('/api/v1/actions/connectors', async ({ request }) => {
+    const payload = (await request.json()) as (typeof mockConnectors)[number] & { secret?: string }
+    const existing = mockConnectors.findIndex((item) => item.connector_id === payload.connector_id)
+    const item = {
+      ...payload,
+      shadow_ready: existing >= 0 ? mockConnectors[existing].shadow_ready : false,
+      updated_at: new Date().toISOString(),
+    }
+    delete item.secret
+    if (existing >= 0) mockConnectors[existing] = item
+    else mockConnectors.push(item)
+    return HttpResponse.json(item)
+  }),
+  http.post('/api/v1/actions/connectors/:connectorId/test', ({ params }) =>
+    HttpResponse.json({
+      connector_id: params.connectorId,
+      reachable: true,
+      checked_at: new Date().toISOString(),
+    }),
+  ),
+  http.post('/api/v1/actions/connectors/:connectorId/4k-sync', ({ params }) =>
+    HttpResponse.json({
+      connector_id: params.connectorId,
+      source: 'srun-office',
+      online_total: 16,
+      identity_accounts: 12,
+      identity_sessions: 16,
+      products: 3,
+      groups: 2,
+      controls: 4,
+      capabilities: ['disconnect'],
+      directory_ready: true,
+    }),
+  ),
+  http.get('/api/v1/integrations/srun4k', () =>
+    HttpResponse.json({ items: [mockSRun4KIntegration('portal-gateway')] }),
+  ),
+  http.get('/api/v1/integrations/srun4k/:connectorId', ({ params }) =>
+    HttpResponse.json(mockSRun4KIntegration(String(params.connectorId))),
+  ),
+  http.post('/api/v1/integrations/srun4k', async ({ request }) => {
+    const value = (await request.json()) as Record<string, unknown>
+    return HttpResponse.json(
+      mockSRun4KIntegration('srun4k-mock', {
+        ...value,
+        authorization_ready: false,
+        connection_state: 'pending',
+        last_synced_at: undefined,
+        identity_accounts: 0,
+        identity_sessions: 0,
+        products: 0,
+        groups: 0,
+        controls: 0,
+      }),
+    )
+  }),
+  http.put('/api/v1/integrations/srun4k/:connectorId', async ({ params, request }) => {
+    const value = (await request.json()) as Record<string, unknown>
+    return HttpResponse.json(
+      mockSRun4KIntegration(String(params.connectorId), { ...value, connection_state: 'pending' }),
+    )
+  }),
+  http.post('/api/v1/integrations/srun4k/:connectorId/authorization', ({ params }) =>
+    HttpResponse.json(mockSRun4KIntegration(String(params.connectorId))),
+  ),
+  http.post('/api/v1/integrations/srun4k/:connectorId/test', ({ params }) =>
+    HttpResponse.json({
+      connector_id: params.connectorId,
+      checked_at: new Date().toISOString(),
+      online_total: 16,
+      channels: {
+        authorization_database: 'healthy',
+        online_redis: 'healthy',
+        catalog_redis: 'healthy',
+        event_redis: 'healthy',
+        northbound_api: 'healthy',
+        event_channel: 'waiting',
+      },
+      enforcement_ready: false,
+    }),
+  ),
+  http.post('/api/v1/integrations/srun4k/:connectorId/sync', ({ params }) =>
+    HttpResponse.json({
+      connector_id: params.connectorId,
+      source: `srun4k:${params.connectorId}`,
+      synced_at: new Date().toISOString(),
+      identity_accounts: 12,
+      identity_sessions: 16,
+      address_records: 18,
+      products: 3,
+      groups: 2,
+      controls: 4,
+      event_channel_state: 'waiting',
+      enforcement_ready: false,
+    }),
+  ),
+  http.get('/api/v1/integrations/identity/bridge', () =>
+    HttpResponse.json({
+      config: {
+        bridge_id: 'ncu-legacy-4k',
+        host: '222.204.3.224',
+        config_version: 1,
+        online_redis_addr: '222.204.3.224:16380',
+        event_redis_addr: '222.204.3.227:16384',
+        online_list: 'list:rad_online',
+        event_list: 'list:antiproxy:127.0.0.1',
+        processing_list: 'list:antiproxy:127.0.0.1:proxy-sentinel-processing',
+        source: 'ncu-srun4k',
+        sensor_id: 'ncu-auth-redis',
+        campus_id: 'ncu',
+        access_domain: 'campus-auth',
+        batch_size: 500,
+        reconcile_interval_seconds: 1800,
+      },
+      runtime: {
+        state: 'healthy',
+        active_host: '222.204.3.224',
+        active_config_version: 1,
+        active_online_redis_addr: '222.204.3.224:16380',
+        online_channel_state: 'healthy',
+        event_channel_state: 'healthy',
+        snapshot_state: 'healthy',
+        queue_sampled_at: new Date().toISOString(),
+        queue_sample_stale: false,
+        quarantine_queue: 0,
+        pipeline: {
+          statistics_at: new Date().toISOString(),
+          accepted_sequence: 20,
+          processed_sequence: 20,
+          pending_records: 0,
+          export_pending_records: 0,
+          calibration_state: 'completed',
+          last_error: '',
+          derived_cursor_at: new Date().toISOString(),
+        },
+        source_queue: 0,
+        processing_queue: 0,
+        online_members: 16266,
+        online_sessions: 16266,
+        committed_messages: 4468,
+        bad_messages: 0,
+        event_consecutive_failures: 0,
+        snapshot_consecutive_failures: 0,
+        accounts: 4476,
+        sessions: 8088,
+        last_event_at: new Date().toISOString(),
+        last_snapshot_at: new Date().toISOString(),
+      },
+      checked_at: new Date().toISOString(),
+    }),
+  ),
+  http.put('/api/v1/integrations/identity/bridge', async ({ request }) => {
+    const value = (await request.json()) as { host: string }
+    return HttpResponse.json(
+      { bridge_id: 'ncu-legacy-4k', host: value.host, config_version: 2, state: 'switching' },
+      { status: 202 },
+    )
+  }),
+  http.get('/api/v1/integrations/identity/bridge/runs', () =>
+    HttpResponse.json({
+      items: [
+        {
+          run_id: 'snapshot-1',
+          kind: 'snapshot',
+          status: 'completed',
+          records_read: 16266,
+          records_emitted: 16266,
+          records_skipped: 0,
+          records_malformed: 0,
+          retry_count: 0,
+          duration_ms: 2300,
+          started_at: new Date().toISOString(),
+          completed_at: new Date().toISOString(),
+        },
+      ],
+      page: { limit: 20, next_cursor: null, total: 1 },
+    }),
+  ),
+  http.get('/api/v1/actions', ({ request }) => {
+    const result = mockPage(mockActions, new URL(request.url))
+    return HttpResponse.json(result)
+  }),
   http.get('/api/v1/actions/:actionId/native-observations', ({ request }) => {
     const older = new URL(request.url).searchParams.has('before')
-    return HttpResponse.json({items:[{id:older?'9007199254740992':'9007199254740993',step_failed:!older,recorded_at:'2026-09-15T09:00:00Z',result:{delivery:older?'acknowledged':'uncertain',observation:older?'online':'absent',reserved_at:'2026-09-15T08:59:00Z'}}],...(older?{}:{next_before:'9007199254740993'})})
+    return HttpResponse.json({
+      items: [
+        {
+          id: older ? '9007199254740992' : '9007199254740993',
+          step_failed: !older,
+          recorded_at: '2026-09-15T09:00:00Z',
+          result: {
+            delivery: older ? 'acknowledged' : 'uncertain',
+            observation: older ? 'online' : 'absent',
+            reserved_at: '2026-09-15T08:59:00Z',
+          },
+        },
+      ],
+      ...(older ? {} : { next_before: '9007199254740993' }),
+    })
   }),
   http.post('/api/v1/actions/execute', async ({ request }) => {
-    const payload = await request.json() as Record<string, string>
-    const action = { ...payload, action_id: `action-${Date.now()}`, idempotency_key: 'mock', subject_id: payload.ip, mode: 'shadow', status: 'shadow', blockers: [], created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
+    const payload = (await request.json()) as Record<string, string>
+    const action = {
+      ...payload,
+      action_id: `action-${Date.now()}`,
+      idempotency_key: 'mock',
+      subject_id: payload.ip,
+      mode: 'shadow',
+      status: 'shadow',
+      blockers: [],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
     mockActions.unshift(action)
     return HttpResponse.json(action, { status: 202 })
   }),
-  http.post('/api/v1/actions/:actionId/revoke', ({ params }) => HttpResponse.json({ action_id: params.actionId, status: 'revoked', updated_at: new Date().toISOString() })),
+  http.post('/api/v1/actions/:actionId/revoke', ({ params }) =>
+    HttpResponse.json({
+      action_id: params.actionId,
+      status: 'revoked',
+      updated_at: new Date().toISOString(),
+    }),
+  ),
   http.post('/api/v1/actions/emergency-stop', () => HttpResponse.json({ global_stop: true })),
   http.get('/api/v1/overview', async () => {
     await delay(160)
-    return HttpResponse.json({...overview,statistics_as_of:new Date().toISOString()})
+    return HttpResponse.json({ ...overview, statistics_as_of: new Date().toISOString() })
   }),
   http.get('/api/v1/system/status', () => HttpResponse.json(systemStatus)),
   http.get('/api/v1/activity/overview', ({ request }) => {
     const url = new URL(request.url)
     const windowValue = url.searchParams.get('window') ?? '1h'
-    return HttpResponse.json({...getActivityOverviewByWindow(windowValue),statistics_as_of:new Date().toISOString()})
+    return HttpResponse.json({
+      ...getActivityOverviewByWindow(windowValue),
+      statistics_as_of: new Date().toISOString(),
+    })
   }),
-  http.get('/api/v1/activity/reports', ({request}) => {
-    const dimension=new URL(request.url).searchParams.get('dimension')??'domain'
-    const overview=getActivityOverviewByWindow('1h')
-    const source=dimension==='domain'?overview.top_domains:dimension==='http_host'?overview.top_http_hosts:dimension==='tls_sni'?overview.top_tls_sni:dimension==='user_agent'?overview.top_user_agents:dimension==='dst_port'?overview.top_dst_ports:dimension==='dst_ip'?overview.top_dst_ips:dimension==='src_ip'?overview.top_source_ips:dimension==='ecosystem'?[{value:'Apple',count:120,last_seen:new Date().toISOString()},{value:'Huawei',count:72,last_seen:new Date().toISOString()}]:dimension==='application'?[{value:'http2',count:220,last_seen:new Date().toISOString()},{value:'dns',count:160,last_seen:new Date().toISOString()},{value:'未知',count:40,last_seen:new Date().toISOString()}]:overview.protocol_counts
-    const total=source.reduce((sum,item)=>sum+item.count,0);const unknown=source.find(item=>item.value==='未知')?.count??0
-    return HttpResponse.json({dimension,total,classified_count:total-unknown,unknown_count:unknown,items:source.map(item=>({key:item.value,label:item.value,count:item.count,share:total?item.count/total:0,last_seen:item.last_seen}))})
+  http.get('/api/v1/activity/reports', ({ request }) => {
+    const dimension = new URL(request.url).searchParams.get('dimension') ?? 'domain'
+    const overview = getActivityOverviewByWindow('1h')
+    const source =
+      dimension === 'domain'
+        ? overview.top_domains
+        : dimension === 'http_host'
+          ? overview.top_http_hosts
+          : dimension === 'tls_sni'
+            ? overview.top_tls_sni
+            : dimension === 'user_agent'
+              ? overview.top_user_agents
+              : dimension === 'dst_port'
+                ? overview.top_dst_ports
+                : dimension === 'dst_ip'
+                  ? overview.top_dst_ips
+                  : dimension === 'src_ip'
+                    ? overview.top_source_ips
+                    : dimension === 'ecosystem'
+                      ? [
+                          { value: 'Apple', count: 120, last_seen: new Date().toISOString() },
+                          { value: 'Huawei', count: 72, last_seen: new Date().toISOString() },
+                        ]
+                      : dimension === 'application'
+                        ? [
+                            { value: 'http2', count: 220, last_seen: new Date().toISOString() },
+                            { value: 'dns', count: 160, last_seen: new Date().toISOString() },
+                            { value: '未知', count: 40, last_seen: new Date().toISOString() },
+                          ]
+                        : overview.protocol_counts
+    const total = source.reduce((sum, item) => sum + item.count, 0)
+    const unknown = source.find((item) => item.value === '未知')?.count ?? 0
+    return HttpResponse.json({
+      dimension,
+      total,
+      classified_count: total - unknown,
+      unknown_count: unknown,
+      items: source.map((item) => ({
+        key: item.value,
+        label: item.value,
+        count: item.count,
+        share: total ? item.count / total : 0,
+        last_seen: item.last_seen,
+      })),
+    })
   }),
   http.get('/api/v1/proxy-reviews', ({ request }) => {
     const url = new URL(request.url)
@@ -288,20 +886,32 @@ export const handlers = [
   }),
   http.get('/api/v1/dpi/trends', () => HttpResponse.json({ points: mockDpiTrendPoints })),
   http.get('/api/v1/dpi/protocol-flows', () => HttpResponse.json({ items: mockDpiProtocolFlows })),
-  http.get('/api/v1/dpi/fingerprint-conflicts', () => HttpResponse.json({ items: mockFingerprintConflicts })),
+  http.get('/api/v1/dpi/fingerprint-conflicts', () =>
+    HttpResponse.json({ items: mockFingerprintConflicts }),
+  ),
   http.get('/api/v1/dpi/flows', ({ request }) => {
     const url = new URL(request.url)
     const result = filterMockFlows(url)
     return HttpResponse.json({ items: result.items, page: result.page })
   }),
-  http.get('/api/v1/dpi/flows/count', ({ request }) => HttpResponse.json({ total: filterMockFlows(new URL(request.url)).total, queried_at: new Date().toISOString() })),
+  http.get('/api/v1/dpi/flows/count', ({ request }) =>
+    HttpResponse.json({
+      total: filterMockFlows(new URL(request.url)).total,
+      queried_at: new Date().toISOString(),
+    }),
+  ),
   http.get('/api/v1/dpi/flows/:flowId', ({ params }) => {
     const flowId = normalizeIp(String(params.flowId))
-    const flow = Object.values(mockFlowSamples).flat().find((item) => item.flow_id === flowId || item.event_id === flowId)
+    const flow = Object.values(mockFlowSamples)
+      .flat()
+      .find((item) => item.flow_id === flowId || item.event_id === flowId)
     return flow
       ? HttpResponse.json({
           flow,
-          event: Object.values(eventsByIp).flat().find((item) => item.event_id === flow.event_id) ?? eventsByIp['10.255.0.59'][0],
+          event:
+            Object.values(eventsByIp)
+              .flat()
+              .find((item) => item.event_id === flow.event_id) ?? eventsByIp['10.255.0.59'][0],
           risk: riskSnapshots.find((item) => item.ip === flow.src_ip) ?? riskSnapshots[3],
           evidence: evidenceByIp[flow.src_ip ?? ''] ?? [],
         })
@@ -313,26 +923,58 @@ export const handlers = [
     const result = filterMockFlows(url)
     return HttpResponse.json({ items: result.items, page: result.page })
   }),
-  http.get('/api/v1/risks/stream-cutover', () => HttpResponse.json({
-    active: true,
-    status: {
-      sensor_id: 'mock-sensor',
-      cancel_id: 'mock-audit-2',
-      accepted_after: '2026-10-26T06:40:03Z',
-      canceled_subjects: 4563,
-      prior_canceled_subjects: 40504,
-      audited_at: '2026-10-26T06:40:04Z',
-      pending_subjects: 18,
-      pending_older_than_5s: 3,
-      router_gap: { cancel_id: 'mock-router-audit', indexed_after: '2026-10-26T06:42:00Z', canceled_index_rows: 5060, prior_processed_events: 58050, audited_at: '2026-10-26T06:42:02Z' },
-      prior_router_canceled_index_rows: 0,
-      source_gap: { epoch: 'packet-fresh', source_owner: 'packet-sidecar', canceled_records: 742819, canceled_bytes: 567763339, audit_batches: 68, manifest_sha256: 'a'.repeat(64), cutoff_at: '2026-10-26T06:38:56Z' },
-      source_gaps: [
-        { epoch: 'handshake-fresh', source_owner: 'handshake-sidecar', canceled_records: 44764, canceled_bytes: 52332842, audit_batches: 7, manifest_sha256: 'b'.repeat(64), cutoff_at: '2026-10-26T06:38:56Z' },
-        { epoch: 'packet-fresh', source_owner: 'packet-sidecar', canceled_records: 742819, canceled_bytes: 567763339, audit_batches: 68, manifest_sha256: 'a'.repeat(64), cutoff_at: '2026-10-26T06:38:56Z' },
-      ],
-    },
-  })),
+  http.get('/api/v1/risks/stream-cutover', () =>
+    HttpResponse.json({
+      active: true,
+      status: {
+        sensor_id: 'mock-sensor',
+        cancel_id: 'mock-audit-2',
+        accepted_after: '2026-10-26T06:40:03Z',
+        canceled_subjects: 4563,
+        prior_canceled_subjects: 40504,
+        audited_at: '2026-10-26T06:40:04Z',
+        pending_subjects: 18,
+        pending_older_than_5s: 3,
+        router_gap: {
+          cancel_id: 'mock-router-audit',
+          indexed_after: '2026-10-26T06:42:00Z',
+          canceled_index_rows: 5060,
+          prior_processed_events: 58050,
+          audited_at: '2026-10-26T06:42:02Z',
+        },
+        prior_router_canceled_index_rows: 0,
+        source_gap: {
+          epoch: 'packet-fresh',
+          source_owner: 'packet-sidecar',
+          canceled_records: 742819,
+          canceled_bytes: 567763339,
+          audit_batches: 68,
+          manifest_sha256: 'a'.repeat(64),
+          cutoff_at: '2026-10-26T06:38:56Z',
+        },
+        source_gaps: [
+          {
+            epoch: 'handshake-fresh',
+            source_owner: 'handshake-sidecar',
+            canceled_records: 44764,
+            canceled_bytes: 52332842,
+            audit_batches: 7,
+            manifest_sha256: 'b'.repeat(64),
+            cutoff_at: '2026-10-26T06:38:56Z',
+          },
+          {
+            epoch: 'packet-fresh',
+            source_owner: 'packet-sidecar',
+            canceled_records: 742819,
+            canceled_bytes: 567763339,
+            audit_batches: 68,
+            manifest_sha256: 'a'.repeat(64),
+            cutoff_at: '2026-10-26T06:38:56Z',
+          },
+        ],
+      },
+    }),
+  ),
   http.get('/api/v1/risks', ({ request }) => {
     const url = new URL(request.url)
     const level = url.searchParams.get('level')
@@ -340,7 +982,9 @@ export const handlers = [
     const limit = Number(url.searchParams.get('limit') ?? 50)
     const filtered = riskSnapshots
       .filter((item) => !level || item.level === level)
-      .filter((item) => !q || item.ip.toLowerCase().includes(q) || item.summary.toLowerCase().includes(q))
+      .filter(
+        (item) => !q || item.ip.toLowerCase().includes(q) || item.summary.toLowerCase().includes(q),
+      )
       .slice(0, limit)
 
     return HttpResponse.json({
@@ -394,166 +1038,361 @@ export const handlers = [
     )
   }),
   http.get('/api/v1/discovery/trends', ({ request }) => {
-    const days = Math.min(30, Math.max(1, Number(new URL(request.url).searchParams.get('days') ?? '7')))
+    const days = Math.min(
+      30,
+      Math.max(1, Number(new URL(request.url).searchParams.get('days') ?? '7')),
+    )
     const base = new Date('2026-11-10T00:00:00Z')
     return HttpResponse.json({
       days: Array.from({ length: days }, (_, index) => {
         const day = new Date(base)
         day.setUTCDate(base.getUTCDate() - (days - 1 - index))
-        return { date: day.toISOString().slice(0, 10), new: (index % 5) + 1, typed: (index % 3) + 1 }
+        return {
+          date: day.toISOString().slice(0, 10),
+          new: (index % 5) + 1,
+          typed: (index % 3) + 1,
+        }
       }),
-      top_types: [{ device_type: 'mobile', count: 3 }, { device_type: 'camera', count: 1 }],
+      top_types: [
+        { device_type: 'mobile', count: 3 },
+        { device_type: 'camera', count: 1 },
+      ],
       as_of: '2026-11-10T02:00:00Z',
       window_days: days,
     })
   }),
-  http.get(/\/api\/v1\/(?:devices|device-inventory(?:\/(?:metadata|position))?)$/, ({ request }) => {
-    const url = new URL(request.url)
-    const qRaw=url.searchParams.get('q')?.trim()||''
-    const q = qRaw.toLowerCase()
-    const searchType=url.searchParams.get('search_type')||'all'
-    if(!['all','account','ip','mac','name'].includes(searchType))return HttpResponse.json({error:'invalid search_type'},{status:400})
-    const ip = url.searchParams.get('ip')
-    const brand = url.searchParams.get('brand')?.toLowerCase()
-    const osFamily = url.searchParams.get('os_family')?.toLowerCase()
-	const ecosystem=url.searchParams.get('ecosystem')?.toLowerCase()
-    const limit = Number(url.searchParams.get('limit') ?? 50)
-    const cursor = Number(url.searchParams.get('cursor') ?? 0)
-    const endpointItems = Object.values(deviceInventoriesByIp).flatMap((inventory) =>
-      inventory.devices.map((device) => ({
-        endpoint_id: device.endpoint_id || device.device_id,
-        primary_mac: device.signals.find((signal) => signal.kind === 'mac')?.normalized_value,
-        entity_role: device.entity_role || 'endpoint',
-        registration_status: device.endpoint_id ? 'registered' : 'unregistered',
-        owner_account: device.account_id || '',
-        owner_name: device.account_id ? '样本用户' : '',
-        owner_department: device.account_id ? '网络中心' : '',
-        asset_tag: device.endpoint_id ? `ASSET-${device.device_id.slice(-4)}` : '',
-        ownership_class: device.endpoint_id ? 'school_asset' : 'unknown',
-        merge_status: 'active',
-        current_account: device.account_id || '',
-        current_ip: inventory.ip,
-        current_access_id: device.access_id || '',
-        accounts: device.account_id ? [device.account_id] : [],
-        ips: [inventory.ip],
-        access_ids: device.access_id ? [device.access_id] : [],
-        brand: device.brand || '',
-        vendor: device.vendor || '',
-        model: device.model || '',
-        vendor_confidence: device.vendor && device.vendor !== 'unknown' ? device.confidence : 0,
-        brand_confidence: device.brand && device.brand !== 'unknown' ? device.confidence : 0,
-        model_confidence: device.model && device.model !== 'unknown' ? device.confidence : 0,
-        device_type_confidence: 0,
-        os_family: device.os_family || '',
-        os_family_confidence: device.confidence,
-        recognition_confidence: device.confidence,
-        randomized_mac: false,
-        recognition_conflict: false,
-		ecosystem_hint:device.model?'Microsoft Windows':'',
-		ecosystem_confidence:device.model?0.6:0,
-		ecosystem_conflict:false,
-		ecosystem_evidence_count:device.model?4:0,
-        first_seen: device.first_seen || inventory.first_seen,
-        last_seen: device.last_seen || inventory.last_seen,
-        identity_confidence: device.confidence,
-        summary: `${device.brand && device.brand !== 'unknown' ? device.brand + ' ' : ''}${device.model && device.model !== 'unknown' ? device.model + ' ' : ''}终端 ${device.endpoint_id || device.device_id}，观察到 1 个 IP`,
-      })),
-    )
-    const now=Date.now(),view=url.searchParams.get('view'),window=url.searchParams.get('window')||'24h'
-    const cutoff=now-({'10m':600000,'1h':3600000,'24h':86400000}[window]||86400000)
-    const allItems = [...endpointItems, domainOnlyDevice, macOSDevice, ...manufacturerReferenceDevices].filter(item=>view!=='recent'||(Date.parse(item.last_seen||'')>=cutoff&&Date.parse(item.last_seen||'')<=now))
-    const brandValue = (item: typeof allItems[number]) => {
-      const inference = 'brand_inference' in item ? item.brand_inference : undefined
-      if (inference?.status === 'inferred' && ((item.brand_confidence ?? 0) < .8 || recognitionDimensionConflict(item, 'brand'))) return inference.brand || 'unknown'
-      if (!recognitionDimensionConflict(item, 'brand') && (item.brand_confidence ?? 0) >= .8 && item.brand && item.brand.toLowerCase() !== 'unknown') return item.brand
-      if (inference?.status === 'inferred') return inference.brand || 'unknown'
-      const reference = 'brand_reference' in item ? item.brand_reference : undefined
-      if (!recognitionDimensionConflict(item, 'brand') && reference && inference?.status !== 'conflict') return reference.brand
-      if (!recognitionDimensionConflict(item, 'brand') && item.brand && item.brand.toLowerCase() !== 'unknown') return item.brand
-      return 'unknown'
-    }
-    const osValue = (item: typeof allItems[number]) => !recognitionDimensionConflict(item, 'os_family') && item.os_family ? item.os_family : 'unknown'
-    const facets = { brands: [...new Set(allItems.map(brandValue))].sort(), os_families: [...new Set(allItems.map(osValue))].sort() }
-    const filtered = allItems
-      .filter(item => !brand || brandValue(item).toLowerCase() === brand)
-      .filter(item => !osFamily || osValue(item).toLowerCase() === osFamily)
-      .filter((item) => !ip || item.current_ip === ip)
-      .filter((item) => {const name='device_name' in item?item.device_name?.value||'':'';return !q || (searchType==='account'?item.current_account===qRaw:searchType==='mac'?(item.primary_mac||'').replace(/[:.-]/g,'').toLowerCase()===q.replace(/[:.-]/g,''):searchType==='name'?name.toLowerCase().includes(q):/^\d+\.\d+\.\d+\.\d+$/.test(q)?item.ips.includes(q):[item.endpoint_id,item.primary_mac,item.current_ip,item.current_account,item.current_access_id,item.owner_account,item.owner_name,name].join(' ').toLowerCase().includes(q))})
-	  .filter((item)=>!ecosystem||(item.ecosystem_hint || '').toLowerCase()===ecosystem)
-    const pageItems = filtered.slice(cursor, cursor + limit).map(item=>({...item,...(q&&/^\d+\.\d+\.\d+\.\d+$/.test(q)?{ip_match:{ip:q,source:'ip_observation',matched_at:item.last_seen,is_recent_ip:item.current_ip===q}}:{})}))
-    const nextCursor = cursor + pageItems.length < filtered.length ? String(cursor + pageItems.length) : null
+  http.get(
+    /\/api\/v1\/(?:devices|device-inventory(?:\/(?:metadata|position))?)$/,
+    ({ request }) => {
+      const url = new URL(request.url)
+      const qRaw = url.searchParams.get('q')?.trim() || ''
+      const q = qRaw.toLowerCase()
+      const searchType = url.searchParams.get('search_type') || 'all'
+      if (!['all', 'account', 'ip', 'mac', 'name'].includes(searchType))
+        return HttpResponse.json({ error: 'invalid search_type' }, { status: 400 })
+      const ip = url.searchParams.get('ip')
+      const brand = url.searchParams.get('brand')?.toLowerCase()
+      const osFamily = url.searchParams.get('os_family')?.toLowerCase()
+      const ecosystem = url.searchParams.get('ecosystem')?.toLowerCase()
+      const limit = Number(url.searchParams.get('limit') ?? 50)
+      const cursor = Number(url.searchParams.get('cursor') ?? 0)
+      const endpointItems = Object.values(deviceInventoriesByIp).flatMap((inventory) =>
+        inventory.devices.map((device) => ({
+          endpoint_id: device.endpoint_id || device.device_id,
+          primary_mac: device.signals.find((signal) => signal.kind === 'mac')?.normalized_value,
+          entity_role: device.entity_role || 'endpoint',
+          registration_status: device.endpoint_id ? 'registered' : 'unregistered',
+          owner_account: device.account_id || '',
+          owner_name: device.account_id ? '样本用户' : '',
+          owner_department: device.account_id ? '网络中心' : '',
+          asset_tag: device.endpoint_id ? `ASSET-${device.device_id.slice(-4)}` : '',
+          ownership_class: device.endpoint_id ? 'school_asset' : 'unknown',
+          merge_status: 'active',
+          current_account: device.account_id || '',
+          current_ip: inventory.ip,
+          current_access_id: device.access_id || '',
+          accounts: device.account_id ? [device.account_id] : [],
+          ips: [inventory.ip],
+          access_ids: device.access_id ? [device.access_id] : [],
+          brand: device.brand || '',
+          vendor: device.vendor || '',
+          model: device.model || '',
+          vendor_confidence: device.vendor && device.vendor !== 'unknown' ? device.confidence : 0,
+          brand_confidence: device.brand && device.brand !== 'unknown' ? device.confidence : 0,
+          model_confidence: device.model && device.model !== 'unknown' ? device.confidence : 0,
+          device_type_confidence: 0,
+          os_family: device.os_family || '',
+          os_family_confidence: device.confidence,
+          recognition_confidence: device.confidence,
+          randomized_mac: false,
+          recognition_conflict: false,
+          ecosystem_hint: device.model ? 'Microsoft Windows' : '',
+          ecosystem_confidence: device.model ? 0.6 : 0,
+          ecosystem_conflict: false,
+          ecosystem_evidence_count: device.model ? 4 : 0,
+          first_seen: device.first_seen || inventory.first_seen,
+          last_seen: device.last_seen || inventory.last_seen,
+          identity_confidence: device.confidence,
+          summary: `${device.brand && device.brand !== 'unknown' ? device.brand + ' ' : ''}${device.model && device.model !== 'unknown' ? device.model + ' ' : ''}终端 ${device.endpoint_id || device.device_id}，观察到 1 个 IP`,
+        })),
+      )
+      const now = Date.now(),
+        view = url.searchParams.get('view'),
+        window = url.searchParams.get('window') || '24h'
+      const cutoff = now - ({ '10m': 600000, '1h': 3600000, '24h': 86400000 }[window] || 86400000)
+      const allItems = [
+        ...endpointItems,
+        domainOnlyDevice,
+        macOSDevice,
+        ...manufacturerReferenceDevices,
+      ].filter(
+        (item) =>
+          view !== 'recent' ||
+          (Date.parse(item.last_seen || '') >= cutoff && Date.parse(item.last_seen || '') <= now),
+      )
+      const brandValue = (item: (typeof allItems)[number]) => {
+        const inference = 'brand_inference' in item ? item.brand_inference : undefined
+        if (
+          inference?.status === 'inferred' &&
+          ((item.brand_confidence ?? 0) < 0.8 || recognitionDimensionConflict(item, 'brand'))
+        )
+          return inference.brand || 'unknown'
+        if (
+          !recognitionDimensionConflict(item, 'brand') &&
+          (item.brand_confidence ?? 0) >= 0.8 &&
+          item.brand &&
+          item.brand.toLowerCase() !== 'unknown'
+        )
+          return item.brand
+        if (inference?.status === 'inferred') return inference.brand || 'unknown'
+        const reference = 'brand_reference' in item ? item.brand_reference : undefined
+        if (
+          !recognitionDimensionConflict(item, 'brand') &&
+          reference &&
+          inference?.status !== 'conflict'
+        )
+          return reference.brand
+        if (
+          !recognitionDimensionConflict(item, 'brand') &&
+          item.brand &&
+          item.brand.toLowerCase() !== 'unknown'
+        )
+          return item.brand
+        return 'unknown'
+      }
+      const osValue = (item: (typeof allItems)[number]) =>
+        !recognitionDimensionConflict(item, 'os_family') && item.os_family
+          ? item.os_family
+          : 'unknown'
+      const facets = {
+        brands: [...new Set(allItems.map(brandValue))].sort(),
+        os_families: [...new Set(allItems.map(osValue))].sort(),
+      }
+      const filtered = allItems
+        .filter((item) => !brand || brandValue(item).toLowerCase() === brand)
+        .filter((item) => !osFamily || osValue(item).toLowerCase() === osFamily)
+        .filter((item) => !ip || item.current_ip === ip)
+        .filter((item) => {
+          const name = 'device_name' in item ? item.device_name?.value || '' : ''
+          return (
+            !q ||
+            (searchType === 'account'
+              ? item.current_account === qRaw
+              : searchType === 'mac'
+                ? (item.primary_mac || '').replace(/[:.-]/g, '').toLowerCase() ===
+                  q.replace(/[:.-]/g, '')
+                : searchType === 'name'
+                  ? name.toLowerCase().includes(q)
+                  : /^\d+\.\d+\.\d+\.\d+$/.test(q)
+                    ? item.ips.includes(q)
+                    : [
+                        item.endpoint_id,
+                        item.primary_mac,
+                        item.current_ip,
+                        item.current_account,
+                        item.current_access_id,
+                        item.owner_account,
+                        item.owner_name,
+                        name,
+                      ]
+                        .join(' ')
+                        .toLowerCase()
+                        .includes(q))
+          )
+        })
+        .filter((item) => !ecosystem || (item.ecosystem_hint || '').toLowerCase() === ecosystem)
+      const pageItems = filtered.slice(cursor, cursor + limit).map((item) => ({
+        ...item,
+        ...(q && /^\d+\.\d+\.\d+\.\d+$/.test(q)
+          ? {
+              ip_match: {
+                ip: q,
+                source: 'ip_observation',
+                matched_at: item.last_seen,
+                is_recent_ip: item.current_ip === q,
+              },
+            }
+          : {}),
+      }))
+      const nextCursor =
+        cursor + pageItems.length < filtered.length ? String(cursor + pageItems.length) : null
 
-    if(url.pathname.endsWith('/metadata')) return HttpResponse.json({total:filtered.length,facets,as_of:new Date().toISOString()})
-    if(url.pathname.endsWith('/position')) {
-      const page=Number(url.searchParams.get('page')??1),offset=(page-1)*limit
-      if(!Number.isInteger(page)||page<1||!Number.isInteger(limit)||limit<1||limit>200||(page>1&&offset>=filtered.length))return HttpResponse.json({code:'page_out_of_range',message:'目标页已不存在，请刷新列表'},{status:400})
-      return HttpResponse.json({page,limit,cursor:page===1?'':String(offset),as_of:new Date().toISOString()})
-    }
+      if (url.pathname.endsWith('/metadata'))
+        return HttpResponse.json({
+          total: filtered.length,
+          facets,
+          as_of: new Date().toISOString(),
+        })
+      if (url.pathname.endsWith('/position')) {
+        const page = Number(url.searchParams.get('page') ?? 1),
+          offset = (page - 1) * limit
+        if (
+          !Number.isInteger(page) ||
+          page < 1 ||
+          !Number.isInteger(limit) ||
+          limit < 1 ||
+          limit > 200 ||
+          (page > 1 && offset >= filtered.length)
+        )
+          return HttpResponse.json(
+            { code: 'page_out_of_range', message: '目标页已不存在，请刷新列表' },
+            { status: 400 },
+          )
+        return HttpResponse.json({
+          page,
+          limit,
+          cursor: page === 1 ? '' : String(offset),
+          as_of: new Date().toISOString(),
+        })
+      }
 
-    return HttpResponse.json({
-      items: pageItems,
-      facets,
-      as_of: new Date().toISOString(),
-      read_model_updating: false,
-      page: { limit, next_cursor: nextCursor, ...(url.searchParams.get('include_metadata')==='false'?{}:{total: filtered.length}) },
-    })
-  }),
-  http.get('/api/v1/device-inventory/:endpointId', () => HttpResponse.json({
-    profile: { recognition: { source_matches: [
-      { source_id: 'satori', rule_id: 'fixture-dhcp-options', version: 'fixture', name: 'Hikvision DHCP options', strength: 'self_report', fields: ['dhcp_options'], observed: { dhcp_options: '53,61,12,81' }, direction: 'client' },
-    ] } },
-    associations: [],
-  })),
+      return HttpResponse.json({
+        items: pageItems,
+        facets,
+        as_of: new Date().toISOString(),
+        read_model_updating: false,
+        page: {
+          limit,
+          next_cursor: nextCursor,
+          ...(url.searchParams.get('include_metadata') === 'false'
+            ? {}
+            : { total: filtered.length }),
+        },
+      })
+    },
+  ),
+  http.get('/api/v1/device-inventory/:endpointId', () =>
+    HttpResponse.json({
+      profile: {
+        recognition: {
+          source_matches: [
+            {
+              source_id: 'satori',
+              rule_id: 'fixture-dhcp-options',
+              version: 'fixture',
+              name: 'Hikvision DHCP options',
+              strength: 'self_report',
+              fields: ['dhcp_options'],
+              observed: { dhcp_options: '53,61,12,81' },
+              direction: 'client',
+            },
+          ],
+        },
+      },
+      associations: [],
+    }),
+  ),
   ...inventoryTraceHandlers,
-  http.get('/api/v1/device-recognition/summary', () => HttpResponse.json({
-    total_endpoints: 121,
-    brand_inference_conflicts: 0, brand_inference_enabled: true, domain_window: '7d',
-    coverage: { brand_inferred: { known: 1, rate: 1 / 121 }, vendor: { known: 52, rate: 52 / 121 }, brand: { known: 1, rate: 1 / 121 }, model: { known: 1, rate: 1 / 121 }, device_type: { known: 15, rate: 15 / 121 }, os_family: { known: 15, rate: 15 / 121 }, ecosystem: { known: 0, rate: 0 } },
-    event_count: 3_795_418,
-    attributed_event_count: 0,
-    event_attribution_rate: 0,
-    mac_attributed_event_count: 285_518,
-    mac_attribution_rate: 285_518 / 3_795_418,
-    top_brands: [{ brand: '华为', count: 3 }, { brand: 'Hikvision', count: 2 }],
-    top_type_brands: [{ device_type: 'camera', brand: 'Hikvision', count: 2 }, { device_type: 'access_point', brand: 'H3C', count: 1 }],
-    untyped_reasons: [{ reason: 'Apple 系统线索', count: 2 }, { reason: '缺少系统与品牌线索', count: 1 }],
-    top_models: [{ model: 'LaserJet Pro MFP', brand: 'HP', count: 1 }],
-    top_os: [{ os: 'Apple OS', count: 2 }, { os: 'Windows', count: 1 }],
-    observability: [
-      { source_event_type: 'mdns', event_count: 1_402_118, mac_attributed_count: 0 },
-      { source_event_type: 'dns', event_count: 964_230, mac_attributed_count: 0 },
-      { source_event_type: 'conn', event_count: 821_004, mac_attributed_count: 0 },
-      { source_event_type: 'ssdp', event_count: 268_744, mac_attributed_count: 268_744 },
-      { source_event_type: 'ttl', event_count: 154_902, mac_attributed_count: 0 },
-      { source_event_type: 'llmnr', event_count: 96_411, mac_attributed_count: 0 },
-      { source_event_type: 'nbns', event_count: 71_233, mac_attributed_count: 0 },
-      { source_event_type: 'ieee1905_topology', event_count: 12_006, mac_attributed_count: 12_006 },
-      { source_event_type: 'dhcp', event_count: 4_768, mac_attributed_count: 4_768 },
-    ],
-    ecosystem_matched: 27_124,
-    ecosystem_attributed: 0,
-    ecosystem_unattributed: 27_124,
-    ecosystem_conflicts: 0,
-    domain_rule_version: 'offline-20260831-mock',
-    backfill_status: 'completed',
-    backfill_processed: 10_039_092,
-    as_of: new Date().toISOString(),
-    window: '24h',
-  })),
-  http.get('/api/v1/endpoints/:endpointId/name-evidence', () => HttpResponse.json({items: [{value:'office-mac41.local',source:'dhcp_hostname',kind:'hostname',event_id:'fixture-name-event',sensor_id:'fixture',observed_at:new Date().toISOString(),valid_until:new Date(Date.now()+86400000).toISOString(),attribution:'dhcp_mac'}],total:1})),
-  http.post('/api/v1/endpoints/:endpointId/name-note', async ({request}) => {
-    const {value}=await request.json() as {value:string}
-    macOSProfile.device_name=value?{value,source:'manual',manual:true,status:'current',multiple_names:false}:macOSDevice.device_name
-    return HttpResponse.json({updated:true})
+  http.get('/api/v1/device-recognition/summary', () =>
+    HttpResponse.json({
+      total_endpoints: 121,
+      brand_inference_conflicts: 0,
+      brand_inference_enabled: true,
+      domain_window: '7d',
+      coverage: {
+        brand_inferred: { known: 1, rate: 1 / 121 },
+        vendor: { known: 52, rate: 52 / 121 },
+        brand: { known: 1, rate: 1 / 121 },
+        model: { known: 1, rate: 1 / 121 },
+        device_type: { known: 15, rate: 15 / 121 },
+        os_family: { known: 15, rate: 15 / 121 },
+        ecosystem: { known: 0, rate: 0 },
+      },
+      event_count: 3_795_418,
+      attributed_event_count: 0,
+      event_attribution_rate: 0,
+      mac_attributed_event_count: 285_518,
+      mac_attribution_rate: 285_518 / 3_795_418,
+      top_brands: [
+        { brand: '华为', count: 3 },
+        { brand: 'Hikvision', count: 2 },
+      ],
+      top_type_brands: [
+        { device_type: 'camera', brand: 'Hikvision', count: 2 },
+        { device_type: 'access_point', brand: 'H3C', count: 1 },
+      ],
+      untyped_reasons: [
+        { reason: 'Apple 系统线索', count: 2 },
+        { reason: '缺少系统与品牌线索', count: 1 },
+      ],
+      top_models: [{ model: 'LaserJet Pro MFP', brand: 'HP', count: 1 }],
+      top_os: [
+        { os: 'Apple OS', count: 2 },
+        { os: 'Windows', count: 1 },
+      ],
+      observability: [
+        { source_event_type: 'mdns', event_count: 1_402_118, mac_attributed_count: 0 },
+        { source_event_type: 'dns', event_count: 964_230, mac_attributed_count: 0 },
+        { source_event_type: 'conn', event_count: 821_004, mac_attributed_count: 0 },
+        { source_event_type: 'ssdp', event_count: 268_744, mac_attributed_count: 268_744 },
+        { source_event_type: 'ttl', event_count: 154_902, mac_attributed_count: 0 },
+        { source_event_type: 'llmnr', event_count: 96_411, mac_attributed_count: 0 },
+        { source_event_type: 'nbns', event_count: 71_233, mac_attributed_count: 0 },
+        {
+          source_event_type: 'ieee1905_topology',
+          event_count: 12_006,
+          mac_attributed_count: 12_006,
+        },
+        { source_event_type: 'dhcp', event_count: 4_768, mac_attributed_count: 4_768 },
+      ],
+      ecosystem_matched: 27_124,
+      ecosystem_attributed: 0,
+      ecosystem_unattributed: 27_124,
+      ecosystem_conflicts: 0,
+      domain_rule_version: 'offline-20260831-mock',
+      backfill_status: 'completed',
+      backfill_processed: 10_039_092,
+      as_of: new Date().toISOString(),
+      window: '24h',
+    }),
+  ),
+  http.get('/api/v1/endpoints/:endpointId/name-evidence', () =>
+    HttpResponse.json({
+      items: [
+        {
+          value: 'office-mac41.local',
+          source: 'dhcp_hostname',
+          kind: 'hostname',
+          event_id: 'fixture-name-event',
+          sensor_id: 'fixture',
+          observed_at: new Date().toISOString(),
+          valid_until: new Date(Date.now() + 86400000).toISOString(),
+          attribution: 'dhcp_mac',
+        },
+      ],
+      total: 1,
+    }),
+  ),
+  http.post('/api/v1/endpoints/:endpointId/name-note', async ({ request }) => {
+    const { value } = (await request.json()) as { value: string }
+    macOSProfile.device_name = value
+      ? { value, source: 'manual', manual: true, status: 'current', multiple_names: false }
+      : macOSDevice.device_name
+    return HttpResponse.json({ updated: true })
   }),
   http.get('/api/v1/endpoints/:endpointId/identity', ({ params }) => {
     const endpointId = decodeURIComponent(String(params.endpointId))
-    const referenceDevice = manufacturerReferenceDevices.find(item => item.endpoint_id === endpointId)
-    if (referenceDevice) return HttpResponse.json({ ...macOSProfile, endpoint_id: endpointId, endpoint: { ...macOSProfile.endpoint, endpoint_id: endpointId, primary_mac: referenceDevice.primary_mac, attributes: { oui_vendor: referenceDevice.vendor } }, recognition: referenceDevice })
+    const referenceDevice = manufacturerReferenceDevices.find(
+      (item) => item.endpoint_id === endpointId,
+    )
+    if (referenceDevice)
+      return HttpResponse.json({
+        ...macOSProfile,
+        endpoint_id: endpointId,
+        endpoint: {
+          ...macOSProfile.endpoint,
+          endpoint_id: endpointId,
+          primary_mac: referenceDevice.primary_mac,
+          attributes: { oui_vendor: referenceDevice.vendor },
+        },
+        recognition: referenceDevice,
+      })
     if (endpointId === macOSDevice.endpoint_id) return HttpResponse.json(macOSProfile)
     if (endpointId === domainOnlyDevice.endpoint_id) return HttpResponse.json(domainOnlyProfile)
     for (const inventory of Object.values(deviceInventoriesByIp)) {
-      const device = inventory.devices.find((item) => item.endpoint_id === endpointId || item.device_id === endpointId)
+      const device = inventory.devices.find(
+        (item) => item.endpoint_id === endpointId || item.device_id === endpointId,
+      )
       if (!device) {
         continue
       }
@@ -624,7 +1463,26 @@ export const handlers = [
             event_ids_sample: [`event-access-${device.device_id}`],
           },
         ],
-		ecosystem_evidence: device.model?[{endpoint_id:endpointId,domain:'settings-win.data.microsoft.com',ecosystem:'Microsoft Windows',event_source:'tls',attribution_method:'active_auth_session',auth_session_id:`session-${device.device_id}`,rule_source:'NextDNS',rule_version:'offline-mock-v2',category:'telemetry',confidence:0.55,first_seen:inventory.first_seen,last_seen:inventory.last_seen,count:4,event_ids_sample:[`event-domain-${device.device_id}`]}]:[],
+        ecosystem_evidence: device.model
+          ? [
+              {
+                endpoint_id: endpointId,
+                domain: 'settings-win.data.microsoft.com',
+                ecosystem: 'Microsoft Windows',
+                event_source: 'tls',
+                attribution_method: 'active_auth_session',
+                auth_session_id: `session-${device.device_id}`,
+                rule_source: 'NextDNS',
+                rule_version: 'offline-mock-v2',
+                category: 'telemetry',
+                confidence: 0.55,
+                first_seen: inventory.first_seen,
+                last_seen: inventory.last_seen,
+                count: 4,
+                event_ids_sample: [`event-domain-${device.device_id}`],
+              },
+            ]
+          : [],
         first_seen: device.first_seen || inventory.first_seen,
         last_seen: device.last_seen || inventory.last_seen,
       })
@@ -651,50 +1509,166 @@ export const handlers = [
     })
   }),
   http.get('/api/v1/device-signals', () =>
-    HttpResponse.json({ items: Object.values(deviceInventoriesByIp).flatMap((item) => item.signals) }),
+    HttpResponse.json({
+      items: Object.values(deviceInventoriesByIp).flatMap((item) => item.signals),
+    }),
   ),
   http.get('/api/v1/device-fingerprint-conflicts', () =>
-    HttpResponse.json({ items: Object.values(deviceInventoriesByIp).flatMap((item) => item.conflicts) }),
+    HttpResponse.json({
+      items: Object.values(deviceInventoriesByIp).flatMap((item) => item.conflicts),
+    }),
   ),
   http.get('/api/v1/ips/:ip/events', ({ params }) => {
     const ip = normalizeIp(String(params.ip))
     return HttpResponse.json({ events: eventsByIp[ip] ?? [] })
   }),
-  http.get('/api/v1/ai-relay/indicators', () => HttpResponse.json({version:'2026.10.21',updated_at:'2026-10-21',sources:[{id:'awesome-ai-api-proxy',name:'awesome-ai-api-proxy',url:'https://github.com/howardpen9/awesome-ai-api-proxy'},{id:'cctq-doc',name:'CCTQ 接入文档',url:'https://doc.cctq.ai/guide/chatbox.html'},{id:'micuapi-doc',name:'米醋接入文档',url:'https://docs.micuapi.ai/external-compat'}],official_domains:['api.openai.com','api.anthropic.com'],indicators:[{domain:'cctq.ai',match_type:'subdomain',category:'relay',name:'CCTQ',name_zh:'CCTQ 中转站',confidence:0.9,status:'resolved',source:'cctq-doc'},{domain:'micuapi.ai',match_type:'subdomain',category:'relay',name:'MICU',name_zh:'米醋中转站',confidence:0.9,status:'resolved',source:'micuapi-doc'},{domain:'yunwu.ai',match_type:'subdomain',category:'relay',name:'云雾 API',name_zh:'云雾 API',confidence:0.8,status:'resolved',source:'awesome-ai-api-proxy'},{domain:'openrouter.ai',match_type:'subdomain',category:'aggregator',name:'OpenRouter',name_zh:'OpenRouter 聚合站',confidence:0.8,status:'resolved',source:'awesome-ai-api-proxy'}]})),
+  http.get('/api/v1/ai-relay/indicators', () =>
+    HttpResponse.json({
+      version: '2026.10.21',
+      updated_at: '2026-10-21',
+      sources: [
+        {
+          id: 'awesome-ai-api-proxy',
+          name: 'awesome-ai-api-proxy',
+          url: 'https://github.com/howardpen9/awesome-ai-api-proxy',
+        },
+        { id: 'cctq-doc', name: 'CCTQ 接入文档', url: 'https://doc.cctq.ai/guide/chatbox.html' },
+        { id: 'micuapi-doc', name: '米醋接入文档', url: 'https://docs.micuapi.ai/external-compat' },
+      ],
+      official_domains: ['api.openai.com', 'api.anthropic.com'],
+      indicators: [
+        {
+          domain: 'cctq.ai',
+          match_type: 'subdomain',
+          category: 'relay',
+          name: 'CCTQ',
+          name_zh: 'CCTQ 中转站',
+          confidence: 0.9,
+          status: 'resolved',
+          source: 'cctq-doc',
+        },
+        {
+          domain: 'micuapi.ai',
+          match_type: 'subdomain',
+          category: 'relay',
+          name: 'MICU',
+          name_zh: '米醋中转站',
+          confidence: 0.9,
+          status: 'resolved',
+          source: 'micuapi-doc',
+        },
+        {
+          domain: 'yunwu.ai',
+          match_type: 'subdomain',
+          category: 'relay',
+          name: '云雾 API',
+          name_zh: '云雾 API',
+          confidence: 0.8,
+          status: 'resolved',
+          source: 'awesome-ai-api-proxy',
+        },
+        {
+          domain: 'openrouter.ai',
+          match_type: 'subdomain',
+          category: 'aggregator',
+          name: 'OpenRouter',
+          name_zh: 'OpenRouter 聚合站',
+          confidence: 0.8,
+          status: 'resolved',
+          source: 'awesome-ai-api-proxy',
+        },
+      ],
+    }),
+  ),
 
-
-  http.get('/api/v1/events/stream-body', () => HttpResponse.json({
-    ...eventsByIp['10.255.0.59'][0], event_id: 'mock-stream-event-1', timestamp: new Date(Date.now() - 60_000).toISOString(),
-  })),
+  http.get('/api/v1/events/stream-body', () =>
+    HttpResponse.json({
+      ...eventsByIp['10.255.0.59'][0],
+      event_id: 'mock-stream-event-1',
+      timestamp: new Date(Date.now() - 60_000).toISOString(),
+    }),
+  ),
 
   http.get('/api/v1/risks/stream-evidence', ({ request }) => {
     const url = new URL(request.url)
     const id = url.searchParams.get('evidence_id')
-    if (!id || !riskSnapshots[0].evidence_ids.includes(id)) return HttpResponse.json({ code: 'stream_risk_evidence_not_current', message: 'risk evidence is not current' }, { status: 404 })
+    if (!id || !riskSnapshots[0].evidence_ids.includes(id))
+      return HttpResponse.json(
+        { code: 'stream_risk_evidence_not_current', message: 'risk evidence is not current' },
+        { status: 404 },
+      )
     const account = url.searchParams.get('subject_type') === 'account'
-    return HttpResponse.json({ ...evidenceByIp['10.255.0.59'][1], evidence_id: id, ip: account ? '' : '192.0.2.8', subject_type: account ? 'account' : 'ip', subject_id: account ? 'mock-account' : '192.0.2.8' })
+    return HttpResponse.json({
+      ...evidenceByIp['10.255.0.59'][1],
+      evidence_id: id,
+      ip: account ? '' : '192.0.2.8',
+      subject_type: account ? 'account' : 'ip',
+      subject_id: account ? 'mock-account' : '192.0.2.8',
+    })
   }),
-  http.get('/api/v1/events/count', ({ request }) => HttpResponse.json({ total: filterMockEvents(new URL(request.url)).length, queried_at: new Date().toISOString() })),
+  http.get('/api/v1/events/count', ({ request }) =>
+    HttpResponse.json({
+      total: filterMockEvents(new URL(request.url)).length,
+      queried_at: new Date().toISOString(),
+    }),
+  ),
   http.get('/api/v1/events', ({ request }) => {
     const url = new URL(request.url)
     const limit = Number(url.searchParams.get('limit') ?? 20)
     const cursor = mockEventOffset(url.searchParams.get('cursor'))
     const filtered = filterMockEvents(url)
     const pageItems = filtered.slice(cursor, cursor + limit)
-    const nextCursor = cursor + pageItems.length < filtered.length ? `event:${cursor + pageItems.length}` : null
-    return HttpResponse.json({ events: pageItems, page: { limit, next_cursor: nextCursor, has_more: nextCursor !== null } })
+    const nextCursor =
+      cursor + pageItems.length < filtered.length ? `event:${cursor + pageItems.length}` : null
+    return HttpResponse.json({
+      events: pageItems,
+      page: { limit, next_cursor: nextCursor, has_more: nextCursor !== null },
+    })
   }),
   http.get('/api/v1/events/:eventId', ({ params }) => {
-    if (params.eventId === 'ai-relay-mock-1') return HttpResponse.json({event_id:'ai-relay-mock-1',type:'tls',source:'replay',timestamp:new Date(Date.now()-10*60_000).toISOString(),observer:{sensor_id:'mock-sensor'},subject:{ip:'10.20.0.11'},flow:{src_ip:'10.20.0.11',dst_ip:'203.0.113.11',dst_port:443,proto:'tcp',direction:'outbound'},payload:{sni:'api.yunwu.ai'},confidence:1})
-    const item = Object.values(eventsByIp).flat().find((entry) => entry.event_id === params.eventId)
+    if (params.eventId === 'ai-relay-mock-1')
+      return HttpResponse.json({
+        event_id: 'ai-relay-mock-1',
+        type: 'tls',
+        source: 'replay',
+        timestamp: new Date(Date.now() - 10 * 60_000).toISOString(),
+        observer: { sensor_id: 'mock-sensor' },
+        subject: { ip: '10.20.0.11' },
+        flow: {
+          src_ip: '10.20.0.11',
+          dst_ip: '203.0.113.11',
+          dst_port: 443,
+          proto: 'tcp',
+          direction: 'outbound',
+        },
+        payload: { sni: 'api.yunwu.ai' },
+        confidence: 1,
+      })
+    const item = Object.values(eventsByIp)
+      .flat()
+      .find((entry) => entry.event_id === params.eventId)
     return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 })
   }),
   http.get('/api/v1/ingest/status', () => HttpResponse.json(ingestStatus)),
   http.get('/api/v1/ingest/runs', () => HttpResponse.json({ runs: shadowRuns })),
-  http.get('/api/v1/ingest/diagnostics', ({ request }) => { const result = mockPage(ingestDiagnostics, new URL(request.url)); return HttpResponse.json({ diagnostics: result.items, page: result.page }) }),
-  http.get('/api/v1/ingest/diagnostics/:diagnosticId', ({ params }) => { const item = ingestDiagnostics.find((entry) => entry.diagnostic_id === params.diagnosticId); return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 }) }),
-  http.get('/api/v1/ingest/event-types', () => HttpResponse.json({ event_types: ingestEventTypes })),
-  http.get('/api/v1/ingest/errors', ({ request }) => { const result = mockPage(ingestDiagnostics.filter((item) => item.severity !== 'info'), new URL(request.url)); return HttpResponse.json({ diagnostics: result.items, page: result.page }) }),
+  http.get('/api/v1/ingest/diagnostics', ({ request }) => {
+    const result = mockPage(ingestDiagnostics, new URL(request.url))
+    return HttpResponse.json({ diagnostics: result.items, page: result.page })
+  }),
+  http.get('/api/v1/ingest/diagnostics/:diagnosticId', ({ params }) => {
+    const item = ingestDiagnostics.find((entry) => entry.diagnostic_id === params.diagnosticId)
+    return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 })
+  }),
+  http.get('/api/v1/ingest/event-types', () =>
+    HttpResponse.json({ event_types: ingestEventTypes }),
+  ),
+  http.get('/api/v1/ingest/errors', ({ request }) => {
+    const result = mockPage(
+      ingestDiagnostics.filter((item) => item.severity !== 'info'),
+      new URL(request.url),
+    )
+    return HttpResponse.json({ diagnostics: result.items, page: result.page })
+  }),
   http.post('/api/v1/labels', async ({ request }) => {
     const payload = (await request.json()) as CreateLabelRequest
     const created = {
@@ -713,20 +1687,142 @@ export const handlers = [
     })
     return HttpResponse.json(created, { status: 201 })
   }),
-  http.get('/api/v1/audit-logs', ({ request }) => { const result = mockPage(auditLogs, new URL(request.url)); return HttpResponse.json({ logs: result.items, page: result.page }) }),
-  http.get('/api/v1/audit-logs/:auditId', ({ params }) => { const item = auditLogs.find((entry) => entry.audit_id === params.auditId); return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 }) }),
-  http.get('/api/v1/device-fingerprint-library/sources', () => HttpResponse.json({items:fingerprintCatalog.sources,version:'mock-converter-1'})),
-  http.get('/api/v1/device-fingerprint-library/rules', ({request}) => {
-    const q=new URL(request.url).searchParams;const page=Math.max(1,Number(q.get('page')??1));const size=Math.min(100,Math.max(1,Number(q.get('page_size')??25)));
-    const items=fingerprintCatalog.rules.filter(r=>(!q.get('source')||r.source_id===q.get('source'))&&(!q.get('protocol')||r.protocol===q.get('protocol'))&&(!q.get('status')||r.status===q.get('status'))&&(!q.get('role')||r.role===q.get('role'))&&JSON.stringify(r).toLowerCase().includes((q.get('q')??'').toLowerCase()));
-    return HttpResponse.json({items:items.slice((page-1)*size,page*size),total:items.length,page,page_size:size});
+  http.get('/api/v1/audit-logs', ({ request }) => {
+    const result = mockPage(auditLogs, new URL(request.url))
+    return HttpResponse.json({ logs: result.items, page: result.page })
   }),
-  http.get('/api/v1/device-fingerprint-library/coverage', () => HttpResponse.json({status:'ready',window:'24h',as_of:'2026-10-12T08:00:00Z',fresh:freshRecognition,count_semantics:'current_rule_endpoint_relationships',overlap_endpoints:2,items:[{source_id:'recog',match_count:12,endpoint_count:8,conflict_count:1,evaluation_match_count:24,realtime_match_count:18,history_match_count:6}]})),
-  http.get('/api/v1/device-fingerprint-library', () => HttpResponse.json({ domain_available:true,brand_eligible_rule_count:3,domain_sources:[{name:'Apple enterprise networks',version:'reviewed-2026-09-08',rule_count:3,brand_eligible_rule_count:3},{name:'HaGeZi',version:'mock-pinned',rule_count:100,brand_eligible_rule_count:0}],version:'offline-20260831-mock',status:'ready',source:'offline-bundle',checksum:'mock',offline_mode:true,rule_count:860,oui_count:42000,dhcp_rule_count:310,domain_rule_count:128,domain_ecosystem_count:8,domain_source_version:'abcdef123456',domain_backfill_status:'completed',domain_backfill_processed:3200,licenses:['Apache-2.0','ODbL-1.0','DbCL-1.0','MIT (NextDNS)'],backfill_status:'completed',backfill_processed:110 })),
-  http.post('/api/v1/device-fingerprint-library/update', () => HttpResponse.json({ code:'offline_update_required',message:'import a verified bundle' },{status:409})),
-  http.post('/api/v1/device-fingerprint-library/validate', () => HttpResponse.json({schema_version:'device-fingerprint-bundle/v1',version:'offline-20260831-mock',created_at:new Date().toISOString(),sources:[{name:'IEEE MA-L/MA-M/MA-S',version:'2026-08-31',url:'https://standards-oui.ieee.org/',license:'IEEE public registry'},{name:'uap-core',version:'mocksha',url:'https://github.com/ua-parser/uap-core',license:'Apache-2.0'},{name:'Fingerbank public snapshot',version:'6.8.2-20140609',url:'https://github.com/karottc/fingerbank',license:'ODbL-1.0/DbCL-1.0'}],files:{}})),
-  http.post('/api/v1/device-fingerprint-library/import', () => HttpResponse.json({version:'offline-20260831-mock',status:'ready',source:'offline-bundle',checksum:'mock',offline_mode:true,rule_count:860,oui_count:42000,dhcp_rule_count:310,licenses:['Apache-2.0','ODbL-1.0','DbCL-1.0'],backfill_status:'pending',backfill_processed:0})),
-  http.get('/api/v1/rules/status', () => HttpResponse.json({reload_supported:false,reload_status:'disabled'})),
+  http.get('/api/v1/audit-logs/:auditId', ({ params }) => {
+    const item = auditLogs.find((entry) => entry.audit_id === params.auditId)
+    return item ? HttpResponse.json(item) : new HttpResponse(null, { status: 404 })
+  }),
+  http.get('/api/v1/device-fingerprint-library/sources', () =>
+    HttpResponse.json({ items: fingerprintCatalog.sources, version: 'mock-converter-1' }),
+  ),
+  http.get('/api/v1/device-fingerprint-library/rules', ({ request }) => {
+    const q = new URL(request.url).searchParams
+    const page = Math.max(1, Number(q.get('page') ?? 1))
+    const size = Math.min(100, Math.max(1, Number(q.get('page_size') ?? 25)))
+    const items = fingerprintCatalog.rules.filter(
+      (r) =>
+        (!q.get('source') || r.source_id === q.get('source')) &&
+        (!q.get('protocol') || r.protocol === q.get('protocol')) &&
+        (!q.get('status') || r.status === q.get('status')) &&
+        (!q.get('role') || r.role === q.get('role')) &&
+        JSON.stringify(r)
+          .toLowerCase()
+          .includes((q.get('q') ?? '').toLowerCase()),
+    )
+    return HttpResponse.json({
+      items: items.slice((page - 1) * size, page * size),
+      total: items.length,
+      page,
+      page_size: size,
+    })
+  }),
+  http.get('/api/v1/device-fingerprint-library/coverage', () =>
+    HttpResponse.json({
+      status: 'ready',
+      window: '24h',
+      as_of: '2026-10-12T08:00:00Z',
+      fresh: freshRecognition,
+      count_semantics: 'current_rule_endpoint_relationships',
+      overlap_endpoints: 2,
+      items: [
+        {
+          source_id: 'recog',
+          match_count: 12,
+          endpoint_count: 8,
+          conflict_count: 1,
+          evaluation_match_count: 24,
+          realtime_match_count: 18,
+          history_match_count: 6,
+        },
+      ],
+    }),
+  ),
+  http.get('/api/v1/device-fingerprint-library', () =>
+    HttpResponse.json({
+      domain_available: true,
+      brand_eligible_rule_count: 3,
+      domain_sources: [
+        {
+          name: 'Apple enterprise networks',
+          version: 'reviewed-2026-09-08',
+          rule_count: 3,
+          brand_eligible_rule_count: 3,
+        },
+        { name: 'HaGeZi', version: 'mock-pinned', rule_count: 100, brand_eligible_rule_count: 0 },
+      ],
+      version: 'offline-20260831-mock',
+      status: 'ready',
+      source: 'offline-bundle',
+      checksum: 'mock',
+      offline_mode: true,
+      rule_count: 860,
+      oui_count: 42000,
+      dhcp_rule_count: 310,
+      domain_rule_count: 128,
+      domain_ecosystem_count: 8,
+      domain_source_version: 'abcdef123456',
+      domain_backfill_status: 'completed',
+      domain_backfill_processed: 3200,
+      licenses: ['Apache-2.0', 'ODbL-1.0', 'DbCL-1.0', 'MIT (NextDNS)'],
+      backfill_status: 'completed',
+      backfill_processed: 110,
+    }),
+  ),
+  http.post('/api/v1/device-fingerprint-library/update', () =>
+    HttpResponse.json(
+      { code: 'offline_update_required', message: 'import a verified bundle' },
+      { status: 409 },
+    ),
+  ),
+  http.post('/api/v1/device-fingerprint-library/validate', () =>
+    HttpResponse.json({
+      schema_version: 'device-fingerprint-bundle/v1',
+      version: 'offline-20260831-mock',
+      created_at: new Date().toISOString(),
+      sources: [
+        {
+          name: 'IEEE MA-L/MA-M/MA-S',
+          version: '2026-08-31',
+          url: 'https://standards-oui.ieee.org/',
+          license: 'IEEE public registry',
+        },
+        {
+          name: 'uap-core',
+          version: 'mocksha',
+          url: 'https://github.com/ua-parser/uap-core',
+          license: 'Apache-2.0',
+        },
+        {
+          name: 'Fingerbank public snapshot',
+          version: '6.8.2-20140609',
+          url: 'https://github.com/karottc/fingerbank',
+          license: 'ODbL-1.0/DbCL-1.0',
+        },
+      ],
+      files: {},
+    }),
+  ),
+  http.post('/api/v1/device-fingerprint-library/import', () =>
+    HttpResponse.json({
+      version: 'offline-20260831-mock',
+      status: 'ready',
+      source: 'offline-bundle',
+      checksum: 'mock',
+      offline_mode: true,
+      rule_count: 860,
+      oui_count: 42000,
+      dhcp_rule_count: 310,
+      licenses: ['Apache-2.0', 'ODbL-1.0', 'DbCL-1.0'],
+      backfill_status: 'pending',
+      backfill_processed: 0,
+    }),
+  ),
+  http.get('/api/v1/rules/status', () =>
+    HttpResponse.json({ reload_supported: false, reload_status: 'disabled' }),
+  ),
   http.post('/api/v1/rules/reload', () =>
     HttpResponse.json(
       { status: 'disabled', mode: 'shadow', requested_at: new Date().toISOString() },
@@ -739,7 +1835,15 @@ function mockPage<T>(items: T[], url: URL) {
   const limit = Number(url.searchParams.get('limit') ?? 20)
   const cursor = Number(url.searchParams.get('cursor') ?? 0)
   const pageItems = items.slice(cursor, cursor + limit)
-  return { items: pageItems, page: { limit, next_cursor: cursor + pageItems.length < items.length ? String(cursor + pageItems.length) : null, total: items.length } }
+  return {
+    items: pageItems,
+    page: {
+      limit,
+      next_cursor:
+        cursor + pageItems.length < items.length ? String(cursor + pageItems.length) : null,
+      total: items.length,
+    },
+  }
 }
 
 function filterMockFlows(url: URL) {
@@ -756,16 +1860,39 @@ function filterMockFlows(url: URL) {
   const filtered = Object.values(mockFlowSamples)
     .flat()
     .filter((flow) => !q || JSON.stringify(flow).toLowerCase().includes(q))
-    .filter((flow) => !domain || String(flow.domain ?? flow.tls_sni ?? '').toLowerCase().includes(domain))
+    .filter(
+      (flow) =>
+        !domain ||
+        String(flow.domain ?? flow.tls_sni ?? '')
+          .toLowerCase()
+          .includes(domain),
+    )
     .filter((flow) => !srcIp || flow.src_ip === srcIp)
     .filter((flow) => !dstIp || flow.dst_ip === dstIp)
-    .filter((flow) => !userAgent || String(flow.user_agent ?? '').toLowerCase().includes(userAgent))
-    .filter((flow) => !fingerprint || String(`${flow.ja3 ?? ''} ${flow.ja4 ?? ''}`).toLowerCase().includes(fingerprint))
+    .filter(
+      (flow) =>
+        !userAgent ||
+        String(flow.user_agent ?? '')
+          .toLowerCase()
+          .includes(userAgent),
+    )
+    .filter(
+      (flow) =>
+        !fingerprint ||
+        String(`${flow.ja3 ?? ''} ${flow.ja4 ?? ''}`)
+          .toLowerCase()
+          .includes(fingerprint),
+    )
     .filter((flow) => !proto || String(flow.protocol ?? '').toLowerCase() === proto)
     .filter((flow) => !port || String(flow.dst_port ?? '') === port)
   const items = filtered.slice(cursor, cursor + limit)
-  const nextCursor = cursor + items.length < filtered.length ? `event:${cursor + items.length}` : null
-  return { items, page: { limit, next_cursor: nextCursor, has_more: nextCursor !== null }, total: filtered.length }
+  const nextCursor =
+    cursor + items.length < filtered.length ? `event:${cursor + items.length}` : null
+  return {
+    items,
+    page: { limit, next_cursor: nextCursor, has_more: nextCursor !== null },
+    total: filtered.length,
+  }
 }
 
 function mockEventOffset(raw: string | null) {
@@ -783,14 +1910,32 @@ function filterMockEvents(url: URL) {
   const fingerprint = url.searchParams.get('fingerprint')?.toLowerCase()
   const proto = url.searchParams.get('proto')?.toLowerCase()
   const port = url.searchParams.get('port')
-  return Object.values(eventsByIp).flat()
+  return Object.values(eventsByIp)
+    .flat()
     .filter((event) => !eventType || event.type === eventType)
-    .filter((event) => !q || event.event_id.toLowerCase().includes(q) || JSON.stringify(event.subject).toLowerCase().includes(q))
+    .filter(
+      (event) =>
+        !q ||
+        event.event_id.toLowerCase().includes(q) ||
+        JSON.stringify(event.subject).toLowerCase().includes(q),
+    )
     .filter((event) => !domain || JSON.stringify(event.payload).toLowerCase().includes(domain))
     .filter((event) => !srcIp || event.flow?.src_ip === srcIp || event.subject?.ip === srcIp)
     .filter((event) => !dstIp || event.flow?.dst_ip === dstIp)
-    .filter((event) => !userAgent || String(event.payload?.user_agent ?? '').toLowerCase().includes(userAgent))
-    .filter((event) => !fingerprint || String(`${event.payload?.ja3 ?? ''} ${event.payload?.ja4 ?? ''}`).toLowerCase().includes(fingerprint))
+    .filter(
+      (event) =>
+        !userAgent ||
+        String(event.payload?.user_agent ?? '')
+          .toLowerCase()
+          .includes(userAgent),
+    )
+    .filter(
+      (event) =>
+        !fingerprint ||
+        String(`${event.payload?.ja3 ?? ''} ${event.payload?.ja4 ?? ''}`)
+          .toLowerCase()
+          .includes(fingerprint),
+    )
     .filter((event) => !proto || String(event.flow?.proto ?? '').toLowerCase() === proto)
     .filter((event) => !port || String(event.flow?.dst_port ?? '') === port)
 }

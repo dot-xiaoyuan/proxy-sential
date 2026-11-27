@@ -6,7 +6,14 @@ import { AppListSection } from './AppListSection'
 describe('AppListSection', () => {
   it('错误优先于加载与空态', () => {
     render(
-      <AppListSection isError isLoading isEmpty errorTitle="模板读取失败" errorMessage="请求超时" emptyText="暂无模板">
+      <AppListSection
+        isError
+        isLoading
+        isEmpty
+        errorTitle="模板读取失败"
+        errorMessage="请求超时"
+        emptyText="暂无模板"
+      >
         <div>列表</div>
       </AppListSection>,
     )

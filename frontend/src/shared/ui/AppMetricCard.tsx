@@ -45,7 +45,11 @@ export function AppMetricCard({
         <div className="metric-card-footer">
           {trend !== undefined && (
             <span
-              className={trend >= 0 ? 'metric-card-trend metric-card-trend-up' : 'metric-card-trend metric-card-trend-down'}
+              className={
+                trend >= 0
+                  ? 'metric-card-trend metric-card-trend-up'
+                  : 'metric-card-trend metric-card-trend-down'
+              }
             >
               {trend >= 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />}
               {Math.abs(trend)}%

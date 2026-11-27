@@ -1,6 +1,20 @@
 import { Tag, Tooltip, Typography } from 'antd'
 import { Link } from 'react-router-dom'
-import { ApartmentOutlined, ApiOutlined, CloudServerOutlined, DeploymentUnitOutlined, DesktopOutlined, HddOutlined, LaptopOutlined, MobileOutlined, PlaySquareOutlined, PrinterOutlined, TabletOutlined, VideoCameraOutlined, WifiOutlined } from '@ant-design/icons'
+import {
+  ApartmentOutlined,
+  ApiOutlined,
+  CloudServerOutlined,
+  DeploymentUnitOutlined,
+  DesktopOutlined,
+  HddOutlined,
+  LaptopOutlined,
+  MobileOutlined,
+  PlaySquareOutlined,
+  PrinterOutlined,
+  TabletOutlined,
+  VideoCameraOutlined,
+  WifiOutlined,
+} from '@ant-design/icons'
 import type { DeviceInventoryListItem, EndpointDeviceInventory } from '../../shared/api/types'
 import { BrandLogo } from './BrandLogo'
 import { DeviceNameView } from './DeviceNameView'
@@ -17,13 +31,34 @@ export function deviceDetailsURL(device: DeviceDisplayItem) {
   return `/devices/${encodeURIComponent(device.endpoint_id)}`
 }
 
-export function DeviceMAC({ device, href }: { device: DeviceDisplayItem; href?:string }) {
-  const vendor = (device.vendor_confidence ?? 0) >= .8 && device.vendor?.toLowerCase() !== 'unknown' ? device.vendor : ''
-  return <div className="device-mac-identity"><div className="device-mac-cell">
-    <Link className="mono device-mac-link" to={href || deviceDetailsURL(device)} title={vendor ? `MAC 注册厂商：${vendor}；不代表整机品牌` : device.primary_mac || '查看终端详情'}>{device.primary_mac || ''}</Link>
-    {device.primary_mac && <Typography.Text className="device-copy-control" copyable={{ text: device.primary_mac }} />}
-  </div></div>
-
+export function DeviceMAC({ device, href }: { device: DeviceDisplayItem; href?: string }) {
+  const vendor =
+    (device.vendor_confidence ?? 0) >= 0.8 && device.vendor?.toLowerCase() !== 'unknown'
+      ? device.vendor
+      : ''
+  return (
+    <div className="device-mac-identity">
+      <div className="device-mac-cell">
+        <Link
+          className="mono device-mac-link"
+          to={href || deviceDetailsURL(device)}
+          title={
+            vendor
+              ? `MAC 注册厂商：${vendor}；不代表整机品牌`
+              : device.primary_mac || '查看终端详情'
+          }
+        >
+          {device.primary_mac || ''}
+        </Link>
+        {device.primary_mac && (
+          <Typography.Text
+            className="device-copy-control"
+            copyable={{ text: device.primary_mac }}
+          />
+        )}
+      </div>
+    </div>
+  )
 }
 
 export function DeviceBrandSummary({ device }: { device: DeviceDisplayItem }) {
@@ -31,152 +66,546 @@ export function DeviceBrandSummary({ device }: { device: DeviceDisplayItem }) {
   const brand = brandSafe && (device.brand_confidence ?? 0) >= 0.8 ? device.brand : ''
   const inference = device.brand_inference
   const inferred = !brand && inference?.status === 'inferred'
-  const model = !recognitionDimensionConflict(device, 'model') && (device.model_confidence ?? 0) >= 0.8 ? device.model : ''
-  const reference = brandSafe && !brand && inference?.status !== 'conflict' && (!inferred || device.brand_reference?.brand.toLowerCase() === inference.brand?.toLowerCase()) ? device.brand_reference : undefined
-  const platform = virtualPlatform(device) || (brandSafe && (device.brand_confidence ?? 0) >= .8 && /^vmware(?:[\s,.]|$)/i.test(device.brand?.trim() || '') ? 'VMware' : undefined)
+  const model =
+    !recognitionDimensionConflict(device, 'model') && (device.model_confidence ?? 0) >= 0.8
+      ? device.model
+      : ''
+  const reference =
+    brandSafe &&
+    !brand &&
+    inference?.status !== 'conflict' &&
+    (!inferred || device.brand_reference?.brand.toLowerCase() === inference.brand?.toLowerCase())
+      ? device.brand_reference
+      : undefined
+  const platform =
+    virtualPlatform(device) ||
+    (brandSafe &&
+    (device.brand_confidence ?? 0) >= 0.8 &&
+    /^vmware(?:[\s,.]|$)/i.test(device.brand?.trim() || '')
+      ? 'VMware'
+      : undefined)
   const label = brand || (inferred ? inference.brand : reference?.brand || '')
-  const os = !recognitionDimensionConflict(device, 'os_family') && device.os_family?.toLowerCase() !== 'unknown' ? device.os_family : ''
+  const os =
+    !recognitionDimensionConflict(device, 'os_family') &&
+    device.os_family?.toLowerCase() !== 'unknown'
+      ? device.os_family
+      : ''
   const conflict = device.recognition_conflict || inference?.status === 'conflict'
-  return <div className="device-brand-summary">
-    <div className={`device-brand-heading${!brand ? ' device-brand-tentative' : ''}`}>
-      {label ? <BrandLogo brandKey={label} /> : <Typography.Text type="secondary"></Typography.Text>}
-      {inferred && !reference && <Tooltip title={`推测 ${inference.brand} · 域名证据评分 ${Math.round(inference.confidence * 100)}%，不确认硬件品牌；查看详情了解依据。`}><Tag className="device-inference-tag">域名推测</Tag></Tooltip>}
-      {reference && <Tooltip title={`${reference.explanation} · 来源：${reference.vendor} · 参考评分 ${Math.round(reference.confidence * 100)}%${inferred ? `；域名推测 ${inference.brand}，证据评分 ${Math.round(inference.confidence*100)}%` : ''}`}><Tag className="device-inference-tag">{inferred?'品牌线索':'MAC 厂商线索'}</Tag></Tooltip>}
-      {conflict && <Tooltip title="识别线索存在冲突，查看详情核对证据"><Tag className="device-conflict-tag">线索冲突</Tag></Tooltip>}
+  return (
+    <div className="device-brand-summary">
+      <div className={`device-brand-heading${!brand ? ' device-brand-tentative' : ''}`}>
+        {label ? (
+          <BrandLogo brandKey={label} />
+        ) : (
+          <Typography.Text type="secondary"></Typography.Text>
+        )}
+        {inferred && !reference && (
+          <Tooltip
+            title={`推测 ${inference.brand} · 域名证据评分 ${Math.round(inference.confidence * 100)}%，不确认硬件品牌；查看详情了解依据。`}
+          >
+            <Tag className="device-inference-tag">域名推测</Tag>
+          </Tooltip>
+        )}
+        {reference && (
+          <Tooltip
+            title={`${reference.explanation} · 来源：${reference.vendor} · 参考评分 ${Math.round(reference.confidence * 100)}%${inferred ? `；域名推测 ${inference.brand}，证据评分 ${Math.round(inference.confidence * 100)}%` : ''}`}
+          >
+            <Tag className="device-inference-tag">{inferred ? '品牌线索' : 'MAC 厂商线索'}</Tag>
+          </Tooltip>
+        )}
+        {conflict && (
+          <Tooltip title="识别线索存在冲突，查看详情核对证据">
+            <Tag className="device-conflict-tag">线索冲突</Tag>
+          </Tooltip>
+        )}
+      </div>
+      {platform && (
+        <Tooltip title="MAC 注册厂商为 VMware，提示虚拟网卡/虚拟化平台；不确认宿主机品牌，也不作为代理或共享上网的判定依据。">
+          <div className="device-platform-clue">
+            <BrandLogo brandKey="VMware" />
+            <Tag className="device-inference-tag">虚拟机线索</Tag>
+          </div>
+        </Tooltip>
+      )}
+      {os && (
+        <div className="device-os-summary">
+          <OperatingSystemLabel family={os} confirmed={(device.os_family_confidence ?? 0) >= 0.8} />
+          {(device.os_family_confidence ?? 0) < 0.8 && (
+            <Tooltip
+              title={`操作系统线索置信度 ${Math.round((device.os_family_confidence ?? 0) * 100)}%，查看详情核对识别证据。`}
+            >
+              <Tag className="device-inference-tag">系统推测</Tag>
+            </Tooltip>
+          )}
+        </div>
+      )}
+      {device.discovery?.conflict && <Tag className="device-conflict-tag">发现线索冲突</Tag>}
+      {!!device.discovery?.capabilities?.length && (
+        <Typography.Text type="secondary" className="device-model">
+          {device.discovery.capabilities
+            .map(
+              (c) =>
+                ({
+                  printing: '打印服务',
+                  scanning: '扫描服务',
+                  casting: '投屏服务',
+                  network_video: '网络视频',
+                })[c] ?? c,
+            )
+            .join(' · ')}
+        </Typography.Text>
+      )}
+      {model && (
+        <Typography.Text type="secondary" className="list-cell-nowrap device-model" title={model}>
+          {model}
+        </Typography.Text>
+      )}
+      {device.router_observation && (
+        <Link
+          className={`router-device-summary router-device-summary-${device.router_observation.status}`}
+          to={`/discovery/routers/${encodeURIComponent(device.router_observation.assessment_id)}`}
+        >
+          路由观察 · {routerStatusLabel(device.router_observation.status)} ·{' '}
+          {device.router_observation.confidence}
+        </Link>
+      )}
     </div>
-    {platform && <Tooltip title="MAC 注册厂商为 VMware，提示虚拟网卡/虚拟化平台；不确认宿主机品牌，也不作为代理或共享上网的判定依据。"><div className="device-platform-clue"><BrandLogo brandKey="VMware" /><Tag className="device-inference-tag">虚拟机线索</Tag></div></Tooltip>}
-    {os && <div className="device-os-summary"><OperatingSystemLabel family={os} confirmed={(device.os_family_confidence ?? 0) >= .8} />{(device.os_family_confidence ?? 0) < .8 && <Tooltip title={`操作系统线索置信度 ${Math.round((device.os_family_confidence ?? 0) * 100)}%，查看详情核对识别证据。`}><Tag className="device-inference-tag">系统推测</Tag></Tooltip>}</div>}
-    {device.discovery?.conflict && <Tag className="device-conflict-tag">发现线索冲突</Tag>}
-    {!!device.discovery?.capabilities?.length && <Typography.Text type="secondary" className="device-model">{device.discovery.capabilities.map(c=>({printing:'打印服务',scanning:'扫描服务',casting:'投屏服务',network_video:'网络视频'}[c]??c)).join(' · ')}</Typography.Text>}
-    {model && <Typography.Text type="secondary" className="list-cell-nowrap device-model" title={model}>{model}</Typography.Text>}
-    {device.router_observation && <Link className={`router-device-summary router-device-summary-${device.router_observation.status}`} to={`/discovery/routers/${encodeURIComponent(device.router_observation.assessment_id)}`}>
-      路由观察 · {routerStatusLabel(device.router_observation.status)} · {device.router_observation.confidence}
-    </Link>}
-  </div>
+  )
 }
 
-export function DeviceIdentityCell({ device, showName = true }: { device: DeviceDisplayItem; showName?: boolean }) {
+export function DeviceIdentityCell({
+  device,
+  showName = true,
+}: {
+  device: DeviceDisplayItem
+  showName?: boolean
+}) {
   const brandSafe = !recognitionDimensionConflict(device, 'brand')
   const platform = virtualPlatform(device)
-  const type = !recognitionDimensionConflict(device, 'device_type') && (device.device_type_confidence ?? 0) >= .8 && !isEmptyRecognition(device.device_type) ? device.device_type : ''
-  const brandValue = brandSafe && !platform && (device.brand_confidence ?? 0) >= .8 && !isEmptyRecognition(device.brand) ? device.brand : ''
+  const type =
+    !recognitionDimensionConflict(device, 'device_type') &&
+    (device.device_type_confidence ?? 0) >= 0.8 &&
+    !isEmptyRecognition(device.device_type)
+      ? device.device_type
+      : ''
+  const brandValue =
+    brandSafe &&
+    !platform &&
+    (device.brand_confidence ?? 0) >= 0.8 &&
+    !isEmptyRecognition(device.brand)
+      ? device.brand
+      : ''
   const brand = brandValue ? resolveDeviceBrand({ brand: brandValue }) : undefined
-  const model = !recognitionDimensionConflict(device, 'model') && (device.model_confidence ?? 0) >= .8 && !isEmptyRecognition(device.model) ? device.model : ''
-  const os = !recognitionDimensionConflict(device, 'os_family') && (device.os_family_confidence ?? 0) >= .8 && !isEmptyRecognition(device.os_family) ? device.os_family : ''
+  const model =
+    !recognitionDimensionConflict(device, 'model') &&
+    (device.model_confidence ?? 0) >= 0.8 &&
+    !isEmptyRecognition(device.model)
+      ? device.model
+      : ''
+  const os =
+    !recognitionDimensionConflict(device, 'os_family') &&
+    (device.os_family_confidence ?? 0) >= 0.8 &&
+    !isEmptyRecognition(device.os_family)
+      ? device.os_family
+      : ''
   const inference = device.brand_inference
   const inferred = !brandValue && inference?.status === 'inferred' ? inference : undefined
-  const reference = !brandValue && inference?.status !== 'conflict' ? device.brand_reference : undefined
+  const reference =
+    !brandValue && inference?.status !== 'conflict' ? device.brand_reference : undefined
   const primaryFallback = type ? deviceTypeLabel(type) : brand?.name || ''
-  return <div className="device-identity-cell">
-    <DeviceSemanticIcon device={device} />
-    <div className="device-identity-content">
-      <div className="device-identity-primary">
-        {showName && device.device_name?.value ? <DeviceNameView name={device.device_name} compact /> : primaryFallback && <Typography.Text strong>{primaryFallback}</Typography.Text>}
-        {showName && device.device_name?.value && type && <Typography.Text type="secondary" className="device-type-label">{deviceTypeLabel(type)}</Typography.Text>}
+  return (
+    <div className="device-identity-cell">
+      <DeviceSemanticIcon device={device} />
+      <div className="device-identity-content">
+        <div className="device-identity-primary">
+          {showName && device.device_name?.value ? (
+            <DeviceNameView name={device.device_name} compact />
+          ) : (
+            primaryFallback && <Typography.Text strong>{primaryFallback}</Typography.Text>
+          )}
+          {showName && device.device_name?.value && type && (
+            <Typography.Text type="secondary" className="device-type-label">
+              {deviceTypeLabel(type)}
+            </Typography.Text>
+          )}
+        </div>
+        {(brand || model) && (
+          <Typography.Text
+            className="device-brand-model"
+            title={[brand?.name, model].filter(Boolean).join(' ')}
+          >
+            {[brand?.name, model].filter(Boolean).join(' · ')}
+          </Typography.Text>
+        )}
+        {os && (
+          <div className="device-os-summary">
+            <OperatingSystemLabel family={os} confirmed />
+          </div>
+        )}
+        <div className="device-identity-clues">
+          {inferred && (
+            <Tooltip
+              title={`域名证据评分 ${Math.round(inferred.confidence * 100)}%，不确认硬件品牌。`}
+            >
+              <Tag className="device-inference-tag">
+                {resolveDeviceBrand({ brand: inferred.brand }).name || inferred.brand} · 品牌推测
+              </Tag>
+            </Tooltip>
+          )}
+          {reference &&
+            (!inferred || reference.brand.toLowerCase() !== inferred.brand?.toLowerCase()) && (
+              <Tooltip
+                title={`${reference.explanation} · 参考评分 ${Math.round(reference.confidence * 100)}%`}
+              >
+                <Tag className="device-inference-tag">
+                  {resolveDeviceBrand({ brand: reference.brand }).name || reference.brand} · MAC
+                  厂商线索
+                </Tag>
+              </Tooltip>
+            )}
+          {!recognitionDimensionConflict(device, 'os_family') &&
+            !os &&
+            !isEmptyRecognition(device.os_family) && (
+              <Tooltip title={`置信度 ${Math.round((device.os_family_confidence ?? 0) * 100)}%`}>
+                <Tag className="device-inference-tag">{device.os_family} · 系统线索</Tag>
+              </Tooltip>
+            )}
+          {platform && (
+            <Tooltip title="VMware 注册厂商仅提示虚拟网卡或虚拟化平台，不确认宿主机品牌。">
+              <Tag className="device-platform-tag">
+                <CloudServerOutlined />
+                VMware 虚拟平台线索
+              </Tag>
+            </Tooltip>
+          )}
+          {(device.recognition_conflict || inference?.status === 'conflict') && (
+            <Tooltip title="识别线索存在冲突，查看详情核对证据">
+              <Tag className="device-conflict-tag">线索冲突</Tag>
+            </Tooltip>
+          )}
+          {device.discovery?.conflict && <Tag className="device-conflict-tag">发现线索冲突</Tag>}
+          {('libraries' in device ? (device.libraries ?? []) : []).map((library) => (
+            <Tooltip
+              key={library}
+              title="开源指纹库识别到该终端的部分特征；仅作来源标签，不改变品牌或型号结论。"
+            >
+              <Tag className="router-library device-library-tag">
+                {routerLibraryLabels[library] || library}
+              </Tag>
+            </Tooltip>
+          ))}
+        </div>
+        {device.router_observation && (
+          <Link
+            className={`router-device-summary router-device-summary-${device.router_observation.status}`}
+            to={`/discovery/routers/${encodeURIComponent(device.router_observation.assessment_id)}`}
+          >
+            路由观察 · {routerStatusLabel(device.router_observation.status)} ·{' '}
+            {device.router_observation.confidence}
+          </Link>
+        )}
       </div>
-      {(brand || model) && <Typography.Text className="device-brand-model" title={[brand?.name, model].filter(Boolean).join(' ')}>{[brand?.name, model].filter(Boolean).join(' · ')}</Typography.Text>}
-      {os && <div className="device-os-summary"><OperatingSystemLabel family={os} confirmed /></div>}
-      <div className="device-identity-clues">
-        {inferred && <Tooltip title={`域名证据评分 ${Math.round(inferred.confidence * 100)}%，不确认硬件品牌。`}><Tag className="device-inference-tag">{resolveDeviceBrand({ brand: inferred.brand }).name || inferred.brand} · 品牌推测</Tag></Tooltip>}
-        {reference && (!inferred || reference.brand.toLowerCase() !== inferred.brand?.toLowerCase()) && <Tooltip title={`${reference.explanation} · 参考评分 ${Math.round(reference.confidence * 100)}%`}><Tag className="device-inference-tag">{resolveDeviceBrand({ brand: reference.brand }).name || reference.brand} · MAC 厂商线索</Tag></Tooltip>}
-        {!recognitionDimensionConflict(device, 'os_family') && !os && !isEmptyRecognition(device.os_family) && <Tooltip title={`置信度 ${Math.round((device.os_family_confidence ?? 0) * 100)}%`}><Tag className="device-inference-tag">{device.os_family} · 系统线索</Tag></Tooltip>}
-        {platform && <Tooltip title="VMware 注册厂商仅提示虚拟网卡或虚拟化平台，不确认宿主机品牌。"><Tag className="device-platform-tag"><CloudServerOutlined />VMware 虚拟平台线索</Tag></Tooltip>}
-        {(device.recognition_conflict || inference?.status === 'conflict') && <Tooltip title="识别线索存在冲突，查看详情核对证据"><Tag className="device-conflict-tag">线索冲突</Tag></Tooltip>}
-        {device.discovery?.conflict && <Tag className="device-conflict-tag">发现线索冲突</Tag>}
-        {('libraries' in device ? device.libraries ?? [] : []).map(library => <Tooltip key={library} title="开源指纹库识别到该终端的部分特征；仅作来源标签，不改变品牌或型号结论。"><Tag className="router-library device-library-tag">{routerLibraryLabels[library] || library}</Tag></Tooltip>)}
-      </div>
-      {device.router_observation && <Link className={`router-device-summary router-device-summary-${device.router_observation.status}`} to={`/discovery/routers/${encodeURIComponent(device.router_observation.assessment_id)}`}>路由观察 · {routerStatusLabel(device.router_observation.status)} · {device.router_observation.confidence}</Link>}
     </div>
-  </div>
+  )
 }
 
 export function DeviceSemanticIcon({ device }: { device: DeviceDisplayItem }) {
-  const confidentType = !recognitionDimensionConflict(device, 'device_type') && (device.device_type_confidence ?? 0) >= .8 ? (device.device_type || '').toLowerCase() : ''
-  const confidentOS = !recognitionDimensionConflict(device, 'os_family') && (device.os_family_confidence ?? 0) >= .8 ? (device.os_family || '').toLowerCase() : ''
-  const Icon = /printer|打印/.test(confidentType) ? PrinterOutlined
-    : /router|switch|gateway|路由|交换/.test(confidentType) ? ApartmentOutlined
-    : /access_point|接入点/.test(confidentType) ? WifiOutlined
-    : /camera|摄像/.test(confidentType) ? VideoCameraOutlined
-    : /media_device|电视|媒体/.test(confidentType) ? PlaySquareOutlined
-    : /\biot\b|物联网/.test(confidentType) ? ApiOutlined
-    : /phone|mobile|手机/.test(confidentType) ? MobileOutlined
-    : /tablet|平板/.test(confidentType) ? TabletOutlined
-    : /laptop|notebook|笔记本/.test(confidentType) ? LaptopOutlined
-    : /server|服务器/.test(confidentType) ? HddOutlined
-    : /virtual|vm|虚拟/.test(confidentType) ? CloudServerOutlined
-    : /desktop|workstation|computer|pc|终端|电脑/.test(confidentType) ? DesktopOutlined
-    : /android|ios/.test(confidentOS) ? MobileOutlined
-    : /windows|macos|linux/.test(confidentOS) ? DesktopOutlined : DeploymentUnitOutlined
-  return <span className="device-semantic-icon" aria-hidden="true"><Icon /></span>
+  const confidentType =
+    !recognitionDimensionConflict(device, 'device_type') &&
+    (device.device_type_confidence ?? 0) >= 0.8
+      ? (device.device_type || '').toLowerCase()
+      : ''
+  const confidentOS =
+    !recognitionDimensionConflict(device, 'os_family') && (device.os_family_confidence ?? 0) >= 0.8
+      ? (device.os_family || '').toLowerCase()
+      : ''
+  const Icon = /printer|打印/.test(confidentType)
+    ? PrinterOutlined
+    : /router|switch|gateway|路由|交换/.test(confidentType)
+      ? ApartmentOutlined
+      : /access_point|接入点/.test(confidentType)
+        ? WifiOutlined
+        : /camera|摄像/.test(confidentType)
+          ? VideoCameraOutlined
+          : /media_device|电视|媒体/.test(confidentType)
+            ? PlaySquareOutlined
+            : /\biot\b|物联网/.test(confidentType)
+              ? ApiOutlined
+              : /phone|mobile|手机/.test(confidentType)
+                ? MobileOutlined
+                : /tablet|平板/.test(confidentType)
+                  ? TabletOutlined
+                  : /laptop|notebook|笔记本/.test(confidentType)
+                    ? LaptopOutlined
+                    : /server|服务器/.test(confidentType)
+                      ? HddOutlined
+                      : /virtual|vm|虚拟/.test(confidentType)
+                        ? CloudServerOutlined
+                        : /desktop|workstation|computer|pc|终端|电脑/.test(confidentType)
+                          ? DesktopOutlined
+                          : /android|ios/.test(confidentOS)
+                            ? MobileOutlined
+                            : /windows|macos|linux/.test(confidentOS)
+                              ? DesktopOutlined
+                              : DeploymentUnitOutlined
+  return (
+    <span className="device-semantic-icon" aria-hidden="true">
+      <Icon />
+    </span>
+  )
 }
 
-export function DeviceLedgerIdentity({device,href,showName=true}:{device:DeviceDisplayItem;href:string;showName?:boolean}) {
- const name=showName?device.device_name?.value:undefined
- const primary=name||device.current_ip||device.primary_mac||device.endpoint_id
- return <div className="device-identity-cell">
-  <DeviceSemanticIcon device={device}/>
-  <div className="device-identity-content">
-   <div className="device-ledger-ip"><Link className={`device-ledger-primary${!name?' mono':''}`} to={href} title={name?[primary,device.device_name?.manual?'人工备注':'观测名称',device.device_name?.status==='historical'?'历史观测，尚未重新确认':'',device.device_name?.multiple_names?'其他名称可在详情查看':''].filter(Boolean).join(' · '):primary}>{primary}</Link>{name&&device.device_name?.status==='historical'&&<span className="device-name-caption">历史名称</span>}{!name&&device.current_ip&&<Typography.Text className="device-copy-control" copyable={{text:device.current_ip}}/>}</div>
-   {name&&device.current_ip&&<Typography.Text className="mono device-ledger-address" copyable={{text:device.current_ip}}>{device.current_ip}</Typography.Text>}
-   {device.primary_mac&&<DeviceMAC device={device} href={href}/>}
-   {device.ip_match&&<Typography.Text className="device-match-caption" title={`${device.ip_match.ip} · ${device.ip_match.matched_at} · ${device.ip_match.source==='account_session'?'账号会话':'IP 观测'}`}>{device.ip_match.is_recent_ip?'最近 IP 命中':'历史 IP 命中'}</Typography.Text>}
-  </div>
- </div>
+export function DeviceLedgerIdentity({
+  device,
+  href,
+  showName = true,
+}: {
+  device: DeviceDisplayItem
+  href: string
+  showName?: boolean
+}) {
+  const name = showName ? device.device_name?.value : undefined
+  const primary = name || device.current_ip || device.primary_mac || device.endpoint_id
+  return (
+    <div className="device-identity-cell">
+      <DeviceSemanticIcon device={device} />
+      <div className="device-identity-content">
+        <div className="device-ledger-ip">
+          <Link
+            className={`device-ledger-primary${!name ? ' mono' : ''}`}
+            to={href}
+            title={
+              name
+                ? [
+                    primary,
+                    device.device_name?.manual ? '人工备注' : '观测名称',
+                    device.device_name?.status === 'historical' ? '历史观测，尚未重新确认' : '',
+                    device.device_name?.multiple_names ? '其他名称可在详情查看' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')
+                : primary
+            }
+          >
+            {primary}
+          </Link>
+          {name && device.device_name?.status === 'historical' && (
+            <span className="device-name-caption">历史名称</span>
+          )}
+          {!name && device.current_ip && (
+            <Typography.Text
+              className="device-copy-control"
+              copyable={{ text: device.current_ip }}
+            />
+          )}
+        </div>
+        {name && device.current_ip && (
+          <Typography.Text
+            className="mono device-ledger-address"
+            copyable={{ text: device.current_ip }}
+          >
+            {device.current_ip}
+          </Typography.Text>
+        )}
+        {device.primary_mac && <DeviceMAC device={device} href={href} />}
+        {device.ip_match && (
+          <Typography.Text
+            className="device-match-caption"
+            title={`${device.ip_match.ip} · ${device.ip_match.matched_at} · ${device.ip_match.source === 'account_session' ? '账号会话' : 'IP 观测'}`}
+          >
+            {device.ip_match.is_recent_ip ? '最近 IP 命中' : '历史 IP 命中'}
+          </Typography.Text>
+        )}
+      </div>
+    </div>
+  )
 }
 
-function ipv4AddressOf(value?: string) { return value && !value.includes(':') ? value : undefined }
+function ipv4AddressOf(value?: string) {
+  return value && !value.includes(':') ? value : undefined
+}
 
-export function TerminalInventoryIdentity({ device, href, showName = true }: { device: DeviceDisplayItem; href: string; showName?: boolean }) {
+export function TerminalInventoryIdentity({
+  device,
+  href,
+  showName = true,
+}: {
+  device: DeviceDisplayItem
+  href: string
+  showName?: boolean
+}) {
   const name = showName ? device.device_name?.value : ''
   // IPv4 is the operational key for policy, risk and 4K identity, so it leads
   // the identity column; IPv6 stays in the address column as SLAAC evidence.
   const ipv4 = device.current_ipv4 || ipv4AddressOf(device.current_ip)
-  const type = !recognitionDimensionConflict(device, 'device_type') && (device.device_type_confidence ?? 0) >= .8 && !isEmptyRecognition(device.device_type) ? device.device_type : undefined
-  return <div className="terminal-inventory-identity">
-    <DiscoveryDeviceIcon type={type} />
-    <div className="terminal-inventory-identity-content">
-      {ipv4 ? <div className="terminal-inventory-ipv4">
-          <Link className="terminal-inventory-primary mono" to={href} title={`IPv4 ${ipv4}`}>{ipv4}</Link>
-          <Typography.Text className="device-copy-control" copyable={{ text: ipv4 }} />
-        </div>
-        : name ? <Link className="terminal-inventory-primary" to={href} title={device.device_name?.status === 'historical' ? '历史观测名称' : name}>{name}</Link>
-          : device.primary_mac ? <div className="terminal-inventory-mac-secondary"><DeviceMAC device={device} href={href} /></div>
-            : device.current_ip ? <Link className="terminal-inventory-primary mono" to={href}>{device.current_ip}</Link> : null}
-      {ipv4 && name && <Link className="terminal-inventory-name" to={href} title={device.device_name?.status === 'historical' ? '历史观测名称' : name}>{name}</Link>}
-      {(ipv4 || name) && device.primary_mac && <DeviceMAC device={device} href={href} />}
-      {name && device.device_name?.status === 'historical' && <span className="device-name-caption">历史名称</span>}
+  const type =
+    !recognitionDimensionConflict(device, 'device_type') &&
+    (device.device_type_confidence ?? 0) >= 0.8 &&
+    !isEmptyRecognition(device.device_type)
+      ? device.device_type
+      : undefined
+  return (
+    <div className="terminal-inventory-identity">
+      <DiscoveryDeviceIcon type={type} />
+      <div className="terminal-inventory-identity-content">
+        {ipv4 ? (
+          <div className="terminal-inventory-ipv4">
+            <Link className="terminal-inventory-primary mono" to={href} title={`IPv4 ${ipv4}`}>
+              {ipv4}
+            </Link>
+            <Typography.Text className="device-copy-control" copyable={{ text: ipv4 }} />
+          </div>
+        ) : name ? (
+          <Link
+            className="terminal-inventory-primary"
+            to={href}
+            title={device.device_name?.status === 'historical' ? '历史观测名称' : name}
+          >
+            {name}
+          </Link>
+        ) : device.primary_mac ? (
+          <div className="terminal-inventory-mac-secondary">
+            <DeviceMAC device={device} href={href} />
+          </div>
+        ) : device.current_ip ? (
+          <Link className="terminal-inventory-primary mono" to={href}>
+            {device.current_ip}
+          </Link>
+        ) : null}
+        {ipv4 && name && (
+          <Link
+            className="terminal-inventory-name"
+            to={href}
+            title={device.device_name?.status === 'historical' ? '历史观测名称' : name}
+          >
+            {name}
+          </Link>
+        )}
+        {(ipv4 || name) && device.primary_mac && <DeviceMAC device={device} href={href} />}
+        {name && device.device_name?.status === 'historical' && (
+          <span className="device-name-caption">历史名称</span>
+        )}
+      </div>
     </div>
-  </div>
+  )
 }
 
-export function DeviceLedgerRecognition({device,showBrandLogo=false}:{device:DeviceDisplayItem;showBrandLogo?:boolean}) {
- const brandSafe=!recognitionDimensionConflict(device, 'brand')
- const platform=virtualPlatform(device)||(/^vmware(?:[\s,.]|$)/i.test(device.brand||'')?'VMware':undefined)
- const type=!recognitionDimensionConflict(device, 'device_type')&&(device.device_type_confidence??0)>=.8&&!isEmptyRecognition(device.device_type)?deviceTypeLabel(device.device_type!):''
- const brand=brandSafe&&!platform&&(device.brand_confidence??0)>=.8&&!isEmptyRecognition(device.brand)?resolveDeviceBrand({brand:device.brand}).name:''
- const model=!recognitionDimensionConflict(device, 'model')&&(device.model_confidence??0)>=.8&&!isEmptyRecognition(device.model)?device.model:''
- const clues=[
-  device.brand_inference?.status==='inferred'&&!isEmptyRecognition(device.brand_inference.brand)?`${device.brand_inference.brand} · 品牌推测（${Math.round(device.brand_inference.confidence*100)}%）`:'',
-  device.brand_reference&&!isEmptyRecognition(device.brand_reference.brand)?`${device.brand_reference.brand} · MAC 厂商线索：${device.brand_reference.explanation}`:'',
-  !recognitionDimensionConflict(device, 'os_family')&&(device.os_family_confidence??0)<.8&&!isEmptyRecognition(device.os_family)?`${device.os_family} · 系统线索（${Math.round((device.os_family_confidence??0)*100)}%）`:'',
-  !recognitionDimensionConflict(device, 'device_type')&&(device.device_type_confidence??0)<.8&&!isEmptyRecognition(device.device_type)?`${deviceTypeLabel(device.device_type!)} · 类型线索`:'',
- ].filter(Boolean)
- return <div className="device-ledger-recognition">
-  {type&&<Typography.Text>{type}</Typography.Text>}
-  {showBrandLogo ? <>{brand && (brandIconPaths[resolveDeviceBrand({brand:device.brand}).key] ? <BrandLogo brandKey={device.brand!} /> : <Typography.Text className="device-brand-model">{brand}</Typography.Text>)}{model && <Typography.Text className="device-brand-model">{model}</Typography.Text>}</>
-    : (brand||model)&&<Typography.Text className="device-brand-model">{[brand,model].filter(Boolean).join(' · ')}</Typography.Text>}
-  <div className="device-identity-clues">
-   {platform&&<Tooltip title="虚拟网卡或虚拟化平台线索，不确认宿主机品牌。"><Tag className="device-platform-tag"><CloudServerOutlined/>VMware 虚拟平台线索</Tag></Tooltip>}
-   {(device.recognition_conflict||device.brand_inference?.status==='conflict')&&<Tag className="device-conflict-tag">线索冲突</Tag>}
-   {device.discovery?.conflict&&<Tag className="device-conflict-tag">发现线索冲突</Tag>}
-   {clues.length>0&&<Tooltip title={<div>{clues.map(clue=><div key={clue}>{clue}</div>)}</div>}><Typography.Text className="device-ledger-clues" tabIndex={0}>识别线索 {clues.length}</Typography.Text></Tooltip>}
-  </div>
-  {device.router_observation&&<Link className="router-device-summary" to={`/discovery/routers/${encodeURIComponent(device.router_observation.assessment_id)}`}>路由观察 · {routerStatusLabel(device.router_observation.status)}</Link>}
- </div>
+export function DeviceLedgerRecognition({
+  device,
+  showBrandLogo = false,
+}: {
+  device: DeviceDisplayItem
+  showBrandLogo?: boolean
+}) {
+  const brandSafe = !recognitionDimensionConflict(device, 'brand')
+  const platform =
+    virtualPlatform(device) ||
+    (/^vmware(?:[\s,.]|$)/i.test(device.brand || '') ? 'VMware' : undefined)
+  const type =
+    !recognitionDimensionConflict(device, 'device_type') &&
+    (device.device_type_confidence ?? 0) >= 0.8 &&
+    !isEmptyRecognition(device.device_type)
+      ? deviceTypeLabel(device.device_type!)
+      : ''
+  const brand =
+    brandSafe &&
+    !platform &&
+    (device.brand_confidence ?? 0) >= 0.8 &&
+    !isEmptyRecognition(device.brand)
+      ? resolveDeviceBrand({ brand: device.brand }).name
+      : ''
+  const model =
+    !recognitionDimensionConflict(device, 'model') &&
+    (device.model_confidence ?? 0) >= 0.8 &&
+    !isEmptyRecognition(device.model)
+      ? device.model
+      : ''
+  const clues = [
+    device.brand_inference?.status === 'inferred' &&
+    !isEmptyRecognition(device.brand_inference.brand)
+      ? `${device.brand_inference.brand} · 品牌推测（${Math.round(device.brand_inference.confidence * 100)}%）`
+      : '',
+    device.brand_reference && !isEmptyRecognition(device.brand_reference.brand)
+      ? `${device.brand_reference.brand} · MAC 厂商线索：${device.brand_reference.explanation}`
+      : '',
+    !recognitionDimensionConflict(device, 'os_family') &&
+    (device.os_family_confidence ?? 0) < 0.8 &&
+    !isEmptyRecognition(device.os_family)
+      ? `${device.os_family} · 系统线索（${Math.round((device.os_family_confidence ?? 0) * 100)}%）`
+      : '',
+    !recognitionDimensionConflict(device, 'device_type') &&
+    (device.device_type_confidence ?? 0) < 0.8 &&
+    !isEmptyRecognition(device.device_type)
+      ? `${deviceTypeLabel(device.device_type!)} · 类型线索`
+      : '',
+  ].filter(Boolean)
+  return (
+    <div className="device-ledger-recognition">
+      {type && <Typography.Text>{type}</Typography.Text>}
+      {showBrandLogo ? (
+        <>
+          {brand &&
+            (brandIconPaths[resolveDeviceBrand({ brand: device.brand }).key] ? (
+              <BrandLogo brandKey={device.brand!} />
+            ) : (
+              <Typography.Text className="device-brand-model">{brand}</Typography.Text>
+            ))}
+          {model && <Typography.Text className="device-brand-model">{model}</Typography.Text>}
+        </>
+      ) : (
+        (brand || model) && (
+          <Typography.Text className="device-brand-model">
+            {[brand, model].filter(Boolean).join(' · ')}
+          </Typography.Text>
+        )
+      )}
+      <div className="device-identity-clues">
+        {platform && (
+          <Tooltip title="虚拟网卡或虚拟化平台线索，不确认宿主机品牌。">
+            <Tag className="device-platform-tag">
+              <CloudServerOutlined />
+              VMware 虚拟平台线索
+            </Tag>
+          </Tooltip>
+        )}
+        {(device.recognition_conflict || device.brand_inference?.status === 'conflict') && (
+          <Tag className="device-conflict-tag">线索冲突</Tag>
+        )}
+        {device.discovery?.conflict && <Tag className="device-conflict-tag">发现线索冲突</Tag>}
+        {clues.length > 0 && (
+          <Tooltip
+            title={
+              <div>
+                {clues.map((clue) => (
+                  <div key={clue}>{clue}</div>
+                ))}
+              </div>
+            }
+          >
+            <Typography.Text className="device-ledger-clues" tabIndex={0}>
+              识别线索 {clues.length}
+            </Typography.Text>
+          </Tooltip>
+        )}
+      </div>
+      {device.router_observation && (
+        <Link
+          className="router-device-summary"
+          to={`/discovery/routers/${encodeURIComponent(device.router_observation.assessment_id)}`}
+        >
+          路由观察 · {routerStatusLabel(device.router_observation.status)}
+        </Link>
+      )}
+    </div>
+  )
 }
 
-export function DeviceLedgerOS({device}:{device:DeviceDisplayItem}) {
- return !recognitionDimensionConflict(device, 'os_family')&&(device.os_family_confidence??0)>=.8&&!isEmptyRecognition(device.os_family)?<OperatingSystemLabel family={device.os_family!} confirmed/>:null
+export function DeviceLedgerOS({ device }: { device: DeviceDisplayItem }) {
+  return !recognitionDimensionConflict(device, 'os_family') &&
+    (device.os_family_confidence ?? 0) >= 0.8 &&
+    !isEmptyRecognition(device.os_family) ? (
+    <OperatingSystemLabel family={device.os_family!} confirmed />
+  ) : null
 }
 
 function isEmptyRecognition(value?: string) {
@@ -206,13 +635,23 @@ export function deviceTypeLabel(value: string) {
 }
 
 function routerStatusLabel(status: string) {
-  return ({ candidate: '候选', likely: '较可信', confirmed: '已确认' } as Record<string, string>)[status] || status
+  return (
+    ({ candidate: '候选', likely: '较可信', confirmed: '已确认' } as Record<string, string>)[
+      status
+    ] || status
+  )
 }
 
 // Virtual-interface vendors are shown independently, never promoted to hardware brand.
 export function virtualPlatform(device: DeviceDisplayItem): string | undefined {
   const mac = device.primary_mac || ''
-  if (!/^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(mac) || (parseInt(mac.slice(0, 2), 16) & 3) !== 0 || device.randomized_mac || (device.vendor_confidence ?? 0) < .8) return undefined
+  if (
+    !/^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(mac) ||
+    (parseInt(mac.slice(0, 2), 16) & 3) !== 0 ||
+    device.randomized_mac ||
+    (device.vendor_confidence ?? 0) < 0.8
+  )
+    return undefined
   if (/^vmware(?:[\s,.]|$)/i.test(device.vendor?.trim() || '')) return 'VMware'
   return undefined
 }

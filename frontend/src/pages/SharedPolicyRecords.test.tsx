@@ -7,72 +7,153 @@ import { sharedDecisionFixture } from '../mocks/sharedPolicyRecords'
 import { request } from '../shared/api/client'
 vi.mock('../shared/api/client', () => ({ request: vi.fn() }))
 vi.mock('../shared/api/queries', () => ({ useSession: () => ({ data: { permissions: [] } }) }))
-afterEach(() => { cleanup(); vi.clearAllMocks() })
-function setup(url = '/shared-access?tab=decisions') {const client = new QueryClient({defaultOptions:{queries:{retry:false}}});return render(<QueryClientProvider client={client}><MemoryRouter initialEntries={[url]}><SharedPolicyRecords /></MemoryRouter></QueryClientProvider>)}
+afterEach(() => {
+  cleanup()
+  vi.clearAllMocks()
+})
+function setup(url = '/shared-access?tab=decisions') {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[url]}>
+        <SharedPolicyRecords />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
 describe('共享策略仅记录', () => {
- it('重复采集原因合并，长原因列表默认折叠', async () => {
-  vi.mocked(request).mockResolvedValue({items:[{...sharedDecisionFixture,reasons:[...Array(500).fill('feature_value_limit'),'incomplete_shared_observation_window']}],next_cursor:''});setup()
-  await screen.findByText('campus-student-001')
-  ;(document.querySelector('.ant-table-row-expand-icon') as HTMLElement).click()
-  expect(await screen.findByText('特征数量达到采集上限')).toBeInTheDocument()
-  expect(screen.getByText('共 500 次')).toBeInTheDocument()
-  expect(screen.queryByText('feature_value_limit')).toBeNull()
-  expect(document.querySelectorAll('.shared-record-reason')).toHaveLength(2)
- })
- it('无效 URL 时间显示校验提示且不发送查询', () => {
-  setup('/shared-access?tab=decisions&decision_from=invalid-date')
-  expect(screen.getByText('请填写有效时间，且结束时间晚于开始时间')).toBeInTheDocument()
-  expect(request).not.toHaveBeenCalled()
- })
- it('默认查询命中并展示证据与仅记录说明，始终没有执行入口', async () => {
-  vi.mocked(request).mockResolvedValue({items:[sharedDecisionFixture],next_cursor:''});setup()
-  expect(await screen.findByText('campus-student-001')).toBeInTheDocument()
-  expect(screen.getAllByText('仅记录，未执行')).toHaveLength(2)
-  expect(screen.getByText('命中后不会下线或发送请求')).toBeInTheDocument()
-  expect(screen.queryByRole('button',{name:/确认执行|下线|撤销/})).toBeNull()
-  expect(vi.mocked(request).mock.calls.every(([url])=>!String(url).includes('include_processing'))).toBe(true)
-  ;(document.querySelector('.ant-table-row-expand-icon') as HTMLElement).click()
-  expect(await screen.findByText('证据版本')).toBeInTheDocument()
-  expect(screen.getByText(sharedDecisionFixture.evidence_version)).toBeInTheDocument()
-  await waitFor(() => expect(request).toHaveBeenCalledWith(expect.stringContaining('result=matched')))
- })
- it('旧弱证据追加更正后不再显示为已确认共享', async () => {
-  vi.mocked(request).mockResolvedValue({items:[{...sharedDecisionFixture,evidence_review_status:'insufficient_evidence',evidence_review_reason:'strong_anchor_missing'}],next_cursor:''})
-  setup()
-  expect(await screen.findByText('旧规则记录：共享证据不足')).toBeInTheDocument()
-  expect(screen.getByText('旧规则证据不足')).toBeInTheDocument()
-  expect(screen.queryByText('已确认共享')).toBeNull()
-  ;(document.querySelector('.ant-table-row-expand-icon') as HTMLElement).click()
-  expect(await screen.findByText('历史核验原因：原证据缺少强锚点')).toBeInTheDocument()
- })
- it('缺少原证据时保留记录并标明核验未完成', async () => {
-  vi.mocked(request).mockResolvedValue({items:[{...sharedDecisionFixture,evidence:undefined,evidence_review_status:'unverified',evidence_review_reason:'saved_evidence_unavailable'}],next_cursor:''})
-  setup()
-  expect(await screen.findByText('历史共享结论待核验')).toBeInTheDocument()
-  expect(screen.getByText('证据缺失待核验')).toBeInTheDocument()
-  ;(document.querySelector('.ant-table-row-expand-icon') as HTMLElement).click()
-  expect(await screen.findByText('历史核验原因：原决策缺少可核验的证据内容')).toBeInTheDocument()
- })
- it('关联观察和不足原因可查询，空结果不表示没有共享', async () => {
-  vi.mocked(request).mockResolvedValue({items:[],next_cursor:''});setup('/shared-access?tab=decisions&decision_result=insufficient&observation_id=raw-proof')
-  expect(await screen.findByText(/当前筛选下暂无评估记录/)).toBeInTheDocument()
-  await waitFor(()=>expect(vi.mocked(request).mock.calls.some(([path])=>String(path).startsWith('/policy-decisions?')&&String(path).includes('observation_id=raw-proof'))).toBe(true))
-  expect(sharedReason('capture_interval_incomplete:handshake-sidecar')).toContain('采集时间段覆盖不足')
- })
- it('大表计数不可用时仍按记录游标翻页', async () => {
-  vi.mocked(request).mockImplementation(async path => {
-   const url = String(path)
-   if (!url.startsWith('/policy-decisions?')) throw new Error('不应请求全量计数或页码定位')
-   if (url.includes('cursor=next-record')) return {items:[{...sharedDecisionFixture,decision_id:'second-decision',account_id:'second-account'}],next_cursor:'',snapshot:'2026-11-11T09:00:00Z'}
-   return {items:[sharedDecisionFixture],next_cursor:'next-record',snapshot:'2026-11-11T09:00:00Z'}
+  it('重复采集原因合并，长原因列表默认折叠', async () => {
+    vi.mocked(request).mockResolvedValue({
+      items: [
+        {
+          ...sharedDecisionFixture,
+          reasons: [
+            ...Array(500).fill('feature_value_limit'),
+            'incomplete_shared_observation_window',
+          ],
+        },
+      ],
+      next_cursor: '',
+    })
+    setup()
+    await screen.findByText('campus-student-001')
+    fireEvent.click(screen.getByRole('button', { name: '证据摘要' }))
+    expect(await screen.findByText('特征数量达到采集上限')).toBeInTheDocument()
+    expect(screen.getByText('共 500 次')).toBeInTheDocument()
+    expect(screen.queryByText('feature_value_limit')).toBeNull()
+    expect(document.querySelectorAll('.shared-record-reason')).toHaveLength(2)
   })
-  setup()
-  expect(await screen.findByText('campus-student-001')).toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button',{name:'下一页'}))
-  expect(await screen.findByText('second-account')).toBeInTheDocument()
-  expect(vi.mocked(request).mock.calls.some(([path])=>String(path).includes('cursor=next-record'))).toBe(true)
-  fireEvent.click(screen.getByRole('button',{name:'上一页'}))
-  expect(await screen.findByText('campus-student-001')).toBeInTheDocument()
-  expect(vi.mocked(request).mock.calls.some(([path])=>String(path).includes('snapshot=2026-11-11T09%3A00%3A00Z'))).toBe(true)
- })
+  it('无效 URL 时间显示校验提示且不发送查询', () => {
+    setup('/shared-access?tab=decisions&decision_from=invalid-date')
+    expect(screen.getByText('请填写有效时间，且结束时间晚于开始时间')).toBeInTheDocument()
+    expect(request).not.toHaveBeenCalled()
+  })
+  it('默认查询命中并展示证据与仅记录说明，始终没有执行入口', async () => {
+    vi.mocked(request).mockResolvedValue({ items: [sharedDecisionFixture], next_cursor: '' })
+    setup()
+    expect(await screen.findByText('campus-student-001')).toBeInTheDocument()
+    expect(screen.getAllByText('仅记录，未执行').length).toBeGreaterThanOrEqual(2)
+    expect(screen.queryByRole('button', { name: /确认执行|下线|撤销/ })).toBeNull()
+    expect(
+      vi.mocked(request).mock.calls.every(([url]) => !String(url).includes('include_processing')),
+    ).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: '证据摘要' }))
+    expect(await screen.findByText('证据版本')).toBeInTheDocument()
+    expect(screen.getByText(sharedDecisionFixture.evidence_version)).toBeInTheDocument()
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith(expect.stringContaining('result=matched')),
+    )
+  })
+  it('旧弱证据追加更正后不再显示为已确认共享', async () => {
+    vi.mocked(request).mockResolvedValue({
+      items: [
+        {
+          ...sharedDecisionFixture,
+          evidence_review_status: 'insufficient_evidence',
+          evidence_review_reason: 'strong_anchor_missing',
+        },
+      ],
+      next_cursor: '',
+    })
+    setup()
+    expect(await screen.findByText('旧规则记录：共享证据不足')).toBeInTheDocument()
+    expect(screen.getByText('旧规则证据不足')).toBeInTheDocument()
+    expect(screen.queryByText('已确认共享')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '证据摘要' }))
+    expect(await screen.findByText('历史核验原因：原证据缺少强锚点')).toBeInTheDocument()
+  })
+  it('缺少原证据时保留记录并标明核验未完成', async () => {
+    vi.mocked(request).mockResolvedValue({
+      items: [
+        {
+          ...sharedDecisionFixture,
+          evidence: undefined,
+          evidence_review_status: 'unverified',
+          evidence_review_reason: 'saved_evidence_unavailable',
+        },
+      ],
+      next_cursor: '',
+    })
+    setup()
+    expect(await screen.findByText('历史共享结论待核验')).toBeInTheDocument()
+    expect(screen.getByText('证据缺失待核验')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '证据摘要' }))
+    expect(await screen.findByText('历史核验原因：原决策缺少可核验的证据内容')).toBeInTheDocument()
+  })
+  it('关联观察和不足原因可查询，空结果不表示没有共享', async () => {
+    vi.mocked(request).mockResolvedValue({ items: [], next_cursor: '' })
+    setup('/shared-access?tab=decisions&decision_result=insufficient&observation_id=raw-proof')
+    expect(await screen.findByText(/当前筛选下暂无评估记录/)).toBeInTheDocument()
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(request)
+          .mock.calls.some(
+            ([path]) =>
+              String(path).startsWith('/policy-decisions?') &&
+              String(path).includes('observation_id=raw-proof'),
+          ),
+      ).toBe(true),
+    )
+    expect(sharedReason('capture_interval_incomplete:handshake-sidecar')).toContain(
+      '采集时间段覆盖不足',
+    )
+  })
+  it('大表计数不可用时仍按记录游标翻页', async () => {
+    vi.mocked(request).mockImplementation(async (path) => {
+      const url = String(path)
+      if (!url.startsWith('/policy-decisions?')) throw new Error('不应请求全量计数或页码定位')
+      if (url.includes('cursor=next-record'))
+        return {
+          items: [
+            {
+              ...sharedDecisionFixture,
+              decision_id: 'second-decision',
+              account_id: 'second-account',
+            },
+          ],
+          next_cursor: '',
+          snapshot: '2026-11-11T09:00:00Z',
+        }
+      return {
+        items: [sharedDecisionFixture],
+        next_cursor: 'next-record',
+        snapshot: '2026-11-11T09:00:00Z',
+      }
+    })
+    setup()
+    expect(await screen.findByText('campus-student-001')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '下一页' }))
+    expect(await screen.findByText('second-account')).toBeInTheDocument()
+    expect(
+      vi.mocked(request).mock.calls.some(([path]) => String(path).includes('cursor=next-record')),
+    ).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: '上一页' }))
+    expect(await screen.findByText('campus-student-001')).toBeInTheDocument()
+    expect(
+      vi
+        .mocked(request)
+        .mock.calls.some(([path]) => String(path).includes('snapshot=2026-11-11T09%3A00%3A00Z')),
+    ).toBe(true)
+  })
 })

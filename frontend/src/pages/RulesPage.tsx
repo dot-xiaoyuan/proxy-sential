@@ -1,11 +1,15 @@
+import '../styles/pages/policies.css'
+import '../styles/pages/ai-relay.css'
+import '../styles/pages/devices.css'
 import { Notice as Alert } from '../shared/ui/Notice'
-import { FingerprintCatalog } from "../features/fingerprints/FingerprintCatalog";
-import { ApplicationLibrary } from "../features/applications/ApplicationLibrary";
-import { AIRelayIndicatorLibrary } from "../features/airelay/AIRelayIndicatorLibrary";
-import { useSearchParams } from 'react-router-dom';
-import { useState } from "react";
-import { UploadOutlined } from "@ant-design/icons";
-import {App as AntApp,
+import { FingerprintCatalog } from '../features/fingerprints/FingerprintCatalog'
+import { ApplicationLibrary } from '../features/applications/ApplicationLibrary'
+import { AIRelayIndicatorLibrary } from '../features/airelay/AIRelayIndicatorLibrary'
+import { useSearchParams } from 'react-router-dom'
+import { useState } from 'react'
+import { UploadOutlined } from '@ant-design/icons'
+import {
+  App as AntApp,
   Button,
   Descriptions,
   Skeleton,
@@ -13,148 +17,165 @@ import {App as AntApp,
   Tabs,
   Tag,
   Typography,
-  Upload} from "antd";
+  Upload,
+} from 'antd'
 
 import {
   useDeviceFingerprintLibrary,
   useImportDeviceFingerprintBundle,
   useSession,
   useValidateDeviceFingerprintBundle,
-} from "../shared/api/queries";
-import type { DeviceFingerprintBundleManifest } from "../shared/api/types";
-import { can } from "../shared/auth/permissions";
-import { statusText } from '../shared/ui/status';
+} from '../shared/api/queries'
+import type { DeviceFingerprintBundleManifest } from '../shared/api/types'
+import { can } from '../shared/auth/permissions'
+import { statusText } from '../shared/ui/status'
 import { AppErrorAlert, AppFactBar, formatDateTime } from '../shared/ui'
 
-
-
 export function RulesPage() {
-  const session = useSession();
-  const { message } = AntApp.useApp();
-  const [params,setParams] = useSearchParams();
-  const requestedTab = params.get("tab")
-  const fallbackTab = can(session.data, 'dpi:read') ? 'application-domains'
-    : can(session.data, 'identity:read') ? 'fingerprints'
-    : 'ai-relay'
+  const session = useSession()
+  const { message } = AntApp.useApp()
+  const [params, setParams] = useSearchParams()
+  const requestedTab = params.get('tab')
+  const fallbackTab = can(session.data, 'dpi:read')
+    ? 'application-domains'
+    : can(session.data, 'identity:read')
+      ? 'fingerprints'
+      : 'ai-relay'
   const activeTab = !requestedTab || requestedTab === 'risk' ? fallbackTab : requestedTab
-  const fingerprintLibrary = useDeviceFingerprintLibrary(activeTab==="fingerprints");
-  const validateBundle = useValidateDeviceFingerprintBundle();
-  const importBundle = useImportDeviceFingerprintBundle();
-  const [bundleFile, setBundleFile] = useState<File | null>(null);
-  const [manifest, setManifest] =
-    useState<DeviceFingerprintBundleManifest | null>(null);
-  const canUpdateLibrary = can(
-    session.data,
-    "device-fingerprint-library:update",
-  );
+  const fingerprintLibrary = useDeviceFingerprintLibrary(activeTab === 'fingerprints')
+  const validateBundle = useValidateDeviceFingerprintBundle()
+  const importBundle = useImportDeviceFingerprintBundle()
+  const [bundleFile, setBundleFile] = useState<File | null>(null)
+  const [manifest, setManifest] = useState<DeviceFingerprintBundleManifest | null>(null)
+  const canUpdateLibrary = can(session.data, 'device-fingerprint-library:update')
 
   if (session.isLoading) {
-    return <Skeleton active />;
+    return <Skeleton active />
   }
 
   const fingerprintStatusItems = [
     {
-      key: "version",
-      label: "当前版本",
+      key: 'version',
+      label: '当前版本',
       children: (
         <Typography.Text className="mono list-cell-nowrap">
-          {fingerprintLibrary.data?.version || ""}
+          {fingerprintLibrary.data?.version || ''}
         </Typography.Text>
       ),
     },
     {
-      key: "source",
-      label: "数据来源",
-      children: fingerprintLibrary.data?.source || "",
+      key: 'source',
+      label: '数据来源',
+      children: fingerprintLibrary.data?.source || '',
     },
     {
-      key: "status",
-      label: "运行状态",
+      key: 'status',
+      label: '运行状态',
       children: (
-        <Tag
-          color={
-            fingerprintLibrary.data?.status === "ready"
-              ? "green"
-              : "gold"
-          }
-        >
+        <Tag color={fingerprintLibrary.data?.status === 'ready' ? 'green' : 'gold'}>
           {statusText(fingerprintLibrary.data?.status)}
         </Tag>
       ),
     },
     {
-      key: "updated",
-      label: "最近更新",
-      children: fingerprintLibrary.data?.updated_at ? formatDateTime(fingerprintLibrary.data.updated_at) : "",
+      key: 'updated',
+      label: '最近更新',
+      children: fingerprintLibrary.data?.updated_at
+        ? formatDateTime(fingerprintLibrary.data.updated_at)
+        : '',
     },
     {
-      key: "error",
-      label: "最近错误",
-      children: fingerprintLibrary.data?.last_error || "",
+      key: 'error',
+      label: '最近错误',
+      children: fingerprintLibrary.data?.last_error || '',
     },
     {
-      key: "mode",
-      label: "更新模式",
-      children: fingerprintLibrary.data?.offline_mode === undefined ? '' : fingerprintLibrary.data.offline_mode
-        ? "离线包导入"
-        : "联网更新",
+      key: 'mode',
+      label: '更新模式',
+      children:
+        fingerprintLibrary.data?.offline_mode === undefined
+          ? ''
+          : fingerprintLibrary.data.offline_mode
+            ? '离线包导入'
+            : '联网更新',
     },
     {
-      key: "counts",
-      label: "规则规模",
+      key: 'counts',
+      label: '规则规模',
       children: `OUI ${fingerprintLibrary.data?.oui_count ?? 0} · UA/自有规则 ${fingerprintLibrary.data?.rule_count ?? 0} · DHCP ${fingerprintLibrary.data?.dhcp_rule_count ?? 0} · 域名 ${fingerprintLibrary.data?.domain_rule_count ?? 0} / ${fingerprintLibrary.data?.domain_ecosystem_count ?? 0} 个生态`,
     },
     {
-      key: "domain-availability",
-      label: "域名识别",
-      children: fingerprintLibrary.data?.domain_rule_count === undefined ? '' : fingerprintLibrary.data.domain_rule_count === 0 ? "域名识别不可用：未加载域名规则" : `可用 · 可推断品牌规则 ${fingerprintLibrary.data?.brand_eligible_rule_count ?? ''} 条`,
+      key: 'domain-availability',
+      label: '域名识别',
+      children:
+        fingerprintLibrary.data?.domain_rule_count === undefined
+          ? ''
+          : fingerprintLibrary.data.domain_rule_count === 0
+            ? '域名识别不可用：未加载域名规则'
+            : `可用 · 可推断品牌规则 ${fingerprintLibrary.data?.brand_eligible_rule_count ?? ''} 条`,
     },
     {
-      key: "domain-provenance",
-      label: "域名来源明细",
-      children: <div className="brand-evidence-wrap">{fingerprintLibrary.data?.domain_sources?.map(source => <div key={`${source.name}-${source.version}`}>{source.name} · {source.version} · {source.rule_count} 条 / 可推断 {source.brand_eligible_rule_count} 条</div>)}</div>,
+      key: 'domain-provenance',
+      label: '域名来源明细',
+      children: (
+        <div className="brand-evidence-wrap">
+          {fingerprintLibrary.data?.domain_sources?.map((source) => (
+            <div key={`${source.name}-${source.version}`}>
+              {source.name} · {source.version} · {source.rule_count} 条 / 可推断{' '}
+              {source.brand_eligible_rule_count} 条
+            </div>
+          ))}
+        </div>
+      ),
     },
     {
-      key: "domain-processing",
-      label: "域名处理状态",
-      children: <div className="brand-evidence-wrap">生效 {fingerprintLibrary.data?.active_domain_version || ""} · 待重算 {fingerprintLibrary.data?.pending_domain_version || "无"} · {fingerprintLibrary.data?.domain_processing_error || "无处理错误"}</div>,
+      key: 'domain-processing',
+      label: '域名处理状态',
+      children: (
+        <div className="brand-evidence-wrap">
+          生效 {fingerprintLibrary.data?.active_domain_version || ''} · 待重算{' '}
+          {fingerprintLibrary.data?.pending_domain_version || '无'} ·{' '}
+          {fingerprintLibrary.data?.domain_processing_error || '无处理错误'}
+        </div>
+      ),
     },
     {
-      key: "domain-source",
-      label: "域名规则版本",
+      key: 'domain-source',
+      label: '域名规则版本',
       children: (
         <Typography.Text className="mono list-cell-nowrap">
-          {fingerprintLibrary.data?.domain_source_version ||
-            ""}
+          {fingerprintLibrary.data?.domain_source_version || ''}
         </Typography.Text>
       ),
     },
     {
-      key: "domain-backfill",
-      label: "域名证据回填",
-      children: fingerprintLibrary.data?.domain_backfill_status ? `${statusText(fingerprintLibrary.data.domain_backfill_status)} · ${fingerprintLibrary.data?.domain_backfill_processed ?? ''} 条` : '',
+      key: 'domain-backfill',
+      label: '域名证据回填',
+      children: fingerprintLibrary.data?.domain_backfill_status
+        ? `${statusText(fingerprintLibrary.data.domain_backfill_status)} · ${fingerprintLibrary.data?.domain_backfill_processed ?? ''} 条`
+        : '',
     },
     {
-      key: "domain-error",
-      label: "域名回填错误",
-      children:
-        fingerprintLibrary.data
-          ?.domain_backfill_last_error || "",
+      key: 'domain-error',
+      label: '域名回填错误',
+      children: fingerprintLibrary.data?.domain_backfill_last_error || '',
     },
     {
-      key: "backfill",
-      label: "画像回填",
-      children: fingerprintLibrary.data?.backfill_status ? `${statusText(fingerprintLibrary.data.backfill_status)} · ${fingerprintLibrary.data?.backfill_processed ?? ''} 条` : '',
+      key: 'backfill',
+      label: '画像回填',
+      children: fingerprintLibrary.data?.backfill_status
+        ? `${statusText(fingerprintLibrary.data.backfill_status)} · ${fingerprintLibrary.data?.backfill_processed ?? ''} 条`
+        : '',
     },
     {
-      key: "licenses",
-      label: "数据许可",
-      children: (
-        fingerprintLibrary.data?.licenses || []
-      ).join("、"),
+      key: 'licenses',
+      label: '数据许可',
+      children: (fingerprintLibrary.data?.licenses || []).join('、'),
     },
-  ].filter(item => item.children !== '' && item.children !== undefined && item.children !== null)
-  const fingerprintDetailItems = fingerprintStatusItems.filter(item => !['version','status','mode','counts'].includes(String(item.key)))
+  ].filter((item) => item.children !== '' && item.children !== undefined && item.children !== null)
+  const fingerprintDetailItems = fingerprintStatusItems.filter(
+    (item) => !['version', 'status', 'mode', 'counts'].includes(String(item.key)),
+  )
 
   return (
     <main className="page rules-page">
@@ -168,117 +189,174 @@ export function RulesPage() {
           </Typography.Text>
         </div>
       </div>
-      <AppFactBar items={['风险规则暂不支持在线热重载；应用域名库与设备特征库分别按实际生效版本运行']} />
+      <AppFactBar
+        items={['风险规则暂不支持在线热重载；应用域名库与设备特征库分别按实际生效版本运行']}
+      />
       <section className="surface operations-tabs-surface">
         <Tabs
           activeKey={activeTab}
-          onChange={tab=>setParams(current=>{const next=new URLSearchParams(current);next.set("tab",tab);return next})}
+          onChange={(tab) =>
+            setParams((current) => {
+              const next = new URLSearchParams(current)
+              next.set('tab', tab)
+              return next
+            })
+          }
           destroyOnHidden
           items={[
             {
-              key: "fingerprints",
-              label: "设备特征库",
-              disabled:!can(session.data,'identity:read'),
+              key: 'fingerprints',
+              label: '设备特征库',
+              disabled: !can(session.data, 'identity:read'),
               children: (
                 <div>
-                  {fingerprintLibrary.isLoading ? <Skeleton active/> : fingerprintLibrary.isError ? (
+                  {fingerprintLibrary.isLoading ? (
+                    <Skeleton active />
+                  ) : fingerprintLibrary.isError ? (
                     <AppErrorAlert title="设备特征库状态加载失败" />
-                  ) : fingerprintLibrary.data && (
-                    <section className="fingerprint-runtime">
-                      <div className="fingerprint-runtime-summary">
-                        <div className="fingerprint-runtime-fact"><span>当前版本</span><strong className="mono">{fingerprintLibrary.data.version || ''}</strong></div>
-                        <div className="fingerprint-runtime-fact"><span>运行状态</span><Tag color={fingerprintLibrary.data.status === 'ready' ? 'green' : 'gold'}>{statusText(fingerprintLibrary.data.status)}</Tag></div>
-                        <div className="fingerprint-runtime-fact"><span>更新模式</span><strong>{fingerprintLibrary.data.offline_mode === undefined ? '' : fingerprintLibrary.data.offline_mode ? '离线包导入' : '联网更新'}</strong></div>
-                        <div className="fingerprint-runtime-fact"><span>规则规模</span><strong>OUI {fingerprintLibrary.data.oui_count ?? 0} · UA {fingerprintLibrary.data.rule_count ?? 0} · DHCP {fingerprintLibrary.data.dhcp_rule_count ?? 0} · 域名 {fingerprintLibrary.data.domain_rule_count ?? 0}</strong></div>
-                      </div>
-                      <details className="filter-disclosure">
-                        <summary>运行与回填详情</summary>
-                        <Descriptions bordered column={1} size="small" className="margin-bottom-lg" items={fingerprintDetailItems} />
-                      </details>
-                      <details className="filter-disclosure">
-                        <summary>离线包导入</summary>
-                        <div className="fingerprint-import-panel">
-  <Space wrap>
-    <Upload
-      accept=".gz,.tgz,application/gzip"
-      beforeUpload={(file) => {
-        setBundleFile(file);
-        setManifest(null);
-        validateBundle.mutate(file, {
-          onSuccess: setManifest,
-          onError: (error) => message.error(error.message),
-        });
-        return false;
-      }}
-      fileList={
-        bundleFile
-          ? [
-              {
-                uid: bundleFile.name,
-                name: bundleFile.name,
-                status: manifest ? "done" : "uploading",
-              },
-            ]
-          : []
-      }
-      maxCount={1}
-      onRemove={() => {
-        setBundleFile(null);
-        setManifest(null);
-      }}
-      showUploadList
-    >
-      <Button
-        disabled={!canUpdateLibrary}
-        icon={<UploadOutlined />}
-        loading={validateBundle.isPending}
-      >
-        选择并校验离线包
-      </Button>
-    </Upload>
-    <Button
-      type="primary"
-      disabled={!canUpdateLibrary || !bundleFile || !manifest}
-      loading={importBundle.isPending}
-      onClick={() =>
-        bundleFile &&
-        importBundle.mutate(bundleFile, {
-          onSuccess: (result) => {
-            message.success(`特征库已导入 ${result.version}`);
-            setBundleFile(null);
-            setManifest(null);
-          },
-          onError: (error) => message.error(error.message),
-        })
-      }
-    >
-      确认导入
-    </Button>
-  </Space>
-  {manifest && (
-    <Alert
-      showIcon
-      type="success"
-      title={`校验通过：${manifest.version}`}
-      description={`生成时间 ${formatDateTime(manifest.created_at)} · ${manifest.sources.map((source) => `${source.name} ${source.version}`).join(" · ")}`}
-    />
-  )}
-  <Typography.Text type="secondary">
-    离线包在可联网开发机生成；现场机器只执行校验、原子切换和画像回填，不上传现场设备数据。
-  </Typography.Text>
-</div>
-                      </details>
-                    </section>
+                  ) : (
+                    fingerprintLibrary.data && (
+                      <section className="fingerprint-runtime">
+                        <div className="fingerprint-runtime-summary">
+                          <div className="fingerprint-runtime-fact">
+                            <span>当前版本</span>
+                            <strong className="mono">
+                              {fingerprintLibrary.data.version || ''}
+                            </strong>
+                          </div>
+                          <div className="fingerprint-runtime-fact">
+                            <span>运行状态</span>
+                            <Tag
+                              color={fingerprintLibrary.data.status === 'ready' ? 'green' : 'gold'}
+                            >
+                              {statusText(fingerprintLibrary.data.status)}
+                            </Tag>
+                          </div>
+                          <div className="fingerprint-runtime-fact">
+                            <span>更新模式</span>
+                            <strong>
+                              {fingerprintLibrary.data.offline_mode === undefined
+                                ? ''
+                                : fingerprintLibrary.data.offline_mode
+                                  ? '离线包导入'
+                                  : '联网更新'}
+                            </strong>
+                          </div>
+                          <div className="fingerprint-runtime-fact">
+                            <span>规则规模</span>
+                            <strong>
+                              OUI {fingerprintLibrary.data.oui_count ?? 0} · UA{' '}
+                              {fingerprintLibrary.data.rule_count ?? 0} · DHCP{' '}
+                              {fingerprintLibrary.data.dhcp_rule_count ?? 0} · 域名{' '}
+                              {fingerprintLibrary.data.domain_rule_count ?? 0}
+                            </strong>
+                          </div>
+                        </div>
+                        <details className="filter-disclosure">
+                          <summary>运行与回填详情</summary>
+                          <Descriptions
+                            bordered
+                            column={1}
+                            size="small"
+                            className="margin-bottom-lg"
+                            items={fingerprintDetailItems}
+                          />
+                        </details>
+                        <details className="filter-disclosure">
+                          <summary>离线包导入</summary>
+                          <div className="fingerprint-import-panel">
+                            <Space wrap>
+                              <Upload
+                                accept=".gz,.tgz,application/gzip"
+                                beforeUpload={(file) => {
+                                  setBundleFile(file)
+                                  setManifest(null)
+                                  validateBundle.mutate(file, {
+                                    onSuccess: setManifest,
+                                    onError: (error) => message.error(error.message),
+                                  })
+                                  return false
+                                }}
+                                fileList={
+                                  bundleFile
+                                    ? [
+                                        {
+                                          uid: bundleFile.name,
+                                          name: bundleFile.name,
+                                          status: manifest ? 'done' : 'uploading',
+                                        },
+                                      ]
+                                    : []
+                                }
+                                maxCount={1}
+                                onRemove={() => {
+                                  setBundleFile(null)
+                                  setManifest(null)
+                                }}
+                                showUploadList
+                              >
+                                <Button
+                                  disabled={!canUpdateLibrary}
+                                  icon={<UploadOutlined />}
+                                  loading={validateBundle.isPending}
+                                >
+                                  选择并校验离线包
+                                </Button>
+                              </Upload>
+                              <Button
+                                type="primary"
+                                disabled={!canUpdateLibrary || !bundleFile || !manifest}
+                                loading={importBundle.isPending}
+                                onClick={() =>
+                                  bundleFile &&
+                                  importBundle.mutate(bundleFile, {
+                                    onSuccess: (result) => {
+                                      message.success(`特征库已导入 ${result.version}`)
+                                      setBundleFile(null)
+                                      setManifest(null)
+                                    },
+                                    onError: (error) => message.error(error.message),
+                                  })
+                                }
+                              >
+                                确认导入
+                              </Button>
+                            </Space>
+                            {manifest && (
+                              <Alert
+                                showIcon
+                                type="success"
+                                title={`校验通过：${manifest.version}`}
+                                description={`生成时间 ${formatDateTime(manifest.created_at)} · ${manifest.sources.map((source) => `${source.name} ${source.version}`).join(' · ')}`}
+                              />
+                            )}
+                            <Typography.Text type="secondary">
+                              离线包在可联网开发机生成；现场机器只执行校验、原子切换和画像回填，不上传现场设备数据。
+                            </Typography.Text>
+                          </div>
+                        </details>
+                      </section>
+                    )
                   )}
                   <FingerprintCatalog canViewRules={canUpdateLibrary} />
                 </div>
               ),
             },
-            {key:"application-domains", label:"应用域名特征库", disabled:!can(session.data,'dpi:read'), children:<ApplicationLibrary />},
-            {key:"ai-relay", label:"AI 中转站域名库", disabled:!can(session.data,'risks:read'), children:<AIRelayIndicatorLibrary />},
+            {
+              key: 'application-domains',
+              label: '应用域名特征库',
+              disabled: !can(session.data, 'dpi:read'),
+              children: <ApplicationLibrary />,
+            },
+            {
+              key: 'ai-relay',
+              label: 'AI 中转站域名库',
+              disabled: !can(session.data, 'risks:read'),
+              children: <AIRelayIndicatorLibrary />,
+            },
           ]}
         />
       </section>
     </main>
-  );
+  )
 }

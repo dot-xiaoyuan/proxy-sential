@@ -1,48 +1,157 @@
 import { lazy, Suspense, type ReactNode } from 'react'
-import { Spin } from 'antd'
 
-const AuditPage = lazy(() => import('../pages/AuditPage').then((module) => ({ default: module.AuditPage })))
-const ActivityPage = lazy(() =>
-  import('../pages/ActivityPage').then((module) => ({ default: module.ActivityPage })),
-)
-const EventsPage = lazy(() => import('../pages/EventsPage').then((module) => ({ default: module.EventsPage })))
-const DevicesPage = lazy(() => import('../pages/DeviceCenterPage').then((module) => ({ default: module.DeviceCenterPage })))
+import { AppPageSkeleton } from '../shared/ui'
+
+const loaders = {
+  overview: () => import('../pages/OverviewPage'),
+  reports: () => import('../pages/ReportsPage'),
+  sharedAccess: () => import('../pages/SharedAccessPage'),
+  actionRecords: () => import('../pages/ActionRecordsPage'),
+  aiRelay: () => import('../pages/AIRelayPage'),
+  devices: () => import('../pages/DeviceCenterPage'),
+  endpointDetails: () => import('../pages/EndpointDetailsPage'),
+  ipDetails: () => import('../pages/IpDetailsPage'),
+  routerDetails: () => import('../pages/RouterObservationDetailsPage'),
+  cases: () => import('../pages/CasesPage'),
+  caseDetails: () => import('../pages/CaseDetailsPage'),
+  reviewDetails: () => import('../pages/ReviewDetailsPage'),
+  recordDetails: () => import('../pages/RecordDetailsPages'),
+  policies: () => import('../pages/PoliciesPage'),
+  whitelist: () => import('../pages/WhitelistPage'),
+  blacklist: () => import('../pages/BlacklistPage'),
+  destinationTargets: () => import('../pages/DestinationTargetsPage'),
+  campusExceptions: () => import('../pages/CampusExceptionsPage'),
+  rules: () => import('../pages/RulesPage'),
+  sources: () => import('../pages/SourcesPage'),
+  actions: () => import('../pages/ActionsPage'),
+  notifications: () => import('../pages/NotificationsPage'),
+  behaviorReports: () => import('../pages/BehaviorReportsPage'),
+  organization: () => import('../pages/OrganizationPage'),
+  security: () => import('../pages/SecuritySettingsPage'),
+  audit: () => import('../pages/AuditPage'),
+  ingest: () => import('../pages/IngestPage'),
+  discovery: () => import('../pages/DiscoveryPage'),
+} as const
+
+const prefetched = new Set<string>()
+
+// 根据路由前缀预加载对应页面模块，提升侧边栏切换响应速度。
+export function prefetchRoute(to: string) {
+  const path = to.split('?')[0]
+  const key: keyof typeof loaders | undefined =
+    path === '/overview'
+      ? 'overview'
+      : path === '/reports'
+        ? 'reports'
+        : path === '/shared-access'
+          ? 'sharedAccess'
+          : path === '/actions'
+            ? 'actionRecords'
+            : path === '/ai-relay'
+              ? 'aiRelay'
+              : path === '/devices'
+                ? 'devices'
+                : path === '/policies'
+                  ? 'policies'
+                  : path === '/policies/whitelist'
+                    ? 'whitelist'
+                    : path === '/policies/blacklist'
+                      ? 'blacklist'
+                      : path === '/policies/destination-targets'
+                        ? 'destinationTargets'
+                        : path === '/policies/exceptions'
+                          ? 'campusExceptions'
+                          : path === '/settings/rules'
+                            ? 'rules'
+                            : path === '/settings/sources'
+                              ? 'sources'
+                              : path === '/settings/actions'
+                                ? 'actions'
+                                : path === '/settings/notifications'
+                                  ? 'notifications'
+                                  : path === '/settings/behavior-reports'
+                                    ? 'behaviorReports'
+                                    : path === '/settings/organization'
+                                      ? 'organization'
+                                      : path === '/settings/security'
+                                        ? 'security'
+                                        : path === '/audit'
+                                          ? 'audit'
+                                          : undefined
+  if (!key || prefetched.has(key)) return
+  prefetched.add(key)
+  void loaders[key]()
+}
+
+const AuditPage = lazy(() => loaders.audit().then((m) => ({ default: m.AuditPage })))
+const DevicesPage = lazy(() => loaders.devices().then((m) => ({ default: m.DeviceCenterPage })))
 const EndpointDetailsPage = lazy(() =>
-  import('../pages/EndpointDetailsPage').then((module) => ({ default: module.EndpointDetailsPage })),
+  loaders.endpointDetails().then((m) => ({ default: m.EndpointDetailsPage })),
 )
-const IpDetailsPage = lazy(() =>
-  import('../pages/IpDetailsPage').then((module) => ({ default: module.IpDetailsPage })),
+const IpDetailsPage = lazy(() => loaders.ipDetails().then((m) => ({ default: m.IpDetailsPage })))
+const IngestPage = lazy(() => loaders.ingest().then((m) => ({ default: m.IngestPage })))
+const OverviewPage = lazy(() => loaders.overview().then((m) => ({ default: m.OverviewPage })))
+const ReportsPage = lazy(() => loaders.reports().then((m) => ({ default: m.ReportsPage })))
+const ReviewDetailsPage = lazy(() =>
+  loaders.reviewDetails().then((m) => ({ default: m.ReviewDetailsPage })),
 )
-const IngestPage = lazy(() => import('../pages/IngestPage').then((module) => ({ default: module.IngestPage })))
-const OverviewPage = lazy(() =>
-  import('../pages/OverviewPage').then((module) => ({ default: module.OverviewPage })),
+const EventDetailsPage = lazy(() =>
+  loaders.recordDetails().then((m) => ({ default: m.EventDetailsPage })),
 )
-const ReportsPage = lazy(() => import('../pages/ReportsPage').then((module) => ({ default: module.ReportsPage })))
-const ReviewPage = lazy(() => import('../pages/ReviewPage').then((module) => ({ default: module.ReviewPage })))
-const ReviewDetailsPage = lazy(() => import('../pages/ReviewDetailsPage').then((module) => ({ default: module.ReviewDetailsPage })))
-const EventDetailsPage = lazy(() => import('../pages/RecordDetailsPages').then((module) => ({ default: module.EventDetailsPage })))
-const AuditDetailsPage = lazy(() => import('../pages/RecordDetailsPages').then((module) => ({ default: module.AuditDetailsPage })))
-const IngestDiagnosticDetailsPage = lazy(() => import('../pages/RecordDetailsPages').then((module) => ({ default: module.IngestDiagnosticDetailsPage })))
-const RisksPage = lazy(() => import('../pages/RisksPage').then((module) => ({ default: module.RisksPage })))
-const RulesPage = lazy(() => import('../pages/RulesPage').then((module) => ({ default: module.RulesPage })))
-const CasesPage = lazy(() => import('../pages/CasesPage').then(module=>({default:module.CasesPage})))
-const CaseDetailsPage = lazy(() => import('../pages/CaseDetailsPage').then(module=>({default:module.CaseDetailsPage})))
-const OrganizationPage = lazy(() => import('../pages/OrganizationPage').then(module=>({default:module.OrganizationPage})))
-const ActionsPage = lazy(() => import('../pages/ActionsPage').then(module=>({default:module.ActionsPage})))
-const SecuritySettingsPage = lazy(() => import('../pages/SecuritySettingsPage').then(module=>({default:module.SecuritySettingsPage})))
+const AuditDetailsPage = lazy(() =>
+  loaders.recordDetails().then((m) => ({ default: m.AuditDetailsPage })),
+)
+const IngestDiagnosticDetailsPage = lazy(() =>
+  loaders.recordDetails().then((m) => ({ default: m.IngestDiagnosticDetailsPage })),
+)
+const RulesPage = lazy(() => loaders.rules().then((m) => ({ default: m.RulesPage })))
+const CasesPage = lazy(() => loaders.cases().then((m) => ({ default: m.CasesPage })))
+const CaseDetailsPage = lazy(() =>
+  loaders.caseDetails().then((m) => ({ default: m.CaseDetailsPage })),
+)
+const OrganizationPage = lazy(() =>
+  loaders.organization().then((m) => ({ default: m.OrganizationPage })),
+)
+const ActionsPage = lazy(() => loaders.actions().then((m) => ({ default: m.ActionsPage })))
+const SecuritySettingsPage = lazy(() =>
+  loaders.security().then((m) => ({ default: m.SecuritySettingsPage })),
+)
+const PoliciesPage = lazy(() => loaders.policies().then((m) => ({ default: m.PoliciesPage })))
+const SharedAccessPage = lazy(() =>
+  loaders.sharedAccess().then((m) => ({ default: m.SharedAccessPage })),
+)
+const SharedBehaviorDetailsPage = lazy(() =>
+  loaders.sharedAccess().then((m) => ({ default: m.SharedBehaviorDetailsPage })),
+)
+const SharedReviewDetailsPage = lazy(() =>
+  loaders.sharedAccess().then((m) => ({ default: m.SharedReviewDetailsPage })),
+)
+const DiscoveryPage = lazy(() => loaders.discovery().then((m) => ({ default: m.DiscoveryPage })))
+const RouterObservationDetailsPage = lazy(() =>
+  loaders.routerDetails().then((m) => ({ default: m.RouterObservationDetailsPage })),
+)
+const ActionRecordsPage = lazy(() =>
+  loaders.actionRecords().then((m) => ({ default: m.ActionRecordsPage })),
+)
+const CampusExceptionsPage = lazy(() =>
+  loaders.campusExceptions().then((m) => ({ default: m.CampusExceptionsPage })),
+)
+const SourcesPage = lazy(() => loaders.sources().then((m) => ({ default: m.SourcesPage })))
+const WhitelistPage = lazy(() => loaders.whitelist().then((m) => ({ default: m.WhitelistPage })))
+const NotificationsPage = lazy(() =>
+  loaders.notifications().then((m) => ({ default: m.NotificationsPage })),
+)
+const BlacklistPage = lazy(() => loaders.blacklist().then((m) => ({ default: m.BlacklistPage })))
+const DestinationTargetsPage = lazy(() =>
+  loaders.destinationTargets().then((m) => ({ default: m.DestinationTargetsPage })),
+)
+const BehaviorReportsPage = lazy(() =>
+  loaders.behaviorReports().then((m) => ({ default: m.BehaviorReportsPage })),
+)
+const AIRelayPage = lazy(() => loaders.aiRelay().then((m) => ({ default: m.AIRelayPage })))
 
 function RouteSuspense({ children }: { children: ReactNode }) {
-  return (
-    <Suspense
-      fallback={
-        <div className="surface">
-          <Spin />
-        </div>
-      }
-    >
-      {children}
-    </Suspense>
-  )
+  return <Suspense fallback={<AppPageSkeleton />}>{children}</Suspense>
 }
 
 export function AuditRoute() {
@@ -52,23 +161,6 @@ export function AuditRoute() {
     </RouteSuspense>
   )
 }
-
-export function ActivityRoute() {
-  return (
-    <RouteSuspense>
-      <ActivityPage />
-    </RouteSuspense>
-  )
-}
-
-export function EventsRoute() {
-  return (
-    <RouteSuspense>
-      <EventsPage />
-    </RouteSuspense>
-  )
-}
-
 export function DevicesRoute() {
   return (
     <RouteSuspense>
@@ -76,7 +168,6 @@ export function DevicesRoute() {
     </RouteSuspense>
   )
 }
-
 export function EndpointDetailsRoute() {
   return (
     <RouteSuspense>
@@ -84,7 +175,6 @@ export function EndpointDetailsRoute() {
     </RouteSuspense>
   )
 }
-
 export function IpDetailsRoute() {
   return (
     <RouteSuspense>
@@ -92,7 +182,6 @@ export function IpDetailsRoute() {
     </RouteSuspense>
   )
 }
-
 export function IngestRoute() {
   return (
     <RouteSuspense>
@@ -100,7 +189,6 @@ export function IngestRoute() {
     </RouteSuspense>
   )
 }
-
 export function OverviewRoute() {
   return (
     <RouteSuspense>
@@ -108,32 +196,41 @@ export function OverviewRoute() {
     </RouteSuspense>
   )
 }
-
 export function ReportsRoute() {
-  return <RouteSuspense><ReportsPage /></RouteSuspense>
-}
-
-export function ReviewRoute() {
   return (
     <RouteSuspense>
-      <ReviewPage />
+      <ReportsPage />
     </RouteSuspense>
   )
 }
-
-export function ReviewDetailsRoute() { return <RouteSuspense><ReviewDetailsPage /></RouteSuspense> }
-export function EventDetailsRoute() { return <RouteSuspense><EventDetailsPage /></RouteSuspense> }
-export function AuditDetailsRoute() { return <RouteSuspense><AuditDetailsPage /></RouteSuspense> }
-export function IngestDiagnosticDetailsRoute() { return <RouteSuspense><IngestDiagnosticDetailsPage /></RouteSuspense> }
-
-export function RisksRoute() {
+export function ReviewDetailsRoute() {
   return (
     <RouteSuspense>
-      <RisksPage />
+      <ReviewDetailsPage />
     </RouteSuspense>
   )
 }
-
+export function EventDetailsRoute() {
+  return (
+    <RouteSuspense>
+      <EventDetailsPage />
+    </RouteSuspense>
+  )
+}
+export function AuditDetailsRoute() {
+  return (
+    <RouteSuspense>
+      <AuditDetailsPage />
+    </RouteSuspense>
+  )
+}
+export function IngestDiagnosticDetailsRoute() {
+  return (
+    <RouteSuspense>
+      <IngestDiagnosticDetailsPage />
+    </RouteSuspense>
+  )
+}
 export function RulesRoute() {
   return (
     <RouteSuspense>
@@ -141,49 +238,143 @@ export function RulesRoute() {
     </RouteSuspense>
   )
 }
-
-export function CasesRoute(){return <RouteSuspense><CasesPage/></RouteSuspense>}
-export function CaseDetailsRoute(){return <RouteSuspense><CaseDetailsPage/></RouteSuspense>}
-export function OrganizationRoute(){return <RouteSuspense><OrganizationPage/></RouteSuspense>}
-export function ActionsRoute(){return <RouteSuspense><ActionsPage/></RouteSuspense>}
-export function SecuritySettingsRoute(){return <RouteSuspense><SecuritySettingsPage/></RouteSuspense>}
-
-const PoliciesPage = lazy(() => import("../pages/PoliciesPage").then(m=>({default:m.PoliciesPage})))
-export function PoliciesRoute(){return <RouteSuspense><PoliciesPage/></RouteSuspense>}
-
-const SharedAccessPage = lazy(() => import('../pages/SharedAccessPage').then(m=>({default:m.SharedAccessPage})))
-const SharedBehaviorDetailsPage = lazy(() => import('../pages/SharedAccessPage').then(m=>({default:m.SharedBehaviorDetailsPage})))
-const SharedReviewDetailsPage = lazy(() => import('../pages/SharedAccessPage').then(m=>({default:m.SharedReviewDetailsPage})))
-export function SharedAccessRoute(){return <RouteSuspense><SharedAccessPage/></RouteSuspense>}
-export function SharedBehaviorDetailsRoute(){return <RouteSuspense><SharedBehaviorDetailsPage/></RouteSuspense>}
-export function SharedReviewDetailsRoute(){return <RouteSuspense><SharedReviewDetailsPage/></RouteSuspense>}
-
-const DiscoveryPage = lazy(() => import("../pages/DiscoveryPage").then(m=>({default:m.DiscoveryPage})))
-const RouterObservationDetailsPage = lazy(() => import('../pages/RouterObservationDetailsPage').then(m=>({default:m.RouterObservationDetailsPage})))
-export function DiscoveryRoute(){return <RouteSuspense><DiscoveryPage/></RouteSuspense>}
-export function RouterObservationDetailsRoute(){return <RouteSuspense><RouterObservationDetailsPage/></RouteSuspense>}
-
-const ActionRecordsPage=lazy(()=>import('../pages/ActionRecordsPage').then(m=>({default:m.ActionRecordsPage})))
-const CampusExceptionsPage=lazy(()=>import('../pages/CampusExceptionsPage').then(m=>({default:m.CampusExceptionsPage})))
-const SourcesPage=lazy(()=>import('../pages/SourcesPage').then(m=>({default:m.SourcesPage})))
-export function ActionRecordsRoute(){return <RouteSuspense><ActionRecordsPage/></RouteSuspense>}
-export function CampusExceptionsRoute(){return <RouteSuspense><CampusExceptionsPage/></RouteSuspense>}
-export function SourcesRoute(){return <RouteSuspense><SourcesPage/></RouteSuspense>}
-
-const WhitelistPage=lazy(()=>import('../pages/WhitelistPage').then(m=>({default:m.WhitelistPage})))
-export function WhitelistRoute(){return <RouteSuspense><WhitelistPage/></RouteSuspense>}
-
-const NotificationsPage=lazy(()=>import('../pages/NotificationsPage').then(m=>({default:m.NotificationsPage})))
-export function NotificationsRoute(){return <RouteSuspense><NotificationsPage/></RouteSuspense>}
-
-const BlacklistPage=lazy(()=>import('../pages/BlacklistPage').then(m=>({default:m.BlacklistPage})))
-export function BlacklistRoute(){return <RouteSuspense><BlacklistPage/></RouteSuspense>}
-
-const DestinationTargetsPage=lazy(()=>import('../pages/DestinationTargetsPage').then(m=>({default:m.DestinationTargetsPage})))
-export function DestinationTargetsRoute(){return <RouteSuspense><DestinationTargetsPage/></RouteSuspense>}
-
-const BehaviorReportsPage=lazy(()=>import('../pages/BehaviorReportsPage').then(m=>({default:m.BehaviorReportsPage})))
-export function BehaviorReportsRoute(){return <RouteSuspense><BehaviorReportsPage/></RouteSuspense>}
-
-const AIRelayPage = lazy(() => import('../pages/AIRelayPage').then(m => ({default:m.AIRelayPage})))
-export function AIRelayRoute(){return <RouteSuspense><AIRelayPage/></RouteSuspense>}
+export function CasesRoute() {
+  return (
+    <RouteSuspense>
+      <CasesPage />
+    </RouteSuspense>
+  )
+}
+export function CaseDetailsRoute() {
+  return (
+    <RouteSuspense>
+      <CaseDetailsPage />
+    </RouteSuspense>
+  )
+}
+export function OrganizationRoute() {
+  return (
+    <RouteSuspense>
+      <OrganizationPage />
+    </RouteSuspense>
+  )
+}
+export function ActionsRoute() {
+  return (
+    <RouteSuspense>
+      <ActionsPage />
+    </RouteSuspense>
+  )
+}
+export function SecuritySettingsRoute() {
+  return (
+    <RouteSuspense>
+      <SecuritySettingsPage />
+    </RouteSuspense>
+  )
+}
+export function PoliciesRoute() {
+  return (
+    <RouteSuspense>
+      <PoliciesPage />
+    </RouteSuspense>
+  )
+}
+export function SharedAccessRoute() {
+  return (
+    <RouteSuspense>
+      <SharedAccessPage />
+    </RouteSuspense>
+  )
+}
+export function SharedBehaviorDetailsRoute() {
+  return (
+    <RouteSuspense>
+      <SharedBehaviorDetailsPage />
+    </RouteSuspense>
+  )
+}
+export function SharedReviewDetailsRoute() {
+  return (
+    <RouteSuspense>
+      <SharedReviewDetailsPage />
+    </RouteSuspense>
+  )
+}
+export function DiscoveryRoute() {
+  return (
+    <RouteSuspense>
+      <DiscoveryPage />
+    </RouteSuspense>
+  )
+}
+export function RouterObservationDetailsRoute() {
+  return (
+    <RouteSuspense>
+      <RouterObservationDetailsPage />
+    </RouteSuspense>
+  )
+}
+export function ActionRecordsRoute() {
+  return (
+    <RouteSuspense>
+      <ActionRecordsPage />
+    </RouteSuspense>
+  )
+}
+export function CampusExceptionsRoute() {
+  return (
+    <RouteSuspense>
+      <CampusExceptionsPage />
+    </RouteSuspense>
+  )
+}
+export function SourcesRoute() {
+  return (
+    <RouteSuspense>
+      <SourcesPage />
+    </RouteSuspense>
+  )
+}
+export function WhitelistRoute() {
+  return (
+    <RouteSuspense>
+      <WhitelistPage />
+    </RouteSuspense>
+  )
+}
+export function NotificationsRoute() {
+  return (
+    <RouteSuspense>
+      <NotificationsPage />
+    </RouteSuspense>
+  )
+}
+export function BlacklistRoute() {
+  return (
+    <RouteSuspense>
+      <BlacklistPage />
+    </RouteSuspense>
+  )
+}
+export function DestinationTargetsRoute() {
+  return (
+    <RouteSuspense>
+      <DestinationTargetsPage />
+    </RouteSuspense>
+  )
+}
+export function BehaviorReportsRoute() {
+  return (
+    <RouteSuspense>
+      <BehaviorReportsPage />
+    </RouteSuspense>
+  )
+}
+export function AIRelayRoute() {
+  return (
+    <RouteSuspense>
+      <AIRelayPage />
+    </RouteSuspense>
+  )
+}

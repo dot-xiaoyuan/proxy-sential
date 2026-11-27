@@ -5,6 +5,8 @@ export function formatDeviceName(brand?: string, model?: string, fallback?: stri
   if (!normalizedModel) return normalizedBrand
 
   const escapedBrand = normalizedBrand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const modelAlreadyIncludesBrand = new RegExp(`^${escapedBrand}(?:[\\s/_-]+|$)`, 'i').test(normalizedModel)
+  const modelAlreadyIncludesBrand = new RegExp(`^${escapedBrand}(?:[\\s/_-]+|$)`, 'i').test(
+    normalizedModel,
+  )
   return modelAlreadyIncludesBrand ? normalizedModel : `${normalizedBrand} ${normalizedModel}`
 }

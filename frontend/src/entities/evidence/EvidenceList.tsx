@@ -19,17 +19,27 @@ export function EvidenceList({ evidence }: { evidence: Evidence[] }) {
     <div className="evidence-compact-list">
       {visibleEvidence.map((item) => (
         <article className="evidence-compact-card" key={item.evidence_id}>
-          {item.proxy_protocol ? <ProxyProtocolView evidence={item.proxy_protocol}/> : <div className="evidence-compact-main">
-            <div className="evidence-item__head">
-              <Typography.Text className="evidence-type-title">{item.type}</Typography.Text>
-              <Tag className="compact-tag" color={severityColor(item.severity)}>{severityText(item.severity)}</Tag>
-              <Typography.Text className="evidence-meta-text">
-                {item.score} 分 · 置信度 {Math.round(item.confidence * 100)}% · {item.window}
+          {item.proxy_protocol ? (
+            <ProxyProtocolView evidence={item.proxy_protocol} />
+          ) : (
+            <div className="evidence-compact-main">
+              <div className="evidence-item__head">
+                <Typography.Text className="evidence-type-title">{item.type}</Typography.Text>
+                <Tag className="compact-tag" color={severityColor(item.severity)}>
+                  {severityText(item.severity)}
+                </Tag>
+                <Typography.Text className="evidence-meta-text">
+                  {item.score} 分 · 置信度 {Math.round(item.confidence * 100)}% · {item.window}
+                </Typography.Text>
+              </div>
+              <Typography.Text className="evidence-reason-text wrap-text">
+                {item.reason}
+              </Typography.Text>
+              <Typography.Text className="mono wrap-text evidence-meta-text">
+                {item.evidence_id}
               </Typography.Text>
             </div>
-            <Typography.Text className="evidence-reason-text wrap-text">{item.reason}</Typography.Text>
-            <Typography.Text className="mono wrap-text evidence-meta-text">{item.evidence_id}</Typography.Text>
-          </div>}
+          )}
           <div className="sample-list evidence-sample-preview">
             {item.samples.slice(0, maxSamplesPerEvidence).map((sample) => (
               <code className="sample-token" key={sample}>

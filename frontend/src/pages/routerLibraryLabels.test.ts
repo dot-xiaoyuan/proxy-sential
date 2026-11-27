@@ -10,6 +10,8 @@ describe('router library labels', () => {
   })
 
   it('covers the libraries the router pipeline can emit', () => {
-    expect(Object.keys(routerLibraryLabels)).toEqual(expect.arrayContaining(['recog', 'satori', 'whatweb', 'librenms', 'openwrt']))
+    expect(Object.keys(routerLibraryLabels)).toEqual(
+      expect.arrayContaining(['recog', 'satori', 'whatweb', 'librenms', 'openwrt']),
+    )
   })
 })

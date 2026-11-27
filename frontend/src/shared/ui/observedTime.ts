@@ -13,7 +13,11 @@ export function observedTimeLabel(value?: string, now: Date = new Date()) {
   const minutes = Math.floor((now.getTime() - at.getTime()) / 60000)
   if (minutes >= 0 && minutes < 1) return '刚刚'
   if (minutes >= 1 && minutes < 60) return `${minutes} 分钟前`
-  const clock = at.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+  const clock = at.toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
   if (at.toDateString() === now.toDateString()) return `今天 ${clock}`
   const yesterday = new Date(now)
   yesterday.setDate(now.getDate() - 1)

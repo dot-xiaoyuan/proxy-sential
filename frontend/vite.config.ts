@@ -19,7 +19,35 @@ export default defineConfig(({ mode }) => {
         }
       : undefined,
     build: {
-      chunkSizeWarningLimit: 1300,
+      chunkSizeWarningLimit: 900,
+      rolldownOptions: {
+        output: {
+          codeSplitting: {
+            groups: [
+              {
+                name: 'echarts-core',
+                test: /node_modules[\\/](echarts|zrender)/,
+                priority: 30,
+              },
+              {
+                name: 'react-vendor',
+                test: /node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler)/,
+                priority: 25,
+              },
+              {
+                name: 'query-vendor',
+                test: /node_modules[\\/]@tanstack/,
+                priority: 20,
+              },
+              {
+                name: 'antd-icons',
+                test: /node_modules[\\/]@ant-design[\\/]icons/,
+                priority: 18,
+              },
+            ],
+          },
+        },
+      },
     },
     plugins: [react()],
     resolve: {

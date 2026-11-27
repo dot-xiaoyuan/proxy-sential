@@ -1,20 +1,21 @@
 import { Navigate, createBrowserRouter } from 'react-router-dom'
 
-import { LegacyRedirect,LegacySettingsEntry,ActivityEntry,LegacyDiscoveryRedirect } from './LegacyRedirect'
+import { LegacyRedirect, LegacySettingsEntry, LegacyDiscoveryRedirect } from './LegacyRedirect'
 import { AppShell } from './AppShell'
 import {
-  ActionRecordsRoute,CampusExceptionsRoute,WhitelistRoute,SourcesRoute,
+  ActionRecordsRoute,
+  CampusExceptionsRoute,
+  WhitelistRoute,
+  SourcesRoute,
   PoliciesRoute,
- SharedAccessRoute,
- SharedBehaviorDetailsRoute,
- SharedReviewDetailsRoute,
-  ActivityRoute,
+  SharedAccessRoute,
+  SharedBehaviorDetailsRoute,
+  SharedReviewDetailsRoute,
   AuditRoute,
   AuditDetailsRoute,
   DevicesRoute,
   RouterObservationDetailsRoute,
   EndpointDetailsRoute,
-  EventsRoute,
   AIRelayRoute,
   EventDetailsRoute,
   IngestDiagnosticDetailsRoute,
@@ -23,15 +24,15 @@ import {
   ReportsRoute,
   ReviewDetailsRoute,
   RulesRoute,
-	CasesRoute,
-	CaseDetailsRoute,
-	OrganizationRoute,
-	ActionsRoute,
-	SecuritySettingsRoute,
-	NotificationsRoute,
-	BlacklistRoute,
-	DestinationTargetsRoute,
-	BehaviorReportsRoute,
+  CasesRoute,
+  CaseDetailsRoute,
+  OrganizationRoute,
+  ActionsRoute,
+  SecuritySettingsRoute,
+  NotificationsRoute,
+  BlacklistRoute,
+  DestinationTargetsRoute,
+  BehaviorReportsRoute,
 } from './routePages'
 
 export const router = createBrowserRouter([
@@ -42,7 +43,7 @@ export const router = createBrowserRouter([
       { index: true, element: <Navigate replace to="/overview" /> },
       { path: 'overview', element: <OverviewRoute /> },
       { path: 'reports', element: <ReportsRoute /> },
-      { path: 'activity', element: <ActivityEntry><ActivityRoute /></ActivityEntry> },
+      { path: 'activity', element: <Navigate replace to="/overview" /> },
       { path: 'devices', element: <DevicesRoute /> },
       { path: 'discovery', element: <LegacyDiscoveryRedirect /> },
       { path: 'discovery/routers/:assessmentId', element: <RouterObservationDetailsRoute /> },
@@ -50,7 +51,7 @@ export const router = createBrowserRouter([
       { path: 'devices/:endpointId', element: <EndpointDetailsRoute /> },
       { path: 'accounts', element: <Navigate replace to="/devices?tab=terminal" /> },
       { path: 'accounts/:accountId', element: <Navigate replace to="/devices?tab=terminal" /> },
-      { path: 'events', element: <EventsRoute /> },
+      { path: 'events', element: <Navigate replace to="/overview" /> },
       { path: 'ai-relay', element: <AIRelayRoute /> },
       { path: 'events/:eventId', element: <EventDetailsRoute /> },
       { path: 'ingest', element: <LegacyRedirect to="/settings/sources" tab="diagnostics" /> },
@@ -59,27 +60,50 @@ export const router = createBrowserRouter([
       { path: 'ips/:ip', element: <IpDetailsRoute /> },
       { path: 'review', element: <LegacyRedirect to="/cases" /> },
       { path: 'review/:caseId', element: <ReviewDetailsRoute /> },
-	  { path: 'cases', element: <CasesRoute /> },
-	  { path: 'violation-observations', element: <Navigate replace to="/actions?tab=actions" /> },
-	  { path: 'behavior-report-proposals', element: <Navigate replace to="/actions?tab=reports" /> },
-	  { path: 'cases/:caseId', element: <CaseDetailsRoute /> },
+      { path: 'cases', element: <CasesRoute /> },
+      { path: 'violation-observations', element: <Navigate replace to="/actions?tab=actions" /> },
+      {
+        path: 'behavior-report-proposals',
+        element: <Navigate replace to="/actions?tab=reports" />,
+      },
+      { path: 'cases/:caseId', element: <CaseDetailsRoute /> },
       { path: 'audit', element: <AuditRoute /> },
       { path: 'audit/:auditId', element: <AuditDetailsRoute /> },
       { path: 'shared-access', element: <SharedAccessRoute /> },
-      { path: 'shared-access/observations/:observationId', element: <SharedBehaviorDetailsRoute /> },
+      {
+        path: 'shared-access/observations/:observationId',
+        element: <SharedBehaviorDetailsRoute />,
+      },
       { path: 'shared-access/reviews/:id', element: <SharedReviewDetailsRoute /> },
       { path: 'policies', element: <PoliciesRoute /> },
       { path: 'settings/rules', element: <RulesRoute /> },
-	  { path: 'settings/organization', element: <OrganizationRoute /> },
-	  { path: 'actions', element: <ActionRecordsRoute /> },
+      { path: 'settings/organization', element: <OrganizationRoute /> },
+      { path: 'actions', element: <ActionRecordsRoute /> },
       { path: 'policies/whitelist', element: <WhitelistRoute /> },
       { path: 'policies/blacklist', element: <BlacklistRoute /> },
       { path: 'policies/destination-targets', element: <DestinationTargetsRoute /> },
       { path: 'policies/exceptions', element: <CampusExceptionsRoute /> },
       { path: 'settings/sources', element: <SourcesRoute /> },
-      { path: 'settings/sources/diagnostics/:diagnosticId', element: <IngestDiagnosticDetailsRoute /> },
-      { path: 'settings/actions', element: <LegacySettingsEntry kind="actions"><ActionsRoute /></LegacySettingsEntry> },
-	  { path: 'settings/security', element: <LegacySettingsEntry kind="security"><SecuritySettingsRoute /></LegacySettingsEntry> },
+      {
+        path: 'settings/sources/diagnostics/:diagnosticId',
+        element: <IngestDiagnosticDetailsRoute />,
+      },
+      {
+        path: 'settings/actions',
+        element: (
+          <LegacySettingsEntry kind="actions">
+            <ActionsRoute />
+          </LegacySettingsEntry>
+        ),
+      },
+      {
+        path: 'settings/security',
+        element: (
+          <LegacySettingsEntry kind="security">
+            <SecuritySettingsRoute />
+          </LegacySettingsEntry>
+        ),
+      },
       { path: 'settings/notifications', element: <NotificationsRoute /> },
       { path: 'settings/behavior-reports', element: <BehaviorReportsRoute /> },
     ],

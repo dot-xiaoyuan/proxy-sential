@@ -30,7 +30,8 @@ export function ProtocolAppFlow({ items }: ProtocolAppFlowProps) {
 
       <Row gutter={[16, 16]}>
         {items.map((item) => {
-          const bpsFormatted = item.bps_mbps == null ? '吞吐字段缺失' : `${item.bps_mbps.toFixed(2)} Mbps`
+          const bpsFormatted =
+            item.bps_mbps == null ? '吞吐字段缺失' : `${item.bps_mbps.toFixed(2)} Mbps`
 
           return (
             <Col key={item.protocol} xs={24} sm={12} md={6}>
@@ -43,15 +44,17 @@ export function ProtocolAppFlow({ items }: ProtocolAppFlowProps) {
                 </div>
 
                 <div className="protocol-flow-metric">
-                  <span className="protocol-flow-percent">
-                    {item.share_percent.toFixed(1)}%
-                  </span>
+                  <span className="protocol-flow-percent">{item.share_percent.toFixed(1)}%</span>
                   <Typography.Text className="protocol-flow-rate" type="secondary">
                     ({bpsFormatted})
                   </Typography.Text>
                 </div>
 
-                <Progress percent={Math.min(100, Math.round(item.share_percent))} showInfo={false} size="small" />
+                <Progress
+                  percent={Math.min(100, Math.round(item.share_percent))}
+                  showInfo={false}
+                  size="small"
+                />
 
                 <div className="protocol-flow-apps">
                   <Typography.Text className="protocol-flow-app-label" type="secondary">

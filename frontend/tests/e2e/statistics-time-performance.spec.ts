@@ -2,9 +2,15 @@ import { expect, test } from '@playwright/test'
 import fs from 'node:fs'
 import path from 'node:path'
 
-for (const route of ['/', '/activity?section=access']) {
-  for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }, { width: 1440, height: 900 }]) {
-    test(`statistics source time ${route} ${viewport.width}x${viewport.height}`, async ({ page }) => {
+for (const route of ['/']) {
+  for (const viewport of [
+    { width: 390, height: 844 },
+    { width: 1280, height: 800 },
+    { width: 1440, height: 900 },
+  ]) {
+    test(`statistics source time ${route} ${viewport.width}x${viewport.height}`, async ({
+      page,
+    }) => {
       await page.setViewportSize(viewport)
       await page.goto(route)
       await expect(page.locator('.statistics-time')).toContainText('数据统计于：')
@@ -15,9 +21,22 @@ for (const route of ['/', '/activity?section=access']) {
         const style = getComputedStyle(label)
         return {
           documentWidth: document.documentElement.scrollWidth,
-          label: { width: label.clientWidth, scrollWidth: label.scrollWidth, fontSize: style.fontSize, color: style.color, flexWrap: style.flexWrap },
-          stamp: { dateTime: stamp.dateTime, whiteSpace: getComputedStyle(stamp).whiteSpace, flexShrink: getComputedStyle(stamp).flexShrink },
-          buttons: [...document.querySelectorAll('.ant-btn')].map(el => ({ whiteSpace: getComputedStyle(el).whiteSpace, flexShrink: getComputedStyle(el).flexShrink })),
+          label: {
+            width: label.clientWidth,
+            scrollWidth: label.scrollWidth,
+            fontSize: style.fontSize,
+            color: style.color,
+            flexWrap: style.flexWrap,
+          },
+          stamp: {
+            dateTime: stamp.dateTime,
+            whiteSpace: getComputedStyle(stamp).whiteSpace,
+            flexShrink: getComputedStyle(stamp).flexShrink,
+          },
+          buttons: [...document.querySelectorAll('.ant-btn')].map((el) => ({
+            whiteSpace: getComputedStyle(el).whiteSpace,
+            flexShrink: getComputedStyle(el).flexShrink,
+          })),
         }
       })
       expect(probe.documentWidth).toBeLessThanOrEqual(viewport.width + 2)
@@ -41,7 +60,10 @@ for (const route of ['/', '/activity?section=access']) {
       fs.mkdirSync(fullDirectory, { recursive: true })
       await page.screenshot({ path: path.join(fullDirectory, `${name}-full.png`), fullPage: true })
       if (await page.locator('.distribution-echart').count()) {
-        await page.locator('.distribution-echart').first().screenshot({ path: path.join(fullDirectory, `${name}-chart.png`) })
+        await page
+          .locator('.distribution-echart')
+          .first()
+          .screenshot({ path: path.join(fullDirectory, `${name}-chart.png`) })
       }
     })
   }

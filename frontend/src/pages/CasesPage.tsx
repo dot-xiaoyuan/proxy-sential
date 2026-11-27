@@ -1,77 +1,319 @@
-import {
-  detailPath } from '../app/navigation'
+import '../styles/pages/shared-access.css'
+import '../styles/pages/devices.css'
+import { detailPath } from '../app/navigation'
 import { useUrlState } from '../shared/ui/useUrlState'
-import { Link,
-  useLocation,
-  useSearchParams } from 'react-router-dom'
-import { App as AntApp,
-  Button,
-  Input,
-  Popover,
-  Select,
-  Space,
-  Switch,
-  Tag,
-  Typography,
-} from 'antd'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
+import { App as AntApp, Button, Input, Popover, Select, Space, Switch, Tag, Typography } from 'antd'
 import { useMemo, useState } from 'react'
 
 import { useCases, useCasesBatchMutation, useSession } from '../shared/api/queries'
 import type { RiskCase } from '../shared/api/types'
-import { AppErrorAlert, AppListHeader, AppLoadingState, AppServerPagination, AppTable, AppTableBar, formatDateTime, type UniversityDimensions, UniversityDimensionFilters, useServerPagination } from '../shared/ui'
+import {
+  AppErrorAlert,
+  AppListHeader,
+  AppLoadingState,
+  AppServerPagination,
+  AppTable,
+  AppTableBar,
+  formatDateTime,
+  type UniversityDimensions,
+  UniversityDimensionFilters,
+  useServerPagination,
+} from '../shared/ui'
 import { CaseAssessment } from '../entities/risk/CaseAssessment'
 import { can } from '../shared/auth/permissions'
 import { StreamRiskCutoverNotice } from '../widgets/StreamRiskCutoverNotice'
 import { StreamRiskCurrentPanel } from '../widgets/StreamRiskCurrentPanel'
 
-const statusNames: Record<string,string> = {new:'新建',assigned:'已分派',investigating:'调查中',waiting_data:'等待数据',resolved:'已解决',closed:'已关闭',reopened:'重新打开'}
-
-export function CasesPage() {
-  const [q,setQ]=useUrlState('q','');const location=useLocation();const [params,setParams]=useSearchParams()
-  const [status,setStatus]=useUrlState('status','')
-	const includeRouterObservations=params.get('include_router_observations')!=='false'
-	const setIncludeRouterObservations=(checked:boolean)=>setParams(current=>{const next=new URLSearchParams(current);if(checked)next.delete('include_router_observations');else next.set('include_router_observations','false');next.delete('page');next.delete('cursor');return next})
-	const pagination=useServerPagination()
-  const dimensions=Object.fromEntries(['sensor_id','campus_id','department','person_type','ssid','vlan','ap','nas_ip'].map(key=>[key,params.get(key)||undefined])) as UniversityDimensions;
- const setDimensions=(value:UniversityDimensions)=>setParams(current=>{const next=new URLSearchParams(current);Object.entries(value).forEach(([key,value])=>value?next.set(key,value):next.delete(key));next.delete('page');next.delete('cursor');return next})
-  const [selected,setSelected]=useState<string[]>([])
-  const [assignee,setAssignee]=useState('')
-  const batch=useCasesBatchMutation();const session=useSession();const {message}=AntApp.useApp();const writable=can(session.data,'cases:write')
-  const query=useCases({q,status:status||undefined,...dimensions,cursor:pagination.cursor,limit:pagination.pageSize,window:'7d',include_router_observations:includeRouterObservations})
-  const columns=useMemo(()=>[
-    {title:'风险对象',dataIndex:'ip',render:(value:string,item:RiskCase)=><div className="case-subject-cell"><Link className="mono" title={value||item.subject_id} to={detailPath(`/cases/${encodeURIComponent(item.case_id)}`,location.pathname+location.search)}>{value||item.subject_id}</Link><Typography.Text title={item.account_id||''} type="secondary">{item.account_id||''}</Typography.Text></div>},
-    {title:'评估',render:(_:unknown,item:RiskCase)=><CaseAssessment item={item}/>},
-    {title:'置信度',dataIndex:'risk_confidence',render:(value:number,item:RiskCase)=><Typography.Text type={item.assessment_current===false?'secondary':undefined}>{Math.round(value*100)}%</Typography.Text>},
-    {title:'位置/院系',key:'location',onCell:(item:RiskCase)=>({className:item.campus_id||item.department?'':'mobile-empty-cell'}),render:(_:unknown,item:RiskCase)=><span className="ellipsis-cell" title={[item.campus_id,item.department].filter(Boolean).join(' / ')}>{[item.campus_id,item.department].filter(Boolean).join(' / ')||''}</span>},
-    {title:'负责人',dataIndex:'assignee_id',onCell:(item:RiskCase)=>({className:item.assignee_id?'':'mobile-empty-cell'}),render:(value?:string)=>value||''},
-    {title:'状态',dataIndex:'status',render:(value:string)=><Tag>{statusNames[value]??value}</Tag>},
-    {title:'SLA 截止',dataIndex:'due_at',render:(value:string)=>{const time=formatCompactTime(value);return <span className="nowrap-cell" title={time?formatDateTime(value):undefined}>{time}</span>}},
-  ],[location.pathname,location.search])
-  if(query.isLoading)return <AppLoadingState rows={8}/>
-  if(query.isError||!query.data)return <AppErrorAlert title="风险处置队列读取失败"/>
-  return <main className="page">
-    <section className="surface list-surface">
-      <div className="list-surface-head">
-        <AppListHeader title="风险案件" count={`${query.data.page.total} 条`} actions={
-          <div className="list-head-actions">
-            <Popover trigger="click" placement="bottomRight" content={<div className="list-popover"><StreamRiskCutoverNotice expanded fallback={<p className="list-popover-empty">当前没有历史缺口记录。</p>} /></div>}><Button size="small">历史缺口</Button></Popover>
-            <Popover trigger="click" placement="bottomRight" destroyOnHidden content={<div className="list-popover"><StreamRiskCurrentPanel /></div>}><Button size="small">新流风险</Button></Popover>
-            <Popover trigger="click" placement="bottomRight" content={<div className="list-popover list-popover-form"><UniversityDimensionFilters value={dimensions} onChange={(next)=>{setDimensions(next)}} /></div>}><Button size="small">高校维度</Button></Popover>
-          </div>
-        } />
-        <AppTableBar searchPlaceholder="搜索 IP、账号、终端或院系" searchValue={q} onSearchChange={value=>{setQ(value)}} extra={<Space wrap><span className="case-router-toggle"><Switch aria-label="显示路由器观察" checked={includeRouterObservations} onChange={setIncludeRouterObservations}/><Typography.Text>显示路由器观察</Typography.Text></span><Select aria-label="案件状态" value={status} onChange={value=>{setStatus(value)}} options={[{value:'',label:'全部状态'},...Object.entries(statusNames).map(([value,label])=>({value,label}))]} /></Space>} />
-      </div>
-      {writable&&selected.length>0&&<div className="case-batch-inline"><Typography.Text>已选 {selected.length} 项</Typography.Text><Input aria-label="批量负责人" placeholder="负责人账号" value={assignee} onChange={event=>setAssignee(event.target.value)}/><Button disabled={!assignee.trim()} loading={batch.isPending} onClick={()=>batch.mutate({caseIds:selected,operation:'assign',assigneeId:assignee.trim()},{onSuccess:()=>{setSelected([]);void message.success('案件已批量分派')}})}>批量分派</Button><Button danger loading={batch.isPending} onClick={()=>batch.mutate({caseIds:selected,operation:'close'},{onSuccess:()=>{setSelected([]);void message.success('已批量关闭符合条件的案件')}})}>批量关闭</Button></div>}
-      <AppTable columns={columns} dataSource={query.data.items} rowKey="case_id" rowSelection={writable?{selectedRowKeys:selected,onChange:(keys)=>setSelected(keys.map(String))}:undefined} tableLayout="fixed" scroll={{x:900}} />
-      <AppServerPagination page={pagination.page} pageSize={pagination.pageSize} total={query.data.page.total} onChange={pagination.update} />
-    </section>
-  </main>
+const statusNames: Record<string, string> = {
+  new: '新建',
+  assigned: '已分派',
+  investigating: '调查中',
+  waiting_data: '等待数据',
+  resolved: '已解决',
+  closed: '已关闭',
+  reopened: '重新打开',
 }
 
-function formatCompactTime(value:string) {
-  if(!value)return ''
+export function CasesPage() {
+  const [q, setQ] = useUrlState('q', '')
+  const location = useLocation()
+  const [params, setParams] = useSearchParams()
+  const [status, setStatus] = useUrlState('status', '')
+  const includeRouterObservations = params.get('include_router_observations') !== 'false'
+  const setIncludeRouterObservations = (checked: boolean) =>
+    setParams((current) => {
+      const next = new URLSearchParams(current)
+      if (checked) next.delete('include_router_observations')
+      else next.set('include_router_observations', 'false')
+      next.delete('page')
+      next.delete('cursor')
+      return next
+    })
+  const pagination = useServerPagination()
+  const dimensions = Object.fromEntries(
+    ['sensor_id', 'campus_id', 'department', 'person_type', 'ssid', 'vlan', 'ap', 'nas_ip'].map(
+      (key) => [key, params.get(key) || undefined],
+    ),
+  ) as UniversityDimensions
+  const setDimensions = (value: UniversityDimensions) =>
+    setParams((current) => {
+      const next = new URLSearchParams(current)
+      Object.entries(value).forEach(([key, value]) =>
+        value ? next.set(key, value) : next.delete(key),
+      )
+      next.delete('page')
+      next.delete('cursor')
+      return next
+    })
+  const [selected, setSelected] = useState<string[]>([])
+  const [assignee, setAssignee] = useState('')
+  const batch = useCasesBatchMutation()
+  const session = useSession()
+  const { message } = AntApp.useApp()
+  const writable = can(session.data, 'cases:write')
+  const query = useCases({
+    q,
+    status: status || undefined,
+    ...dimensions,
+    cursor: pagination.cursor,
+    limit: pagination.pageSize,
+    window: '7d',
+    include_router_observations: includeRouterObservations,
+  })
+  const columns = useMemo(
+    () => [
+      {
+        title: '风险对象',
+        dataIndex: 'ip',
+        render: (value: string, item: RiskCase) => (
+          <div className="case-subject-cell">
+            <Link
+              className="mono"
+              title={value || item.subject_id}
+              to={detailPath(
+                `/cases/${encodeURIComponent(item.case_id)}`,
+                location.pathname + location.search,
+              )}
+            >
+              {value || item.subject_id}
+            </Link>
+            <Typography.Text title={item.account_id || ''} type="secondary">
+              {item.account_id || ''}
+            </Typography.Text>
+          </div>
+        ),
+      },
+      { title: '评估', render: (_: unknown, item: RiskCase) => <CaseAssessment item={item} /> },
+      {
+        title: '置信度',
+        dataIndex: 'risk_confidence',
+        render: (value: number, item: RiskCase) => (
+          <Typography.Text type={item.assessment_current === false ? 'secondary' : undefined}>
+            {Math.round(value * 100)}%
+          </Typography.Text>
+        ),
+      },
+      {
+        title: '位置/院系',
+        key: 'location',
+        onCell: (item: RiskCase) => ({
+          className: item.campus_id || item.department ? '' : 'mobile-empty-cell',
+        }),
+        render: (_: unknown, item: RiskCase) => (
+          <span
+            className="ellipsis-cell"
+            title={[item.campus_id, item.department].filter(Boolean).join(' / ')}
+          >
+            {[item.campus_id, item.department].filter(Boolean).join(' / ') || ''}
+          </span>
+        ),
+      },
+      {
+        title: '负责人',
+        dataIndex: 'assignee_id',
+        onCell: (item: RiskCase) => ({ className: item.assignee_id ? '' : 'mobile-empty-cell' }),
+        render: (value?: string) => value || '',
+      },
+      {
+        title: '状态',
+        dataIndex: 'status',
+        render: (value: string) => <Tag>{statusNames[value] ?? value}</Tag>,
+      },
+      {
+        title: 'SLA 截止',
+        dataIndex: 'due_at',
+        render: (value: string) => {
+          const time = formatCompactTime(value)
+          return (
+            <span className="nowrap-cell" title={time ? formatDateTime(value) : undefined}>
+              {time}
+            </span>
+          )
+        },
+      },
+    ],
+    [location.pathname, location.search],
+  )
+  if (query.isLoading) return <AppLoadingState rows={8} />
+  if (query.isError || !query.data) return <AppErrorAlert title="风险处置队列读取失败" />
+  return (
+    <main className="page">
+      <section className="surface list-surface">
+        <div className="list-surface-head">
+          <AppListHeader
+            title="风险案件"
+            count={`${query.data.page.total} 条`}
+            actions={
+              <div className="list-head-actions">
+                <Popover
+                  trigger="click"
+                  placement="bottomRight"
+                  content={
+                    <div className="list-popover">
+                      <StreamRiskCutoverNotice
+                        expanded
+                        fallback={<p className="list-popover-empty">当前没有历史缺口记录。</p>}
+                      />
+                    </div>
+                  }
+                >
+                  <Button size="small">历史缺口</Button>
+                </Popover>
+                <Popover
+                  trigger="click"
+                  placement="bottomRight"
+                  destroyOnHidden
+                  content={
+                    <div className="list-popover">
+                      <StreamRiskCurrentPanel />
+                    </div>
+                  }
+                >
+                  <Button size="small">新流风险</Button>
+                </Popover>
+                <Popover
+                  trigger="click"
+                  placement="bottomRight"
+                  content={
+                    <div className="list-popover list-popover-form">
+                      <UniversityDimensionFilters
+                        value={dimensions}
+                        onChange={(next) => {
+                          setDimensions(next)
+                        }}
+                      />
+                    </div>
+                  }
+                >
+                  <Button size="small">高校维度</Button>
+                </Popover>
+              </div>
+            }
+          />
+          <AppTableBar
+            searchPlaceholder="搜索 IP、账号、终端或院系"
+            searchValue={q}
+            onSearchChange={(value) => {
+              setQ(value)
+            }}
+            extra={
+              <Space wrap>
+                <span className="case-router-toggle">
+                  <Switch
+                    aria-label="显示路由器观察"
+                    checked={includeRouterObservations}
+                    onChange={setIncludeRouterObservations}
+                  />
+                  <Typography.Text>显示路由器观察</Typography.Text>
+                </span>
+                <Select
+                  aria-label="案件状态"
+                  value={status}
+                  onChange={(value) => {
+                    setStatus(value)
+                  }}
+                  options={[
+                    { value: '', label: '全部状态' },
+                    ...Object.entries(statusNames).map(([value, label]) => ({ value, label })),
+                  ]}
+                />
+              </Space>
+            }
+          />
+        </div>
+        {writable && selected.length > 0 && (
+          <div className="case-batch-inline">
+            <Typography.Text>已选 {selected.length} 项</Typography.Text>
+            <Input
+              aria-label="批量负责人"
+              placeholder="负责人账号"
+              value={assignee}
+              onChange={(event) => setAssignee(event.target.value)}
+            />
+            <Button
+              disabled={!assignee.trim()}
+              loading={batch.isPending}
+              onClick={() =>
+                batch.mutate(
+                  { caseIds: selected, operation: 'assign', assigneeId: assignee.trim() },
+                  {
+                    onSuccess: () => {
+                      setSelected([])
+                      void message.success('案件已批量分派')
+                    },
+                  },
+                )
+              }
+            >
+              批量分派
+            </Button>
+            <Button
+              danger
+              loading={batch.isPending}
+              onClick={() =>
+                batch.mutate(
+                  { caseIds: selected, operation: 'close' },
+                  {
+                    onSuccess: () => {
+                      setSelected([])
+                      void message.success('已批量关闭符合条件的案件')
+                    },
+                  },
+                )
+              }
+            >
+              批量关闭
+            </Button>
+          </div>
+        )}
+        <AppTable
+          columns={columns}
+          dataSource={query.data.items}
+          rowKey="case_id"
+          rowSelection={
+            writable
+              ? { selectedRowKeys: selected, onChange: (keys) => setSelected(keys.map(String)) }
+              : undefined
+          }
+          tableLayout="fixed"
+          scroll={{ x: 900 }}
+        />
+        <AppServerPagination
+          page={pagination.page}
+          pageSize={pagination.pageSize}
+          total={query.data.page.total}
+          onChange={pagination.update}
+        />
+      </section>
+    </main>
+  )
+}
+
+function formatCompactTime(value: string) {
+  if (!value) return ''
   const date = new Date(value)
-  if(!Number.isFinite(date.getTime()))return ''
-  const pad = (part:number) => String(part).padStart(2,'0')
-  return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+  if (!Number.isFinite(date.getTime())) return ''
+  const pad = (part: number) => String(part).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }

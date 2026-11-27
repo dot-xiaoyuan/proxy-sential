@@ -6,6 +6,7 @@ export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
+      refetchIntervalInBackground: false,
       retry: 1,
       staleTime: 60_000,
       gcTime: 30 * 60_000,
@@ -15,6 +16,6 @@ export const queryClient = new QueryClient({
 })
 
 setUnauthorizedHandler(() => {
-  queryClient.removeQueries({ predicate: query => query.queryKey[0] !== queryKeys.session[0] })
+  queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== queryKeys.session[0] })
   void queryClient.invalidateQueries({ queryKey: queryKeys.session })
 })

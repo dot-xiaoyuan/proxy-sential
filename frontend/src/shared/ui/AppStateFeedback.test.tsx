@@ -5,7 +5,13 @@ import { AppEmptyState, AppErrorAlert } from './AppStateFeedback'
 
 describe('AppErrorAlert', () => {
   it('统一渲染错误标题、说明与操作，并带 alert 语义', () => {
-    render(<AppErrorAlert title="模板读取失败" message="请求超时" action={<button type="button">重试</button>} />)
+    render(
+      <AppErrorAlert
+        title="模板读取失败"
+        message="请求超时"
+        action={<button type="button">重试</button>}
+      />,
+    )
     expect(screen.getByRole('alert')).toBeInTheDocument()
     expect(screen.getByText('模板读取失败')).toBeInTheDocument()
     expect(screen.getByText('请求超时')).toBeInTheDocument()

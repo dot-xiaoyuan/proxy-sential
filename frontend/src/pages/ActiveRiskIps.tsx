@@ -1,8 +1,6 @@
-import {
-  AppListHeader, AppTable, formatDateTime } from '../shared/ui'
+import { AppListHeader, AppTable, formatDateTime } from '../shared/ui'
 import { useState } from 'react'
-import { Link,
-  useLocation } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { Button } from 'antd'
 import { SearchOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
@@ -10,54 +8,52 @@ import { RiskLevelTag } from '../entities/risk/RiskLevelTag'
 import { RiskScore } from '../entities/risk/RiskScore'
 import { FlowInspectorDrawer } from '../features/dpi/FlowInspectorDrawer'
 import { detailPath } from '../app/navigation'
-import type { ActivityCount,ActivityIpSummary } from '../shared/api/types'
+import type { ActivityCount, ActivityIpSummary } from '../shared/api/types'
 import type { ReportWindow } from '../shared/ui'
-export function ActiveRiskIps({items}:{items:ActivityIpSummary[]}){
- const [inspectIp,setInspectIp]=useState<string|null>(null);const location=useLocation();
+export function ActiveRiskIps({ items }: { items: ActivityIpSummary[] }) {
+  const [inspectIp, setInspectIp] = useState<string | null>(null)
+  const location = useLocation()
   const riskColumns: ColumnsType<ActivityIpSummary> = [
     {
-      title: "IP 地址",
-      dataIndex: "ip",
+      title: 'IP 地址',
+      dataIndex: 'ip',
       width: 150,
       render: (value: string) => (
         <Link
           className="mono wrap-text"
-          to={detailPath(`/ips/${encodeURIComponent(value)}`,location.pathname+location.search)}
+          to={detailPath(`/ips/${encodeURIComponent(value)}`, location.pathname + location.search)}
         >
           {value}
         </Link>
       ),
     },
     {
-      title: "风险等级",
-      dataIndex: "risk_level",
+      title: '风险等级',
+      dataIndex: 'risk_level',
       width: 85,
-      render: (value: ActivityIpSummary["risk_level"]) => (
-        <RiskLevelTag level={value} />
-      ),
+      render: (value: ActivityIpSummary['risk_level']) => <RiskLevelTag level={value} />,
     },
     {
-      title: "综合评分",
-      dataIndex: "score",
+      title: '综合评分',
+      dataIndex: 'score',
       width: 130,
       render: (value: number) => <RiskScore score={value} />,
     },
-    { title: "DPI 事件数", dataIndex: "event_count", width: 100 },
+    { title: 'DPI 事件数', dataIndex: 'event_count', width: 100 },
     {
-      title: "Top 访问对象 (DNS/SNI/Host)",
-      dataIndex: "top_domains",
-      render: (items: ActivityCount[]) =>
-        renderCountTokens(items, "暂无域名对象"),
+      title: 'Top 访问对象 (DNS/SNI/Host)',
+      dataIndex: 'top_domains',
+      render: (items: ActivityCount[]) => renderCountTokens(items, '暂无域名对象'),
     },
     {
-      title: "最后抓包时间",
-      dataIndex: "last_seen",
+      title: '最后抓包时间',
+      dataIndex: 'last_seen',
       width: 150,
       render: (value?: string) => formatDateTime(value),
     },
     {
-      title: "快捷追查",
-      key: "action",
+      title: '快捷追查',
+      key: 'action',
       width: 160,
       fixed: 'right',
       render: (_, record) => (
@@ -72,20 +68,46 @@ export function ActiveRiskIps({items}:{items:ActivityIpSummary[]}){
         </Button>
       ),
     },
-  ];
+  ]
 
-return <>          <div className="activity-tab-panel">
-            <AppListHeader title="活跃风险 IP" count={`${items.length} 个`} description="点击 DPI Flow 样本展开追查抽屉" />
-            <AppTable<ActivityIpSummary> className="compact-list-table"
-              tableLayout="fixed"
-            columns={riskColumns}
-              dataSource={items}
-              pagination={false}
-              rowKey="ip"
-              scroll={{ x: 960 }}
-              size="small"
-            />
-          </div>
-<FlowInspectorDrawer context={{window:(new URLSearchParams(location.search).get('window')||'1h') as ReportWindow,sensor_id:new URLSearchParams(location.search).get('sensor_id')||undefined,campus_id:new URLSearchParams(location.search).get('campus_id')||undefined}} ip={inspectIp} open={!!inspectIp} onClose={()=>setInspectIp(null)}/></>;
+  return (
+    <>
+      {' '}
+      <div className="activity-tab-panel">
+        <AppListHeader
+          title="活跃风险 IP"
+          count={`${items.length} 个`}
+          description="点击 DPI Flow 样本展开追查抽屉"
+        />
+        <AppTable<ActivityIpSummary>
+          className="compact-list-table"
+          tableLayout="fixed"
+          columns={riskColumns}
+          dataSource={items}
+          pagination={false}
+          rowKey="ip"
+          scroll={{ x: 960 }}
+          size="small"
+        />
+      </div>
+      <FlowInspectorDrawer
+        context={{
+          window: (new URLSearchParams(location.search).get('window') || '1h') as ReportWindow,
+          sensor_id: new URLSearchParams(location.search).get('sensor_id') || undefined,
+          campus_id: new URLSearchParams(location.search).get('campus_id') || undefined,
+        }}
+        ip={inspectIp}
+        open={!!inspectIp}
+        onClose={() => setInspectIp(null)}
+      />
+    </>
+  )
 }
-function renderCountTokens(items:ActivityCount[],_empty:string){const text=items.map(item=>`${item.value} ×${item.count}`).join('、');return <span className="ellipsis-cell" title={text}>{text}</span>}
+function renderCountTokens(items: ActivityCount[], _empty: string) {
+  const text = items.map((item) => `${item.value} ×${item.count}`).join('、')
+  return (
+    <span className="ellipsis-cell" title={text}>
+      {text}
+    </span>
+  )
+}

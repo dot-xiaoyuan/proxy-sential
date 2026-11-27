@@ -42,8 +42,17 @@ export function resolveDeviceBrand(device: {
   model?: string
 }): BrandInfo {
   const label = (device.brand || '').trim()
-  const normalized = label.toLowerCase().replace(/[-_.,]+/g, ' ').replace(/\s+/g, ' ')
-  const match = brands.find(([, , , aliases]) => aliases.some(alias => normalized === alias || normalized.startsWith(`${alias} `)))
+  const normalized = label
+    .toLowerCase()
+    .replace(/[-_.,]+/g, ' ')
+    .replace(/\s+/g, ' ')
+  const match = brands.find(([, , , aliases]) =>
+    aliases.some((alias) => normalized === alias || normalized.startsWith(`${alias} `)),
+  )
   if (match) return { key: match[0], name: match[1], nameEn: match[2] }
-  return { key: 'unknown', name: label && !/^(unknown|未知|未知设备)$/i.test(label) ? label : '', nameEn: label || 'Unknown' }
+  return {
+    key: 'unknown',
+    name: label && !/^(unknown|未知|未知设备)$/i.test(label) ? label : '',
+    nameEn: label || 'Unknown',
+  }
 }

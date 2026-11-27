@@ -28,7 +28,9 @@ describe('AppTableBar', () => {
   })
 
   it('搜索或筛选请求进行中时给出加载反馈', () => {
-    const { rerender } = render(<AppTableBar onSearchChange={() => {}} searchValue="router" searching />)
+    const { rerender } = render(
+      <AppTableBar onSearchChange={() => {}} searchValue="router" searching />,
+    )
     expect(screen.getByPlaceholderText(/关键字快速检索/)).toHaveAttribute('aria-busy', 'true')
     expect(screen.getByLabelText('正在加载')).toBeInTheDocument()
 

@@ -9,16 +9,66 @@ vi.mock('../shared/api/queries', () => ({
   useSession: () => ({ data: { permissions: ['identity:read'] } }),
   useIpRisk: () => ({ data: data.risk }),
   useIpDevices: () => ({ data: data.inventory }),
-  useIpEvidence: () => ({}), useIpEvents: () => ({}), useIpActivity: () => ({}),
+  useIpEvidence: () => ({}),
+  useIpEvents: () => ({}),
+  useIpActivity: () => ({}),
   useCreateLabel: () => ({ isPending: false, mutate: vi.fn() }),
 }))
 vi.mock('../features/applications/ApplicationActivity', () => ({ ApplicationActivity: () => null }))
 afterEach(cleanup)
-const risk: RiskSnapshot = { ip: '192.0.2.82', score: 59, level: 'suspicious', confidence: .79, window: '10m', evidence_ids: ['proof-fixture'], summary: '客户端协议线索，需要复核', recommended_action: 'shadow_watch', updated_at: '2026-10-01T00:00:00Z', suspected_device_count: 0, device_confidence: 0 }
-const inventory: IpDeviceInventory = { ip: risk.ip, window: '24h', suspected_device_count: 1, confidence: .82, status: 'single_candidate', summary: '单个设备候选', signals: [], conflicts: [], devices: [{ device_id: 'fixture-device', ip: risk.ip, label: '设备候选', brand: 'unknown', vendor: '未获取厂商', os_family: 'Linux', device_type: 'desktop', model: '', confidence: .82, signal_count: 1, strong_signal_count: 1, medium_signal_count: 0, weak_signal_count: 0, signals: [], fingerprints: [], summary: '原始设备线索保留' }] }
+const risk: RiskSnapshot = {
+  ip: '192.0.2.82',
+  score: 59,
+  level: 'suspicious',
+  confidence: 0.79,
+  window: '10m',
+  evidence_ids: ['proof-fixture'],
+  summary: '客户端协议线索，需要复核',
+  recommended_action: 'shadow_watch',
+  updated_at: '2026-10-01T00:00:00Z',
+  suspected_device_count: 0,
+  device_confidence: 0,
+}
+const inventory: IpDeviceInventory = {
+  ip: risk.ip,
+  window: '24h',
+  suspected_device_count: 1,
+  confidence: 0.82,
+  status: 'single_candidate',
+  summary: '单个设备候选',
+  signals: [],
+  conflicts: [],
+  devices: [
+    {
+      device_id: 'fixture-device',
+      ip: risk.ip,
+      label: '设备候选',
+      brand: 'unknown',
+      vendor: '未获取厂商',
+      os_family: 'Linux',
+      device_type: 'desktop',
+      model: '',
+      confidence: 0.82,
+      signal_count: 1,
+      strong_signal_count: 1,
+      medium_signal_count: 0,
+      weak_signal_count: 0,
+      signals: [],
+      fingerprints: [],
+      summary: '原始设备线索保留',
+    },
+  ],
+}
 function setup(value = risk, devices = inventory) {
-  data.risk = value; data.inventory = devices
-  render(<MemoryRouter initialEntries={['/ips/192.0.2.82']}><Routes><Route path="/ips/:ip" element={<IpDetailsPage />} /></Routes></MemoryRouter>)
+  data.risk = value
+  data.inventory = devices
+  render(
+    <MemoryRouter initialEntries={['/ips/192.0.2.82']}>
+      <Routes>
+        <Route path="/ips/:ip" element={<IpDetailsPage />} />
+      </Routes>
+    </MemoryRouter>,
+  )
 }
 it('可访问的 IP 详情隐藏设备缺省字段并保留真实系统', () => {
   setup()
@@ -34,7 +84,16 @@ it('影子建议动作展示中文且风险置信度保留', () => {
   expect(screen.getByText('79%')).toBeInTheDocument()
 })
 it('没有有效风险窗口不能展示正常零分或请求时刻为评估时刻', () => {
-  setup({ ...risk, window: 'none', score: 0, level: 'normal', confidence: 0, evidence_ids: [], summary: '未发现该 IP 的有效风险证据', recommended_action: 'record' })
+  setup({
+    ...risk,
+    window: 'none',
+    score: 0,
+    level: 'normal',
+    confidence: 0,
+    evidence_ids: [],
+    summary: '未发现该 IP 的有效风险证据',
+    recommended_action: 'record',
+  })
   expect(screen.queryByText('正常')).toBeNull()
   expect(screen.queryByText('0%')).toBeNull()
   expect(screen.queryByText('none')).toBeNull()
@@ -45,7 +104,15 @@ it('没有有效风险窗口不能展示正常零分或请求时刻为评估时�
   expect(screen.getByText('当前对象没有可关联证据 ID，暂不能提交复核标注')).toBeInTheDocument()
 })
 it('有效高风险保留等级分数、影子复核和原始证据追溯', () => {
-  setup({ ...risk, level: 'high', score: 97, confidence: .85, recommended_action: 'shadow_manual_review', detection_basis: 'explicit_tunnel', independent_signal_groups: ['protocol_rule'] })
+  setup({
+    ...risk,
+    level: 'high',
+    score: 97,
+    confidence: 0.85,
+    recommended_action: 'shadow_manual_review',
+    detection_basis: 'explicit_tunnel',
+    independent_signal_groups: ['protocol_rule'],
+  })
   expect(screen.getByText('高风险')).toBeInTheDocument()
   expect(screen.getByRole('progressbar', { name: '风险分 97' })).toBeInTheDocument()
   expect(screen.getByText('85%')).toBeInTheDocument()
@@ -68,18 +135,61 @@ it('协议线索不显示为设备候选零或成功识别', () => {
 })
 function renderProtocolOnly() {
   data.risk = risk
-  data.inventory = { ...inventory, status: 'non_endpoint_or_weak', suspected_device_count: 0, confidence: 0, devices: [] }
-  return render(<MemoryRouter initialEntries={['/ips/192.0.2.82']}><Routes><Route path="/ips/:ip" element={<IpDetailsPage />} /></Routes></MemoryRouter>)
+  data.inventory = {
+    ...inventory,
+    status: 'non_endpoint_or_weak',
+    suspected_device_count: 0,
+    confidence: 0,
+    devices: [],
+  }
+  return render(
+    <MemoryRouter initialEntries={['/ips/192.0.2.82']}>
+      <Routes>
+        <Route path="/ips/:ip" element={<IpDetailsPage />} />
+      </Routes>
+    </MemoryRouter>,
+  )
 }
 
 it('撤销的历史系统推测弱化展示，原始值和 MAC 身份可追溯', () => {
-  const baseSignal = { signal_id: 'legacy-os', ip: risk.ip, source: 'dhcp', kind: 'os_family', value: 'Linux', normalized_value: 'linux', strength: 'strong' as const, confidence: .82, weight: 70, event_ids: ['legacy-os-proof'] }
-  const macSignal = { ...baseSignal, signal_id: 'mac-signal', kind: 'mac', value: '02:00:00:00:00:82', event_ids: ['mac-proof'] }
-  setup(risk, { ...inventory, signals: [baseSignal, macSignal], devices: [{ ...inventory.devices[0], os_family: 'unknown', device_type: 'unknown', signals: [baseSignal, macSignal], strong_signal_count: 2 }] })
+  const baseSignal = {
+    signal_id: 'legacy-os',
+    ip: risk.ip,
+    source: 'dhcp',
+    kind: 'os_family',
+    value: 'Linux',
+    normalized_value: 'linux',
+    strength: 'strong' as const,
+    confidence: 0.82,
+    weight: 70,
+    event_ids: ['legacy-os-proof'],
+  }
+  const macSignal = {
+    ...baseSignal,
+    signal_id: 'mac-signal',
+    kind: 'mac',
+    value: '02:00:00:00:00:82',
+    event_ids: ['mac-proof'],
+  }
+  setup(risk, {
+    ...inventory,
+    signals: [baseSignal, macSignal],
+    devices: [
+      {
+        ...inventory.devices[0],
+        os_family: 'unknown',
+        device_type: 'unknown',
+        signals: [baseSignal, macSignal],
+        strong_signal_count: 2,
+      },
+    ],
+  })
   expect(screen.getByText('历史推测')).toBeInTheDocument()
   const legacy = screen.getByTitle('legacy-os-proof')
   expect(legacy).toHaveTextContent('os_family: Linux')
   expect(legacy).toHaveClass('ant-typography-secondary')
   expect(legacy.closest('.device-signal-token')?.querySelector('.ant-tag-green')).toBeNull()
-  expect(screen.getByTitle('mac-proof').closest('.device-signal-token')?.querySelector('.ant-tag-green')).toBeInTheDocument()
+  expect(
+    screen.getByTitle('mac-proof').closest('.device-signal-token')?.querySelector('.ant-tag-green'),
+  ).toBeInTheDocument()
 })

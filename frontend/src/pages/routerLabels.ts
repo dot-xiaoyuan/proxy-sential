@@ -1,4 +1,8 @@
-export const routerStatusLabels: Record<string, string> = { candidate: '身份线索', likely: '身份待确认', confirmed: '身份已确认' }
+export const routerStatusLabels: Record<string, string> = {
+  candidate: '身份线索',
+  likely: '身份待确认',
+  confirmed: '身份已确认',
+}
 
 export const routerRoleLabels: Record<string, string> = {
   router: '路由器',
@@ -28,7 +32,11 @@ export const routerSourceLabels: Record<string, string> = {
   weak_stack: '弱栈特征',
 }
 
-export const routerStrengthLabels: Record<string, string> = { strong: '强证据', medium: '中等证据', weak: '弱证据' }
+export const routerStrengthLabels: Record<string, string> = {
+  strong: '强证据',
+  medium: '中等证据',
+  weak: '弱证据',
+}
 
 export const routerAssociationLabels: Record<string, string> = {
   endpoint: '终端标识关联',

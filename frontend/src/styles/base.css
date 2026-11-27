@@ -1,0 +1,48 @@
+.ant-tag {
+  width: fit-content;
+  max-width: 100%;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.mono {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.mono.wrap-text {
+  min-width: 0;
+  white-space: normal;
+}
+
+.ant-btn span {
+  white-space: nowrap !important;
+}
+
+.mono-path {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 12px;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  color: #334155;
+}
+
+.detail-value-wrap,
+.record-json {
+  overflow-wrap: anywhere;
+}
+
+.ant-btn,
+.ant-tag,
+.ant-badge,
+.ant-menu-title-content {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.ant-tag-checkable-checked {
+  color: #1d4ed8;
+  background: #eff6ff;
+  border-color: #93c5fd;
+}

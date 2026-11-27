@@ -39,5 +39,7 @@ export function formatCount(value?: number | null): string {
 }
 
 export function formatPercent(value?: number | null, digits = 1): string {
-  return typeof value === 'number' && Number.isFinite(value) ? `${(value * 100).toFixed(digits)}%` : ''
+  return typeof value === 'number' && Number.isFinite(value)
+    ? `${(value * 100).toFixed(digits)}%`
+    : ''
 }

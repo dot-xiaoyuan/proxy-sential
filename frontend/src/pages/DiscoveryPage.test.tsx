@@ -8,21 +8,35 @@ const request = vi.hoisted(() => vi.fn())
 vi.mock('../shared/api/queries', () => ({ useSession: () => ({ data: undefined }) }))
 vi.mock('../shared/api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../shared/api/client')>()
-  return { ...actual, request, api: { ...actual.api, routerObservations: () => Promise.resolve({ items: [], total: 0 }) } }
+  return {
+    ...actual,
+    request,
+    api: { ...actual.api, routerObservations: () => Promise.resolve({ items: [], total: 0 }) },
+  }
 })
 
 function setup() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  render(<QueryClientProvider client={client}><MemoryRouter><DiscoveryPage /></MemoryRouter></QueryClientProvider>)
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <DiscoveryPage />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
 }
 
-afterEach(() => { cleanup(); request.mockReset() })
+afterEach(() => {
+  cleanup()
+  request.mockReset()
+})
 
 describe('网络设备发现', () => {
   // 空结果历史上被后端序列化为 null，前端直接 .map 会让整页崩到错误边界。
   it('接口 items 为 null 时按空列表渲染且不崩溃', async () => {
     request.mockImplementation((path: string) => {
-      if (String(path).startsWith('/discovery/devices')) return Promise.resolve({ items: null, next_cursor: '', has_more: false })
+      if (String(path).startsWith('/discovery/devices'))
+        return Promise.resolve({ items: null, next_cursor: '', has_more: false })
       return Promise.resolve({ items: [], total: 0 })
     })
     setup()
@@ -34,11 +48,26 @@ describe('网络设备发现', () => {
     request.mockImplementation((path: string) => {
       if (String(path).startsWith('/discovery/devices')) {
         return Promise.resolve({
-          items: [{
-            id: 'device-1',
-            observations: [{ id: 'obs-1', ip: '198.18.90.8', mac: '02:00:00:00:90:08', name: 'office-printer.local', origin: 'dns_sd', observed_at: '2026-10-12T00:00:00Z', valid_until: '2026-10-13T00:00:00Z', explanation: '服务能力公告', device_type: 'printer', capabilities: ['printing'] }],
-            association: '',
-          }],
+          items: [
+            {
+              id: 'device-1',
+              observations: [
+                {
+                  id: 'obs-1',
+                  ip: '198.18.90.8',
+                  mac: '02:00:00:00:90:08',
+                  name: 'office-printer.local',
+                  origin: 'dns_sd',
+                  observed_at: '2026-10-12T00:00:00Z',
+                  valid_until: '2026-10-13T00:00:00Z',
+                  explanation: '服务能力公告',
+                  device_type: 'printer',
+                  capabilities: ['printing'],
+                },
+              ],
+              association: '',
+            },
+          ],
           next_cursor: '',
           has_more: false,
         })

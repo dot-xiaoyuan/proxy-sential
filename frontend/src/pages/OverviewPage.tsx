@@ -1,25 +1,57 @@
-import { Notice as Alert } from '../shared/ui/Notice'
-import { ActiveRiskIps } from './ActiveRiskIps'
-import { useUrlState } from '../shared/ui/useUrlState'
-import { useSession } from '../shared/api/queries'
-import { can } from '../shared/auth/permissions'
-import { useState, type ReactNode } from 'react'
+import '../styles/pages/overview.css'
+import '../styles/pages/reports.css'
+import { lazy, Suspense, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import {
   AlertOutlined,
   CheckCircleOutlined,
   CloudServerOutlined,
   CodeOutlined,
   DatabaseOutlined,
+  DeploymentUnitOutlined,
+  RightOutlined,
   SafetyCertificateOutlined,
 } from '@ant-design/icons'
-import { Card, Progress, Select, Typography } from 'antd'
+import { Card, Progress, Select, Tag, Typography } from 'antd'
 
-import { RootFilesystemCapacity, RootFilesystemWarning } from '../entities/system/RootFilesystemCapacity'
-import { formatBytes } from '../shared/ui/formatBytes'
-import { useActivityOverview, useOrganization, useOverview, useSystemStatus } from '../shared/api/queries'
+import { ActiveRiskIps } from './ActiveRiskIps'
+import { routerStatusLabels } from './routerLabels'
+import {
+  RootFilesystemCapacity,
+  RootFilesystemWarning,
+} from '../entities/system/RootFilesystemCapacity'
+import { request } from '../shared/api/client'
+import type { components } from '../shared/api/generated'
+import {
+  useActivityOverview,
+  useOrganization,
+  useOverview,
+  useSession,
+  useSystemStatus,
+} from '../shared/api/queries'
 import type { RiskLevel } from '../shared/api/types'
-import { AppErrorAlert, AppLoadingState, AppMetricCard, AppPageHeader, StatisticsTime, type ReportWindow } from '../shared/ui'
+import { can } from '../shared/auth/permissions'
+import {
+  AppErrorAlert,
+  AppLoadingState,
+  AppMetricCard,
+  AppPageHeader,
+  StatisticsTime,
+  type ReportWindow,
+} from '../shared/ui'
+import { formatBytes } from '../shared/ui/formatBytes'
+import { Notice as Alert } from '../shared/ui/Notice'
+import { useUrlState } from '../shared/ui/useUrlState'
+
+const SharedTrendChart = lazy(() =>
+  import('../features/reports/SharedTrendChart').then((module) => ({
+    default: module.SharedTrendChart,
+  })),
+)
+
+type RouterObservationReport = components['schemas']['RouterObservationReport']
+type SharedDecisionTrend = components['schemas']['SharedDecisionTrend']
 
 const levelOrder: RiskLevel[] = ['confirmed', 'high', 'suspicious', 'normal']
 
@@ -29,7 +61,6 @@ const levelNames: Record<RiskLevel, string> = {
   suspicious: '复核线索',
   normal: '正常终端',
 }
-
 
 const componentNames: Record<string, string> = {
   operations: '运营数据',
@@ -70,17 +101,17 @@ function clampPercent(value: number) {
 function progressColor(percent: number) {
   if (percent >= 85) return '#dc2626'
   if (percent >= 70) return '#d97706'
-  return '#0284c7'
+  return '#2257a7'
 }
 
-function PanelHeader({ icon, title, meta }: { icon: ReactNode; title: string; meta?: string }) {
+function PanelHeader({ icon, title, meta }: { icon: ReactNode; title: string; meta?: ReactNode }) {
   return (
     <div className="overview-panel-header">
       <div className="overview-panel-heading">
         <span className="overview-panel-icon">{icon}</span>
         <Typography.Title level={4}>{title}</Typography.Title>
       </div>
-      {meta && <Typography.Text className="overview-panel-meta">{meta}</Typography.Text>}
+      {meta && <div className="overview-panel-meta">{meta}</div>}
     </div>
   )
 }
@@ -99,31 +130,95 @@ function LoadRow({ label, percent, detail }: { label: string; percent: number; d
 }
 
 export function OverviewPage() {
-  const [windowValue,setQuickWindow]=useUrlState('window','1h',['10m','1h','24h','7d','30d']);const quickWindow=windowValue as ReportWindow
-  const [campusId,setCampusId]=useUrlState('campus_id','');const session=useSession();
-  const [sensorId]=useUrlState('sensor_id','');
-  const [healthOpen,setHealthOpen]=useState(true)
-  const context=new URLSearchParams({window:quickWindow,...(campusId?{campus_id:campusId}:{}),...(sensorId?{sensor_id:sensorId}:{})}).toString()
-  const organization = useOrganization(can(session.data,'organization:read'))
-  const overview = useOverview({ window: quickWindow, sensor_id:sensorId||undefined, campus_id: campusId || undefined })
-  const activity = useActivityOverview({ window: quickWindow, sensor_id:sensorId||undefined, campus_id: campusId || undefined },can(session.data,'dpi:read'))
+  const [windowValue, setQuickWindow] = useUrlState('window', '1h', [
+    '10m',
+    '1h',
+    '24h',
+    '7d',
+    '30d',
+  ])
+  const quickWindow = windowValue as ReportWindow
+  const [campusId, setCampusId] = useUrlState('campus_id', '')
+  const [sensorId] = useUrlState('sensor_id', '')
+  const session = useSession()
+  const [healthOpen, setHealthOpen] = useState(false)
+
+  const context = new URLSearchParams({
+    window: quickWindow,
+    ...(campusId ? { campus_id: campusId } : {}),
+    ...(sensorId ? { sensor_id: sensorId } : {}),
+  }).toString()
+
+  const canReadIdentity = can(session.data, 'identity:read')
+  const canReadPolicies = can(session.data, 'policies:read')
+  const canReadCases = can(session.data, 'cases:read')
+  const canReadActions = can(session.data, 'actions:read')
+
+  const organization = useOrganization(can(session.data, 'organization:read'))
+  const overview = useOverview({
+    window: quickWindow,
+    sensor_id: sensorId || undefined,
+    campus_id: campusId || undefined,
+  })
+  const activity = useActivityOverview(
+    { window: quickWindow, sensor_id: sensorId || undefined, campus_id: campusId || undefined },
+    can(session.data, 'dpi:read'),
+  )
   const system = useSystemStatus()
+
+  const routerSummary = useQuery({
+    queryKey: ['overview-router-summary'],
+    queryFn: ({ signal }) =>
+      request<RouterObservationReport>('/router-observations/summary', { signal }),
+    enabled: canReadIdentity,
+    staleTime: 60_000,
+  })
+
+  const sharedTrend = useQuery({
+    queryKey: ['overview-shared-trend', '1h'],
+    queryFn: ({ signal }) =>
+      request<SharedDecisionTrend>('/policy-decisions/shared-trend?window=1h', { signal }),
+    enabled: canReadPolicies,
+    staleTime: 60_000,
+  })
 
   if (overview.isLoading) {
     return <AppLoadingState rows={6} />
   }
 
   if (overview.isError || !overview.data) {
-    return <AppErrorAlert title="总览控制塔读取失败" message={overview.error?.message} />
+    return <AppErrorAlert title="运营工作台读取失败" message={overview.error?.message} />
   }
 
   const levelCounts = overview.data.level_counts
   const totalRiskObjects = levelOrder.reduce((total, level) => total + levelCounts[level], 0)
+  const openCases = overview.data.open_case_count ?? overview.data.pending_reviews
+  const overdueCases = overview.data.overdue_case_count ?? 0
+
+  const routerTotal = routerSummary.data
+    ? routerSummary.data.candidate + routerSummary.data.likely + routerSummary.data.confirmed
+    : undefined
+
+  const trendTotals = sharedTrend.data?.buckets.reduce(
+    (acc, item) => ({
+      matched: acc.matched + item.matched,
+      insufficient: acc.insufficient + item.insufficient,
+      expired: acc.expired + item.expired,
+    }),
+    { matched: 0, insufficient: 0, expired: 0 },
+  )
+
   const runtime = system.data?.runtime
   const host = runtime?.host
   const process = runtime?.process
-  const hostLoadPercent = host?.load_1 === undefined ? undefined : (host.load_1 / Math.max(host.logical_cpus, 1)) * 100
-  const healthComponents = Object.entries(system.data?.components ?? {}).filter(([, item]) => Boolean(item.status))
+  const hostLoadPercent =
+    host?.load_1 === undefined ? undefined : (host.load_1 / Math.max(host.logical_cpus, 1)) * 100
+  const healthComponents = Object.entries(system.data?.components ?? {}).filter(([, item]) =>
+    Boolean(item.status),
+  )
+  const degradedComponents = healthComponents.filter(([, item]) =>
+    ['unavailable', 'stale', 'delayed'].includes(item.status ?? ''),
+  )
 
   return (
     <main className="page overview-page">
@@ -131,157 +226,370 @@ export function OverviewPage() {
         onQuickWindowChange={setQuickWindow}
         quickWindow={quickWindow}
         quickWindows={['10m', '1h', '24h', '7d', '30d']}
-        extra={(
-          <Select
-            className="campus-filter"
-            value={campusId}
-            onChange={setCampusId}
-            options={[
-              { value: '', label: '全部校区' },
-              ...(organization.data?.campuses ?? []).map((item) => ({ value: item.campus_id, label: item.name })),
-            ]}
-          />
-        )}
+        extra={
+          <>
+            <Tag color="blue">观察期 · 仅记录未执行</Tag>
+            <Select
+              aria-label="校区筛选"
+              className="campus-filter"
+              value={campusId}
+              onChange={setCampusId}
+              options={[
+                { value: '', label: '全部校区' },
+                ...(organization.data?.campuses ?? []).map((item) => ({
+                  value: item.campus_id,
+                  label: item.name,
+                })),
+              ]}
+            />
+          </>
+        }
       />
 
-      <StatisticsTime freshness={overview.data.data_freshness} value={overview.data.statistics_as_of} />
+      <StatisticsTime
+        freshness={overview.data.data_freshness}
+        value={overview.data.statistics_as_of}
+      />
 
-      <section className="metric-grid overview-metric-grid">
-        <AppMetricCard
-          icon={<AlertOutlined className="text-danger-color" />}
-          statusColor="red"
-          statusText={`超时 ${overview.data.overdue_case_count ?? 0}`}
-          title="待处理案件"
-          value={overview.data.open_case_count ?? overview.data.pending_reviews}
-        />
-        <AppMetricCard
-          icon={<DatabaseOutlined className="text-primary-color" />}
-          statusColor="blue"
-          statusText={`窗口 ${overview.data.window ?? quickWindow}`}
-          title="标准事件"
-          value={overview.data.throughput.events}
-        />
-        <AppMetricCard
-          icon={<SafetyCertificateOutlined className="text-purple-color" />}
-          statusColor="purple"
-          statusText="证据聚合"
-          title="风险证据"
-          value={overview.data.throughput.evidence}
-        />
-        <AppMetricCard
-          icon={<CheckCircleOutlined className="text-success-color" />}
-          statusColor="green"
-          statusText="活跃对象"
-          title="风险对象"
-          value={overview.data.throughput.risks}
-        />
+      <section className="metric-grid overview-metric-grid" aria-label="防代理核心治理指标">
+        <Link className="overview-metric-link" to="/shared-access">
+          <AppMetricCard
+            icon={<AlertOutlined className="text-danger-color" />}
+            statusColor={overdueCases > 0 ? 'red' : 'blue'}
+            statusText={overdueCases > 0 ? `超时 ${overdueCases}` : '进入核验'}
+            title="待处理案件"
+            value={openCases}
+          />
+        </Link>
+        {canReadPolicies ? (
+          <Link className="overview-metric-link" to="/actions?tab=decisions">
+            <AppMetricCard
+              icon={<SafetyCertificateOutlined className="text-primary-color" />}
+              statusColor="blue"
+              statusText="近 1 小时 · 仅记录"
+              title="共享策略命中"
+              value={trendTotals ? trendTotals.matched : 0}
+            />
+          </Link>
+        ) : (
+          <AppMetricCard
+            icon={<SafetyCertificateOutlined className="text-primary-color" />}
+            statusColor="blue"
+            statusText="证据聚合"
+            title="风险证据"
+            value={overview.data.throughput.evidence}
+          />
+        )}
+        {canReadIdentity ? (
+          <Link className="overview-metric-link" to="/devices?tab=network&routers_view=router">
+            <AppMetricCard
+              icon={<DeploymentUnitOutlined className="text-primary-color" />}
+              statusColor="green"
+              statusText={
+                routerSummary.data ? `已确认 ${routerSummary.data.confirmed} 台` : '路由器台账'
+              }
+              title="观测路由器"
+              value={routerTotal ?? 0}
+            />
+          </Link>
+        ) : (
+          <AppMetricCard
+            icon={<CheckCircleOutlined className="text-success-color" />}
+            statusColor="green"
+            statusText="活跃对象"
+            title="风险对象"
+            value={overview.data.throughput.risks}
+          />
+        )}
+        <Link className="overview-metric-link" to="/reports">
+          <AppMetricCard
+            icon={<DatabaseOutlined className="text-primary-color" />}
+            statusColor="blue"
+            statusText={`窗口 ${overview.data.window ?? quickWindow}`}
+            title="标准事件"
+            value={overview.data.throughput.events}
+          />
+        </Link>
       </section>
 
-      <details className="surface platform-health" open={healthOpen} onToggle={event=>setHealthOpen(event.currentTarget.open)}><summary>平台健康与运行负载 <RootFilesystemWarning status={host?.root_filesystem} error={host?.root_filesystem_error} /></summary><div className="overview-runtime-grid">{host && <Card className="surface-card overview-panel" size="small">
-          <PanelHeader icon={<CloudServerOutlined />} title="服务器负载" meta={host ? `${host.logical_cpus} 核` : undefined} />
-          <div className="overview-load-stack">
-            {hostLoadPercent !== undefined && host?.load_1 !== undefined && (
-              <LoadRow label="1 分钟负载" percent={hostLoadPercent} detail={host.load_1.toFixed(2)} />
-            )}
-            {host?.memory_used_percent !== undefined && (
-              <LoadRow
-                label="物理内存"
-                percent={host.memory_used_percent}
-                detail={`${formatBytes(host.memory_used_bytes)} / ${formatBytes(host.memory_total_bytes)}`}
+      {(canReadPolicies || canReadIdentity) && (
+        <section className="overview-cockpit-grid" aria-label="防代理治理态势">
+          {canReadPolicies && (
+            <Card className="surface-card overview-panel" size="small">
+              <PanelHeader
+                icon={<SafetyCertificateOutlined />}
+                title="近 1 小时共享判定趋势"
+                meta={
+                  <Link className="overview-panel-link" to="/reports">
+                    防代理报表 <RightOutlined />
+                  </Link>
+                }
               />
-            )}
-          </div>
-          <RootFilesystemCapacity status={host?.root_filesystem} error={host?.root_filesystem_error} />
-          {host && (host.load_5 !== undefined || host.load_15 !== undefined) && (
-            <div className="overview-inline-stats">
-              {host.load_5 !== undefined && <div><span>5 分钟负载</span><strong>{host.load_5.toFixed(2)}</strong></div>}
-              {host.load_15 !== undefined && <div><span>15 分钟负载</span><strong>{host.load_15.toFixed(2)}</strong></div>}
+              {sharedTrend.isPending ? (
+                <AppLoadingState rows={3} />
+              ) : sharedTrend.isError || !sharedTrend.data ? (
+                <Alert type="warning" showIcon title="共享判定趋势暂不可用" />
+              ) : (
+                <div className="overview-trend-body">
+                  <dl className="report-facts">
+                    <div>
+                      <dt>策略命中</dt>
+                      <dd>{(trendTotals?.matched ?? 0).toLocaleString('zh-CN')}</dd>
+                    </div>
+                    <div>
+                      <dt>证据不足</dt>
+                      <dd>{(trendTotals?.insufficient ?? 0).toLocaleString('zh-CN')}</dd>
+                    </div>
+                    <div>
+                      <dt>证据过期</dt>
+                      <dd>{(trendTotals?.expired ?? 0).toLocaleString('zh-CN')}</dd>
+                    </div>
+                  </dl>
+                  <Suspense fallback={<AppLoadingState rows={3} />}>
+                    <SharedTrendChart buckets={sharedTrend.data.buckets} />
+                  </Suspense>
+                </div>
+              )}
+            </Card>
+          )}
+
+          <Card className="surface-card overview-panel" size="small">
+            <PanelHeader
+              icon={<AlertOutlined />}
+              title="共享研判与路由器态势"
+              meta={
+                <Link className="overview-panel-link" to="/shared-access">
+                  共享发现 <RightOutlined />
+                </Link>
+              }
+            />
+            <div className="overview-cockpit-stack">
+              {canReadIdentity && routerSummary.data && (
+                <div className="report-meters" role="group" aria-label="路由器识别分布">
+                  {[
+                    {
+                      label: routerStatusLabels.confirmed,
+                      value: routerSummary.data.confirmed,
+                      tone: 'blue',
+                    },
+                    {
+                      label: routerStatusLabels.likely,
+                      value: routerSummary.data.likely,
+                      tone: 'amber',
+                    },
+                    {
+                      label: routerStatusLabels.candidate,
+                      value: routerSummary.data.candidate,
+                      tone: 'slate',
+                    },
+                  ].map((item) => (
+                    <div className={`report-meter tone-${item.tone}`} key={item.label}>
+                      <div className="report-meter-label">
+                        <span>{item.label}</span>
+                        <strong>{item.value.toLocaleString('zh-CN')}</strong>
+                      </div>
+                      <meter min={0} max={Math.max(routerTotal ?? 1, 1)} value={item.value} />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="overview-quick-links">
+                {canReadCases && (
+                  <Link className="overview-quick-link" to={`/shared-access?${context}`}>
+                    <span>共享行为观察</span>
+                    <RightOutlined />
+                  </Link>
+                )}
+                {canReadActions && (
+                  <Link className="overview-quick-link" to="/actions?tab=actions">
+                    <span>仅记录处置动作</span>
+                    <RightOutlined />
+                  </Link>
+                )}
+                {canReadCases && openCases > 0 && (
+                  <Link className="overview-quick-link" to={`/cases?${context}`}>
+                    <span>
+                      待处理案件（{openCases}
+                      {overdueCases > 0 ? ` · 超时 ${overdueCases}` : ''}）
+                    </span>
+                    <RightOutlined />
+                  </Link>
+                )}
+                {canReadIdentity && (
+                  <Link className="overview-quick-link" to="/devices?tab=network">
+                    <span>路由器台账核验</span>
+                    <RightOutlined />
+                  </Link>
+                )}
+              </div>
             </div>
-          )}
-        </Card>}
+          </Card>
+        </section>
+      )}
 
-        {process && <Card className="surface-card overview-panel" size="small">
-          <PanelHeader icon={<CodeOutlined />} title="程序负载" meta={process ? `运行 ${formatDuration(process.uptime_seconds)}` : undefined} />
-          {process && (
-            <>
-              <div className="overview-load-stack">
-                <LoadRow label="进程 CPU" percent={process.cpu_percent} detail={`${process.cpu_percent.toFixed(1)}%`} />
-              </div>
-              <div className="overview-inline-stats overview-process-stats">
-                {process.resident_memory_bytes !== undefined && <div><span>常驻内存</span><strong>{formatBytes(process.resident_memory_bytes)}</strong></div>}
-                <div><span>Go 堆内存</span><strong>{formatBytes(process.heap_alloc_bytes)}</strong></div>
-                <div><span>协程</span><strong>{process.goroutines.toLocaleString()}</strong></div>
-                <div><span>GC 次数</span><strong>{process.gc_cycles.toLocaleString()}</strong></div>
-              </div>
-            </>
-          )}
-          {system.isError && <Alert className="overview-inline-alert" type="warning" showIcon title="运行状态接口读取失败" />}
-        </Card>}
-        {healthComponents.length > 0 && <Card className="surface-card overview-panel" size="small">
-          <PanelHeader
-            icon={<CheckCircleOutlined />}
-            title="平台链路健康"
-            meta={system.data?.status === 'ready' ? '整体正常' : system.data?.status === 'degraded' ? '存在异常' : undefined}
-          />
-          <div className="overview-health-list">
-            {healthComponents.map(([name, item]) => (
-              <div className="overview-health-item" key={name} title={item.error}>
-                <span>{componentNames[name] ?? name}</span>
-                <span className={`overview-health-state overview-health-state-${item.status ?? 'neutral'}`}>
-                  {item.status ? statusNames[item.status] ?? item.status : ''}
-                </span>
-              </div>
-            ))}
-          </div>
-          {system.isError && <Alert className="overview-inline-alert" type="warning" showIcon title="平台健康状态读取失败" />}
-        </Card>}
-</div></details>
+      {activity.data && (activity.data.top_active_risk_ips?.length ?? 0) > 0 && (
+        <section className="surface">
+          <ActiveRiskIps items={activity.data.top_active_risk_ips} />
+        </section>
+      )}
 
-      {(overview.data.open_case_count??overview.data.pending_reviews)>0||(overview.data.overdue_case_count??0)>0 ? <section className="surface workbench-actions"><Typography.Title level={4}>风险待办</Typography.Title><p>待处理 {overview.data.open_case_count??overview.data.pending_reviews} 件 · 超时 {overview.data.overdue_case_count??0} 件</p><div className="policy-toolbar">
-      {can(session.data,'cases:read')&&<><Link to={`/cases?${context}`}>处理风险案件</Link><Link to={`/shared-access?tab=reviews&${context}`}>核对账号归属</Link></>}
-      {can(session.data,'actions:read')&&<Link to="/actions?tab=actions">核对处置记录</Link>}
-      </div></section> : null}
-      {activity.data && (activity.data.top_active_risk_ips?.length ?? 0) > 0 && <section className="surface"><ActiveRiskIps items={activity.data.top_active_risk_ips}/></section>}
       {totalRiskObjects > 0 && (
         <section className="overview-risk-summary">
           <Card className="surface-card overview-panel" size="small">
-            <PanelHeader icon={<SafetyCertificateOutlined />} title="风险等级分布" meta={`${totalRiskObjects.toLocaleString()} 个对象`} />
+            <PanelHeader
+              icon={<SafetyCertificateOutlined />}
+              title="风险等级分布"
+              meta={`${totalRiskObjects.toLocaleString()} 个对象`}
+            />
             <div className="overview-risk-list">
               {levelOrder.map((level) => {
                 const count = levelCounts[level]
-                const percent = totalRiskObjects > 0 ? count / totalRiskObjects * 100 : 0
+                const percent = totalRiskObjects > 0 ? (count / totalRiskObjects) * 100 : 0
                 if (count <= 0) return null
                 return (
                   <div className={`overview-risk-item overview-risk-item-${level}`} key={level}>
                     <span className="overview-risk-dot" />
                     <span className="overview-risk-name">{levelNames[level]}</span>
                     <strong>{count.toLocaleString()}</strong>
-                    <span className="overview-risk-percent">{percent.toFixed(percent > 0 && percent < 1 ? 1 : 0)}%</span>
+                    <span className="overview-risk-percent">
+                      {percent.toFixed(percent > 0 && percent < 1 ? 1 : 0)}%
+                    </span>
                   </div>
                 )
               })}
             </div>
           </Card>
-
         </section>
       )}
 
-      {activity.data && ((activity.data.active_ip_count ?? 0) > 0 || (activity.data.access_object_count ?? 0) > 0 || (activity.data.event_count ?? 0) > 0) && <section className="overview-detail-grid">
-        <div className="surface overview-activity-summary">
-          <div>
-            <Typography.Title level={4}>DPI 访问态势</Typography.Title>
-            <Typography.Text type="secondary">
-              {quickWindow} 内覆盖 {activity.data?.active_ip_count ?? 0} 个活跃 IP 与 {activity.data?.access_object_count ?? 0} 个访问目标
-            </Typography.Text>
-          </div>
-          <div className="overview-activity-metrics">
-            <div><span>标准事件</span><strong>{(activity.data?.event_count ?? 0).toLocaleString()}</strong></div>
-            <div><span>活跃风险 IP</span><strong>{activity.data?.active_risk_ip_count ?? 0}</strong></div>
-            <Link to={`/activity?section=access&${context}`}>进入访问分析</Link>
-          </div>
-        </div>
+      <details
+        className="surface platform-health"
+        open={healthOpen}
+        onToggle={(event) => setHealthOpen(event.currentTarget.open)}
+      >
+        <summary className="overview-health-summary-bar">
+          <span className="overview-health-summary-title">
+            <CloudServerOutlined /> 平台健康与运行负载
+          </span>
+          <span className="overview-health-summary-chips">
+            {degradedComponents.length > 0 ? (
+              <Tag color="orange">{degradedComponents.length} 项组件需关注</Tag>
+            ) : healthComponents.length > 0 ? (
+              <Tag color="green">全部组件正常</Tag>
+            ) : null}
+            {host?.memory_used_percent !== undefined && (
+              <Tag>内存 {host.memory_used_percent.toFixed(0)}%</Tag>
+            )}
+            <RootFilesystemWarning
+              status={host?.root_filesystem}
+              error={host?.root_filesystem_error}
+            />
+          </span>
+        </summary>
+        <div className="overview-runtime-grid">
+          {host && (
+            <Card className="surface-card overview-panel" size="small">
+              <PanelHeader
+                icon={<CloudServerOutlined />}
+                title="服务器资源"
+                meta={`${host.logical_cpus} 核`}
+              />
+              <div className="overview-load-list">
+                {hostLoadPercent !== undefined && (
+                  <LoadRow
+                    label="1 分钟平均负载"
+                    percent={hostLoadPercent}
+                    detail={[host.load_1, host.load_5, host.load_15]
+                      .filter((v): v is number => v !== undefined)
+                      .map((v) => v.toFixed(2))
+                      .join(' / ')}
+                  />
+                )}
+                {host.memory_used_percent !== undefined && (
+                  <LoadRow
+                    label="内存使用率"
+                    percent={host.memory_used_percent}
+                    detail={`${formatBytes(host.memory_used_bytes)} / ${formatBytes(host.memory_total_bytes)}`}
+                  />
+                )}
+              </div>
+              <RootFilesystemCapacity
+                status={host.root_filesystem}
+                error={host.root_filesystem_error}
+              />
+            </Card>
+          )}
 
-      </section>}
+          {process && (
+            <Card className="surface-card overview-panel" size="small">
+              <PanelHeader
+                icon={<CodeOutlined />}
+                title="服务运行态"
+                meta={`已运行 ${formatDuration(process.uptime_seconds)}`}
+              />
+              <div className="overview-runtime-metrics">
+                <div className="overview-runtime-stat">
+                  <span>进程 CPU</span>
+                  <strong>{process.cpu_percent.toFixed(1)}%</strong>
+                </div>
+                <div className="overview-runtime-stat">
+                  <span>堆内存</span>
+                  <strong>{formatBytes(process.heap_alloc_bytes)}</strong>
+                </div>
+                <div className="overview-runtime-stat">
+                  <span>常驻内存</span>
+                  <strong>
+                    {formatBytes(process.resident_memory_bytes ?? process.heap_in_use_bytes)}
+                  </strong>
+                </div>
+                <div className="overview-runtime-stat">
+                  <span>活跃协程 / GC</span>
+                  <strong>
+                    {process.goroutines} / {process.gc_cycles}
+                  </strong>
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {(healthComponents.length > 0 || system.isError) && (
+            <Card className="surface-card overview-panel" size="small">
+              <PanelHeader
+                icon={<DatabaseOutlined />}
+                title="核心组件健康"
+                meta={
+                  system.data?.status === 'ready'
+                    ? '就绪'
+                    : system.data?.status === 'degraded'
+                      ? '降级'
+                      : ''
+                }
+              />
+              <div className="overview-health-list">
+                {healthComponents.map(([key, item]) => (
+                  <div className="overview-health-row" key={key}>
+                    <span className="overview-health-name">{componentNames[key] ?? key}</span>
+                    <span
+                      className={`overview-health-state overview-health-state-${item.status ?? 'neutral'}`}
+                    >
+                      {item.status ? (statusNames[item.status] ?? item.status) : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {system.isError && (
+                <Alert
+                  className="overview-inline-alert"
+                  type="warning"
+                  showIcon
+                  title="平台健康状态读取失败"
+                />
+              )}
+            </Card>
+          )}
+        </div>
+      </details>
     </main>
   )
 }

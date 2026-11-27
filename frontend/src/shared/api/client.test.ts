@@ -28,7 +28,10 @@ describe('request 401 handling', () => {
   it('认证接口返回 401 不触发会话失效，避免登录页循环', async () => {
     const handler = vi.fn()
     setUnauthorizedHandler(handler)
-    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => new Response('bad password', { status: 401 })))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(async () => new Response('bad password', { status: 401 })),
+    )
     await expect(request('/auth/login', { method: 'POST' })).rejects.toMatchObject({ status: 401 })
     await expect(request('/session')).rejects.toMatchObject({ status: 401 })
     expect(handler).not.toHaveBeenCalled()

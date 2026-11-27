@@ -14,7 +14,9 @@ describe('LabelPanel', () => {
 
   it('requires reason before submit', async () => {
     const user = userEvent.setup()
-    const setup = renderWithProviders(<LabelPanel evidenceIds={['evidence-test']} targetId="10.0.0.1" />)
+    const setup = renderWithProviders(
+      <LabelPanel evidenceIds={['evidence-test']} targetId="10.0.0.1" />,
+    )
     render(setup.ui, { wrapper: setup.wrapper })
     await user.click(screen.getByRole('button', { name: '提交标注' }))
     expect(await screen.findByText('请选择复核结论')).toBeInTheDocument()

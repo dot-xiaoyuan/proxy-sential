@@ -15,7 +15,9 @@ test.describe('Responsive Visual Snapshots & Strict DOM Internal Anti-Overflow C
     await page.screenshot({ path: testInfo.outputPath('cases-1280x800.png'), fullPage: true })
   })
 
-  test('capture 390x844 ip detail page with strict DOM internal container overflow checks', async ({ page }, testInfo) => {
+  test('capture 390x844 ip detail page with strict DOM internal container overflow checks', async ({
+    page,
+  }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 })
     await page.goto('/ips/10.255.0.59')
     await expect(page.getByRole('heading', { name: '10.255.0.59' })).toBeVisible()
@@ -31,7 +33,14 @@ test.describe('Responsive Visual Snapshots & Strict DOM Internal Anti-Overflow C
 
     // 2. DOM 内部主要容器溢出检测 (.page, .surface, .details-grid, .sample-list, .evidence-item)
     const overflowingContainers = await page.evaluate(() => {
-      const selectors = ['.page', '.surface', '.details-grid', '.sample-list', '.evidence-item', '.ant-table-content']
+      const selectors = [
+        '.page',
+        '.surface',
+        '.details-grid',
+        '.sample-list',
+        '.evidence-item',
+        '.ant-table-content',
+      ]
       const failures: Array<{ selector: string; scrollWidth: number; clientWidth: number }> = []
 
       for (const sel of selectors) {
@@ -56,7 +65,9 @@ test.describe('Responsive Visual Snapshots & Strict DOM Internal Anti-Overflow C
     await page.screenshot({ path: testInfo.outputPath('ip-detail-390x844.png'), fullPage: true })
   })
 
-  test('capture 390x844 rules page with strict DOM internal container overflow checks', async ({ page }, testInfo) => {
+  test('capture 390x844 rules page with strict DOM internal container overflow checks', async ({
+    page,
+  }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 })
     await page.goto('/settings/rules')
     await expect(page.getByRole('heading', { name: '规则与特征库' })).toBeVisible()
@@ -70,7 +81,14 @@ test.describe('Responsive Visual Snapshots & Strict DOM Internal Anti-Overflow C
 
     // 2. DOM 内部主要容器溢出检测
     const overflowingContainers = await page.evaluate(() => {
-      const selectors = ['.page', '.surface', '.details-grid', '.sample-list', '.evidence-item', '.ant-table-content']
+      const selectors = [
+        '.page',
+        '.surface',
+        '.details-grid',
+        '.sample-list',
+        '.evidence-item',
+        '.ant-table-content',
+      ]
       const failures: Array<{ selector: string; scrollWidth: number; clientWidth: number }> = []
 
       for (const sel of selectors) {

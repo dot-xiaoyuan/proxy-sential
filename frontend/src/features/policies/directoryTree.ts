@@ -1,6 +1,11 @@
 import type { FourKDirectoryItem } from './api'
 
-export type DirectoryTreeNode = { value: string; key: string; title: string; children?: DirectoryTreeNode[] }
+export type DirectoryTreeNode = {
+  value: string
+  key: string
+  title: string
+  children?: DirectoryTreeNode[]
+}
 
 /**
  * Groups arrive as a flat id/parent_id list. Render the real organisational

@@ -104,7 +104,7 @@ Proxy Sentinel 是防代理/共享上网检测系统，按“标准事件 → �
 
 ### 样式规则
 
-- 样式集中到 `frontend/src/index.css` 的 CSS Class 或 CSS Variables，禁止 TSX/JSX 硬编码内联 `style={{ ... }}`。
+- 样式按分层组织在 `frontend/src/styles/`（全局基础层由 `frontend/src/index.css` 统一导入 `tokens.css`、`base.css`、`layout.css`、`components.css`，页面专属样式位于 `frontend/src/styles/pages/*.css` 并由对应路由页面按需引入），使用 CSS Class 与 CSS Variables，禁止 TSX/JSX 硬编码内联 `style={{ ... }}`。
 - 按钮、标签、状态 Badge、操作项文本设置 `white-space: nowrap` 与 `flex-shrink: 0`，防止挤压成竖排；按钮组和操作栏使用 `flex-wrap: wrap` 与合理 `gap`。
 - IP、UUID、Hash 等长标识符显式采用 `overflow-wrap: anywhere` 或省略截断，避免遮挡、撑宽。
 - 使用 Neutral Slate 背景、`#e2e8f0` 边框、8px 卡片圆角、桌面 20px / 移动 14px 内边距；不使用硬编码深色背景。标题、副标题、表头与正文须有清晰字号和字重层级。

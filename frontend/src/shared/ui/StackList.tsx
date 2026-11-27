@@ -7,67 +7,73 @@ import type { ReactNode } from 'react'
  */
 
 type StackListProps<T> = {
-	items: readonly T[]
-	renderItem: (item: T, index: number) => ReactNode
-	empty?: ReactNode
-	className?: string
-	itemKey?: (item: T, index: number) => string
+  items: readonly T[]
+  renderItem: (item: T, index: number) => ReactNode
+  empty?: ReactNode
+  className?: string
+  itemKey?: (item: T, index: number) => string
 }
 
 export function StackList<T>({ items, renderItem, empty, className, itemKey }: StackListProps<T>) {
-	if (items.length === 0) {
-		// className 必须同时作用于空态容器，否则 mobile-only 之类的可见性约束会失效
-		return <div className={className ? `ps-list-empty ${className}` : 'ps-list-empty'}>{empty ?? '暂无数据'}</div>
-	}
-	return (
-		<div className={className ? `ps-list ${className}` : 'ps-list'}>
-			{items.map((item, index) => (
-				<div className="ps-list-item" key={itemKey ? itemKey(item, index) : index}>
-					{renderItem(item, index)}
-				</div>
-			))}
-		</div>
-	)
+  if (items.length === 0) {
+    // className 必须同时作用于空态容器，否则 mobile-only 之类的可见性约束会失效
+    return (
+      <div className={className ? `ps-list-empty ${className}` : 'ps-list-empty'}>
+        {empty ?? '暂无数据'}
+      </div>
+    )
+  }
+  return (
+    <div className={className ? `ps-list ${className}` : 'ps-list'}>
+      {items.map((item, index) => (
+        <div className="ps-list-item" key={itemKey ? itemKey(item, index) : index}>
+          {renderItem(item, index)}
+        </div>
+      ))}
+    </div>
+  )
 }
 
 type StackListItemProps = {
-	meta?: ReactNode
-	actions?: ReactNode
-	children?: ReactNode
+  meta?: ReactNode
+  actions?: ReactNode
+  children?: ReactNode
 }
 
 export function StackListItem({ meta, actions, children }: StackListItemProps) {
-	return (
-		<>
-			<div className="ps-list-item-main">
-				{meta}
-				{children}
-			</div>
-			{actions}
-		</>
-	)
+  return (
+    <>
+      <div className="ps-list-item-main">
+        {meta}
+        {children}
+      </div>
+      {actions}
+    </>
+  )
 }
 
 type StackListItemMetaProps = {
-	title?: ReactNode
-	description?: ReactNode
+  title?: ReactNode
+  description?: ReactNode
 }
 
 export function StackListItemMeta({ title, description }: StackListItemMetaProps) {
-	return (
-		<div className="ps-list-item-meta">
-			<div className="ps-list-item-meta-content">
-				{title !== undefined && <div className="ps-list-item-meta-title">{title}</div>}
-				{description !== undefined && <div className="ps-list-item-meta-description">{description}</div>}
-			</div>
-		</div>
-	)
+  return (
+    <div className="ps-list-item-meta">
+      <div className="ps-list-item-meta-content">
+        {title !== undefined && <div className="ps-list-item-meta-title">{title}</div>}
+        {description !== undefined && (
+          <div className="ps-list-item-meta-description">{description}</div>
+        )}
+      </div>
+    </div>
+  )
 }
 
 type StackListActionsProps = {
-	children: ReactNode
+  children: ReactNode
 }
 
 export function StackListActions({ children }: StackListActionsProps) {
-	return <div className="ps-list-item-action">{children}</div>
+  return <div className="ps-list-item-action">{children}</div>
 }

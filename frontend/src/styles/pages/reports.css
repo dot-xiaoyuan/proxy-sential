@@ -1,0 +1,259 @@
+.report-chart {
+  height: 240px;
+}
+
+.report-toolbar,
+.report-panel-heading,
+.report-panel-footer,
+.report-coverage-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.report-toolbar {
+  justify-content: flex-end;
+}
+
+.report-link,
+.report-refresh,
+.report-status {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.report-panels {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  gap: 14px;
+  min-width: 0;
+}
+
+.report-panels > :only-child {
+  grid-column: 1 / -1;
+}
+
+.report-panels:empty {
+  display: none;
+}
+
+.report-diagnostics {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.55fr);
+}
+
+.report-panel {
+  display: grid;
+  gap: 12px;
+  padding: var(--report-padding);
+  align-content: start;
+  overflow-wrap: anywhere;
+}
+
+.report-panel-heading,
+.report-panel-footer {
+  justify-content: space-between;
+}
+
+.report-panel h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--ps-text-primary);
+}
+
+.report-link {
+  color: var(--ps-primary-hover);
+  font-size: 13px;
+}
+
+.report-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 112px), 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.report-facts div {
+  padding: 10px 12px;
+  background: var(--ps-bg-body);
+  border-radius: 6px;
+  min-width: 0;
+}
+
+.report-facts dt,
+.report-meta {
+  margin: 0;
+  color: var(--ps-text-secondary);
+  font-size: 12px;
+}
+
+.report-facts dd {
+  margin: 2px 0 0;
+  font-weight: 600;
+  color: var(--ps-text-primary);
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+}
+
+.report-status {
+  margin-inline-end: 0;
+}
+
+.report-select {
+  width: 126px;
+  max-width: 100%;
+  flex-shrink: 0;
+}
+
+.report-total {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  color: var(--ps-text-secondary);
+  font-size: 13px;
+}
+
+.report-total strong {
+  color: var(--ps-text-primary);
+  font-size: 26px;
+  font-variant-numeric: tabular-nums;
+}
+
+.report-meters {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.report-meter {
+  --report-bar-color: #2563a4;
+}
+
+.report-meter.tone-amber {
+  --report-bar-color: #b66911;
+}
+
+.report-meter.tone-slate {
+  --report-bar-color: #7591a9;
+}
+
+.report-meter-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 5px 10px;
+  color: var(--ps-text-secondary);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+
+.report-meter meter {
+  display: block;
+  width: 100%;
+  height: 8px;
+  margin-top: 4px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--ps-bg-surface-hover);
+}
+
+.report-meter meter::-webkit-meter-bar {
+  border: 0;
+  border-radius: 4px;
+  background: var(--ps-bg-surface-hover);
+}
+
+.report-meter meter::-webkit-meter-optimum-value {
+  border-radius: 4px;
+  background: var(--report-bar-color);
+}
+
+.report-meter meter::-moz-meter-bar {
+  border-radius: 4px;
+  background: var(--report-bar-color);
+}
+
+.report-panel .defense-trend-chart {
+  height: 226px !important;
+  min-width: 0;
+}
+
+.report-no-trend {
+  display: grid;
+  place-items: center;
+  min-height: 132px;
+  margin: 0;
+  background: var(--ps-bg-body);
+  border-radius: 6px;
+  color: var(--ps-text-secondary);
+}
+
+.report-coverage-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 24px;
+}
+
+.report-coverage-grid > div {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.report-coverage-grid h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.report-coverage-list {
+  display: grid;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.report-coverage-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 4px 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--ps-border-color);
+}
+
+.report-coverage-source {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.report-coverage-list time {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 880px) {
+  .report-panels,
+  .report-coverage-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 560px) {
+  .reports-page {
+    --report-padding: 14px;
+  }
+
+  .report-facts {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .report-facts div {
+    padding-inline: 8px;
+  }
+}

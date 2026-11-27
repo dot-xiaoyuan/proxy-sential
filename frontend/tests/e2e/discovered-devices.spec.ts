@@ -1,53 +1,126 @@
 import { test, expect } from '@playwright/test'
 import { writeFile } from 'node:fs/promises'
 
-for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:1440,height:900}]) {
-  test(`discovered devices ${viewport.width}`, async ({page}, info) => {
-    const errors:string[]=[]
-    const serviceTargets:string[]=[]
-    const observedPortTargets:string[]=[]
-    page.on('pageerror',error=>errors.push(error.message))
-    page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
-    page.on('response',response=>{if(response.status()>=400)errors.push(`${response.status()} ${response.url()}`)})
-    page.on('request',request=>{if(new URL(request.url()).pathname.endsWith('/discovery/service-clues'))serviceTargets.push(new URL(request.url()).searchParams.get('targets')??'')})
-    page.on('request',request=>{if(new URL(request.url()).pathname.endsWith('/discovery/observed-ports'))observedPortTargets.push(new URL(request.url()).searchParams.get('targets')??'')})
+for (const viewport of [
+  { width: 390, height: 844 },
+  { width: 1280, height: 800 },
+  { width: 1440, height: 900 },
+]) {
+  test(`discovered devices ${viewport.width}`, async ({ page }, info) => {
+    const errors: string[] = []
+    const serviceTargets: string[] = []
+    const observedPortTargets: string[] = []
+    page.on('pageerror', (error) => errors.push(error.message))
+    page.on('console', (message) => {
+      if (message.type() === 'error') errors.push(message.text())
+    })
+    page.on('response', (response) => {
+      if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`)
+    })
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname.endsWith('/discovery/service-clues'))
+        serviceTargets.push(new URL(request.url()).searchParams.get('targets') ?? '')
+    })
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname.endsWith('/discovery/observed-ports'))
+        observedPortTargets.push(new URL(request.url()).searchParams.get('targets') ?? '')
+    })
     await page.setViewportSize(viewport)
     await page.goto('/devices?tab=discovery')
-    await expect(page.getByRole('heading',{name:'发现设备',level:1})).toBeVisible()
-    await expect(page.getByText('192.0.2.10',{exact:true}).filter({visible:true})).toBeVisible()
-    await expect(page.getByText('HP LaserJet Pro MFP',{exact:true}).filter({visible:true})).toBeVisible()
-    await expect(page.getByText('Windows · 历史线索',{exact:true})).toBeVisible()
-    await expect(page.getByText('Android · IP 线索',{exact:true})).toHaveCount(0)
-    await expect(page.getByText('_ipp._tcp · 631',{exact:true})).toHaveCount(1)
-    expect(serviceTargets.some(target=>target.includes('sensor-test|00:11:22:33:44:55|192.0.2.10'))).toBe(true)
+    await expect(page.getByRole('heading', { name: '发现设备', level: 1 })).toBeVisible()
+    await expect(
+      page.getByText('192.0.2.10', { exact: true }).filter({ visible: true }),
+    ).toBeVisible()
+    await expect(
+      page.getByText('HP LaserJet Pro MFP', { exact: true }).filter({ visible: true }),
+    ).toBeVisible()
+    await expect(page.getByText('Windows · 历史线索', { exact: true })).toBeVisible()
+    await expect(page.getByText('Android · IP 线索', { exact: true })).toHaveCount(0)
+    await expect(page.getByText('_ipp._tcp · 631', { exact: true })).toHaveCount(1)
+    expect(
+      serviceTargets.some((target) => target.includes('sensor-test|00:11:22:33:44:55|192.0.2.10')),
+    ).toBe(true)
     expect(observedPortTargets).toEqual([])
     await expect(page.getByLabel('发现设备摘要')).toContainText(/发现设备\s*3/)
     await expect(page.getByLabel('发现设备摘要')).toContainText(/哑终端线索\s*1/)
-    await expect(page.getByText('证据有效不代表设备在线。',{exact:false})).toBeVisible()
+    await expect(page.getByText('证据有效不代表设备在线。', { exact: false })).toBeVisible()
     await expect(page.getByText('镜像采集范围即将到期')).toBeVisible()
     await expect(page.getByText('发现数据段已隔离，处理存在缺口')).toBeVisible()
-    const probe=await page.evaluate(()=>({
-      overflow:document.documentElement.scrollWidth>innerWidth+2,
-      panelRight:document.querySelector('.passive-discovery-panel')!.getBoundingClientRect().right,
-      controls:[...document.querySelectorAll('.passive-discovery-panel .ant-btn,.passive-discovery-panel .ant-tag')].filter(e=>e.getBoundingClientRect().width>0).map(e=>({text:e.textContent,wrap:getComputedStyle(e).whiteSpace,shrink:getComputedStyle(e).flexShrink})),
-      rowDisplay:getComputedStyle(document.querySelector('.passive-discovery-panel .ant-table-tbody > tr[data-row-key]')!).display,
-      visibleHeaders:[...document.querySelectorAll<HTMLElement>('.passive-ledger-table .ant-table-thead th')].filter(e=>e.getClientRects().length>0).map(e=>e.textContent?.trim()),
-      clippedHeaders:[...document.querySelectorAll<HTMLElement>('.passive-ledger-table .ant-table-thead th')].filter(e=>e.getClientRects().length>0&&e.scrollWidth>e.clientWidth+1).map(e=>e.textContent?.trim()),
-      tableScroll:(()=>{const e=document.querySelector<HTMLElement>('.passive-ledger-table .ant-table-content')!;return {width:e.clientWidth,content:e.scrollWidth,overflow:getComputedStyle(e).overflowX}})(),
-      selected:[...document.querySelectorAll('.ant-menu-item-selected')].map(e=>({text:e.textContent,color:getComputedStyle(e).color,background:getComputedStyle(e).backgroundColor})),
-      titleSize:getComputedStyle(document.querySelector('h1')!).fontSize,
+    const probe = await page.evaluate(() => ({
+      overflow: document.documentElement.scrollWidth > innerWidth + 2,
+      panelRight: document.querySelector('.passive-discovery-panel')!.getBoundingClientRect().right,
+      controls: [
+        ...document.querySelectorAll(
+          '.passive-discovery-panel .ant-btn,.passive-discovery-panel .ant-tag',
+        ),
+      ]
+        .filter((e) => e.getBoundingClientRect().width > 0)
+        .map((e) => ({
+          text: e.textContent,
+          wrap: getComputedStyle(e).whiteSpace,
+          shrink: getComputedStyle(e).flexShrink,
+        })),
+      rowDisplay: getComputedStyle(
+        document.querySelector('.passive-discovery-panel .ant-table-tbody > tr[data-row-key]')!,
+      ).display,
+      visibleHeaders: [
+        ...document.querySelectorAll<HTMLElement>('.passive-ledger-table .ant-table-thead th'),
+      ]
+        .filter((e) => e.getClientRects().length > 0)
+        .map((e) => e.textContent?.trim()),
+      clippedHeaders: [
+        ...document.querySelectorAll<HTMLElement>('.passive-ledger-table .ant-table-thead th'),
+      ]
+        .filter((e) => e.getClientRects().length > 0 && e.scrollWidth > e.clientWidth + 1)
+        .map((e) => e.textContent?.trim()),
+      tableScroll: (() => {
+        const e = document.querySelector<HTMLElement>('.passive-ledger-table .ant-table-content')!
+        return {
+          width: e.clientWidth,
+          content: e.scrollWidth,
+          overflow: getComputedStyle(e).overflowX,
+        }
+      })(),
+      selected: [...document.querySelectorAll('.ant-menu-item-selected')].map((e) => ({
+        text: e.textContent,
+        color: getComputedStyle(e).color,
+        background: getComputedStyle(e).backgroundColor,
+      })),
+      titleSize: getComputedStyle(document.querySelector('h1')!).fontSize,
     }))
     expect(probe.overflow).toBe(false)
     expect(probe.panelRight).toBeLessThanOrEqual(viewport.width)
-    expect(probe.controls.every(c=>c.wrap==='nowrap'&&c.shrink==='0')).toBe(true)
-    if(viewport.width<560)expect(probe.rowDisplay).not.toBe('table-row')
-    else {expect(probe.visibleHeaders).toHaveLength(8);expect(probe.visibleHeaders).toContain('终端类型 / 制造商 / 型号');expect(probe.visibleHeaders).toContain('证据状态 / 最近观测');expect(probe.clippedHeaders).toEqual([])}
-    if(viewport.width===1280){expect(probe.tableScroll.content).toBeGreaterThan(probe.tableScroll.width);expect(probe.tableScroll.overflow).toMatch(/auto|scroll/)}
-    if(viewport.width===1440)expect(probe.tableScroll.content).toBeLessThanOrEqual(probe.tableScroll.width+1)
-    await writeFile(info.outputPath('dom.json'),JSON.stringify(probe,null,2))
-    await page.screenshot({path:info.outputPath('discovered-devices.png'),fullPage:true,animations:'disabled'})
-    if(viewport.width<560){await page.locator('.passive-ledger-table .ant-table-tbody > tr[data-row-key]').first().scrollIntoViewIfNeeded();await page.screenshot({path:info.outputPath('discovered-devices-card.png'),animations:'disabled'})}
-    await page.getByRole('button',{name:'查看证据'}).first().click()
+    expect(probe.controls.every((c) => c.wrap === 'nowrap' && c.shrink === '0')).toBe(true)
+    if (viewport.width < 560) expect(probe.rowDisplay).not.toBe('table-row')
+    else {
+      expect(probe.visibleHeaders).toHaveLength(8)
+      expect(probe.visibleHeaders).toContain('终端类型 / 制造商 / 型号')
+      expect(probe.visibleHeaders).toContain('证据状态 / 最近观测')
+      expect(probe.clippedHeaders).toEqual([])
+    }
+    if (viewport.width === 1280) {
+      expect(probe.tableScroll.content).toBeGreaterThan(probe.tableScroll.width)
+      expect(probe.tableScroll.overflow).toMatch(/auto|scroll/)
+    }
+    if (viewport.width === 1440)
+      expect(probe.tableScroll.content).toBeLessThanOrEqual(probe.tableScroll.width + 1)
+    await writeFile(info.outputPath('dom.json'), JSON.stringify(probe, null, 2))
+    await page.screenshot({
+      path: info.outputPath('discovered-devices.png'),
+      fullPage: true,
+      animations: 'disabled',
+    })
+    if (viewport.width < 560) {
+      await page
+        .locator('.passive-ledger-table .ant-table-tbody > tr[data-row-key]')
+        .first()
+        .scrollIntoViewIfNeeded()
+      await page.screenshot({
+        path: info.outputPath('discovered-devices-card.png'),
+        animations: 'disabled',
+      })
+    }
+    await page.getByRole('button', { name: '查看证据' }).first().click()
     await expect(page.getByRole('dialog')).toContainText('DNS-SD 服务响应与地址记录自动关联')
     await expect(page.getByRole('dialog')).toContainText('见 TCP SYN-ACK 443')
     expect(observedPortTargets).toEqual(['sensor-test|192.0.2.10'])
@@ -58,34 +131,49 @@ for (const viewport of [{width:390,height:844},{width:1280,height:800},{width:14
     await expect(page.getByRole('dialog')).toContainText('fixture-handshake-ja4')
     await expect(page.getByRole('dialog')).toContainText('TLS JA4')
     await expect(page.getByRole('dialog')).toContainText('握手目标 TCP/443')
-    await page.getByRole('dialog').getByText('TLS JA4',{exact:true}).scrollIntoViewIfNeeded()
-    const modalProbe=await page.evaluate(()=>{
-      const modal=document.querySelector('[role="dialog"]')!
-      const value=[...document.querySelectorAll('.discovery-client-clues article')].find(e=>e.textContent?.includes('TLS JA4'))!.querySelector('span')!
-      return {modalRight:modal.getBoundingClientRect().right,modalWidth:modal.getBoundingClientRect().width,bodyWidth:document.documentElement.scrollWidth,valueWrap:getComputedStyle(value).overflowWrap}
+    await page.getByRole('dialog').getByText('TLS JA4', { exact: true }).scrollIntoViewIfNeeded()
+    const modalProbe = await page.evaluate(() => {
+      const modal = document.querySelector('[role="dialog"]')!
+      const value = [...document.querySelectorAll('.discovery-client-clues article')]
+        .find((e) => e.textContent?.includes('TLS JA4'))!
+        .querySelector('span')!
+      return {
+        modalRight: modal.getBoundingClientRect().right,
+        modalWidth: modal.getBoundingClientRect().width,
+        bodyWidth: document.documentElement.scrollWidth,
+        valueWrap: getComputedStyle(value).overflowWrap,
+      }
     })
     expect(modalProbe.modalRight).toBeLessThanOrEqual(viewport.width)
-    expect(modalProbe.bodyWidth).toBeLessThanOrEqual(viewport.width+2)
+    expect(modalProbe.bodyWidth).toBeLessThanOrEqual(viewport.width + 2)
     expect(modalProbe.valueWrap).toBe('anywhere')
-    await writeFile(info.outputPath('modal-dom.json'),JSON.stringify(modalProbe,null,2))
+    await writeFile(info.outputPath('modal-dom.json'), JSON.stringify(modalProbe, null, 2))
     await expect(page.getByRole('dialog')).toContainText('fixture-flow-443')
     await expect(page.getByRole('dialog')).toContainText('见 TCP SYN-ACK 443')
     await expect(page.getByRole('dialog')).toContainText('fixture-flow-80')
     await expect(page.getByRole('dialog')).toContainText('fixture-service-announcement')
     await expect(page.getByRole('dialog')).toContainText('不证明连接完成或设备本机端口开放')
-    await page.screenshot({path:info.outputPath('evidence.png'),fullPage:true,animations:'disabled'})
-    await page.getByRole('button',{name:'Close',exact:true}).click()
-    await page.getByRole('button',{name:'更多筛选'}).click()
-    await expect(page.getByRole('combobox',{name:'设备类型'})).toBeVisible()
-    await page.getByRole('combobox',{name:'发现协议'}).click()
-    await page.getByText('DHCP',{exact:true}).last().click()
+    await page.screenshot({
+      path: info.outputPath('evidence.png'),
+      fullPage: true,
+      animations: 'disabled',
+    })
+    await page.getByRole('button', { name: 'Close', exact: true }).click()
+    await page.getByRole('button', { name: '更多筛选' }).click()
+    await expect(page.getByRole('combobox', { name: '设备类型' })).toBeVisible()
+    await page.getByRole('combobox', { name: '发现协议' }).click()
+    await page.getByText('DHCP', { exact: true }).last().click()
     await expect(page).toHaveURL(/discovery_protocol=dhcp/)
     await expect(page.getByText(/第 1 页 · 已加载/)).toBeVisible()
-    await page.screenshot({path:info.outputPath('filters.png'),fullPage:true,animations:'disabled'})
+    await page.screenshot({
+      path: info.outputPath('filters.png'),
+      fullPage: true,
+      animations: 'disabled',
+    })
     expect(errors).toEqual([])
     await page.goto('/discovery?tab=records&discovery_protocol=dns_sd')
     await expect(page).toHaveURL(/tab=discovery/)
     await expect(page).toHaveURL(/discovery_protocol=dns_sd/)
-    await expect(page.getByRole('heading',{name:'发现设备',level:1})).toBeVisible()
+    await expect(page.getByRole('heading', { name: '发现设备', level: 1 })).toBeVisible()
   })
 }

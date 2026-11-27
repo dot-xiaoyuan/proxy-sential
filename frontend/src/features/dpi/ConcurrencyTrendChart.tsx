@@ -37,9 +37,7 @@ export function ConcurrencyTrendChart({ points, windowValue }: ConcurrencyTrendC
           return (
             <Col key={point.time} xs={12} sm={8} md={4}>
               <div className="concurrency-point-card">
-                <div className="concurrency-point-time">
-                  {point.time}
-                </div>
+                <div className="concurrency-point-time">{point.time}</div>
 
                 <div className="concurrency-point-devices">
                   {point.active_devices} <span className="concurrency-point-unit">台</span>
@@ -58,9 +56,7 @@ export function ConcurrencyTrendChart({ points, windowValue }: ConcurrencyTrendC
                   />
                 </div>
 
-                <div className="concurrency-point-pps">
-                  {(pps / 1000).toFixed(1)}k PPS
-                </div>
+                <div className="concurrency-point-pps">{(pps / 1000).toFixed(1)}k PPS</div>
                 <Typography.Text className="concurrency-point-subtext" type="secondary">
                   {bps == null ? 'Mbps 缺失' : `${bps} Mbps`}
                 </Typography.Text>

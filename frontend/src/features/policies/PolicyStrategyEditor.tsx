@@ -2,7 +2,19 @@ import { Notice as Alert } from '../../shared/ui/Notice'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { Button, Checkbox, Form, Input, InputNumber, Select, Space, Steps, Switch, TreeSelect, Typography } from 'antd'
+import {
+  Button,
+  Checkbox,
+  Form,
+  Input,
+  InputNumber,
+  Select,
+  Space,
+  Steps,
+  Switch,
+  TreeSelect,
+  Typography,
+} from 'antd'
 
 import { request } from '../../shared/api/client'
 import type { components } from '../../shared/api/generated'
@@ -51,15 +63,24 @@ const actionLabel: Record<string, string> = {
   disable_account: '用户封禁',
 }
 
-const stageOf = (policy: Policy, action: string) => policy.stages.find(stage => stage.action === action)
+const stageOf = (policy: Policy, action: string) =>
+  policy.stages.find((stage) => stage.action === action)
 
 function actionValues(policy: Policy): ActionEditor {
   const notify = stageOf(policy, 'notify')
   const disconnect = stageOf(policy, 'disconnect')
   const rate = stageOf(policy, 'rate_limit')
   const disable = stageOf(policy, 'disable_account')
-  const basis = (stage?: Stage): TriggerBasis => stage?.depends_on?.[0] === 'notify' ? 'notify' : stage?.depends_on?.[0] === 'rate_limit' ? 'rate_limit' : 'duration'
-  const value = (stage?: Stage) => stage?.depends_on?.length ? Math.max(stage.min_episodes || 1, 1) : Math.max(stage?.after_seconds || 1, 1)
+  const basis = (stage?: Stage): TriggerBasis =>
+    stage?.depends_on?.[0] === 'notify'
+      ? 'notify'
+      : stage?.depends_on?.[0] === 'rate_limit'
+        ? 'rate_limit'
+        : 'duration'
+  const value = (stage?: Stage) =>
+    stage?.depends_on?.length
+      ? Math.max(stage.min_episodes || 1, 1)
+      : Math.max(stage?.after_seconds || 1, 1)
   return {
     notify_enabled: Boolean(notify),
     notify_after_seconds: notify?.after_seconds || 60,
@@ -88,49 +109,91 @@ function actionValues(policy: Policy): ActionEditor {
   }
 }
 
-function toStage(action: string, enabled: boolean | undefined, basis: TriggerBasis | undefined, value: number | undefined, connector: string | undefined, extra: Partial<Stage> = {}): Stage[] {
+function toStage(
+  action: string,
+  enabled: boolean | undefined,
+  basis: TriggerBasis | undefined,
+  value: number | undefined,
+  connector: string | undefined,
+  extra: Partial<Stage> = {},
+): Stage[] {
   if (!enabled) return []
   const dependency = basis && basis !== 'duration' ? [basis] : []
-  return [{
-    action,
-    connector_id: connector || '',
-    after_seconds: dependency.length ? 0 : Math.max(value || 0, 0),
-    min_episodes: dependency.length ? Math.max(value || 1, 1) : 1,
-    duration_seconds: 0,
-    rate_kbps: 0,
-    template: '',
-    depends_on: dependency,
-    interval_seconds: 0,
-    sync_notify: false,
-    put_black: false,
-    ...extra,
-  }]
+  return [
+    {
+      action,
+      connector_id: connector || '',
+      after_seconds: dependency.length ? 0 : Math.max(value || 0, 0),
+      min_episodes: dependency.length ? Math.max(value || 1, 1) : 1,
+      duration_seconds: 0,
+      rate_kbps: 0,
+      template: '',
+      depends_on: dependency,
+      interval_seconds: 0,
+      sync_notify: false,
+      put_black: false,
+      ...extra,
+    },
+  ]
 }
 
 function buildPolicy(original: Policy, values: StrategyForm): Policy {
   const action = values.actions || {}
   const stages: Stage[] = [
-    ...toStage('notify', action.notify_enabled, 'duration', action.notify_after_seconds, action.notify_connector_id, {
-      template: action.notify_template || '',
-      channel_id: action.notify_channel_id || '',
-      interval_seconds: action.notify_interval_seconds || 0,
-    }),
-    ...toStage('disconnect', action.disconnect_enabled, action.disconnect_basis, action.disconnect_value, action.disconnect_connector_id, {
-      sync_notify: action.disconnect_sync_notify || false,
-    }),
-    ...toStage('disable_account', action.disable_enabled, action.disable_basis, action.disable_value, action.disable_connector_id, {
-      duration_seconds: action.disable_duration_seconds || 0,
-      sync_notify: action.disable_sync_notify || false,
-    }),
+    ...toStage(
+      'notify',
+      action.notify_enabled,
+      'duration',
+      action.notify_after_seconds,
+      action.notify_connector_id,
+      {
+        template: action.notify_template || '',
+        channel_id: action.notify_channel_id || '',
+        interval_seconds: action.notify_interval_seconds || 0,
+      },
+    ),
+    ...toStage(
+      'disconnect',
+      action.disconnect_enabled,
+      action.disconnect_basis,
+      action.disconnect_value,
+      action.disconnect_connector_id,
+      {
+        sync_notify: action.disconnect_sync_notify || false,
+      },
+    ),
+    ...toStage(
+      'disable_account',
+      action.disable_enabled,
+      action.disable_basis,
+      action.disable_value,
+      action.disable_connector_id,
+      {
+        duration_seconds: action.disable_duration_seconds || 0,
+        sync_notify: action.disable_sync_notify || false,
+      },
+    ),
   ]
   return {
     ...original,
     ...values,
     trigger: 'quota_exceeded',
     action_model: 'dpi-strategy/v1',
-    scope: { accounts: values.scope?.accounts || [], sources: directorySource(values, original), products: values.scope?.products || [], groups: values.scope?.groups || [], vlans: values.scope?.vlans || [] },
+    scope: {
+      accounts: values.scope?.accounts || [],
+      sources: directorySource(values, original),
+      products: values.scope?.products || [],
+      groups: values.scope?.groups || [],
+      vlans: values.scope?.vlans || [],
+    },
     exempt: original.exempt || {},
-    limits: { total: values.limits?.total ?? null, mobile: values.limits?.mobile ?? null, pc: values.limits?.pc ?? null, router: values.limits?.router ?? null, sessions: null },
+    limits: {
+      total: values.limits?.total ?? null,
+      mobile: values.limits?.mobile ?? null,
+      pc: values.limits?.pc ?? null,
+      router: values.limits?.router ?? null,
+      sessions: null,
+    },
     stages,
   }
 }
@@ -142,48 +205,115 @@ function directorySource(values: StrategyForm, original: Policy): string[] {
 function connectorSupports(connector: ActionConnector, action: string) {
   if (!connector.enabled) return false
   const mapping = connector.action_mapping || {}
-  return mapping.account_policy_v1 === 'supported' && Boolean(mapping[action] || mapping[`session.${action}`] || mapping[`account.${action}`])
+  return (
+    mapping.account_policy_v1 === 'supported' &&
+    Boolean(mapping[action] || mapping[`session.${action}`] || mapping[`account.${action}`])
+  )
 }
 
-function ActionDevice({ name, action, connectors, managedConnectorId }: { name: (string | number)[]; action: string; connectors: ActionConnector[]; managedConnectorId?: string }) {
-  const options = connectors.filter(connector => connectorSupports(connector, action)).map(connector => ({ value: connector.connector_id, label: connector.name }))
+function ActionDevice({
+  name,
+  action,
+  connectors,
+  managedConnectorId,
+}: {
+  name: (string | number)[]
+  action: string
+  connectors: ActionConnector[]
+  managedConnectorId?: string
+}) {
+  const options = connectors
+    .filter((connector) => connectorSupports(connector, action))
+    .map((connector) => ({ value: connector.connector_id, label: connector.name }))
   // A managed 4K source can advance its identity epoch when the online Redis
   // address changes, so the source suffix is not always the connector ID. The
   // native connector remains the authoritative executor; do not force an
   // operator to select an empty generic-device list for a 4K policy.
-  const managed = connectors.find(connector => connector.connector_type === 'srun4k' && connector.enabled && (!managedConnectorId || connector.connector_id === managedConnectorId) && (connectorSupports(connector, action) || ['notify', 'disconnect', 'disable_account'].includes(action)))
-    || connectors.find(connector => connector.connector_type === 'srun4k' && connector.enabled && (connectorSupports(connector, action) || ['notify', 'disconnect', 'disable_account'].includes(action)))
+  const managed =
+    connectors.find(
+      (connector) =>
+        connector.connector_type === 'srun4k' &&
+        connector.enabled &&
+        (!managedConnectorId || connector.connector_id === managedConnectorId) &&
+        (connectorSupports(connector, action) ||
+          ['notify', 'disconnect', 'disable_account'].includes(action)),
+    ) ||
+    connectors.find(
+      (connector) =>
+        connector.connector_type === 'srun4k' &&
+        connector.enabled &&
+        (connectorSupports(connector, action) ||
+          ['notify', 'disconnect', 'disable_account'].includes(action)),
+    )
   if (managed) {
-    return <Form.Item name={name} hidden><Input /></Form.Item>
+    return (
+      <Form.Item name={name} hidden>
+        <Input />
+      </Form.Item>
+    )
   }
-  return <Form.Item name={name} label={`${actionLabel[action]}执行设备`} rules={[{ required: true, message: `请选择${actionLabel[action]}执行设备` }]}>
-    <Select options={options} placeholder={options.length ? '请选择执行设备' : '请先在认证与处置接入配置执行设备'} />
-  </Form.Item>
+  return (
+    <Form.Item
+      name={name}
+      label={`${actionLabel[action]}执行设备`}
+      rules={[{ required: true, message: `请选择${actionLabel[action]}执行设备` }]}
+    >
+      <Select
+        options={options}
+        placeholder={options.length ? '请选择执行设备' : '请先在认证与处置接入配置执行设备'}
+      />
+    </Form.Item>
+  )
 }
 
-function BasisFields({ prefix, allowRate }: { prefix: 'disconnect' | 'rate_limit' | 'disable'; allowRate?: boolean }) {
+function BasisFields({
+  prefix,
+  allowRate,
+}: {
+  prefix: 'disconnect' | 'rate_limit' | 'disable'
+  allowRate?: boolean
+}) {
   const basis = Form.useWatch(['actions', `${prefix}_basis`]) as TriggerBasis | undefined
   const notifyEnabled = Form.useWatch(['actions', 'notify_enabled']) as boolean | undefined
   const rateEnabled = Form.useWatch(['actions', 'rate_limit_enabled']) as boolean | undefined
   const options = [{ value: 'duration', label: '配额超限持续时间' }]
   if (notifyEnabled) options.push({ value: 'notify', label: '消息提醒次数' })
   if (allowRate && rateEnabled) options.push({ value: 'rate_limit', label: '带宽降速次数' })
-  return <div className="policy-action-fields">
-    <Form.Item name={['actions', `${prefix}_basis`]} label="触发依据" rules={[{ required: true }]}><Select options={options} /></Form.Item>
-    <Form.Item name={['actions', `${prefix}_value`]} label={basis === 'duration' ? '持续秒数' : '达到次数'} rules={[{ required: true }]}><InputNumber min={1} precision={0} /></Form.Item>
-  </div>
+  return (
+    <div className="policy-action-fields">
+      <Form.Item
+        name={['actions', `${prefix}_basis`]}
+        label="触发依据"
+        rules={[{ required: true }]}
+      >
+        <Select options={options} />
+      </Form.Item>
+      <Form.Item
+        name={['actions', `${prefix}_value`]}
+        label={basis === 'duration' ? '持续秒数' : '达到次数'}
+        rules={[{ required: true }]}
+      >
+        <InputNumber min={1} precision={0} />
+      </Form.Item>
+    </div>
+  )
 }
 
 // A one-line, always-current statement of what this policy does. It is the
 // confirmation an operator would otherwise look for only after saving, and it
 // makes the effect of every field visible while editing.
 type DirectoryOption = { value: string; label: string }
-function policySummary(values: StrategyForm | undefined, products: DirectoryOption[], groups: DirectoryOption[]): string {
-  const nameOf = (options: DirectoryOption[], id: string) => options.find(item => item.value === id)?.label ?? id
+function policySummary(
+  values: StrategyForm | undefined,
+  products: DirectoryOption[],
+  groups: DirectoryOption[],
+): string {
+  const nameOf = (options: DirectoryOption[], id: string) =>
+    options.find((item) => item.value === id)?.label ?? id
   const scope = [
-    ...(values?.scope?.products ?? []).map(id => nameOf(products, id)),
-    ...(values?.scope?.groups ?? []).map(id => nameOf(groups, id)),
-    ...(values?.scope?.vlans ?? []).map(vlan => `VLAN ${vlan}`),
+    ...(values?.scope?.products ?? []).map((id) => nameOf(products, id)),
+    ...(values?.scope?.groups ?? []).map((id) => nameOf(groups, id)),
+    ...(values?.scope?.vlans ?? []).map((vlan) => `VLAN ${vlan}`),
     ...(values?.scope?.accounts ?? []),
   ]
   const limits = values?.limits
@@ -207,7 +337,19 @@ function policySummary(values: StrategyForm | undefined, products: DirectoryOpti
   ].join(' · ')
 }
 
-export function PolicyStrategyEditor({ policy, creating, directory, directoryError, directoryLoading, onRetryDirectory, connectors, saving, onCancel, onSave }: {  policy: Policy
+export function PolicyStrategyEditor({
+  policy,
+  creating,
+  directory,
+  directoryError,
+  directoryLoading,
+  onRetryDirectory,
+  connectors,
+  saving,
+  onCancel,
+  onSave,
+}: {
+  policy: Policy
   creating: boolean
   directory?: FourKDirectory
   directoryError?: string
@@ -222,16 +364,43 @@ export function PolicyStrategyEditor({ policy, creating, directory, directoryErr
   const [step, setStep] = useState(0)
   const stepRef = useRef<HTMLDivElement>(null)
   const actions = Form.useWatch('actions', form) as ActionEditor | undefined
-  const channels = useQuery({ queryKey: ['notifications', 'channels'], queryFn: () => request<components['schemas']['NotificationChannelPage']>('/notifications/channels') })
-  const products = useMemo(() => (directory?.products || []).map(item => ({ value: item.id, label: item.name ? `${item.name} (${item.id})` : item.id })), [directory])
-  const groups = useMemo(() => (directory?.groups || []).map(item => ({ value: item.id, label: item.name ? `${item.name} (${item.id})` : `组 ${item.id}` })), [directory])
+  const channels = useQuery({
+    queryKey: ['notifications', 'channels'],
+    queryFn: () =>
+      request<components['schemas']['NotificationChannelPage']>('/notifications/channels'),
+  })
+  const products = useMemo(
+    () =>
+      (directory?.products || []).map((item) => ({
+        value: item.id,
+        label: item.name ? `${item.name} (${item.id})` : item.id,
+      })),
+    [directory],
+  )
+  const groups = useMemo(
+    () =>
+      (directory?.groups || []).map((item) => ({
+        value: item.id,
+        label: item.name ? `${item.name} (${item.id})` : `组 ${item.id}`,
+      })),
+    [directory],
+  )
   const groupTree = useMemo(() => groupTreeData(directory?.groups || []), [directory])
   // Only the northbound catalog carries names and parents; saying so is the
   // difference between "this group has no name" and "we have not synced it yet".
-  const groupDirectoryHasNames = (directory?.groups || []).some(item => Boolean(item.name))
-  const accounts = useMemo(() => (directory?.accounts || []).map(item => ({ value: item.id, label: item.name || item.id })), [directory])
-  const vlans = useMemo(() => (directory?.vlans || []).map(item => ({ value: item.id, label: item.name || item.id })), [directory])
-  const managedConnectorId = directory?.source.startsWith('srun4k:') ? directory.source.slice('srun4k:'.length) : undefined
+  const groupDirectoryHasNames = (directory?.groups || []).some((item) => Boolean(item.name))
+  const accounts = useMemo(
+    () =>
+      (directory?.accounts || []).map((item) => ({ value: item.id, label: item.name || item.id })),
+    [directory],
+  )
+  const vlans = useMemo(
+    () => (directory?.vlans || []).map((item) => ({ value: item.id, label: item.name || item.id })),
+    [directory],
+  )
+  const managedConnectorId = directory?.source.startsWith('srun4k:')
+    ? directory.source.slice('srun4k:'.length)
+    : undefined
   // The server states why a selector is empty; without it a blank dropdown
   // cannot be told apart from a failed directory read.
   const directoryWarnings = directory?.warnings ?? []
@@ -243,14 +412,19 @@ export function PolicyStrategyEditor({ policy, creating, directory, directoryErr
 
   useEffect(() => {
     const nextActions = actionValues(policy)
-    const srun = connectors.find(connector => connector.connector_id === managedConnectorId && connector.enabled)
-      || connectors.find(connector => connector.connector_type === 'srun4k' && connector.enabled)
+    const srun =
+      connectors.find(
+        (connector) => connector.connector_id === managedConnectorId && connector.enabled,
+      ) ||
+      connectors.find((connector) => connector.connector_type === 'srun4k' && connector.enabled)
     if (srun) {
       nextActions.notify_connector_id ||= srun.connector_id
       nextActions.disconnect_connector_id ||= srun.connector_id
       nextActions.disable_connector_id ||= srun.connector_id
     }
-    const scopedPolicy = directory?.source ? {...policy,scope:{...policy.scope,sources:[directory.source]}} : policy
+    const scopedPolicy = directory?.source
+      ? { ...policy, scope: { ...policy.scope, sources: [directory.source] } }
+      : policy
     form.setFieldsValue({ ...scopedPolicy, actions: nextActions })
     setStep(0)
   }, [connectors, directory?.source, form, managedConnectorId, policy])
@@ -262,95 +436,330 @@ export function PolicyStrategyEditor({ policy, creating, directory, directoryErr
   }, [step])
 
   const next = async () => {
-    const fields = step === 0 ? [['name'], ['scope', 'products'], ['scope', 'groups'], ['scope', 'vlans']] : [['limits', 'total'], ['limits', 'mobile'], ['limits', 'pc'], ['limits', 'router']]
+    const fields =
+      step === 0
+        ? [['name'], ['scope', 'products'], ['scope', 'groups'], ['scope', 'vlans']]
+        : [
+            ['limits', 'total'],
+            ['limits', 'mobile'],
+            ['limits', 'pc'],
+            ['limits', 'router'],
+          ]
     await form.validateFields(fields)
-    setStep(current => Math.min(current + 1, 2))
+    setStep((current) => Math.min(current + 1, 2))
   }
   const finish = async () => {
     const values = await form.validateFields()
-    if (values.limits?.total == null && values.limits?.mobile == null && values.limits?.pc == null && values.limits?.router == null) {
+    if (
+      values.limits?.total == null &&
+      values.limits?.mobile == null &&
+      values.limits?.pc == null &&
+      values.limits?.router == null
+    ) {
       setStep(1)
-      form.setFields([{name:['limits','total'],errors:['至少填写一项认定条件']}])
+      form.setFields([{ name: ['limits', 'total'], errors: ['至少填写一项认定条件'] }])
       return
     }
-    if (!values.actions?.notify_enabled && !values.actions?.disconnect_enabled && !values.actions?.disable_enabled) {
-      form.setFields([{name:['actions','notify_enabled'],errors:['至少配置一项处理动作']}])
+    if (
+      !values.actions?.notify_enabled &&
+      !values.actions?.disconnect_enabled &&
+      !values.actions?.disable_enabled
+    ) {
+      form.setFields([{ name: ['actions', 'notify_enabled'], errors: ['至少配置一项处理动作'] }])
       return
     }
     onSave(buildPolicy(policy, values))
   }
 
-  return <AppFormModal className="policy-strategy-modal" title={creating ? '新增终端配额策略' : '编辑终端配额策略'} open width={900} destroyOnHidden onCancel={onCancel} footer={
-    <Space wrap className="policy-editor-footer">
-      <Button onClick={onCancel}>返回列表</Button>
-      {step > 0 && <Button onClick={() => setStep(current => current - 1)}>上一步</Button>}
-      {step < 2 ? <Button type="primary" onClick={() => void next()}>下一步</Button> : <Button type="primary" loading={saving} onClick={() => void finish()}>保存设置</Button>}
-    </Space>
-  }>
-    <div ref={stepRef}>
-    <p className="policy-summary" role="status" aria-live="polite"><span className="policy-summary-label">策略摘要</span>{summary}</p>
-    <Steps className="policy-editor-steps" current={step} responsive items={[{ title: '策略信息' }, { title: '配额超限认定条件' }, { title: '配额超限处理动作' }]} />
-    <Form form={form} layout="vertical" className="policy-editor-form">
-      <section className={step === 0 ? 'policy-editor-step is-active' : 'policy-editor-step'} aria-hidden={step !== 0}>
-        <Typography.Title level={5}>策略信息</Typography.Title>
-        <Form.Item name="name" label="策略名称" rules={[{ required: true, message: '请输入策略名称' }]}><Input placeholder="请输入名称" /></Form.Item>
-        <AppFactBar items={[creating ? '新策略保存后默认为停用' : '策略开关在列表中管理','4K 只同步身份与匹配目录','认定条件与处理动作由当前策略配置']} />
-        <Form.Item name="mode" label="运行模式" rules={[{required:true}]}><Select options={[{value:'automatic',label:'真实执行'},{value:'observe',label:'仅记录'},{value:'manual',label:'人工确认'}]} /></Form.Item>
-        <Typography.Title level={5}>管控目标</Typography.Title>
-        <div className="policy-form-grid">
-          <Form.Item name={['scope', 'products']} label="选择产品"><Select mode="multiple" loading={directoryLoading} options={products} placeholder="请选择产品" /></Form.Item>
-          <Form.Item name={['scope', 'groups']} label="选择用户组" extra={groupDirectoryHasNames ? undefined : '当前只有身份观测到的用户组编号；在「认证与处置接入」配置 4K 北向接入并同步目录后可显示名称与层级'}><TreeSelect multiple loading={directoryLoading} treeData={groupTree} treeDefaultExpandAll showSearch allowClear treeNodeFilterProp="title" placeholder="请选择用户组" /></Form.Item>
-        </div>
-        {directoryError
-          ? <p className="policy-directory-status" role="alert"><span>4K 目录读取失败：{directoryError}</span>{onRetryDirectory && <Button size="small" onClick={onRetryDirectory}>重试</Button>}</p>
-          : directoryEmpty
-            ? <div className="policy-directory-empty" role="status"><AppFactBar items={directoryWarnings} /><Link to="/settings/actions">去同步 4K 目录</Link></div>
-            : null}
-        <details className="policy-advanced-scope">
-          <summary>高级匹配（可选）</summary>
-          <div className="policy-form-grid">
-            <Form.Item name={['scope', 'vlans']} label="VLAN"><Select mode="tags" options={vlans} tokenSeparators={[',']} placeholder="选择或输入VLAN" /></Form.Item>
-            <Form.Item name={['scope', 'accounts']} label="限定账号"><Select mode="tags" options={accounts} tokenSeparators={[',']} placeholder="选择或输入账号" /></Form.Item>
-          </div>
-        </details>
-      </section>
-      <section className={step === 1 ? 'policy-editor-step is-active' : 'policy-editor-step'} aria-hidden={step !== 1}>
-        <Typography.Title level={5}>配额超限认定条件</Typography.Title>
-        <Typography.Paragraph type="secondary">设备数量或已绑定的路由器证据满足任意一项就会触发</Typography.Paragraph>
-        <div className="policy-condition-grid">
-          <Form.Item name={['limits', 'total']} label="全部设备数大于"><InputNumber min={0} precision={0} /></Form.Item>
-          <span className="policy-condition-or">或者</span>
-          <Form.Item name={['limits', 'pc']} label="电脑数量大于"><InputNumber min={0} precision={0} /></Form.Item>
-          <span className="policy-condition-or">或者</span>
-          <Form.Item name={['limits', 'mobile']} label="移动设备数量大于"><InputNumber min={0} precision={0} /></Form.Item>
-          <span className="policy-condition-or">或者</span>
-          <Form.Item name={['limits', 'router']} label="发现路由器数量大于"><InputNumber min={0} precision={0} /></Form.Item>
-        </div>
-        <Alert type="warning" showIcon title="至少填写一项认定条件" description="设备阈值只统计身份覆盖完整且具有独立设备证据的在线终端；路由器阈值只统计当前路由观察中与该账号有明确 MAC 或端点绑定的路由器，双栈地址不会重复计数。" />
-      </section>
-      <section className={step === 2 ? 'policy-editor-step is-active' : 'policy-editor-step'} aria-hidden={step !== 2}>
-        <Typography.Title level={5}>配额超限处理动作</Typography.Title>
-        <AppFactBar items={['同步 4K 信息不会生成动作','策略满足认定条件后，启用的动作才进入影子判定或执行流程']} />
-        <article className="policy-action-card">
-          <Form.Item name={['actions', 'notify_enabled']} label="消息提醒" valuePropName="checked"><Switch aria-label="消息提醒" /></Form.Item>
-          {actions?.notify_enabled && <div className="policy-action-fields">
-            <Form.Item name={['actions', 'notify_channel_id']} label="发送通道" extra="留空时使用默认通道；未配置通道时消息会明确记为失败"><Select allowClear placeholder="默认通知通道" options={(channels.data?.items || []).map(item => ({ value: item.channel_id, label: item.name }))} /></Form.Item>
-            <Form.Item name={['actions', 'notify_template']} label="消息内容或模板标识" rules={[{ required: true }]}><Input.TextArea rows={3} placeholder="填写通知模板标识，或直接填写消息正文" /></Form.Item>
-            <ActionDevice name={['actions', 'notify_connector_id']} action="notify" connectors={connectors} managedConnectorId={managedConnectorId}/>
-            <Form.Item name={['actions', 'notify_after_seconds']} label="配额超限持续秒数" rules={[{ required: true }]}><InputNumber min={1} precision={0} /></Form.Item>
-            <Form.Item name={['actions', 'notify_interval_seconds']} label="执行间隔秒数" rules={[{ required: true }]}><InputNumber min={1} precision={0} /></Form.Item>
-          </div>}
-        </article>
-        <article className="policy-action-card">
-          <Form.Item name={['actions', 'disconnect_enabled']} label="强制下线" valuePropName="checked"><Switch aria-label="强制下线" /></Form.Item>
-          {actions?.disconnect_enabled && <><BasisFields prefix="disconnect"/><ActionDevice name={['actions', 'disconnect_connector_id']} action="disconnect" connectors={connectors} managedConnectorId={managedConnectorId}/><Form.Item name={['actions', 'disconnect_sync_notify']} valuePropName="checked"><Checkbox>同时消息提醒用户</Checkbox></Form.Item></>}
-        </article>
-        <article className="policy-action-card">
-          <Form.Item name={['actions', 'disable_enabled']} label="用户禁用" valuePropName="checked"><Switch aria-label="用户禁用" /></Form.Item>
-          {actions?.disable_enabled && <><BasisFields prefix="disable"/><Form.Item name={['actions', 'disable_duration_seconds']} label="禁用秒数" rules={[{ required: true }]}><InputNumber min={1} precision={0}/></Form.Item><ActionDevice name={['actions', 'disable_connector_id']} action="disable_account" connectors={connectors} managedConnectorId={managedConnectorId}/><Form.Item name={['actions', 'disable_sync_notify']} valuePropName="checked"><Checkbox>同时消息提醒用户</Checkbox></Form.Item></>}
-        </article>
-      </section>
-    </Form>
-    </div>
-  </AppFormModal>
+  return (
+    <AppFormModal
+      className="policy-strategy-modal"
+      title={creating ? '新增终端配额策略' : '编辑终端配额策略'}
+      open
+      width={900}
+      destroyOnHidden
+      onCancel={onCancel}
+      footer={
+        <Space wrap className="policy-editor-footer">
+          <Button onClick={onCancel}>返回列表</Button>
+          {step > 0 && <Button onClick={() => setStep((current) => current - 1)}>上一步</Button>}
+          {step < 2 ? (
+            <Button type="primary" onClick={() => void next()}>
+              下一步
+            </Button>
+          ) : (
+            <Button type="primary" loading={saving} onClick={() => void finish()}>
+              保存设置
+            </Button>
+          )}
+        </Space>
+      }
+    >
+      <div ref={stepRef}>
+        <p className="policy-summary" role="status" aria-live="polite">
+          <span className="policy-summary-label">策略摘要</span>
+          {summary}
+        </p>
+        <Steps
+          className="policy-editor-steps"
+          current={step}
+          responsive
+          items={[
+            { title: '策略信息' },
+            { title: '配额超限认定条件' },
+            { title: '配额超限处理动作' },
+          ]}
+        />
+        <Form form={form} layout="vertical" className="policy-editor-form">
+          <section
+            className={step === 0 ? 'policy-editor-step is-active' : 'policy-editor-step'}
+            aria-hidden={step !== 0}
+          >
+            <Typography.Title level={5}>策略信息</Typography.Title>
+            <Form.Item
+              name="name"
+              label="策略名称"
+              rules={[{ required: true, message: '请输入策略名称' }]}
+            >
+              <Input placeholder="请输入名称" />
+            </Form.Item>
+            <AppFactBar
+              items={[
+                creating ? '新策略保存后默认为停用' : '策略开关在列表中管理',
+                '4K 只同步身份与匹配目录',
+                '认定条件与处理动作由当前策略配置',
+              ]}
+            />
+            <Form.Item name="mode" label="运行模式" rules={[{ required: true }]}>
+              <Select
+                options={[
+                  { value: 'automatic', label: '真实执行' },
+                  { value: 'observe', label: '仅记录' },
+                  { value: 'manual', label: '人工确认' },
+                ]}
+              />
+            </Form.Item>
+            <Typography.Title level={5}>管控目标</Typography.Title>
+            <div className="policy-form-grid">
+              <Form.Item name={['scope', 'products']} label="选择产品">
+                <Select
+                  mode="multiple"
+                  loading={directoryLoading}
+                  options={products}
+                  placeholder="请选择产品"
+                />
+              </Form.Item>
+              <Form.Item
+                name={['scope', 'groups']}
+                label="选择用户组"
+                extra={
+                  groupDirectoryHasNames
+                    ? undefined
+                    : '当前只有身份观测到的用户组编号；在「认证与处置接入」配置 4K 北向接入并同步目录后可显示名称与层级'
+                }
+              >
+                <TreeSelect
+                  multiple
+                  loading={directoryLoading}
+                  treeData={groupTree}
+                  treeDefaultExpandAll
+                  showSearch
+                  allowClear
+                  treeNodeFilterProp="title"
+                  placeholder="请选择用户组"
+                />
+              </Form.Item>
+            </div>
+            {directoryError ? (
+              <p className="policy-directory-status" role="alert">
+                <span>4K 目录读取失败：{directoryError}</span>
+                {onRetryDirectory && (
+                  <Button size="small" onClick={onRetryDirectory}>
+                    重试
+                  </Button>
+                )}
+              </p>
+            ) : directoryEmpty ? (
+              <div className="policy-directory-empty" role="status">
+                <AppFactBar items={directoryWarnings} />
+                <Link to="/settings/actions">去同步 4K 目录</Link>
+              </div>
+            ) : null}
+            <details className="policy-advanced-scope">
+              <summary>高级匹配（可选）</summary>
+              <div className="policy-form-grid">
+                <Form.Item name={['scope', 'vlans']} label="VLAN">
+                  <Select
+                    mode="tags"
+                    options={vlans}
+                    tokenSeparators={[',']}
+                    placeholder="选择或输入VLAN"
+                  />
+                </Form.Item>
+                <Form.Item name={['scope', 'accounts']} label="限定账号">
+                  <Select
+                    mode="tags"
+                    options={accounts}
+                    tokenSeparators={[',']}
+                    placeholder="选择或输入账号"
+                  />
+                </Form.Item>
+              </div>
+            </details>
+          </section>
+          <section
+            className={step === 1 ? 'policy-editor-step is-active' : 'policy-editor-step'}
+            aria-hidden={step !== 1}
+          >
+            <Typography.Title level={5}>配额超限认定条件</Typography.Title>
+            <Typography.Paragraph type="secondary">
+              设备数量或已绑定的路由器证据满足任意一项就会触发
+            </Typography.Paragraph>
+            <div className="policy-condition-grid">
+              <Form.Item name={['limits', 'total']} label="全部设备数大于">
+                <InputNumber min={0} precision={0} />
+              </Form.Item>
+              <span className="policy-condition-or">或者</span>
+              <Form.Item name={['limits', 'pc']} label="电脑数量大于">
+                <InputNumber min={0} precision={0} />
+              </Form.Item>
+              <span className="policy-condition-or">或者</span>
+              <Form.Item name={['limits', 'mobile']} label="移动设备数量大于">
+                <InputNumber min={0} precision={0} />
+              </Form.Item>
+              <span className="policy-condition-or">或者</span>
+              <Form.Item name={['limits', 'router']} label="发现路由器数量大于">
+                <InputNumber min={0} precision={0} />
+              </Form.Item>
+            </div>
+            <Alert
+              type="warning"
+              showIcon
+              title="至少填写一项认定条件"
+              description="设备阈值只统计身份覆盖完整且具有独立设备证据的在线终端；路由器阈值只统计当前路由观察中与该账号有明确 MAC 或端点绑定的路由器，双栈地址不会重复计数。"
+            />
+          </section>
+          <section
+            className={step === 2 ? 'policy-editor-step is-active' : 'policy-editor-step'}
+            aria-hidden={step !== 2}
+          >
+            <Typography.Title level={5}>配额超限处理动作</Typography.Title>
+            <AppFactBar
+              items={[
+                '同步 4K 信息不会生成动作',
+                '策略满足认定条件后，启用的动作才进入影子判定或执行流程',
+              ]}
+            />
+            <article className="policy-action-card">
+              <Form.Item
+                name={['actions', 'notify_enabled']}
+                label="消息提醒"
+                valuePropName="checked"
+              >
+                <Switch aria-label="消息提醒" />
+              </Form.Item>
+              {actions?.notify_enabled && (
+                <div className="policy-action-fields">
+                  <Form.Item
+                    name={['actions', 'notify_channel_id']}
+                    label="发送通道"
+                    extra="留空时使用默认通道；未配置通道时消息会明确记为失败"
+                  >
+                    <Select
+                      allowClear
+                      placeholder="默认通知通道"
+                      options={(channels.data?.items || []).map((item) => ({
+                        value: item.channel_id,
+                        label: item.name,
+                      }))}
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    name={['actions', 'notify_template']}
+                    label="消息内容或模板标识"
+                    rules={[{ required: true }]}
+                  >
+                    <Input.TextArea rows={3} placeholder="填写通知模板标识，或直接填写消息正文" />
+                  </Form.Item>
+                  <ActionDevice
+                    name={['actions', 'notify_connector_id']}
+                    action="notify"
+                    connectors={connectors}
+                    managedConnectorId={managedConnectorId}
+                  />
+                  <Form.Item
+                    name={['actions', 'notify_after_seconds']}
+                    label="配额超限持续秒数"
+                    rules={[{ required: true }]}
+                  >
+                    <InputNumber min={1} precision={0} />
+                  </Form.Item>
+                  <Form.Item
+                    name={['actions', 'notify_interval_seconds']}
+                    label="执行间隔秒数"
+                    rules={[{ required: true }]}
+                  >
+                    <InputNumber min={1} precision={0} />
+                  </Form.Item>
+                </div>
+              )}
+            </article>
+            <article className="policy-action-card">
+              <Form.Item
+                name={['actions', 'disconnect_enabled']}
+                label="强制下线"
+                valuePropName="checked"
+              >
+                <Switch aria-label="强制下线" />
+              </Form.Item>
+              {actions?.disconnect_enabled && (
+                <>
+                  <BasisFields prefix="disconnect" />
+                  <ActionDevice
+                    name={['actions', 'disconnect_connector_id']}
+                    action="disconnect"
+                    connectors={connectors}
+                    managedConnectorId={managedConnectorId}
+                  />
+                  <Form.Item name={['actions', 'disconnect_sync_notify']} valuePropName="checked">
+                    <Checkbox>同时消息提醒用户</Checkbox>
+                  </Form.Item>
+                </>
+              )}
+            </article>
+            <article className="policy-action-card">
+              <Form.Item
+                name={['actions', 'disable_enabled']}
+                label="用户禁用"
+                valuePropName="checked"
+              >
+                <Switch aria-label="用户禁用" />
+              </Form.Item>
+              {actions?.disable_enabled && (
+                <>
+                  <BasisFields prefix="disable" />
+                  <Form.Item
+                    name={['actions', 'disable_duration_seconds']}
+                    label="禁用秒数"
+                    rules={[{ required: true }]}
+                  >
+                    <InputNumber min={1} precision={0} />
+                  </Form.Item>
+                  <ActionDevice
+                    name={['actions', 'disable_connector_id']}
+                    action="disable_account"
+                    connectors={connectors}
+                    managedConnectorId={managedConnectorId}
+                  />
+                  <Form.Item name={['actions', 'disable_sync_notify']} valuePropName="checked">
+                    <Checkbox>同时消息提醒用户</Checkbox>
+                  </Form.Item>
+                </>
+              )}
+            </article>
+          </section>
+        </Form>
+      </div>
+    </AppFormModal>
+  )
 }

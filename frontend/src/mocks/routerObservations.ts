@@ -7,56 +7,433 @@ const expires = '2026-09-25T09:30:00Z'
 
 export const routerObservations: RouterObservationDetail[] = [
   {
-    current: true, assessment_id: 'router-huawei-ar-001', endpoint_id: 'endpoint-router-001', ip: '192.0.2.10', mac: '00:46:4b:12:34:56', vlans: ['120'], brand: 'Huawei', series: 'AR', model: 'AR6140', role: 'router', status: 'confirmed', confidence: 95, independent_sources: 2, sources: ['dhcp', 'lldp'], libraries: ['recog', 'whatweb'], infrastructure: false, brand_reference_only: false, association_quality: 'mac', ambiguous: false, confirmed_router: true, rule_version: 'router-rules-2026.09.1', first_seen: first, last_seen: now, expires_at: expires, conflicts: [], merged_records: 3,
-    auth_bindings: [{ session_id: 'ncu-session-001', account_id: '20260001', assigned_ips: ['10.20.30.40', '2001:db8::40'], mac: '00:46:4b:12:34:56', vlan: '120', nas_ip: '10.0.0.1', access_id: 'slot=1;port=12', source: 'ncu-srun4k', match_basis: 'exact_endpoint', ambiguous: false, started_at: first, last_confirmed_at: now }],
-    score_components: [{ source_family: 'dhcp', evidence_id: 'ev-dhcp-ar', score: 55, explanation: 'DHCP vendor class 明确包含 Huawei AR6140' }, { source_family: 'lldp', evidence_id: 'ev-lldp-ar', score: 55, explanation: 'LLDP 宣告 router capability 与型号' }],
-    evidence: [
-      { evidence_id: 'ev-lldp-ar', assessment_id: 'router-huawei-ar-001', kind: 'router_signal', endpoint_id: 'endpoint-router-001', ip: '192.0.2.10', mac: '00:46:4b:12:34:56', vlan: '120', brand: 'Huawei', series: 'AR', model: 'AR6140', role: 'router', source: 'zeek', source_family: 'lldp', source_event_type: 'device', raw_value: 'Huawei AR6140 router', strength: 'strong', score: 55, rule_id: 'huawei-router-ar', rule_version: 'router-rules-2026.09.1', explanation: 'LLDP 路由能力与 Huawei AR 型号同时命中', conflict: false, exclusion: false, brand_reference_only: false, association_quality: 'mac', ambiguous: false, first_seen: first, last_seen: now, expires_at: expires, expired: false, event_ids: ['evt-lldp-ar'] },
-      { evidence_id: 'ev-dhcp-ar', assessment_id: 'router-huawei-ar-001', kind: 'router_signal', endpoint_id: 'endpoint-router-001', ip: '192.0.2.10', mac: '00:46:4b:12:34:56', vlan: '120', brand: 'Huawei', series: 'AR', model: 'AR6140', role: 'router', source: 'zeek', source_family: 'dhcp', source_event_type: 'device', raw_value: 'Huawei AR6140', strength: 'strong', score: 55, rule_id: 'huawei-router-ar', rule_version: 'router-rules-2026.09.1', explanation: 'DHCP vendor class 明确包含路由器型号', conflict: false, exclusion: false, brand_reference_only: false, association_quality: 'mac', ambiguous: false, first_seen: first, last_seen: now, expires_at: expires, expired: false, event_ids: ['evt-dhcp-ar'] },
+    current: true,
+    assessment_id: 'router-huawei-ar-001',
+    endpoint_id: 'endpoint-router-001',
+    ip: '192.0.2.10',
+    mac: '00:46:4b:12:34:56',
+    vlans: ['120'],
+    brand: 'Huawei',
+    series: 'AR',
+    model: 'AR6140',
+    role: 'router',
+    status: 'confirmed',
+    confidence: 95,
+    independent_sources: 2,
+    sources: ['dhcp', 'lldp'],
+    libraries: ['recog', 'whatweb'],
+    infrastructure: false,
+    brand_reference_only: false,
+    association_quality: 'mac',
+    ambiguous: false,
+    confirmed_router: true,
+    rule_version: 'router-rules-2026.09.1',
+    first_seen: first,
+    last_seen: now,
+    expires_at: expires,
+    conflicts: [],
+    merged_records: 3,
+    auth_bindings: [
+      {
+        session_id: 'ncu-session-001',
+        account_id: '20260001',
+        assigned_ips: ['10.20.30.40', '2001:db8::40'],
+        mac: '00:46:4b:12:34:56',
+        vlan: '120',
+        nas_ip: '10.0.0.1',
+        access_id: 'slot=1;port=12',
+        source: 'ncu-srun4k',
+        match_basis: 'exact_endpoint',
+        ambiguous: false,
+        started_at: first,
+        last_confirmed_at: now,
+      },
     ],
-    history: [{ status: 'candidate', confidence: 55, rule_version: 'router-rules-2026.09.1', changed_at: first, conflicts: [] }, { status: 'confirmed', confidence: 95, rule_version: 'router-rules-2026.09.1', changed_at: now, conflicts: [] }],
+    score_components: [
+      {
+        source_family: 'dhcp',
+        evidence_id: 'ev-dhcp-ar',
+        score: 55,
+        explanation: 'DHCP vendor class 明确包含 Huawei AR6140',
+      },
+      {
+        source_family: 'lldp',
+        evidence_id: 'ev-lldp-ar',
+        score: 55,
+        explanation: 'LLDP 宣告 router capability 与型号',
+      },
+    ],
+    evidence: [
+      {
+        evidence_id: 'ev-lldp-ar',
+        assessment_id: 'router-huawei-ar-001',
+        kind: 'router_signal',
+        endpoint_id: 'endpoint-router-001',
+        ip: '192.0.2.10',
+        mac: '00:46:4b:12:34:56',
+        vlan: '120',
+        brand: 'Huawei',
+        series: 'AR',
+        model: 'AR6140',
+        role: 'router',
+        source: 'zeek',
+        source_family: 'lldp',
+        source_event_type: 'device',
+        raw_value: 'Huawei AR6140 router',
+        strength: 'strong',
+        score: 55,
+        rule_id: 'huawei-router-ar',
+        rule_version: 'router-rules-2026.09.1',
+        explanation: 'LLDP 路由能力与 Huawei AR 型号同时命中',
+        conflict: false,
+        exclusion: false,
+        brand_reference_only: false,
+        association_quality: 'mac',
+        ambiguous: false,
+        first_seen: first,
+        last_seen: now,
+        expires_at: expires,
+        expired: false,
+        event_ids: ['evt-lldp-ar'],
+      },
+      {
+        evidence_id: 'ev-dhcp-ar',
+        assessment_id: 'router-huawei-ar-001',
+        kind: 'router_signal',
+        endpoint_id: 'endpoint-router-001',
+        ip: '192.0.2.10',
+        mac: '00:46:4b:12:34:56',
+        vlan: '120',
+        brand: 'Huawei',
+        series: 'AR',
+        model: 'AR6140',
+        role: 'router',
+        source: 'zeek',
+        source_family: 'dhcp',
+        source_event_type: 'device',
+        raw_value: 'Huawei AR6140',
+        strength: 'strong',
+        score: 55,
+        rule_id: 'huawei-router-ar',
+        rule_version: 'router-rules-2026.09.1',
+        explanation: 'DHCP vendor class 明确包含路由器型号',
+        conflict: false,
+        exclusion: false,
+        brand_reference_only: false,
+        association_quality: 'mac',
+        ambiguous: false,
+        first_seen: first,
+        last_seen: now,
+        expires_at: expires,
+        expired: false,
+        event_ids: ['evt-dhcp-ar'],
+      },
+    ],
+    history: [
+      {
+        status: 'candidate',
+        confidence: 55,
+        rule_version: 'router-rules-2026.09.1',
+        changed_at: first,
+        conflicts: [],
+      },
+      {
+        status: 'confirmed',
+        confidence: 95,
+        rule_version: 'router-rules-2026.09.1',
+        changed_at: now,
+        conflicts: [],
+      },
+    ],
   },
   {
-    current: true, assessment_id: 'router-h3c-msr-002', ip: '192.0.2.22', mac: '00:1a:a9:65:43:21', vlans: ['220'], brand: 'H3C', series: 'MSR', model: 'MSR3600', role: 'router', status: 'likely', confidence: 75, independent_sources: 2, sources: ['software', 'http_management'], infrastructure: false, brand_reference_only: false, association_quality: 'mac', ambiguous: false, confirmed_router: false, rule_version: 'router-rules-2026.09.1', first_seen: first, last_seen: now, expires_at: expires, conflicts: ['strong_evidence_required'], score_components: [{ source_family: 'software', evidence_id: 'ev-soft-msr', score: 45, explanation: '软件标识包含 H3C MSR' }, { source_family: 'http_management', evidence_id: 'ev-http-msr', score: 30, explanation: '管理面标题包含型号' }], evidence: [], history: [{ status: 'likely', confidence: 75, rule_version: 'router-rules-2026.09.1', changed_at: now, conflicts: ['strong_evidence_required'] }],
+    current: true,
+    assessment_id: 'router-h3c-msr-002',
+    ip: '192.0.2.22',
+    mac: '00:1a:a9:65:43:21',
+    vlans: ['220'],
+    brand: 'H3C',
+    series: 'MSR',
+    model: 'MSR3600',
+    role: 'router',
+    status: 'likely',
+    confidence: 75,
+    independent_sources: 2,
+    sources: ['software', 'http_management'],
+    infrastructure: false,
+    brand_reference_only: false,
+    association_quality: 'mac',
+    ambiguous: false,
+    confirmed_router: false,
+    rule_version: 'router-rules-2026.09.1',
+    first_seen: first,
+    last_seen: now,
+    expires_at: expires,
+    conflicts: ['strong_evidence_required'],
+    score_components: [
+      {
+        source_family: 'software',
+        evidence_id: 'ev-soft-msr',
+        score: 45,
+        explanation: '软件标识包含 H3C MSR',
+      },
+      {
+        source_family: 'http_management',
+        evidence_id: 'ev-http-msr',
+        score: 30,
+        explanation: '管理面标题包含型号',
+      },
+    ],
+    evidence: [],
+    history: [
+      {
+        status: 'likely',
+        confidence: 75,
+        rule_version: 'router-rules-2026.09.1',
+        changed_at: now,
+        conflicts: ['strong_evidence_required'],
+      },
+    ],
   },
   {
-    current: true, assessment_id: 'router-huawei-oui-003', ip: '192.0.2.33', mac: '70:72:3c:11:22:33', vlans: ['120'], brand: 'Huawei', role: 'unknown', status: 'candidate', confidence: 10, independent_sources: 1, sources: ['oui'], infrastructure: false, brand_reference_only: true, association_quality: 'mac', ambiguous: false, confirmed_router: false, rule_version: 'router-rules-2026.09.1', first_seen: first, last_seen: now, expires_at: expires, conflicts: ['brand_reference_only'], score_components: [{ source_family: 'oui', evidence_id: 'ev-oui-huawei', score: 10, explanation: 'MAC OUI 仅确认厂商' }], evidence: [], history: [{ status: 'candidate', confidence: 10, rule_version: 'router-rules-2026.09.1', changed_at: now, conflicts: ['brand_reference_only'] }],
+    current: true,
+    assessment_id: 'router-huawei-oui-003',
+    ip: '192.0.2.33',
+    mac: '70:72:3c:11:22:33',
+    vlans: ['120'],
+    brand: 'Huawei',
+    role: 'unknown',
+    status: 'candidate',
+    confidence: 10,
+    independent_sources: 1,
+    sources: ['oui'],
+    infrastructure: false,
+    brand_reference_only: true,
+    association_quality: 'mac',
+    ambiguous: false,
+    confirmed_router: false,
+    rule_version: 'router-rules-2026.09.1',
+    first_seen: first,
+    last_seen: now,
+    expires_at: expires,
+    conflicts: ['brand_reference_only'],
+    score_components: [
+      {
+        source_family: 'oui',
+        evidence_id: 'ev-oui-huawei',
+        score: 10,
+        explanation: 'MAC OUI 仅确认厂商',
+      },
+    ],
+    evidence: [],
+    history: [
+      {
+        status: 'candidate',
+        confidence: 10,
+        rule_version: 'router-rules-2026.09.1',
+        changed_at: now,
+        conflicts: ['brand_reference_only'],
+      },
+    ],
   },
   {
-    current: true, assessment_id: 'router-huawei-ap-004', endpoint_id: 'endpoint-ap-004', ip: '192.0.2.44', mac: '00:46:4b:99:88:77', vlans: ['120'], brand: 'Huawei', series: 'AP', model: 'AP4050DN', role: 'ap', status: 'likely', confidence: 70, independent_sources: 2, sources: ['lldp', 'dhcp'], libraries: ['recog'], infrastructure: false, brand_reference_only: false, association_quality: 'mac', ambiguous: false, confirmed_router: false, rule_version: 'router-rules-2026.09.1', first_seen: first, last_seen: now, expires_at: expires, conflicts: [],
+    current: true,
+    assessment_id: 'router-huawei-ap-004',
+    endpoint_id: 'endpoint-ap-004',
+    ip: '192.0.2.44',
+    mac: '00:46:4b:99:88:77',
+    vlans: ['120'],
+    brand: 'Huawei',
+    series: 'AP',
+    model: 'AP4050DN',
+    role: 'ap',
+    status: 'likely',
+    confidence: 70,
+    independent_sources: 2,
+    sources: ['lldp', 'dhcp'],
+    libraries: ['recog'],
+    infrastructure: false,
+    brand_reference_only: false,
+    association_quality: 'mac',
+    ambiguous: false,
+    confirmed_router: false,
+    rule_version: 'router-rules-2026.09.1',
+    first_seen: first,
+    last_seen: now,
+    expires_at: expires,
+    conflicts: [],
     auth_bindings: [],
-    score_components: [{ source_family: 'lldp', evidence_id: 'ev-lldp-ap', score: 40, explanation: 'LLDP 宣告接入点能力与 Huawei AP4050DN 型号' }, { source_family: 'dhcp', evidence_id: 'ev-dhcp-ap', score: 30, explanation: 'DHCP vendor class 包含接入点型号' }],
-    evidence: [
-      { evidence_id: 'ev-lldp-ap', assessment_id: 'router-huawei-ap-004', kind: 'router_signal', endpoint_id: 'endpoint-ap-004', ip: '192.0.2.44', mac: '00:46:4b:99:88:77', vlan: '120', brand: 'Huawei', series: 'AP', model: 'AP4050DN', role: 'ap', source: 'zeek', source_family: 'lldp', source_event_type: 'device', raw_value: 'Huawei AP4050DN access point', strength: 'medium', score: 40, rule_id: 'huawei-access-point', rule_version: 'router-rules-2026.09.1', explanation: 'LLDP 接入点能力与 Huawei AP4050DN 型号同时命中', conflict: false, exclusion: false, brand_reference_only: false, association_quality: 'mac', ambiguous: false, first_seen: first, last_seen: now, expires_at: expires, expired: false, event_ids: ['evt-lldp-ap'] },
+    score_components: [
+      {
+        source_family: 'lldp',
+        evidence_id: 'ev-lldp-ap',
+        score: 40,
+        explanation: 'LLDP 宣告接入点能力与 Huawei AP4050DN 型号',
+      },
+      {
+        source_family: 'dhcp',
+        evidence_id: 'ev-dhcp-ap',
+        score: 30,
+        explanation: 'DHCP vendor class 包含接入点型号',
+      },
     ],
-    history: [{ status: 'candidate', confidence: 40, rule_version: 'router-rules-2026.09.1', changed_at: first, conflicts: [] }, { status: 'likely', confidence: 70, rule_version: 'router-rules-2026.09.1', changed_at: now, conflicts: [] }],
+    evidence: [
+      {
+        evidence_id: 'ev-lldp-ap',
+        assessment_id: 'router-huawei-ap-004',
+        kind: 'router_signal',
+        endpoint_id: 'endpoint-ap-004',
+        ip: '192.0.2.44',
+        mac: '00:46:4b:99:88:77',
+        vlan: '120',
+        brand: 'Huawei',
+        series: 'AP',
+        model: 'AP4050DN',
+        role: 'ap',
+        source: 'zeek',
+        source_family: 'lldp',
+        source_event_type: 'device',
+        raw_value: 'Huawei AP4050DN access point',
+        strength: 'medium',
+        score: 40,
+        rule_id: 'huawei-access-point',
+        rule_version: 'router-rules-2026.09.1',
+        explanation: 'LLDP 接入点能力与 Huawei AP4050DN 型号同时命中',
+        conflict: false,
+        exclusion: false,
+        brand_reference_only: false,
+        association_quality: 'mac',
+        ambiguous: false,
+        first_seen: first,
+        last_seen: now,
+        expires_at: expires,
+        expired: false,
+        event_ids: ['evt-lldp-ap'],
+      },
+    ],
+    history: [
+      {
+        status: 'candidate',
+        confidence: 40,
+        rule_version: 'router-rules-2026.09.1',
+        changed_at: first,
+        conflicts: [],
+      },
+      {
+        status: 'likely',
+        confidence: 70,
+        rule_version: 'router-rules-2026.09.1',
+        changed_at: now,
+        conflicts: [],
+      },
+    ],
   },
 ]
 
-routerObservations.push({ ...routerObservations[0], current: false, assessment_id: 'router-expired-82', ip: '192.0.2.82', endpoint_id: undefined, mac: undefined, brand: undefined, series: undefined, model: undefined, status: 'likely', confidence: 85, sources: ['shared_gateway_behavior'], independent_sources: 1, confirmed_router: false, evidence: [], score_components: [{ source_family: 'shared_gateway_behavior', evidence_id: 'expired-gateway-role-82', score: 85, explanation: '旧共享窗口曾推测网关角色，当前支持窗口已失效。' }], history: [{ status: 'likely', confidence: 85, rule_version: 'router-rules-previous', changed_at: first, conflicts: [] }, { status: 'likely', confidence: 85, rule_version: 'router-rules-previous', changed_at: now, conflicts: ['shared_gateway_window_retired'] }] })
+routerObservations.push({
+  ...routerObservations[0],
+  current: false,
+  assessment_id: 'router-expired-82',
+  ip: '192.0.2.82',
+  endpoint_id: undefined,
+  mac: undefined,
+  brand: undefined,
+  series: undefined,
+  model: undefined,
+  status: 'likely',
+  confidence: 85,
+  sources: ['shared_gateway_behavior'],
+  independent_sources: 1,
+  confirmed_router: false,
+  evidence: [],
+  score_components: [
+    {
+      source_family: 'shared_gateway_behavior',
+      evidence_id: 'expired-gateway-role-82',
+      score: 85,
+      explanation: '旧共享窗口曾推测网关角色，当前支持窗口已失效。',
+    },
+  ],
+  history: [
+    {
+      status: 'likely',
+      confidence: 85,
+      rule_version: 'router-rules-previous',
+      changed_at: first,
+      conflicts: [],
+    },
+    {
+      status: 'likely',
+      confidence: 85,
+      rule_version: 'router-rules-previous',
+      changed_at: now,
+      conflicts: ['shared_gateway_window_retired'],
+    },
+  ],
+})
 
 function matches(item: RouterAssessment, url: URL) {
-  const text = [item.assessment_id, item.endpoint_id, item.ip, item.mac, item.brand, item.series, item.model].filter(Boolean).join(' ').toLowerCase()
+  const text = [
+    item.assessment_id,
+    item.endpoint_id,
+    item.ip,
+    item.mac,
+    item.brand,
+    item.series,
+    item.model,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
   const keyword = url.searchParams.get('keyword')?.toLowerCase()
-  const equal = (name: string, value?: string) => !url.searchParams.get(name) || value?.toLowerCase() === url.searchParams.get(name)?.toLowerCase()
+  const equal = (name: string, value?: string) =>
+    !url.searchParams.get(name) ||
+    value?.toLowerCase() === url.searchParams.get(name)?.toLowerCase()
   const minimum = Number(url.searchParams.get('confidence_min') || 0)
   const maximum = Number(url.searchParams.get('confidence_max') || 100)
   const role = url.searchParams.get('role') || 'router'
-  const roleMatches = role === 'network' ? ['router', 'ap', 'switch', 'firewall'].includes(item.role) : item.role === role
+  const roleMatches =
+    role === 'network'
+      ? ['router', 'ap', 'switch', 'firewall'].includes(item.role)
+      : item.role === role
   const status = url.searchParams.get('status')
-  const statusMatches = status ? item.status === status : url.searchParams.get('include_candidates') === 'true' || item.status === 'likely' || item.status === 'confirmed'
-  const inRange = (field: string, from: string, to: string) => (!url.searchParams.get(from) || field >= url.searchParams.get(from)!) && (!url.searchParams.get(to) || field <= url.searchParams.get(to)!)
-  return Boolean(item.ip) && !item.brand_reference_only && roleMatches && statusMatches &&
-    (!keyword || text.includes(keyword)) && equal('ip', item.ip) && equal('mac', item.mac) && equal('brand', item.brand) && equal('model', item.model) &&
+  const statusMatches = status
+    ? item.status === status
+    : url.searchParams.get('include_candidates') === 'true' ||
+      item.status === 'likely' ||
+      item.status === 'confirmed'
+  const inRange = (field: string, from: string, to: string) =>
+    (!url.searchParams.get(from) || field >= url.searchParams.get(from)!) &&
+    (!url.searchParams.get(to) || field <= url.searchParams.get(to)!)
+  return (
+    Boolean(item.ip) &&
+    !item.brand_reference_only &&
+    roleMatches &&
+    statusMatches &&
+    (!keyword || text.includes(keyword)) &&
+    equal('ip', item.ip) &&
+    equal('mac', item.mac) &&
+    equal('brand', item.brand) &&
+    equal('model', item.model) &&
     (!url.searchParams.get('vlan') || item.vlans?.includes(url.searchParams.get('vlan') || '')) &&
-    (!url.searchParams.get('source') || item.sources.includes(url.searchParams.get('source') || '')) &&
-    (!url.searchParams.has('infrastructure') || item.infrastructure === (url.searchParams.get('infrastructure') === 'true')) &&
+    (!url.searchParams.get('source') ||
+      item.sources.includes(url.searchParams.get('source') || '')) &&
+    (!url.searchParams.has('infrastructure') ||
+      item.infrastructure === (url.searchParams.get('infrastructure') === 'true')) &&
     (url.searchParams.get('has_auth_binding') !== 'true' || Boolean(item.auth_bindings?.length)) &&
-    item.confidence >= minimum && item.confidence <= maximum &&
-    inRange(item.first_seen, 'first_seen_from', 'first_seen_to') && inRange(item.last_seen, 'last_seen_from', 'last_seen_to')
+    item.confidence >= minimum &&
+    item.confidence <= maximum &&
+    inRange(item.first_seen, 'first_seen_from', 'first_seen_to') &&
+    inRange(item.last_seen, 'last_seen_from', 'last_seen_to')
+  )
 }
 
-type RouterMockCursor = { confidence: number; last_seen: string; assessment_id: string; scope: string }
+type RouterMockCursor = {
+  confidence: number
+  last_seen: string
+  assessment_id: string
+  scope: string
+}
 const routerCursorPrefix = 'router-seek:'
 
 function routerCursorScope(url: URL) {
@@ -67,57 +444,124 @@ function routerCursorScope(url: URL) {
   return params.toString()
 }
 
-function routerPageOrder(a: Pick<RouterAssessment, 'confidence' | 'last_seen' | 'assessment_id'>, b: Pick<RouterAssessment, 'confidence' | 'last_seen' | 'assessment_id'>) {
-  return b.confidence - a.confidence || b.last_seen.localeCompare(a.last_seen) || a.assessment_id.localeCompare(b.assessment_id)
+function routerPageOrder(
+  a: Pick<RouterAssessment, 'confidence' | 'last_seen' | 'assessment_id'>,
+  b: Pick<RouterAssessment, 'confidence' | 'last_seen' | 'assessment_id'>,
+) {
+  return (
+    b.confidence - a.confidence ||
+    b.last_seen.localeCompare(a.last_seen) ||
+    a.assessment_id.localeCompare(b.assessment_id)
+  )
 }
 
 function routerWinnerOrder(a: RouterAssessment, b: RouterAssessment) {
   const statusRank: Record<string, number> = { confirmed: 3, likely: 2, candidate: 1 }
-  return (statusRank[b.status] ?? 0) - (statusRank[a.status] ?? 0) || b.confidence - a.confidence || Number(Boolean(b.endpoint_id)) - Number(Boolean(a.endpoint_id)) || b.last_seen.localeCompare(a.last_seen) || a.assessment_id.localeCompare(b.assessment_id)
+  return (
+    (statusRank[b.status] ?? 0) - (statusRank[a.status] ?? 0) ||
+    b.confidence - a.confidence ||
+    Number(Boolean(b.endpoint_id)) - Number(Boolean(a.endpoint_id)) ||
+    b.last_seen.localeCompare(a.last_seen) ||
+    a.assessment_id.localeCompare(b.assessment_id)
+  )
 }
 
 function routerPhysicalKey(item: RouterAssessment) {
-  return item.mac ? `mac:${item.mac.toLowerCase()}` : item.endpoint_id ? `endpoint:${item.endpoint_id}` : item.ip ? `ip:${item.ip}:vlans:${item.vlans?.join(',') ?? ''}` : `assessment:${item.assessment_id}`
+  return item.mac
+    ? `mac:${item.mac.toLowerCase()}`
+    : item.endpoint_id
+      ? `endpoint:${item.endpoint_id}`
+      : item.ip
+        ? `ip:${item.ip}:vlans:${item.vlans?.join(',') ?? ''}`
+        : `assessment:${item.assessment_id}`
 }
 
 function routerMockCursor(value: string, scope: string): RouterMockCursor | null {
   if (!value.startsWith(routerCursorPrefix) || value.length > 2048) return null
   try {
-    const parsed = JSON.parse(decodeURIComponent(atob(value.slice(routerCursorPrefix.length)))) as RouterMockCursor
-    return parsed.scope === scope && Number.isInteger(parsed.confidence) && parsed.confidence >= 0 && parsed.confidence <= 100 && Boolean(parsed.last_seen) && Boolean(parsed.assessment_id) ? parsed : null
-  } catch { return null }
+    const parsed = JSON.parse(
+      decodeURIComponent(atob(value.slice(routerCursorPrefix.length))),
+    ) as RouterMockCursor
+    return parsed.scope === scope &&
+      Number.isInteger(parsed.confidence) &&
+      parsed.confidence >= 0 &&
+      parsed.confidence <= 100 &&
+      Boolean(parsed.last_seen) &&
+      Boolean(parsed.assessment_id)
+      ? parsed
+      : null
+  } catch {
+    return null
+  }
 }
 
 function encodeRouterMockCursor(item: RouterAssessment, scope: string) {
-  return routerCursorPrefix + btoa(encodeURIComponent(JSON.stringify({ confidence: item.confidence, last_seen: item.last_seen, assessment_id: item.assessment_id, scope })))
+  return (
+    routerCursorPrefix +
+    btoa(
+      encodeURIComponent(
+        JSON.stringify({
+          confidence: item.confidence,
+          last_seen: item.last_seen,
+          assessment_id: item.assessment_id,
+          scope,
+        }),
+      ),
+    )
+  )
 }
 
 export const routerObservationHandlers = [
   http.get('/api/v1/router-observations', ({ request }) => {
     const url = new URL(request.url)
     const limit = Number(url.searchParams.get('limit') || 20)
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) return HttpResponse.json({ code: 'bad_router_observation_query', message: '路由观察分页参数无效' }, { status: 400 })
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+      return HttpResponse.json(
+        { code: 'bad_router_observation_query', message: '路由观察分页参数无效' },
+        { status: 400 },
+      )
     const scope = routerCursorScope(url)
     const rawCursor = url.searchParams.get('cursor') || ''
     const cursor = rawCursor && rawCursor !== '0' ? routerMockCursor(rawCursor, scope) : null
-    if (rawCursor && rawCursor !== '0' && !cursor) return HttpResponse.json({ code: 'bad_router_observation_query', message: '路由观察游标无效' }, { status: 400 })
+    if (rawCursor && rawCursor !== '0' && !cursor)
+      return HttpResponse.json(
+        { code: 'bad_router_observation_query', message: '路由观察游标无效' },
+        { status: 400 },
+      )
     const winners = new Map<string, RouterObservationDetail>()
-    for (const item of routerObservations.filter(item => item.current && matches(item, url))) {
+    for (const item of routerObservations.filter((item) => item.current && matches(item, url))) {
       const key = routerPhysicalKey(item)
       const previous = winners.get(key)
       if (!previous || routerWinnerOrder(item, previous) < 0) winners.set(key, item)
     }
-    const ordered = [...winners.values()].sort(routerPageOrder).filter(item => !cursor || routerPageOrder(item, cursor) > 0)
+    const ordered = [...winners.values()]
+      .sort(routerPageOrder)
+      .filter((item) => !cursor || routerPageOrder(item, cursor) > 0)
     const hasMore = ordered.length > limit
     const selected = ordered.slice(0, limit)
     const items = selected.map(({ evidence: _evidence, history: _history, ...item }) => item)
-    return HttpResponse.json({ items, page: { limit, next_cursor: hasMore ? encodeRouterMockCursor(selected[selected.length - 1], scope) : null, total: 0, has_more: hasMore } })
+    return HttpResponse.json({
+      items,
+      page: {
+        limit,
+        next_cursor: hasMore ? encodeRouterMockCursor(selected[selected.length - 1], scope) : null,
+        total: 0,
+        has_more: hasMore,
+      },
+    })
   }),
-  http.get('/api/v1/router-observations/summary', () => HttpResponse.json({
-    as_of: new Date().toISOString(), candidate: 24, likely: 7, confirmed: 3,
-  })),
+  http.get('/api/v1/router-observations/summary', () =>
+    HttpResponse.json({
+      as_of: new Date().toISOString(),
+      candidate: 24,
+      likely: 7,
+      confirmed: 3,
+    }),
+  ),
   http.get('/api/v1/router-observations/:assessmentId', ({ params }) => {
-    const item = routerObservations.find(entry => entry.assessment_id === params.assessmentId)
-    return item ? HttpResponse.json(item) : HttpResponse.json({ code: 'not_found', message: '路由观察不存在' }, { status: 404 })
+    const item = routerObservations.find((entry) => entry.assessment_id === params.assessmentId)
+    return item
+      ? HttpResponse.json(item)
+      : HttpResponse.json({ code: 'not_found', message: '路由观察不存在' }, { status: 404 })
   }),
 ]

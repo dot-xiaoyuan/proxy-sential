@@ -1,13 +1,5 @@
 import { expect, test } from '@playwright/test'
 
-test('opens the event list without requesting an exact count', async ({ page }) => {
-	const countRequests: string[] = []
-	page.on('request', request => { if (request.url().includes('/api/v1/events/count')) countRequests.push(request.url()) })
-	await page.goto('/events')
-	await expect(page.getByText('本页 3 条', { exact: true })).toBeVisible()
-	expect(countRequests).toEqual([])
-})
-
 test('redirects the legacy risk list to cases and opens a case', async ({ page }) => {
   await page.goto('/risks')
   await expect(page).toHaveURL(/\/cases$/)
@@ -54,9 +46,13 @@ test('shows compact endpoint inventory and opens endpoint detail', async ({ page
 test('validates and imports an offline device fingerprint bundle', async ({ page }) => {
   await page.goto('/settings/rules')
   await page.getByRole('tab', { name: '设备特征库' }).click()
-  await page.locator('input[type="file"]').setInputFiles({ name:'device-fingerprint-bundle.tar.gz',mimeType:'application/gzip',buffer:Buffer.from('mock bundle') })
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'device-fingerprint-bundle.tar.gz',
+    mimeType: 'application/gzip',
+    buffer: Buffer.from('mock bundle'),
+  })
   await expect(page.getByText(/校验通过：offline-20260831-mock/)).toBeVisible()
-  await page.getByRole('button',{name:'确认导入'}).click()
+  await page.getByRole('button', { name: '确认导入' }).click()
   await expect(page.getByText(/特征库已导入 offline-20260831-mock/)).toBeVisible()
 })
 
@@ -77,18 +73,14 @@ test('shows ingest diagnostics and normalized event samples', async ({ page }) =
   await expect(page.getByRole('tab', { name: '事件类型报表' })).toBeVisible()
   await expect(page.getByText('2048 → 4096')).toBeVisible()
   await page.getByRole('tab', { name: '错误记录' }).click()
-  await expect(page.getByText('collector run completed with skipped or malformed input records').first()).toBeVisible()
+  await expect(
+    page.getByText('collector run completed with skipped or malformed input records').first(),
+  ).toBeVisible()
   await page.getByRole('tab', { name: '最近事件' }).click()
   await expect(page.getByText('event-http-59-a')).toBeVisible()
 })
 
-test('shows observed activity posture and opens active risk IP detail', async ({ page }) => {
-  await page.goto('/activity?section=access')
-  await expect(page.getByRole('heading', { name: '访问分析' })).toBeVisible()
-  await page.getByRole('tab', { name: '访问对象 (Domains)' }).click()
-  await expect(page.getByText('Top 访问域名（DNS / Host / SNI）')).toBeVisible()
-  await page.goto('/activity?section=technical&tab=fingerprints')
-  await expect(page.getByText('UA 可重复、可伪造，只用于技术检索，不表示设备数量或硬件品牌。')).toBeVisible()
+test('opens active risk IP detail from overview workbench', async ({ page }) => {
   await page.goto('/overview')
   await page.getByRole('link', { name: '10.255.0.59' }).click()
   await expect(page.getByRole('heading', { name: '10.255.0.59' })).toBeVisible()

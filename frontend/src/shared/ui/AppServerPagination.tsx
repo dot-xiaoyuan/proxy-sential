@@ -3,53 +3,72 @@ import { useCallback, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
 type AppServerPaginationProps = {
-	disabled?: boolean
-	page: number
-	pageSize: number
-	total?: number
-	onChange: (page: number, pageSize: number) => void
-	/** 统计尚未就绪时显示明确的读取状态，不使用已加载条数替代总数。 */
-	totalText?: string
-	showSizeChanger?: boolean
+  disabled?: boolean
+  page: number
+  pageSize: number
+  total?: number
+  onChange: (page: number, pageSize: number) => void
+  /** 统计尚未就绪时显示明确的读取状态，不使用已加载条数替代总数。 */
+  totalText?: string
+  showSizeChanger?: boolean
 }
 
-export function AppServerPagination({ disabled = false, page, pageSize, total, onChange, totalText, showSizeChanger = true }: AppServerPaginationProps) {
-	const hasTotal = typeof total === 'number' && Number.isFinite(total) && total >= 0
-	return <Pagination
-		className="list-pagination app-server-pagination"
-		current={page}
-		disabled={disabled || !hasTotal}
-		pageSize={pageSize}
-		pageSizeOptions={[20, 50]}
-		showQuickJumper
-		showSizeChanger={showSizeChanger}
-		showTotal={() => totalText ?? (hasTotal ? `共 ${total} 条` : '正在读取总数')}
-		total={hasTotal ? total : 0}
-		onChange={(nextPage, nextSize) => onChange(nextSize !== pageSize ? 1 : nextPage, nextSize)}
-	/>
+export function AppServerPagination({
+  disabled = false,
+  page,
+  pageSize,
+  total,
+  onChange,
+  totalText,
+  showSizeChanger = true,
+}: AppServerPaginationProps) {
+  const hasTotal = typeof total === 'number' && Number.isFinite(total) && total >= 0
+  return (
+    <Pagination
+      className="list-pagination app-server-pagination"
+      current={page}
+      disabled={disabled || !hasTotal}
+      pageSize={pageSize}
+      pageSizeOptions={[20, 50]}
+      showQuickJumper
+      showSizeChanger={showSizeChanger}
+      showTotal={() => totalText ?? (hasTotal ? `共 ${total} 条` : '正在读取总数')}
+      total={hasTotal ? total : 0}
+      onChange={(nextPage, nextSize) => onChange(nextSize !== pageSize ? 1 : nextPage, nextSize)}
+    />
+  )
 }
 
 export function useServerPagination(prefix = '') {
-	const [params, setParams] = useSearchParams()
-	const pageKey = `${prefix}page`
-	const sizeKey = `${prefix}limit`
-	const page = positiveInteger(params.get(pageKey), 1)
-	const parsedSize = positiveInteger(params.get(sizeKey), 20)
-	const pageSize = parsedSize === 50 ? 50 : 20
-	const update = useCallback((nextPage: number, nextSize: number) => {
-		setParams((current) => {
-			const next = new URLSearchParams(current)
-			next.set(pageKey, String(Math.max(1, nextPage)))
-			next.set(sizeKey, String(nextSize === 50 ? 50 : 20))
-			next.delete('cursor')
-			return next
-		}, { replace: true })
-	}, [pageKey, setParams, sizeKey])
-	const reset = useCallback(() => update(1, pageSize), [pageSize, update])
-	return useMemo(() => ({ page, pageSize, cursor: String((page - 1) * pageSize), update, reset }), [page, pageSize, reset, update])
+  const [params, setParams] = useSearchParams()
+  const pageKey = `${prefix}page`
+  const sizeKey = `${prefix}limit`
+  const page = positiveInteger(params.get(pageKey), 1)
+  const parsedSize = positiveInteger(params.get(sizeKey), 20)
+  const pageSize = parsedSize === 50 ? 50 : 20
+  const update = useCallback(
+    (nextPage: number, nextSize: number) => {
+      setParams(
+        (current) => {
+          const next = new URLSearchParams(current)
+          next.set(pageKey, String(Math.max(1, nextPage)))
+          next.set(sizeKey, String(nextSize === 50 ? 50 : 20))
+          next.delete('cursor')
+          return next
+        },
+        { replace: true },
+      )
+    },
+    [pageKey, setParams, sizeKey],
+  )
+  const reset = useCallback(() => update(1, pageSize), [pageSize, update])
+  return useMemo(
+    () => ({ page, pageSize, cursor: String((page - 1) * pageSize), update, reset }),
+    [page, pageSize, reset, update],
+  )
 }
 
 function positiveInteger(value: string | null, fallback: number) {
-	const parsed = Number(value)
-	return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
 }

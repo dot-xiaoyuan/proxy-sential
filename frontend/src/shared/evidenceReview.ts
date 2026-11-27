@@ -7,5 +7,5 @@ const correctionReasons: Record<string, string> = {
 }
 
 export function evidenceReviewReason(reason?: string) {
-  return reason ? correctionReasons[reason] ?? reason : ''
+  return reason ? (correctionReasons[reason] ?? reason) : ''
 }

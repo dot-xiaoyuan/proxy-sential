@@ -23,7 +23,10 @@ for (const viewport of viewports) {
     const errors: string[] = []
     page.on('pageerror', (error) => errors.push(error.message))
     await page.setViewportSize(viewport)
-    const dir = path.resolve('../artifacts/releases/hint-consistency-20261014', `mock-${viewport.width}`)
+    const dir = path.resolve(
+      '../artifacts/releases/hint-consistency-20261014',
+      `mock-${viewport.width}`,
+    )
     await mkdir(dir, { recursive: true })
     const probes: unknown[] = []
 
@@ -39,8 +42,9 @@ for (const viewport of viewports) {
           itemCount: items.length,
           itemHeight: items.map((item) => Math.round(item.getBoundingClientRect().height)),
           barWidth: bar ? Math.round(bar.getBoundingClientRect().width) : 0,
-          proseBanners: [...document.querySelectorAll('.ant-alert-info .ant-alert-description')]
-            .filter((node) => (node.textContent ?? '').length > 40).length,
+          proseBanners: [
+            ...document.querySelectorAll('.ant-alert-info .ant-alert-description'),
+          ].filter((node) => (node.textContent ?? '').length > 40).length,
           color: bar ? getComputedStyle(bar).color : '',
           fontSize: bar ? getComputedStyle(bar).fontSize : '',
         }
@@ -48,7 +52,11 @@ for (const viewport of viewports) {
       expect(probe.overflow).toBe(false)
       expect(probe.proseBanners).toBe(0)
       probes.push({ route: route.name, ...probe })
-      await page.screenshot({ path: path.join(dir, `${route.name}.png`), fullPage: true, animations: 'disabled' })
+      await page.screenshot({
+        path: path.join(dir, `${route.name}.png`),
+        fullPage: true,
+        animations: 'disabled',
+      })
     }
 
     await writeFile(path.join(dir, 'dom.json'), JSON.stringify({ probes, errors }, null, 2))

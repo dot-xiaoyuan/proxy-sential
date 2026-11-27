@@ -3,27 +3,45 @@ import { request } from '../api/client'
 
 export type PaginationQuery = string | URLSearchParams | object
 export function paginationParams(query: PaginationQuery) {
-  return typeof query === 'string' || query instanceof URLSearchParams ? new URLSearchParams(query) : new URLSearchParams(Object.entries(query).filter(([, value]) => value !== undefined && value !== null && value !== '').map(([key, value]) => [key, String(value)]))
+  return typeof query === 'string' || query instanceof URLSearchParams
+    ? new URLSearchParams(query)
+    : new URLSearchParams(
+        Object.entries(query)
+          .filter(([, value]) => value !== undefined && value !== null && value !== '')
+          .map(([key, value]) => [key, String(value)]),
+      )
 }
 
 export function usePaginationMetadata(path: string, query: PaginationQuery, enabled = true) {
   const scope = paginationParams(query)
   for (const key of ['cursor', 'offset', 'limit', 'page']) scope.delete(key)
   const key = scope.toString()
-  return useQuery({ queryKey: ['pagination-metadata', path, key], queryFn: ({ signal }) => request<{ total: number; as_of: string; snapshot?: string }>(`${path}?${key}`, { signal }), enabled, retry: false })
+  return useQuery({
+    queryKey: ['pagination-metadata', path, key],
+    queryFn: ({ signal }) =>
+      request<{ total: number; as_of: string; snapshot?: string }>(`${path}?${key}`, { signal }),
+    enabled,
+    retry: false,
+  })
 }
 
 export type CursorPagePosition = { page: number; limit: number; cursor: string; as_of?: string }
 
 /** Locate one page boundary without downloading earlier pages or their evidence. */
-export function useCursorPagePosition({ path, query, page, pageSize, enabled = true }: {
+export function useCursorPagePosition({
+  path,
+  query,
+  page,
+  pageSize,
+  enabled = true,
+}: {
   path: string
   query: PaginationQuery
   page: number
   pageSize: number
   enabled?: boolean
 }) {
-  const client=useQueryClient()
+  const client = useQueryClient()
   const scope = paginationParams(query)
   scope.delete('cursor')
   scope.delete('offset')
@@ -45,9 +63,12 @@ export function useCursorPagePosition({ path, query, page, pageSize, enabled = t
   })
   return {
     ...position,
-    invalidate:()=>client.invalidateQueries({queryKey:['cursor-page-position',path],refetchType:'none'}),
+    invalidate: () =>
+      client.invalidateQueries({ queryKey: ['cursor-page-position', path], refetchType: 'none' }),
     cursor: page > 1 ? position.data?.cursor : undefined,
-    ready: enabled && (page === 1 || Boolean(position.data && !position.isError && !position.isFetching)),
+    ready:
+      enabled &&
+      (page === 1 || Boolean(position.data && !position.isError && !position.isFetching)),
     isLocating: enabled && page > 1 && position.isFetching,
   }
 }

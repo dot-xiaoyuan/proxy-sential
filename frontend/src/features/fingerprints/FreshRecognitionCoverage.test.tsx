@@ -17,7 +17,15 @@ it('keeps new-input counts, actual protocol gaps and processing semantics distin
 it('distinguishes pending statistics, empty fresh input and stale statistics', () => {
   const { rerender } = render(<FreshRecognitionCoverage />)
   expect(screen.getByText('新鲜输入统计正在准备')).toBeVisible()
-  rerender(<FreshRecognitionCoverage data={{ ...freshRecognition, status: 'stale', items: freshRecognition.items.filter(item => item.inputs === 0) }} />)
+  rerender(
+    <FreshRecognitionCoverage
+      data={{
+        ...freshRecognition,
+        status: 'stale',
+        items: freshRecognition.items.filter((item) => item.inputs === 0),
+      }}
+    />,
+  )
   expect(screen.getByText('起点之后暂无新标准发现事件')).toBeVisible()
   expect(screen.getByText(/统计已过期/)).toBeVisible()
 })

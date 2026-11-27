@@ -1,0 +1,63 @@
+:root {
+  /* 基础表面与中性色（Neutral Slate 浅色体系） */
+  --ps-bg-body: #f8fafc;
+  --ps-bg-surface: #ffffff;
+  --ps-bg-surface-subtle: #f8fafc;
+  --ps-bg-surface-hover: #f1f5f9;
+  --ps-bg-sider: #ffffff;
+  --ps-bg-header: #ffffff;
+  --ps-border-color: #e2e8f0;
+  --ps-border-strong: #cbd5e1;
+  --ps-border-subtle: #f1f5f9;
+
+  /* 文本层级（确保高对比度 >= 4.5:1） */
+  --ps-text-primary: #0f172a;
+  --ps-text-secondary: #475569;
+  --ps-text-muted: #64748b;
+
+  /* 统一品牌主色（沉稳安全深蓝） */
+  --ps-primary-color: #2257a7;
+  --ps-primary-hover: #1b4688;
+  --ps-primary-active: #163a72;
+  --ps-primary-bg: #eff6ff;
+  --ps-primary-border: #bfdbfe;
+  --ps-primary-ring: rgba(34, 87, 167, 0.16);
+
+  /* 登录页统一配色 */
+  --ps-login-bg-start: #f8fafc;
+  --ps-login-bg-mid: #f1f5f9;
+  --ps-login-bg-end: #e8eff8;
+  --ps-login-accent: #2257a7;
+  --ps-login-accent-hover: #1b4688;
+
+  /* 克制稳定的风险语义色 */
+  --ps-risk-confirmed: #dc2626;
+  --ps-risk-confirmed-bg: #fef2f2;
+  --ps-risk-confirmed-border: #fecaca;
+
+  --ps-risk-high: #ea580c;
+  --ps-risk-high-bg: #fff7ed;
+  --ps-risk-high-border: #fed7aa;
+
+  --ps-risk-suspicious: #b45309;
+  --ps-risk-suspicious-bg: #fffbeb;
+  --ps-risk-suspicious-border: #fde68a;
+
+  --ps-risk-normal: #15803d;
+  --ps-risk-normal-bg: #f0fdf4;
+  --ps-risk-normal-border: #bbf7d0;
+
+  /* 布局与阴影令牌 */
+  --ps-radius-md: 8px;
+  --ps-radius-sm: 6px;
+  --ps-shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --ps-shadow-elevated: 0 8px 24px rgba(15, 23, 42, 0.08);
+  --ps-pad-desktop: 20px;
+  --ps-pad-mobile: 14px;
+
+  font-synthesis: none;
+  letter-spacing: 0;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}

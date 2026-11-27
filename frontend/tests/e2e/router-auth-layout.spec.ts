@@ -21,11 +21,13 @@ test('router authentication bindings pass responsive visual and DOM probes', asy
     await expect(roleList.getByRole('button', { name: '下一页' })).toBeDisabled()
     const probe = await page.evaluate(() => {
       const overflow = document.documentElement.scrollWidth > window.innerWidth + 2
-      const vertical = [...document.querySelectorAll('.ant-btn, .ant-tag')].filter(element => {
+      const vertical = [...document.querySelectorAll('.ant-btn, .ant-tag')].filter((element) => {
         const style = getComputedStyle(element)
         return style.whiteSpace !== 'nowrap' || style.flexShrink !== '0'
       }).length
-      const auth = [...document.querySelectorAll('.router-auth-identity')].find(element => element.getBoundingClientRect().width > 0)
+      const auth = [...document.querySelectorAll('.router-auth-identity')].find(
+        (element) => element.getBoundingClientRect().width > 0,
+      )
       const authStyle = auth ? getComputedStyle(auth) : null
       return {
         overflow,
@@ -35,8 +37,16 @@ test('router authentication bindings pass responsive visual and DOM probes', asy
         bodyBackground: getComputedStyle(document.body).backgroundColor,
       }
     })
-    expect(probe).toMatchObject({ overflow: false, vertical: 0, authVisible: true, authWrap: 'anywhere' })
+    expect(probe).toMatchObject({
+      overflow: false,
+      vertical: 0,
+      authVisible: true,
+      authWrap: 'anywhere',
+    })
     expect(probe.bodyBackground).not.toBe('rgb(0, 0, 0)')
-    await page.screenshot({ path: `../artifacts/ncu-auth-${viewport.name}-${viewport.width}x${viewport.height}.png`, fullPage: true })
+    await page.screenshot({
+      path: `../artifacts/ncu-auth-${viewport.name}-${viewport.width}x${viewport.height}.png`,
+      fullPage: true,
+    })
   }
 })

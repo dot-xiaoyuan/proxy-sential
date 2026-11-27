@@ -9,10 +9,7 @@ import { proxySentinelTheme } from './theme'
 
 export function App() {
   return (
-    <ConfigProvider
-      locale={zhCN}
-      theme={proxySentinelTheme}
-    >
+    <ConfigProvider locale={zhCN} theme={proxySentinelTheme}>
       <QueryClientProvider client={queryClient}>
         <AntApp>
           <RouterProvider router={router} />

@@ -18,7 +18,15 @@ type DevicePage = components['schemas']['DiscoveryDevicePage']
 type ChassisCandidate = components['schemas']['DiscoveryChassisCandidate']
 
 function rowKey(item: Device) {
-  return JSON.stringify([item.id, item.sensor_id, item.site, item.domain, item.vlan, item.mac, item.observations.map(row => row.id).sort()])
+  return JSON.stringify([
+    item.id,
+    item.sensor_id,
+    item.site,
+    item.domain,
+    item.vlan,
+    item.mac,
+    item.observations.map((row) => row.id).sort(),
+  ])
 }
 
 function currentAddresses(item: Device) {
@@ -31,9 +39,12 @@ function discoveryLink(item: Device) {
 
 function networkTypeLabel(item: Device) {
   switch (item.network_device_type || item.last_network_device_type) {
-    case 'gateway': return '网关类型线索'
-    case 'access_point': return '接入点类型线索'
-    default: return '路由器类型线索'
+    case 'gateway':
+      return '网关类型线索'
+    case 'access_point':
+      return '接入点类型线索'
+    default:
+      return '路由器类型线索'
   }
 }
 
@@ -46,7 +57,7 @@ function networkTypeStatusLabel(item: Device) {
 
 export function RouterAssetsPanel() {
   const [params, setParams] = useSearchParams()
-  const queryClient=useQueryClient()
+  const queryClient = useQueryClient()
   const view = params.get('routers_view') === 'ap' ? 'ap' : 'router'
   const type = view === 'ap' ? 'access_point' : 'router'
   const label = view === 'ap' ? '接入点' : '路由器／网关'
@@ -63,8 +74,15 @@ export function RouterAssetsPanel() {
   const scopeKey = scope.toString()
   const filterKey = `${scopeKey}|${pageSize}`
   const [paging, setPaging] = useState({ key: filterKey, page: 1, cursors: [''] })
-  useEffect(()=>setPaging(current=>current.key===filterKey?current:{key:filterKey,page:1,cursors:['']}),[filterKey])
-  const currentPaging = paging.key === filterKey ? paging : { key: filterKey, page: 1, cursors: [''] }
+  useEffect(
+    () =>
+      setPaging((current) =>
+        current.key === filterKey ? current : { key: filterKey, page: 1, cursors: [''] },
+      ),
+    [filterKey],
+  )
+  const currentPaging =
+    paging.key === filterKey ? paging : { key: filterKey, page: 1, cursors: [''] }
   const page = currentPaging.page
   const query = new URLSearchParams(scope)
   query.set('limit', String(pageSize))
@@ -76,118 +94,342 @@ export function RouterAssetsPanel() {
   })
   const chassisCandidates = useQuery({
     queryKey: ['router-chassis-candidates', window],
-    queryFn: ({ signal }) => request<{ items: ChassisCandidate[] }>(`/discovery/chassis-candidates?window=${window}`, { signal }),
+    queryFn: ({ signal }) =>
+      request<{ items: ChassisCandidate[] }>(`/discovery/chassis-candidates?window=${window}`, {
+        signal,
+      }),
   })
-  const candidateByNeighbor = new Map((chassisCandidates.data?.items ?? []).map(candidate => [(candidate.neighbor_mac ?? '').toLowerCase(), candidate]))
-  const change = (key: string, value: string) => setParams(current => {
-    const next = new URLSearchParams(current)
-    if (value) next.set(`routers_${key}`, value)
-    else next.delete(`routers_${key}`)
-    next.delete('routers_page')
-    return next
-  }, { replace: true })
+  const candidateByNeighbor = new Map(
+    (chassisCandidates.data?.items ?? []).map((candidate) => [
+      (candidate.neighbor_mac ?? '').toLowerCase(),
+      candidate,
+    ]),
+  )
+  const change = (key: string, value: string) =>
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current)
+        if (value) next.set(`routers_${key}`, value)
+        else next.delete(`routers_${key}`)
+        next.delete('routers_page')
+        return next
+      },
+      { replace: true },
+    )
   const reset = () => {
     setDraft('')
-    setParams(current => {
-      const next = new URLSearchParams(current)
-      for (const key of ['search', 'state', 'window', 'page']) next.delete(`routers_${key}`)
-      return next
-    }, { replace: true })
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current)
+        for (const key of ['search', 'state', 'window', 'page']) next.delete(`routers_${key}`)
+        return next
+      },
+      { replace: true },
+    )
   }
-  const refresh = () => { const first=new URLSearchParams(query);first.delete('cursor');setPaging({key:filterKey,page:1,cursors:['']});void queryClient.invalidateQueries({queryKey:['router-assets'],refetchType:'none'});void queryClient.refetchQueries({queryKey:['router-assets',first.toString()],exact:true}) }
+  const refresh = () => {
+    const first = new URLSearchParams(query)
+    first.delete('cursor')
+    setPaging({ key: filterKey, page: 1, cursors: [''] })
+    void queryClient.invalidateQueries({ queryKey: ['router-assets'], refetchType: 'none' })
+    void queryClient.refetchQueries({ queryKey: ['router-assets', first.toString()], exact: true })
+  }
   const items = devices.data?.items ?? []
   const freshness = devices.data?.freshness
-  const processedAt = freshness?.processed_at ? observedTimeTitle(freshness.processed_at) : undefined
+  const processedAt = freshness?.processed_at
+    ? observedTimeTitle(freshness.processed_at)
+    : undefined
   const processingLag = freshness?.processing_lag_seconds ?? 0
-  const freshnessMessage = freshness?.status === 'delayed' ? processingLag > 300
-    ? `设备投影处理延迟约 ${Math.ceil(processingLag / 60)} 分钟${processedAt ? `，最近完成于 ${processedAt}` : ''}；不具备来源追平证明，当前列表可能不是最新结果。`
-    : `设备投影${processedAt ? `最近完成于 ${processedAt}` : '完成时间已过期'}，可能存在处理延迟；不具备来源追平证明，当前列表可能不是最新结果。`
-    : freshness?.status === 'initializing' ? '设备投影正在初始化，当前列表尚未覆盖全部来源。'
-      : freshness?.status === 'failed' ? '设备投影处理失败，当前列表可能不是最新结果。'
-        : freshness?.status === 'unknown' || freshness?.source_progress_status === 'unverified' ? `来源进度尚未核验，不具备来源追平证明${processedAt ? `；设备投影最近完成于 ${processedAt}` : ''}。` : ''
-  const emptyDescription = freshness && (freshness.status === 'delayed' || freshness.status === 'initializing' || freshness.source_progress_status === 'unverified')
-    ? `当前已处理范围内暂无匹配的${label}类型线索` : `当前观测范围内暂无匹配的${label}类型线索`
+  const freshnessMessage =
+    freshness?.status === 'delayed'
+      ? processingLag > 300
+        ? `设备投影处理延迟约 ${Math.ceil(processingLag / 60)} 分钟${processedAt ? `，最近完成于 ${processedAt}` : ''}；不具备来源追平证明，当前列表可能不是最新结果。`
+        : `设备投影${processedAt ? `最近完成于 ${processedAt}` : '完成时间已过期'}，可能存在处理延迟；不具备来源追平证明，当前列表可能不是最新结果。`
+      : freshness?.status === 'initializing'
+        ? '设备投影正在初始化，当前列表尚未覆盖全部来源。'
+        : freshness?.status === 'failed'
+          ? '设备投影处理失败，当前列表可能不是最新结果。'
+          : freshness?.status === 'unknown' || freshness?.source_progress_status === 'unverified'
+            ? `来源进度尚未核验，不具备来源追平证明${processedAt ? `；设备投影最近完成于 ${processedAt}` : ''}。`
+            : ''
+  const emptyDescription =
+    freshness &&
+    (freshness.status === 'delayed' ||
+      freshness.status === 'initializing' ||
+      freshness.source_progress_status === 'unverified')
+      ? `当前已处理范围内暂无匹配的${label}类型线索`
+      : `当前观测范围内暂无匹配的${label}类型线索`
   const filtered = Boolean(search || state || window !== '24h')
   const columns = [
     {
-      title: '设备', key: 'identity', width: 250,
+      title: '设备',
+      key: 'identity',
+      width: 250,
       render: (_: unknown, item: Device) => {
         const candidate = candidateByNeighbor.get((item.mac ?? '').toLowerCase())
-        return <div className="router-device-cell">
-          <DiscoveryDeviceIcon type={item.network_device_type === 'gateway' ? 'gateway' : type} />
-          <DeviceAddress name={item.name} ip={currentAddresses(item)[0]} addresses={currentAddresses(item)} mac={item.mac} historicalIP={item.last_observed_ip} />
-          {candidate && <Tooltip title={(candidate.evidence ?? []).join('；')}>
-            <Typography.Text type="secondary" className="router-chassis-candidate">疑似同一机箱：{candidate.partner_ip} · {Math.round(candidate.confidence * 100)}%</Typography.Text>
-          </Tooltip>}
-        </div>
+        return (
+          <div className="router-device-cell">
+            <DiscoveryDeviceIcon type={item.network_device_type === 'gateway' ? 'gateway' : type} />
+            <DeviceAddress
+              name={item.name}
+              ip={currentAddresses(item)[0]}
+              addresses={currentAddresses(item)}
+              mac={item.mac}
+              historicalIP={item.last_observed_ip}
+            />
+            {candidate && (
+              <Tooltip title={(candidate.evidence ?? []).join('；')}>
+                <Typography.Text type="secondary" className="router-chassis-candidate">
+                  疑似同一机箱：{candidate.partner_ip} · {Math.round(candidate.confidence * 100)}%
+                </Typography.Text>
+              </Tooltip>
+            )}
+          </div>
+        )
       },
     },
     {
-      title: '类型 / 厂商型号', key: 'type', width: 175,
-      render: (_: unknown, item: Device) => <div className="router-identity">
-        <Tag>{networkTypeStatusLabel(item)}</Tag>
-        {(item.manufacturer || item.model_name) && <Typography.Text type="secondary">{[item.manufacturer, item.model_name].filter(Boolean).join(' · ')}</Typography.Text>}
-      </div>,
+      title: '类型 / 厂商型号',
+      key: 'type',
+      width: 175,
+      render: (_: unknown, item: Device) => (
+        <div className="router-identity">
+          <Tag>{networkTypeStatusLabel(item)}</Tag>
+          {(item.manufacturer || item.model_name) && (
+            <Typography.Text type="secondary">
+              {[item.manufacturer, item.model_name].filter(Boolean).join(' · ')}
+            </Typography.Text>
+          )}
+        </div>
+      ),
     },
     {
-      title: '识别依据', key: 'evidence', width: 175,
-      render: (_: unknown, item: Device) => <div className="router-recognition-evidence">
-        {(item.protocols ?? []).map(protocol => <Tag key={protocol} className="router-source">{routerSourceLabels[protocol] || protocol.toUpperCase()}</Tag>)}
-        {item.network_type_reason && <span className="router-verdict-reason">{item.network_type_reason}</span>}
-      </div>,
+      title: '识别依据',
+      key: 'evidence',
+      width: 175,
+      render: (_: unknown, item: Device) => (
+        <div className="router-recognition-evidence">
+          {(item.protocols ?? []).map((protocol) => (
+            <Tag key={protocol} className="router-source">
+              {routerSourceLabels[protocol] || protocol.toUpperCase()}
+            </Tag>
+          ))}
+          {item.network_type_reason && (
+            <span className="router-verdict-reason">{item.network_type_reason}</span>
+          )}
+        </div>
+      ),
     },
     {
-      title: '网络范围', key: 'scope', width: 110,
-      render: (_: unknown, item: Device) => <div className="router-identity"><span>{item.domain}</span>{item.vlan && <Typography.Text type="secondary">VLAN {item.vlan}</Typography.Text>}</div>,
+      title: '网络范围',
+      key: 'scope',
+      width: 110,
+      render: (_: unknown, item: Device) => (
+        <div className="router-identity">
+          <span>{item.domain}</span>
+          {item.vlan && <Typography.Text type="secondary">VLAN {item.vlan}</Typography.Text>}
+        </div>
+      ),
     },
-    { title: '类型线索时间', key: 'network_type_last_seen', width: 105, render: (_: unknown, item: Device) => <span title={observedTimeTitle(item.network_type_last_seen)}>{observedTimeLabel(item.network_type_last_seen)}</span> },
-    { title: '操作', key: 'action', width: 85, render: (_: unknown, item: Device) => <Button type="link" onClick={() => setSelected(item)}>查看设备</Button> },
+    {
+      title: '类型线索时间',
+      key: 'network_type_last_seen',
+      width: 105,
+      render: (_: unknown, item: Device) => (
+        <span title={observedTimeTitle(item.network_type_last_seen)}>
+          {observedTimeLabel(item.network_type_last_seen)}
+        </span>
+      ),
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 85,
+      render: (_: unknown, item: Device) => (
+        <Button type="link" onClick={() => setSelected(item)}>
+          查看设备
+        </Button>
+      ),
+    },
   ]
-  return <section className="router-observations-panel">
-    <div className="router-view-switch"><Segmented aria-label="网络设备类型" value={view} options={[{ value: 'router', label: '路由器' }, { value: 'ap', label: '接入点' }]} onChange={value => change('view', String(value))} /></div>
-    <AppTableBar
-      searchPlaceholder="搜索设备名称、IP 或 MAC"
-      searchValue={draft}
-      onSearchChange={value => { setDraft(value); if (!value) change('search', '') }}
-      onSearch={value => change('search', value.trim())}
-      filters={<>
-        <Select aria-label="类型证据状态" value={state} options={[{ value: '', label: '当前类型线索' }, { value: 'expired', label: '历史及到期线索' }]} onChange={value => change('state', value)} />
-        <Select aria-label="设备观测范围" value={window} options={[{ value: '24h', label: '近 24 小时' }, { value: '168h', label: '近 7 天' }, { value: '720h', label: '近 30 天' }]} onChange={value => change('window', value)} />
-        <Button onClick={() => change('search', draft.trim())}>查询</Button>
-        {filtered && <Button type="text" onClick={reset}>清空筛选</Button>}
-      </>}
-    />
-    {freshnessMessage && <div className="router-freshness-note" role="status">{freshnessMessage}</div>}
-    {devices.data?.network_type_coverage === 'new_observations' && <div className="router-freshness-note" role="status">类型线索读模型从新观测或到期处理逐步建立，旧事实尚未完成回填与核验；只有带有效设备类型的发现事实才会进入此列表，上方路由角色候选不会自动转为资产类型线索。</div>}
-    <section className="surface center-list-surface">
-      <AppListHeader
-        title={`${label}类型线索`}
-        description="被动协议公告提供设备类型线索，整机类型需核验；违规与共享行为由独立角色评估判断。"
-        actions={<Button aria-label="刷新设备" icon={<ReloadOutlined />} loading={devices.isFetching} onClick={refresh}>刷新</Button>}
+  return (
+    <section className="router-observations-panel">
+      <div className="router-view-switch">
+        <Segmented
+          aria-label="网络设备类型"
+          value={view}
+          options={[
+            { value: 'router', label: '路由器' },
+            { value: 'ap', label: '接入点' },
+          ]}
+          onChange={(value) => change('view', String(value))}
+        />
+      </div>
+      <AppTableBar
+        searchPlaceholder="搜索设备名称、IP 或 MAC"
+        searchValue={draft}
+        onSearchChange={(value) => {
+          setDraft(value)
+          if (!value) change('search', '')
+        }}
+        onSearch={(value) => change('search', value.trim())}
+        filters={
+          <>
+            <Select
+              aria-label="类型证据状态"
+              value={state}
+              options={[
+                { value: '', label: '当前类型线索' },
+                { value: 'expired', label: '历史及到期线索' },
+              ]}
+              onChange={(value) => change('state', value)}
+            />
+            <Select
+              aria-label="设备观测范围"
+              value={window}
+              options={[
+                { value: '24h', label: '近 24 小时' },
+                { value: '168h', label: '近 7 天' },
+                { value: '720h', label: '近 30 天' },
+              ]}
+              onChange={(value) => change('window', value)}
+            />
+            <Button onClick={() => change('search', draft.trim())}>查询</Button>
+            {filtered && (
+              <Button type="text" onClick={reset}>
+                清空筛选
+              </Button>
+            )}
+          </>
+        }
       />
-      {devices.isError ? <AppErrorAlert title="读取网络设备失败" message={devices.error.message} action={<Button onClick={() => void devices.refetch()}>重新读取</Button>} /> : <>
-        <AppTable className="passive-ledger-table" rowKey={rowKey} columns={columns} dataSource={items} loading={devices.isPending} tableLayout="fixed" scroll={{ x: 900 }} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={emptyDescription}>{filtered && <Button onClick={reset}>清空筛选</Button>}</Empty> }} />
-        {(items.length > 0 || page > 1) && <RecordCursorPagination page={page} pageSize={pageSize} count={items.length} nextCursor={devices.data?.next_cursor ?? ''} fetching={devices.isFetching}
-          onNext={() => { const next = devices.data?.next_cursor; if (next) setPaging({ key: filterKey, page: page + 1, cursors: [...currentPaging.cursors.slice(0, page), next] }) }}
-          onPrevious={() => setPaging({ ...currentPaging, page: Math.max(1, page - 1) })}
-          onPageSizeChange={size => { setPageSize(size); setPaging({ key: '', page: 1, cursors: [''] }) }} />}
-      </>}
+      {freshnessMessage && (
+        <div className="router-freshness-note" role="status">
+          {freshnessMessage}
+        </div>
+      )}
+      {devices.data?.network_type_coverage === 'new_observations' && (
+        <div className="router-freshness-note" role="status">
+          类型线索读模型从新观测或到期处理逐步建立，旧事实尚未完成回填与核验；只有带有效设备类型的发现事实才会进入此列表，上方路由角色候选不会自动转为资产类型线索。
+        </div>
+      )}
+      <section className="surface center-list-surface">
+        <AppListHeader
+          title={`${label}类型线索`}
+          description="被动协议公告提供设备类型线索，整机类型需核验；违规与共享行为由独立角色评估判断。"
+          actions={
+            <Button
+              aria-label="刷新设备"
+              icon={<ReloadOutlined />}
+              loading={devices.isFetching}
+              onClick={refresh}
+            >
+              刷新
+            </Button>
+          }
+        />
+        {devices.isError ? (
+          <AppErrorAlert
+            title="读取网络设备失败"
+            message={devices.error.message}
+            action={<Button onClick={() => void devices.refetch()}>重新读取</Button>}
+          />
+        ) : (
+          <>
+            <AppTable
+              className="passive-ledger-table"
+              rowKey={rowKey}
+              columns={columns}
+              dataSource={items}
+              loading={devices.isPending}
+              tableLayout="fixed"
+              scroll={{ x: 900 }}
+              locale={{
+                emptyText: (
+                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={emptyDescription}>
+                    {filtered && <Button onClick={reset}>清空筛选</Button>}
+                  </Empty>
+                ),
+              }}
+            />
+            {(items.length > 0 || page > 1) && (
+              <RecordCursorPagination
+                page={page}
+                pageSize={pageSize}
+                count={items.length}
+                nextCursor={devices.data?.next_cursor ?? ''}
+                fetching={devices.isFetching}
+                onNext={() => {
+                  const next = devices.data?.next_cursor
+                  if (next)
+                    setPaging({
+                      key: filterKey,
+                      page: page + 1,
+                      cursors: [...currentPaging.cursors.slice(0, page), next],
+                    })
+                }}
+                onPrevious={() => setPaging({ ...currentPaging, page: Math.max(1, page - 1) })}
+                onPageSizeChange={(size) => {
+                  setPageSize(size)
+                  setPaging({ key: '', page: 1, cursors: [''] })
+                }}
+              />
+            )}
+          </>
+        )}
+      </section>
+      <Modal
+        title="设备资料"
+        className="discovery-evidence-modal"
+        open={Boolean(selected)}
+        onCancel={() => setSelected(undefined)}
+        footer={selected ? <Link to={discoveryLink(selected)}>在发现设备中查看</Link> : null}
+      >
+        {selected && (
+          <>
+            <DeviceAddress
+              name={selected.name}
+              ip={currentAddresses(selected)[0]}
+              addresses={currentAddresses(selected)}
+              mac={selected.mac}
+              historicalIP={selected.last_observed_ip}
+            />
+            <dl className="discovery-detail-facts">
+              {[
+                ['设备类型线索', networkTypeStatusLabel(selected)],
+                ['厂商', selected.manufacturer],
+                ['型号', selected.model_name],
+                ['网络域', selected.domain],
+                ['VLAN', selected.vlan],
+                ['采集传感器', selected.sensor_id],
+                ['线索首次观测', observedTimeTitle(selected.network_type_first_seen)],
+                ['线索最近观测', observedTimeTitle(selected.network_type_last_seen)],
+              ]
+                .filter(([, value]) => Boolean(value))
+                .map(([title, value]) => (
+                  <div key={title}>
+                    <dt>{title}</dt>
+                    <dd>{value}</dd>
+                  </div>
+                ))}
+            </dl>
+            {selected.network_type_reason && (
+              <Typography.Paragraph>{selected.network_type_reason}</Typography.Paragraph>
+            )}
+            {(selected.network_type_evidence_ids?.length ?? 0) > 0 && (
+              <Typography.Paragraph className="router-network-evidence-refs" type="secondary">
+                证据引用：{selected.network_type_evidence_ids?.join('、')}
+              </Typography.Paragraph>
+            )}
+            <Space wrap>
+              {(selected.protocols ?? []).map((protocol) => (
+                <Tag key={protocol}>{routerSourceLabels[protocol] || protocol.toUpperCase()}</Tag>
+              ))}
+            </Space>
+            <DiscoveryEvidenceSummary observations={selected.observations ?? []} />
+          </>
+        )}
+      </Modal>
     </section>
-    <Modal title="设备资料" className="discovery-evidence-modal" open={Boolean(selected)} onCancel={() => setSelected(undefined)} footer={selected ? <Link to={discoveryLink(selected)}>在发现设备中查看</Link> : null}>
-      {selected && <>
-        <DeviceAddress name={selected.name} ip={currentAddresses(selected)[0]} addresses={currentAddresses(selected)} mac={selected.mac} historicalIP={selected.last_observed_ip} />
-        <dl className="discovery-detail-facts">
-          {[
-            ['设备类型线索', networkTypeStatusLabel(selected)],
-            ['厂商', selected.manufacturer], ['型号', selected.model_name], ['网络域', selected.domain], ['VLAN', selected.vlan],
-            ['采集传感器', selected.sensor_id], ['线索首次观测', observedTimeTitle(selected.network_type_first_seen)], ['线索最近观测', observedTimeTitle(selected.network_type_last_seen)],
-          ].filter(([, value]) => Boolean(value)).map(([title, value]) => <div key={title}><dt>{title}</dt><dd>{value}</dd></div>)}
-        </dl>
-        {selected.network_type_reason && <Typography.Paragraph>{selected.network_type_reason}</Typography.Paragraph>}
-        {(selected.network_type_evidence_ids?.length ?? 0) > 0 && <Typography.Paragraph className="router-network-evidence-refs" type="secondary">证据引用：{selected.network_type_evidence_ids?.join('、')}</Typography.Paragraph>}
-        <Space wrap>{(selected.protocols ?? []).map(protocol => <Tag key={protocol}>{routerSourceLabels[protocol] || protocol.toUpperCase()}</Tag>)}</Space>
-        <DiscoveryEvidenceSummary observations={selected.observations ?? []} />
-      </>}
-    </Modal>
-  </section>
+  )
 }

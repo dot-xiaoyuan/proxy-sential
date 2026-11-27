@@ -8,28 +8,74 @@ const request = vi.hoisted(() => vi.fn())
 vi.mock('../shared/api/client', () => ({ request }))
 
 const profile = {
-  profile_id: 'profile-1', sensor_id: 'sensor', endpoint_id: 'endpoint-1', mac: '00:11:22:33:44:55', ip: '192.0.2.1',
-  display_name: 'TP-Link AX3000', brand: 'TP-Link', model: 'AX3000', role: 'router', confidence: 90,
-  identity_conflict: false, identity_state: 'supported', identity_current: true,
-  identity_at: '2026-10-09T06:00:00Z', identity_expires_at: '2026-10-10T06:00:00Z',
-  identity_evidence_id: '', identity_assessment_id: 'assessment-1', identity_basis: 'DHCP 路由器型号证据',
-  address_state: 'verified', current_shared: false, shared_confidence: 0, address_only: false,
-  auth_bindings: [{ session_id: 'session-1', account_id: 'student-1', assigned_ips: ['198.51.100.8'], source: 'ncu-srun4k', match_basis: 'exact_endpoint', ambiguous: false }],
-  latest_account_id: 'student-1', latest_account_at: '2026-10-09T06:01:00Z', latest_account_active: false,
-  latest_account_match_basis: 'exact_endpoint', account_conflict: false,
-  first_seen: '2026-10-09T05:00:00Z', last_observed_at: '2026-10-09T06:01:00Z', materialized_at: '2026-10-09T06:01:01Z',
+  profile_id: 'profile-1',
+  sensor_id: 'sensor',
+  endpoint_id: 'endpoint-1',
+  mac: '00:11:22:33:44:55',
+  ip: '192.0.2.1',
+  display_name: 'TP-Link AX3000',
+  brand: 'TP-Link',
+  model: 'AX3000',
+  role: 'router',
+  confidence: 90,
+  identity_conflict: false,
+  identity_state: 'supported',
+  identity_current: true,
+  identity_at: '2026-10-09T06:00:00Z',
+  identity_expires_at: '2026-10-10T06:00:00Z',
+  identity_evidence_id: '',
+  identity_assessment_id: 'assessment-1',
+  identity_basis: 'DHCP 路由器型号证据',
+  address_state: 'verified',
+  current_shared: false,
+  shared_confidence: 0,
+  address_only: false,
+  auth_bindings: [
+    {
+      session_id: 'session-1',
+      account_id: 'student-1',
+      assigned_ips: ['198.51.100.8'],
+      source: 'ncu-srun4k',
+      match_basis: 'exact_endpoint',
+      ambiguous: false,
+    },
+  ],
+  latest_account_id: 'student-1',
+  latest_account_at: '2026-10-09T06:01:00Z',
+  latest_account_active: false,
+  latest_account_match_basis: 'exact_endpoint',
+  account_conflict: false,
+  first_seen: '2026-10-09T05:00:00Z',
+  last_observed_at: '2026-10-09T06:01:00Z',
+  materialized_at: '2026-10-09T06:01:01Z',
 }
 
 function setup() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  render(<QueryClientProvider client={client}><MemoryRouter><SharedDeviceProfiles /></MemoryRouter></QueryClientProvider>)
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <SharedDeviceProfiles />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
 }
 
-afterEach(() => { cleanup(); request.mockReset() })
+afterEach(() => {
+  cleanup()
+  request.mockReset()
+})
 
 describe('共享设备持久化档案', () => {
   it('初始化阶段直接展示持久化档案口径和空状态', async () => {
-    request.mockResolvedValue({ items: [], page: { limit: 20, total: 0 }, checked_at: '2026-10-09T06:02:00Z', as_of: '2026-10-09T06:02:00Z', freshness_state: 'initializing', pending_jobs: 0 })
+    request.mockResolvedValue({
+      items: [],
+      page: { limit: 20, total: 0 },
+      checked_at: '2026-10-09T06:02:00Z',
+      as_of: '2026-10-09T06:02:00Z',
+      freshness_state: 'initializing',
+      pending_jobs: 0,
+    })
     setup()
     expect(await screen.findByText('正在建立新的终端档案')).toBeInTheDocument()
     expect(screen.getByText('当前筛选下暂无终端档案')).toBeInTheDocument()
@@ -37,7 +83,15 @@ describe('共享设备持久化档案', () => {
   })
 
   it('直接展示最后观测和最新账号，不再展示请求时流量状态', async () => {
-    request.mockResolvedValue({ items: [profile], page: { limit: 20, total: 1 }, checked_at: '2026-10-09T06:02:00Z', as_of: '2026-10-09T06:02:00Z', freshness_state: 'fresh', materialized_at: '2026-10-09T06:01:01Z', pending_jobs: 0 })
+    request.mockResolvedValue({
+      items: [profile],
+      page: { limit: 20, total: 1 },
+      checked_at: '2026-10-09T06:02:00Z',
+      as_of: '2026-10-09T06:02:00Z',
+      freshness_state: 'fresh',
+      materialized_at: '2026-10-09T06:01:01Z',
+      pending_jobs: 0,
+    })
     setup()
     await screen.findAllByText('TP-Link AX3000')
     expect(screen.getAllByText(/最后观测/).length).toBeGreaterThan(0)
@@ -47,22 +101,79 @@ describe('共享设备持久化档案', () => {
   })
 
   it('按需读取档案历史，不额外刷新列表', async () => {
-    request.mockImplementation((url: string) => Promise.resolve(url.includes('/profile-1')
-      ? { profile, history: [{ kind: 'projection', observed_at: '2026-10-09T06:01:00Z', snapshot: profile }] }
-      : { items: [profile], page: { limit: 20, total: 1 }, checked_at: '2026-10-09T06:02:00Z', as_of: '2026-10-09T06:02:00Z', freshness_state: 'fresh', pending_jobs: 0 }))
+    request.mockImplementation((url: string) =>
+      Promise.resolve(
+        url.includes('/profile-1')
+          ? {
+              profile,
+              history: [
+                { kind: 'projection', observed_at: '2026-10-09T06:01:00Z', snapshot: profile },
+              ],
+            }
+          : {
+              items: [profile],
+              page: { limit: 20, total: 1 },
+              checked_at: '2026-10-09T06:02:00Z',
+              as_of: '2026-10-09T06:02:00Z',
+              freshness_state: 'fresh',
+              pending_jobs: 0,
+            },
+      ),
+    )
     setup()
     await screen.findAllByText('TP-Link AX3000')
     fireEvent.click(screen.getAllByRole('button', { name: '档案历史' })[0])
     await screen.findByText('终端档案历史')
-    await waitFor(() => expect(request.mock.calls.some(([url]) => String(url).includes('/profile-1'))).toBe(true))
+    await waitFor(() =>
+      expect(request.mock.calls.some(([url]) => String(url).includes('/profile-1'))).toBe(true),
+    )
     expect(screen.getByText('账号 student-1')).toBeInTheDocument()
   })
 
   it('分开展示时间有效性与路由可信度，线索角色和厂商参考弱化呈现', async () => {
-    const candidate = { ...profile, profile_id: 'candidate', display_name: '', brand: 'Huawei', model: '', brand_reference_only: true, role_source: 'assessment', router_status: 'candidate', ip: '192.0.2.9' }
-    const hint = { ...profile, profile_id: 'hint', display_name: '192.168.1.1', brand: '', model: '', role: 'gateway', role_source: 'discovery_hint', identity_state: 'reference', identity_current: false, identity_assessment_id: '', ip: '192.168.1.1' }
-    const inferred = { ...profile, profile_id: 'inferred', display_name: '198.51.100.20', brand: '', model: '', role: 'shared_gateway', role_source: 'inferred_shared_gateway', identity_assessment_id: '', ip: '198.51.100.20' }
-    request.mockResolvedValue({ items: [candidate, hint, inferred], page: { limit: 20, total: 3 }, checked_at: '2026-10-09T06:02:00Z', as_of: '2026-10-09T06:02:00Z', freshness_state: 'fresh', pending_jobs: 0 })
+    const candidate = {
+      ...profile,
+      profile_id: 'candidate',
+      display_name: '',
+      brand: 'Huawei',
+      model: '',
+      brand_reference_only: true,
+      role_source: 'assessment',
+      router_status: 'candidate',
+      ip: '192.0.2.9',
+    }
+    const hint = {
+      ...profile,
+      profile_id: 'hint',
+      display_name: '192.168.1.1',
+      brand: '',
+      model: '',
+      role: 'gateway',
+      role_source: 'discovery_hint',
+      identity_state: 'reference',
+      identity_current: false,
+      identity_assessment_id: '',
+      ip: '192.168.1.1',
+    }
+    const inferred = {
+      ...profile,
+      profile_id: 'inferred',
+      display_name: '198.51.100.20',
+      brand: '',
+      model: '',
+      role: 'shared_gateway',
+      role_source: 'inferred_shared_gateway',
+      identity_assessment_id: '',
+      ip: '198.51.100.20',
+    }
+    request.mockResolvedValue({
+      items: [candidate, hint, inferred],
+      page: { limit: 20, total: 3 },
+      checked_at: '2026-10-09T06:02:00Z',
+      as_of: '2026-10-09T06:02:00Z',
+      freshness_state: 'fresh',
+      pending_jobs: 0,
+    })
     setup()
     expect(await screen.findByText('身份线索')).toBeInTheDocument()
     expect(screen.getAllByText('身份当前有效').length).toBe(2)
@@ -75,27 +186,64 @@ describe('共享设备持久化档案', () => {
   })
 
   it('按路由可信度筛选时传给接口', async () => {
-    request.mockResolvedValue({ items: [], page: { limit: 20, total: 0 }, checked_at: '2026-10-09T06:02:00Z', as_of: '2026-10-09T06:02:00Z', freshness_state: 'fresh', pending_jobs: 0 })
+    request.mockResolvedValue({
+      items: [],
+      page: { limit: 20, total: 0 },
+      checked_at: '2026-10-09T06:02:00Z',
+      as_of: '2026-10-09T06:02:00Z',
+      freshness_state: 'fresh',
+      pending_jobs: 0,
+    })
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/shared-access?tab=devices&device_router_status=likely']}><SharedDeviceProfiles /></MemoryRouter></QueryClientProvider>)
-    await waitFor(() => expect(request.mock.calls.some(([url]) => String(url).includes('router_status=likely'))).toBe(true))
-    expect(new URL(request.mock.calls[0][0], 'http://localhost').searchParams.get('has_account')).toBeNull()
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/shared-access?tab=devices&device_router_status=likely']}>
+          <SharedDeviceProfiles />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    await waitFor(() =>
+      expect(request.mock.calls.some(([url]) => String(url).includes('router_status=likely'))).toBe(
+        true,
+      ),
+    )
+    expect(
+      new URL(request.mock.calls[0][0], 'http://localhost').searchParams.get('has_account'),
+    ).toBeNull()
   })
 })
 
 it('默认展示无账号身份档案而不将其认定为共享', async () => {
   request.mockImplementation((url: string) => {
     const hidden = new URL(url, 'http://localhost').searchParams.get('has_account') === 'true'
-    return Promise.resolve({ items: hidden ? [] : [{ ...profile, auth_bindings: [], latest_account_id: '', current_shared: false }], page: { total: hidden ? 0 : 1 } })
+    return Promise.resolve({
+      items: hidden
+        ? []
+        : [{ ...profile, auth_bindings: [], latest_account_id: '', current_shared: false }],
+      page: { total: hidden ? 0 : 1 },
+    })
   })
   setup()
   expect(await screen.findByText('TP-Link AX3000')).toBeInTheDocument()
   expect(screen.queryByText('已确认当前共享')).not.toBeInTheDocument()
 })
 
-it.each([['linked', 'true'], ['empty', 'false']])('保留显式账号筛选 %s', async (range, expected) => {
+it.each([
+  ['linked', 'true'],
+  ['empty', 'false'],
+])('保留显式账号筛选 %s', async (range, expected) => {
   request.mockResolvedValue({ items: [], page: { total: 0 } })
-  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={[`/shared-access?tab=devices&device_accounts=${range}`]}><SharedDeviceProfiles /></MemoryRouter></QueryClientProvider>)
+  render(
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <MemoryRouter initialEntries={[`/shared-access?tab=devices&device_accounts=${range}`]}>
+        <SharedDeviceProfiles />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
   await waitFor(() => expect(request).toHaveBeenCalled())
-  expect(new URL(request.mock.calls[0][0], 'http://localhost').searchParams.get('has_account')).toBe(expected)
+  expect(
+    new URL(request.mock.calls[0][0], 'http://localhost').searchParams.get('has_account'),
+  ).toBe(expected)
 })

@@ -1,8 +1,14 @@
+import '../styles/pages/reports.css'
 import { ReloadOutlined } from '@ant-design/icons'
 import { useIsFetching, useQueryClient } from '@tanstack/react-query'
 import { Button } from 'antd'
 
-import { RouterReport, SharedBehaviorReport, SharingCoverageReport, SharingTrendReport } from '../features/reports/DefenseReports'
+import {
+  RouterReport,
+  SharedBehaviorReport,
+  SharingCoverageReport,
+  SharingTrendReport,
+} from '../features/reports/DefenseReports'
 import { useSession } from '../shared/api/queries'
 import { can } from '../shared/auth/permissions'
 import { Notice } from '../shared/ui/Notice'
@@ -15,14 +21,24 @@ export function ReportsPage() {
   const policies = can(session, 'policies:read')
   const cases = can(session, 'cases:read')
   if (!identity && !policies && !cases) {
-    return <main className="page"><Notice showIcon type="warning" title="没有报表访问权限" /></main>
+    return (
+      <main className="page">
+        <Notice showIcon type="warning" title="没有报表访问权限" />
+      </main>
+    )
   }
 
   return (
     <main className="page reports-page">
       <div className="report-toolbar">
-        <Button className="report-refresh" icon={<ReloadOutlined />} loading={fetching}
-          onClick={() => void queryClient.invalidateQueries({ queryKey: ['reports'], refetchType: 'active' })}>
+        <Button
+          className="report-refresh"
+          icon={<ReloadOutlined />}
+          loading={fetching}
+          onClick={() =>
+            void queryClient.invalidateQueries({ queryKey: ['reports'], refetchType: 'active' })
+          }
+        >
           刷新报表
         </Button>
       </div>

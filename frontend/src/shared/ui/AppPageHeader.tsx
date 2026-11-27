@@ -64,7 +64,6 @@ export function AppPageHeader<T extends ReportWindow = QuickWindow>({
         )}
 
         {extra}
-
       </Space>
     </div>
   )

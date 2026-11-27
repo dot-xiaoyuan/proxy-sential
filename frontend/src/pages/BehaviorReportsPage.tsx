@@ -1,11 +1,9 @@
-import {
-  useState } from 'react'
+import '../styles/pages/system.css'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useMutation,
-  useQuery,
-  useQueryClient,
-  type UseQueryResult } from '@tanstack/react-query'
-import { Button,
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
+import {
+  Button,
   Card,
   Descriptions,
   Form,
@@ -24,8 +22,20 @@ import type { ColumnsType } from 'antd/es/table'
 import { request } from '../shared/api/client'
 import { useSession } from '../shared/api/queries'
 import { can } from '../shared/auth/permissions'
-import { AppErrorAlert, AppFactBar, AppListHeader, AppListSection, AppLoadingState, AppPageHeader, AppTable, formatDateTime } from '../shared/ui'
-import { RecordCursorPagination, useRecordCursorPagination } from '../shared/ui/RecordCursorPagination'
+import {
+  AppErrorAlert,
+  AppFactBar,
+  AppListHeader,
+  AppListSection,
+  AppLoadingState,
+  AppPageHeader,
+  AppTable,
+  formatDateTime,
+} from '../shared/ui'
+import {
+  RecordCursorPagination,
+  useRecordCursorPagination,
+} from '../shared/ui/RecordCursorPagination'
 import { statusText, statusColor } from '../shared/ui/status'
 import { useUrlState } from '../shared/ui/useUrlState'
 import type { components } from '../shared/api/generated'
@@ -35,8 +45,16 @@ type ChannelPage = components['schemas']['BehaviorReportChannelPage']
 type OutboxRow = components['schemas']['BehaviorReportOutboxRow']
 type OutboxDetail = components['schemas']['BehaviorReportOutboxDetail']
 
-const authTypes: Record<string, string> = { none: '无鉴权', bearer: 'Bearer 令牌', oauth2_client_credentials: 'OAuth2 客户端凭据' }
-const eventTypes: Record<string, string> = { poison_behavior: '投毒行为', proxy_behavior: '代理行为', ai_relay_audit: 'AI 中转站审计' }
+const authTypes: Record<string, string> = {
+  none: '无鉴权',
+  bearer: 'Bearer 令牌',
+  oauth2_client_credentials: 'OAuth2 客户端凭据',
+}
+const eventTypes: Record<string, string> = {
+  poison_behavior: '投毒行为',
+  proxy_behavior: '代理行为',
+  ai_relay_audit: 'AI 中转站审计',
+}
 const statusFilters = ['recorded', 'queued', 'sending', 'sent', 'failed', 'cancelled']
 const when = formatDateTime
 
@@ -53,67 +71,189 @@ export function BehaviorReportsPage() {
   const writable = can(session.data, 'behavior-reports:manage')
   const cache = useQueryClient()
   const [tab, setTab] = useUrlState('tab', 'channels', ['channels', 'outbox'])
-  const channels = useQuery({ queryKey: ['behavior-reports', 'channels'], queryFn: () => request<ChannelPage>('/behavior-reports/channels') })
+  const channels = useQuery({
+    queryKey: ['behavior-reports', 'channels'],
+    queryFn: () => request<ChannelPage>('/behavior-reports/channels'),
+  })
   const invalidate = () => void cache.invalidateQueries({ queryKey: ['behavior-reports'] })
   return (
     <section className="page behavior-reports-page">
       <AppPageHeader />
-      <AppFactBar label="上报通道配置" items={['共享策略命中时，已启用通道写入仅记录状态的上报记录，不请求外部平台','策略与上报记录可在风险运营中查询','字段映射可填“=常量”写固定值，或填证据字段名取值']} />
+      <AppFactBar
+        label="上报通道配置"
+        items={[
+          '共享策略命中时，已启用通道写入仅记录状态的上报记录，不请求外部平台',
+          '策略与上报记录可在风险运营中查询',
+          '字段映射可填“=常量”写固定值，或填证据字段名取值',
+        ]}
+      />
       <Card>
-        <Tabs activeKey={tab} onChange={setTab} items={[
-          { key: 'channels', label: '上报通道', children: <ChannelsPanel channels={channels} writable={writable} invalidate={invalidate} /> },
-          { key: 'outbox', label: '上报记录', children: <BehaviorReportRecords writable={writable} /> },
-        ]} />
+        <Tabs
+          activeKey={tab}
+          onChange={setTab}
+          items={[
+            {
+              key: 'channels',
+              label: '上报通道',
+              children: (
+                <ChannelsPanel channels={channels} writable={writable} invalidate={invalidate} />
+              ),
+            },
+            {
+              key: 'outbox',
+              label: '上报记录',
+              children: <BehaviorReportRecords writable={writable} />,
+            },
+          ]}
+        />
       </Card>
     </section>
   )
 }
 
-function ChannelsPanel({ channels, writable, invalidate }: { channels: UseQueryResult<ChannelPage>; writable: boolean; invalidate: () => void }) {
+function ChannelsPanel({
+  channels,
+  writable,
+  invalidate,
+}: {
+  channels: UseQueryResult<ChannelPage>
+  writable: boolean
+  invalidate: () => void
+}) {
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Channel>()
   const [preview, setPreview] = useState<string>()
   const [form] = Form.useForm()
   const save = useMutation({
-    mutationFn: (value: Record<string, unknown>) => request<Channel>(editing ? `/behavior-reports/channels/${encodeURIComponent(editing.channel_id ?? '')}` : '/behavior-reports/channels', { method: editing ? 'PUT' : 'POST', body: JSON.stringify(value) }),
-    onSuccess: () => { invalidate(); setOpen(false); message.success('通道已保存') },
+    mutationFn: (value: Record<string, unknown>) =>
+      request<Channel>(
+        editing
+          ? `/behavior-reports/channels/${encodeURIComponent(editing.channel_id ?? '')}`
+          : '/behavior-reports/channels',
+        { method: editing ? 'PUT' : 'POST', body: JSON.stringify(value) },
+      ),
+    onSuccess: () => {
+      invalidate()
+      setOpen(false)
+      message.success('通道已保存')
+    },
     onError: (error: Error) => message.error(error.message),
   })
   const remove = useMutation({
-    mutationFn: (id: string) => request(`/behavior-reports/channels/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-    onSuccess: () => { invalidate(); message.success('通道已删除') },
+    mutationFn: (id: string) =>
+      request(`/behavior-reports/channels/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      invalidate()
+      message.success('通道已删除')
+    },
     onError: (error: Error) => message.error(error.message),
   })
   const test = useMutation({
-    mutationFn: (id: string) => request<{ status: string; http_status: number; remote_id?: string; error?: string }>(`/behavior-reports/channels/${encodeURIComponent(id)}/test`, { method: 'POST' }),
-    onSuccess: (data) => (data.status === '拟测试' ? message.success('已记录拟测试，未向平台发送') : message.error(data.error || '拟测试记录失败')),
+    mutationFn: (id: string) =>
+      request<{ status: string; http_status: number; remote_id?: string; error?: string }>(
+        `/behavior-reports/channels/${encodeURIComponent(id)}/test`,
+        { method: 'POST' },
+      ),
+    onSuccess: (data) =>
+      data.status === '拟测试'
+        ? message.success('已记录拟测试，未向平台发送')
+        : message.error(data.error || '拟测试记录失败'),
     onError: (error: Error) => message.error(error.message),
   })
   const runPreview = useMutation({
-    mutationFn: (id: string) => request<{ payload: Record<string, unknown> }>(`/behavior-reports/channels/${encodeURIComponent(id)}/preview`, { method: 'POST' }),
+    mutationFn: (id: string) =>
+      request<{ payload: Record<string, unknown> }>(
+        `/behavior-reports/channels/${encodeURIComponent(id)}/preview`,
+        { method: 'POST' },
+      ),
     onSuccess: (data) => setPreview(JSON.stringify(data.payload, null, 2)),
     onError: (error: Error) => message.error(error.message),
   })
   const edit = (item?: Channel) => {
     setEditing(item)
     form.resetFields()
-    form.setFieldsValue(item ? { ...item, secret: undefined } : { auth_type: 'none', token_method: 'GET', enabled: false, batch_size: 100, timeout_seconds: 10, success_status_codes: '200', field_mapping: JSON.stringify(defaultMapping, null, 2) })
+    form.setFieldsValue(
+      item
+        ? { ...item, secret: undefined }
+        : {
+            auth_type: 'none',
+            token_method: 'GET',
+            enabled: false,
+            batch_size: 100,
+            timeout_seconds: 10,
+            success_status_codes: '200',
+            field_mapping: JSON.stringify(defaultMapping, null, 2),
+          },
+    )
     setOpen(true)
   }
   const columns: ColumnsType<Channel> = [
-    { title: '名称', dataIndex: 'name', render: (value: string, row) => <div><strong>{value}</strong><div className="notifications-muted">{row.channel_id}</div></div> },
-    { title: '鉴权', dataIndex: 'auth_type', width: 160, render: (value: string) => authTypes[value] ?? value },
-    { title: '密钥', dataIndex: 'has_secret', width: 90, render: (value: boolean) => (value ? <Tag color="blue">已配置</Tag> : '') },
-    { title: '批量', dataIndex: 'batch_size', width: 80 },
-    { title: '状态', dataIndex: 'enabled', width: 90, render: (value: boolean) => <Tag color={statusColor(value ? 'enabled' : 'disabled')}>{statusText(value ? 'enabled' : 'disabled')}</Tag> },
     {
-      title: '操作', width: 230,
+      title: '名称',
+      dataIndex: 'name',
+      render: (value: string, row) => (
+        <div>
+          <strong>{value}</strong>
+          <div className="notifications-muted">{row.channel_id}</div>
+        </div>
+      ),
+    },
+    {
+      title: '鉴权',
+      dataIndex: 'auth_type',
+      width: 160,
+      render: (value: string) => authTypes[value] ?? value,
+    },
+    {
+      title: '密钥',
+      dataIndex: 'has_secret',
+      width: 90,
+      render: (value: boolean) => (value ? <Tag color="blue">已配置</Tag> : ''),
+    },
+    { title: '批量', dataIndex: 'batch_size', width: 80 },
+    {
+      title: '状态',
+      dataIndex: 'enabled',
+      width: 90,
+      render: (value: boolean) => (
+        <Tag color={statusColor(value ? 'enabled' : 'disabled')}>
+          {statusText(value ? 'enabled' : 'disabled')}
+        </Tag>
+      ),
+    },
+    {
+      title: '操作',
+      width: 230,
       render: (_value, row) => (
         <Space wrap>
-          <Button size="small" loading={test.isPending && test.variables === row.channel_id} onClick={() => test.mutate(row.channel_id)}>拟测试</Button>
-          <Button size="small" loading={runPreview.isPending && runPreview.variables === row.channel_id} onClick={() => { setPreview(undefined); runPreview.mutate(row.channel_id) }}>试算</Button>
-          <Button size="small" disabled={!writable} onClick={() => edit(row)}>编辑</Button>
-          <Button size="small" danger disabled={!writable} onClick={() => remove.mutate(row.channel_id)}>删除</Button>
+          <Button
+            size="small"
+            loading={test.isPending && test.variables === row.channel_id}
+            onClick={() => test.mutate(row.channel_id)}
+          >
+            拟测试
+          </Button>
+          <Button
+            size="small"
+            loading={runPreview.isPending && runPreview.variables === row.channel_id}
+            onClick={() => {
+              setPreview(undefined)
+              runPreview.mutate(row.channel_id)
+            }}
+          >
+            试算
+          </Button>
+          <Button size="small" disabled={!writable} onClick={() => edit(row)}>
+            编辑
+          </Button>
+          <Button
+            size="small"
+            danger
+            disabled={!writable}
+            onClick={() => remove.mutate(row.channel_id)}
+          >
+            删除
+          </Button>
         </Space>
       ),
     },
@@ -122,84 +262,270 @@ function ChannelsPanel({ channels, writable, invalidate }: { channels: UseQueryR
     <>
       <AppListHeader title="上报通道" count={`${channels.data?.items.length ?? 0} 条`} />
       <div className="notifications-toolbar">
-        <Typography.Text type="secondary">密钥使用处置主密钥加密保存，接口不会回显；编辑时留空保持原密钥，填写“-”清空。</Typography.Text>
-        <Button type="primary" disabled={!writable} onClick={() => edit()}>新增通道</Button>
+        <Typography.Text type="secondary">
+          密钥使用处置主密钥加密保存，接口不会回显；编辑时留空保持原密钥，填写“-”清空。
+        </Typography.Text>
+        <Button type="primary" disabled={!writable} onClick={() => edit()}>
+          新增通道
+        </Button>
       </div>
-      {<AppListSection isError={channels.isError} errorTitle="通道读取失败" errorMessage={String(channels.error)} isLoading={channels.isLoading} loadingRows={3} isEmpty={!channels.data?.items.length} emptyText="暂无上报通道">{<AppTable rowKey="channel_id" className="compact-list-table" columns={columns} dataSource={channels.data?.items ?? []} pagination={false} scroll={{ x: 1000 }} />}</AppListSection>}
-      <Modal forceRender width={700} title={editing ? '编辑上报通道' : '新增上报通道'} open={open} confirmLoading={save.isPending} onCancel={() => setOpen(false)} onOk={() => void form.validateFields().then((value) => {
-        let mapping: Record<string, string> = {}
-        try {
-          mapping = value.field_mapping ? JSON.parse(String(value.field_mapping)) as Record<string, string> : {}
-        } catch {
-          message.error('字段映射必须是 JSON 对象')
-          return
+      {
+        <AppListSection
+          isError={channels.isError}
+          errorTitle="通道读取失败"
+          errorMessage={String(channels.error)}
+          isLoading={channels.isLoading}
+          loadingRows={3}
+          isEmpty={!channels.data?.items.length}
+          emptyText="暂无上报通道"
+        >
+          {
+            <AppTable
+              rowKey="channel_id"
+              className="compact-list-table"
+              columns={columns}
+              dataSource={channels.data?.items ?? []}
+              pagination={false}
+              scroll={{ x: 1000 }}
+            />
+          }
+        </AppListSection>
+      }
+      <Modal
+        forceRender
+        width={700}
+        title={editing ? '编辑上报通道' : '新增上报通道'}
+        open={open}
+        confirmLoading={save.isPending}
+        onCancel={() => setOpen(false)}
+        onOk={() =>
+          void form
+            .validateFields()
+            .then((value) => {
+              let mapping: Record<string, string> = {}
+              try {
+                mapping = value.field_mapping
+                  ? (JSON.parse(String(value.field_mapping)) as Record<string, string>)
+                  : {}
+              } catch {
+                message.error('字段映射必须是 JSON 对象')
+                return
+              }
+              const codes = String(value.success_status_codes ?? '200')
+                .split(',')
+                .map((item: string) => Number(item.trim()))
+                .filter((item: number) => Number.isFinite(item))
+              save.mutate({ ...value, field_mapping: mapping, success_status_codes: codes })
+            })
+            .catch(() => undefined)
         }
-        const codes = String(value.success_status_codes ?? '200').split(',').map((item: string) => Number(item.trim())).filter((item: number) => Number.isFinite(item))
-        save.mutate({ ...value, field_mapping: mapping, success_status_codes: codes })
-      }).catch(() => undefined)}>
+      >
         <Form form={form} layout="vertical">
-          <Form.Item name="channel_id" label="通道标识" rules={[{ required: !editing, max: 128 }]}><Input disabled={!!editing} placeholder="例如 ncu-behavior" /></Form.Item>
-          <Form.Item name="name" label="名称" rules={[{ required: true, max: 128 }]}><Input /></Form.Item>
-          <Form.Item name="endpoint_url" label="上报地址" rules={[{ required: true }]}><Input placeholder="https://.../security-behavior/report" /></Form.Item>
-          <Form.Item name="auth_type" label="鉴权方式" rules={[{ required: true }]}><Select options={Object.entries(authTypes).map(([value, label]) => ({ value, label }))} /></Form.Item>
-          <Form.Item noStyle shouldUpdate={(previous, next) => previous.auth_type !== next.auth_type}>
-            {({ getFieldValue }) => getFieldValue('auth_type') === 'oauth2_client_credentials' && (
-              <>
-                <Form.Item name="token_endpoint" label="令牌地址"><Input placeholder="https://.../api/v1/auth/get-access-token" /></Form.Item>
-                <Form.Item name="token_method" label="令牌请求方法"><Select options={[{ value: 'GET', label: 'GET' }, { value: 'POST', label: 'POST' }]} /></Form.Item>
-                <Form.Item name="token_scope" label="令牌范围"><Input /></Form.Item>
-              </>
-            )}
+          <Form.Item name="channel_id" label="通道标识" rules={[{ required: !editing, max: 128 }]}>
+            <Input disabled={!!editing} placeholder="例如 ncu-behavior" />
           </Form.Item>
-          <Form.Item name="secret" label="密钥 / 凭据"><Input.Password placeholder={editing ? '留空保持不变' : ''} autoComplete="new-password" /></Form.Item>
-          <Form.Item name="source_system_ip" label="来源系统 IP"><Input /></Form.Item>
-          <Form.Item name="source_system_name" label="来源系统名称"><Input placeholder="校园 DPI 系统" /></Form.Item>
-          <Form.Item name="field_mapping" label="字段映射（JSON）"><Input.TextArea rows={6} placeholder='{"behavior_type":"event_type","account":"account"}' /></Form.Item>
-          <Form.Item name="success_status_codes" label="成功状态码（逗号分隔）"><Input placeholder="200" /></Form.Item>
-          <Form.Item name="batch_size" label="单批条数" rules={[{ required: true }]}><InputNumber min={1} max={500} /></Form.Item>
-          <Form.Item name="timeout_seconds" label="超时（秒）" rules={[{ required: true }]}><InputNumber min={1} max={120} /></Form.Item>
-          <Form.Item name="tls_skip_verify" label="跳过 TLS 校验" valuePropName="checked"><Switch /></Form.Item>
-          <Form.Item name="enabled" label="启用通道" valuePropName="checked"><Switch /></Form.Item>
+          <Form.Item name="name" label="名称" rules={[{ required: true, max: 128 }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="endpoint_url" label="上报地址" rules={[{ required: true }]}>
+            <Input placeholder="https://.../security-behavior/report" />
+          </Form.Item>
+          <Form.Item name="auth_type" label="鉴权方式" rules={[{ required: true }]}>
+            <Select
+              options={Object.entries(authTypes).map(([value, label]) => ({ value, label }))}
+            />
+          </Form.Item>
+          <Form.Item
+            noStyle
+            shouldUpdate={(previous, next) => previous.auth_type !== next.auth_type}
+          >
+            {({ getFieldValue }) =>
+              getFieldValue('auth_type') === 'oauth2_client_credentials' && (
+                <>
+                  <Form.Item name="token_endpoint" label="令牌地址">
+                    <Input placeholder="https://.../api/v1/auth/get-access-token" />
+                  </Form.Item>
+                  <Form.Item name="token_method" label="令牌请求方法">
+                    <Select
+                      options={[
+                        { value: 'GET', label: 'GET' },
+                        { value: 'POST', label: 'POST' },
+                      ]}
+                    />
+                  </Form.Item>
+                  <Form.Item name="token_scope" label="令牌范围">
+                    <Input />
+                  </Form.Item>
+                </>
+              )
+            }
+          </Form.Item>
+          <Form.Item name="secret" label="密钥 / 凭据">
+            <Input.Password
+              placeholder={editing ? '留空保持不变' : ''}
+              autoComplete="new-password"
+            />
+          </Form.Item>
+          <Form.Item name="source_system_ip" label="来源系统 IP">
+            <Input />
+          </Form.Item>
+          <Form.Item name="source_system_name" label="来源系统名称">
+            <Input placeholder="校园 DPI 系统" />
+          </Form.Item>
+          <Form.Item name="field_mapping" label="字段映射（JSON）">
+            <Input.TextArea
+              rows={6}
+              placeholder='{"behavior_type":"event_type","account":"account"}'
+            />
+          </Form.Item>
+          <Form.Item name="success_status_codes" label="成功状态码（逗号分隔）">
+            <Input placeholder="200" />
+          </Form.Item>
+          <Form.Item name="batch_size" label="单批条数" rules={[{ required: true }]}>
+            <InputNumber min={1} max={500} />
+          </Form.Item>
+          <Form.Item name="timeout_seconds" label="超时（秒）" rules={[{ required: true }]}>
+            <InputNumber min={1} max={120} />
+          </Form.Item>
+          <Form.Item name="tls_skip_verify" label="跳过 TLS 校验" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+          <Form.Item name="enabled" label="启用通道" valuePropName="checked">
+            <Switch />
+          </Form.Item>
         </Form>
       </Modal>
-      <Modal width={640} footer={null} title="试算载荷" open={!!preview} onCancel={() => setPreview(undefined)}>
-        {preview ? <Input.TextArea className="behavior-report-preview" readOnly autoSize={{ minRows: 8, maxRows: 20 }} value={preview} /> : <AppLoadingState rows={3} />}
+      <Modal
+        width={640}
+        footer={null}
+        title="试算载荷"
+        open={!!preview}
+        onCancel={() => setPreview(undefined)}
+      >
+        {preview ? (
+          <Input.TextArea
+            className="behavior-report-preview"
+            readOnly
+            autoSize={{ minRows: 8, maxRows: 20 }}
+            value={preview}
+          />
+        ) : (
+          <AppLoadingState rows={3} />
+        )}
       </Modal>
     </>
   )
 }
 
-export function BehaviorReportRecords({ writable = false, recordOnly = false }: { writable?: boolean; recordOnly?: boolean }) {
-  const [status, setStatus] = useUrlState('status', '', statusFilters, ['behavior_report_outbox_page'])
+export function BehaviorReportRecords({
+  writable = false,
+  recordOnly = false,
+}: {
+  writable?: boolean
+  recordOnly?: boolean
+}) {
+  const [status, setStatus] = useUrlState('status', '', statusFilters, [
+    'behavior_report_outbox_page',
+  ])
   const pagination = useRecordCursorPagination(recordOnly ? 'recorded' : status)
   const [detail, setDetail] = useState<string>()
   const query = new URLSearchParams({ seek: '1', limit: String(pagination.pageSize) })
   if (pagination.cursor) query.set('cursor', pagination.cursor)
   if (recordOnly) query.set('status', 'recorded')
   else if (status) query.set('status', status)
-  const outbox = useQuery({ queryKey: ['behavior-reports', 'outbox', query.toString()], queryFn: () => request<{items:OutboxRow[];next_cursor:string}>(`/behavior-reports/outbox?${query}`), refetchInterval: 15000 })
-  const detailQuery = useQuery({ queryKey: ['behavior-reports', 'outbox', 'detail', detail], queryFn: () => request<OutboxDetail>(`/behavior-reports/outbox/${encodeURIComponent(detail!)}`), enabled: !!detail })
+  const outbox = useQuery({
+    queryKey: ['behavior-reports', 'outbox', query.toString()],
+    queryFn: () =>
+      request<{ items: OutboxRow[]; next_cursor: string }>(`/behavior-reports/outbox?${query}`),
+    refetchInterval: 15000,
+  })
+  const detailQuery = useQuery({
+    queryKey: ['behavior-reports', 'outbox', 'detail', detail],
+    queryFn: () => request<OutboxDetail>(`/behavior-reports/outbox/${encodeURIComponent(detail!)}`),
+    enabled: !!detail,
+  })
   const operate = useMutation({
-    mutationFn: ({ id, op }: { id: string; op: 'retry' | 'cancel' }) => request(`/behavior-reports/outbox/${encodeURIComponent(id)}/${op}`, { method: 'POST' }),
-    onSuccess: () => { void outbox.refetch(); message.success('已提交') },
+    mutationFn: ({ id, op }: { id: string; op: 'retry' | 'cancel' }) =>
+      request(`/behavior-reports/outbox/${encodeURIComponent(id)}/${op}`, { method: 'POST' }),
+    onSuccess: () => {
+      void outbox.refetch()
+      message.success('已提交')
+    },
     onError: (error: Error) => message.error(error.message),
   })
   const columns: ColumnsType<OutboxRow> = [
-    { title: '事件', dataIndex: 'event_type', width: 130, render: (value: string) => eventTypes[value] ?? value },
-    { title: '终端', dataIndex: 'ip', render: (value: string, row) => <div><strong>{value}</strong>{row.account_id && <div className="notifications-muted">{row.account_id}</div>}</div> },
-    { title: '通道', dataIndex: 'channel_id' },
-    { title: '状态', dataIndex: 'status', width: 110, render: (value: string) => <Tag color={statusColor(value)}>{statusText(value)}</Tag> },
-    ...(!recordOnly ? [{ title: '尝试', dataIndex: 'attempts', width: 80 }] : []),
-    { title: '发生时间', dataIndex: 'occurred_at', width: 180, render: (value: string) => when(value) },
-    ...(!recordOnly ? [{ title: '最后错误', dataIndex: 'last_error', render: (value: string) => <span className="notifications-wrap">{value}</span> }] : []),
     {
-      title: '操作', width: 190,
+      title: '事件',
+      dataIndex: 'event_type',
+      width: 130,
+      render: (value: string) => eventTypes[value] ?? value,
+    },
+    {
+      title: '终端',
+      dataIndex: 'ip',
+      render: (value: string, row) => (
+        <div>
+          <strong>{value}</strong>
+          {row.account_id && <div className="notifications-muted">{row.account_id}</div>}
+        </div>
+      ),
+    },
+    { title: '通道', dataIndex: 'channel_id' },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      width: 110,
+      render: (value: string) => <Tag color={statusColor(value)}>{statusText(value)}</Tag>,
+    },
+    ...(!recordOnly ? [{ title: '尝试', dataIndex: 'attempts', width: 80 }] : []),
+    {
+      title: '发生时间',
+      dataIndex: 'occurred_at',
+      width: 180,
+      render: (value: string) => when(value),
+    },
+    ...(!recordOnly
+      ? [
+          {
+            title: '最后错误',
+            dataIndex: 'last_error',
+            render: (value: string) => <span className="notifications-wrap">{value}</span>,
+          },
+        ]
+      : []),
+    {
+      title: '操作',
+      width: 190,
       render: (_value, row) => (
         <Space wrap>
-          <Button size="small" onClick={() => setDetail(row.report_id)}>详情</Button>
-          {recordOnly && row.observation_id && <Link to={`/actions?tab=decisions&observation_id=${encodeURIComponent(row.observation_id)}&decision_result=all`}>策略依据</Link>}
-          {!recordOnly && <Button size="small" disabled={!writable || !['failed', 'cancelled'].includes(row.status)} onClick={() => operate.mutate({ id: row.report_id, op: 'retry' })}>重试</Button>}
-          {!recordOnly && <Button size="small" disabled={!writable || !['queued', 'sending', 'failed'].includes(row.status)} onClick={() => operate.mutate({ id: row.report_id, op: 'cancel' })}>取消</Button>}
+          <Button size="small" onClick={() => setDetail(row.report_id)}>
+            详情
+          </Button>
+          {recordOnly && row.observation_id && (
+            <Link
+              to={`/actions?tab=decisions&observation_id=${encodeURIComponent(row.observation_id)}&decision_result=all`}
+            >
+              策略依据
+            </Link>
+          )}
+          {!recordOnly && (
+            <Button
+              size="small"
+              disabled={!writable || !['failed', 'cancelled'].includes(row.status)}
+              onClick={() => operate.mutate({ id: row.report_id, op: 'retry' })}
+            >
+              重试
+            </Button>
+          )}
+          {!recordOnly && (
+            <Button
+              size="small"
+              disabled={!writable || !['queued', 'sending', 'failed'].includes(row.status)}
+              onClick={() => operate.mutate({ id: row.report_id, op: 'cancel' })}
+            >
+              取消
+            </Button>
+          )}
         </Space>
       ),
     },
@@ -208,39 +534,153 @@ export function BehaviorReportRecords({ writable = false, recordOnly = false }: 
     <>
       <AppListHeader title="上报记录" count={`${outbox.data?.items.length ?? 0} 条`} />
       <div className="notifications-toolbar">
-        {!recordOnly && <Select aria-label="上报状态筛选" allowClear placeholder="全部状态" value={status || undefined} onChange={(value) => setStatus(value ?? '')} options={statusFilters.map((value) => ({ value, label: statusText(value) }))} />}
+        {!recordOnly && (
+          <Select
+            aria-label="上报状态筛选"
+            allowClear
+            placeholder="全部状态"
+            value={status || undefined}
+            onChange={(value) => setStatus(value ?? '')}
+            options={statusFilters.map((value) => ({ value, label: statusText(value) }))}
+          />
+        )}
       </div>
-      {<AppListSection isError={outbox.isError} errorTitle="上报队列读取失败" errorMessage={String(outbox.error)} isLoading={outbox.isLoading} loadingRows={4} isEmpty={!outbox.data?.items.length} emptyText="暂无上报记录">{<AppTable rowKey="report_id" className="compact-list-table" columns={columns} dataSource={outbox.data?.items ?? []} pagination={false} scroll={{ x: 1200 }} />}</AppListSection>}
-      <RecordCursorPagination page={pagination.page} pageSize={pagination.pageSize} count={outbox.data?.items.length ?? 0} nextCursor={outbox.data?.next_cursor ?? ''} fetching={outbox.isFetching} onNext={()=>pagination.next(outbox.data?.next_cursor ?? '')} onPrevious={pagination.previous} onPageSizeChange={pagination.changePageSize}/>
-      <Modal width={720} footer={null} title="上报详情" open={!!detail} onCancel={() => setDetail(undefined)}>
-        {detailQuery.isLoading ? <AppLoadingState rows={3} /> : detailQuery.data ? (
+      {
+        <AppListSection
+          isError={outbox.isError}
+          errorTitle="上报队列读取失败"
+          errorMessage={String(outbox.error)}
+          isLoading={outbox.isLoading}
+          loadingRows={4}
+          isEmpty={!outbox.data?.items.length}
+          emptyText="暂无上报记录"
+        >
+          {
+            <AppTable
+              rowKey="report_id"
+              className="compact-list-table"
+              columns={columns}
+              dataSource={outbox.data?.items ?? []}
+              pagination={false}
+              scroll={{ x: 1200 }}
+            />
+          }
+        </AppListSection>
+      }
+      <RecordCursorPagination
+        page={pagination.page}
+        pageSize={pagination.pageSize}
+        count={outbox.data?.items.length ?? 0}
+        nextCursor={outbox.data?.next_cursor ?? ''}
+        fetching={outbox.isFetching}
+        onNext={() => pagination.next(outbox.data?.next_cursor ?? '')}
+        onPrevious={pagination.previous}
+        onPageSizeChange={pagination.changePageSize}
+      />
+      <Modal
+        width={720}
+        footer={null}
+        title="上报详情"
+        open={!!detail}
+        onCancel={() => setDetail(undefined)}
+      >
+        {detailQuery.isLoading ? (
+          <AppLoadingState rows={3} />
+        ) : detailQuery.data ? (
           <>
-            <Descriptions column={1} size="small" items={[
-              { key: 'event', label: '事件类型', children: eventTypes[detailQuery.data.report.event_type] ?? detailQuery.data.report.event_type },
-              { key: 'ip', label: '终端', children: detailQuery.data.report.ip },
-              { key: 'account', label: '账号', children: detailQuery.data.report.account_id },
-              { key: 'channel', label: '通道', children: detailQuery.data.report.channel_id },
-              { key: 'status', label: '状态', children: statusText(detailQuery.data.report.status) },
-              ...(recordOnly ? [
-                { key: 'decision', label: '策略决定', children: detailQuery.data.report.policy_decision_id },
-                { key: 'evidence', label: '证据版本', children: detailQuery.data.report.evidence_version },
-              ] : []),
-              ...(!recordOnly ? [
-                { key: 'attempts', label: '尝试次数', children: String(detailQuery.data.report.attempts) },
-                { key: 'sent', label: '送达时间', children: when(detailQuery.data.report.sent_at) },
-                { key: 'remote', label: '平台回执', children: detailQuery.data.report.remote_id },
-                { key: 'error', label: '最后错误', children: detailQuery.data.report.last_error },
-              ] : []),
-            ]} />
-            {!recordOnly && <AppTable rowKey="attempt_id" size="small" className="compact-list-table" pagination={false} dataSource={detailQuery.data.attempts} columns={[
-              { title: '第几次', dataIndex: 'attempt', width: 80 },
-              { title: '结果', dataIndex: 'status', width: 90, render: (value: string) => statusText(value) },
-              { title: 'HTTP', dataIndex: 'http_status', width: 80 },
-              { title: '错误', dataIndex: 'error', render: (value: string) => <span className="notifications-wrap">{value}</span> },
-              { title: '时间', dataIndex: 'finished_at', width: 180, render: (value: string) => when(value) },
-            ]} />}
+            <Descriptions
+              column={1}
+              size="small"
+              items={[
+                {
+                  key: 'event',
+                  label: '事件类型',
+                  children:
+                    eventTypes[detailQuery.data.report.event_type] ??
+                    detailQuery.data.report.event_type,
+                },
+                { key: 'ip', label: '终端', children: detailQuery.data.report.ip },
+                { key: 'account', label: '账号', children: detailQuery.data.report.account_id },
+                { key: 'channel', label: '通道', children: detailQuery.data.report.channel_id },
+                {
+                  key: 'status',
+                  label: '状态',
+                  children: statusText(detailQuery.data.report.status),
+                },
+                ...(recordOnly
+                  ? [
+                      {
+                        key: 'decision',
+                        label: '策略决定',
+                        children: detailQuery.data.report.policy_decision_id,
+                      },
+                      {
+                        key: 'evidence',
+                        label: '证据版本',
+                        children: detailQuery.data.report.evidence_version,
+                      },
+                    ]
+                  : []),
+                ...(!recordOnly
+                  ? [
+                      {
+                        key: 'attempts',
+                        label: '尝试次数',
+                        children: String(detailQuery.data.report.attempts),
+                      },
+                      {
+                        key: 'sent',
+                        label: '送达时间',
+                        children: when(detailQuery.data.report.sent_at),
+                      },
+                      {
+                        key: 'remote',
+                        label: '平台回执',
+                        children: detailQuery.data.report.remote_id,
+                      },
+                      {
+                        key: 'error',
+                        label: '最后错误',
+                        children: detailQuery.data.report.last_error,
+                      },
+                    ]
+                  : []),
+              ]}
+            />
+            {!recordOnly && (
+              <AppTable
+                rowKey="attempt_id"
+                size="small"
+                className="compact-list-table"
+                pagination={false}
+                dataSource={detailQuery.data.attempts}
+                columns={[
+                  { title: '第几次', dataIndex: 'attempt', width: 80 },
+                  {
+                    title: '结果',
+                    dataIndex: 'status',
+                    width: 90,
+                    render: (value: string) => statusText(value),
+                  },
+                  { title: 'HTTP', dataIndex: 'http_status', width: 80 },
+                  {
+                    title: '错误',
+                    dataIndex: 'error',
+                    render: (value: string) => <span className="notifications-wrap">{value}</span>,
+                  },
+                  {
+                    title: '时间',
+                    dataIndex: 'finished_at',
+                    width: 180,
+                    render: (value: string) => when(value),
+                  },
+                ]}
+              />
+            )}
           </>
-        ) : <AppErrorAlert title="上报详情读取失败" message={String(detailQuery.error)} />}
+        ) : (
+          <AppErrorAlert title="上报详情读取失败" message={String(detailQuery.error)} />
+        )}
       </Modal>
     </>
   )

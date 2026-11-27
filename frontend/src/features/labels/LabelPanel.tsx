@@ -65,7 +65,11 @@ export function LabelPanel({
         name="label"
         rules={[{ required: true, message: '请选择复核结论' }]}
       >
-        <Select disabled={disabled || missingEvidence} options={labelOptions} placeholder="选择标注" />
+        <Select
+          disabled={disabled || missingEvidence}
+          options={labelOptions}
+          placeholder="选择标注"
+        />
       </Form.Item>
       <Form.Item
         label="复核原因"
@@ -78,7 +82,12 @@ export function LabelPanel({
           rows={4}
         />
       </Form.Item>
-      <Button disabled={disabled || missingEvidence} htmlType="submit" loading={createLabel.isPending} type="primary">
+      <Button
+        disabled={disabled || missingEvidence}
+        htmlType="submit"
+        loading={createLabel.isPending}
+        type="primary"
+      >
         提交标注
       </Button>
     </Form>

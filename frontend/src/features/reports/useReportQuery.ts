@@ -1,6 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
 
-export function useReportQuery<T>(key: string, read: (signal: AbortSignal) => Promise<T>, enabled = true) {
+export function useReportQuery<T>(
+  key: string,
+  read: (signal: AbortSignal) => Promise<T>,
+  enabled = true,
+) {
   return useQuery({
     queryKey: ['reports', key],
     queryFn: ({ signal }) => read(signal),

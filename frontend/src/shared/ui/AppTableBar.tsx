@@ -53,7 +53,11 @@ export function AppTableBar({
           onPressEnter={() => onSearch?.(searchValue)}
           placeholder={searchPlaceholder}
           prefix={<SearchOutlined className="search-prefix-icon" />}
-          suffix={searching ? <LoadingOutlined aria-label="正在加载" className="app-table-search-spinner" spin /> : undefined}
+          suffix={
+            searching ? (
+              <LoadingOutlined aria-label="正在加载" className="app-table-search-spinner" spin />
+            ) : undefined
+          }
           aria-busy={searching}
           className={searching ? 'app-table-search is-searching' : 'app-table-search'}
           value={searchValue}

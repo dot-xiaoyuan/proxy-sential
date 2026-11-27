@@ -8,4 +8,3 @@ export const routerLibraryLabels: Record<string, string> = {
   openwrt: 'OpenWrt ToH 命中',
   'fingerbank-current': 'Fingerbank 命中',
 }
-

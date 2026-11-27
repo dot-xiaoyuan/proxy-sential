@@ -3,13 +3,25 @@ import { describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 import { DeviceCenterPage } from './DeviceCenterPage'
 
-vi.mock('./DevicesPage', () => ({ DevicesPage: () => <div data-testid="terminal-panel">终端列表</div> }))
-vi.mock('./IpTrafficLookupPanel', () => ({ IpTrafficLookupPanel: () => <div data-testid="ip-observation-panel">IP 流量观察</div> }))
-vi.mock('./RouterObservationsPanel', () => ({ RouterObservationsPanel: () => <div data-testid="network-panel">路由器列表</div> }))
+vi.mock('./DevicesPage', () => ({
+  DevicesPage: () => <div data-testid="terminal-panel">终端列表</div>,
+}))
+vi.mock('./RouterObservationsPanel', () => ({
+  RouterObservationsPanel: () => <div data-testid="network-panel">路由器列表</div>,
+}))
 
-vi.mock('./PassiveDiscoveryPanel', () => ({ PassiveDiscoveryPanel: ({view}:{view:string}) => <div data-testid="discovery-panel">{view}</div> }))
+vi.mock('./PassiveDiscoveryPanel', () => ({
+  PassiveDiscoveryPanel: ({ view }: { view: string }) => (
+    <div data-testid="discovery-panel">{view}</div>
+  ),
+}))
 
-const renderAt = (path: string) => render(<MemoryRouter initialEntries={[path]}><DeviceCenterPage /></MemoryRouter>)
+const renderAt = (path: string) =>
+  render(
+    <MemoryRouter initialEntries={[path]}>
+      <DeviceCenterPage />
+    </MemoryRouter>,
+  )
 
 describe('设备中心子菜单页面', () => {
   it('终端列表直接展示列表内容，不再出现标签页', () => {
@@ -21,15 +33,16 @@ describe('设备中心子菜单页面', () => {
     renderAt('/devices?tab=network')
     expect(screen.getByTestId('network-panel')).toBeVisible()
   })
-  it('IP 流量观察独立展示', () => {
+  it('旧的 IP 流量观察参数回退到终端列表', () => {
     renderAt('/devices?tab=ip&ip=10.157.2.191')
-    expect(screen.getByTestId('ip-observation-panel')).toBeVisible()
-    expect(screen.queryByTestId('terminal-panel')).toBeNull()
+    expect(screen.getByTestId('terminal-panel')).toBeVisible()
   })
   it('发现设备及旧链接展示发现面板', () => {
     for (const tab of ['discovery', 'iot', 'records']) {
       const { unmount } = renderAt(`/devices?tab=${tab}`)
-      expect(screen.getByTestId('discovery-panel')).toHaveTextContent(tab === 'iot' ? 'iot' : 'records')
+      expect(screen.getByTestId('discovery-panel')).toHaveTextContent(
+        tab === 'iot' ? 'iot' : 'records',
+      )
       expect(screen.queryByTestId('terminal-panel')).toBeNull()
       unmount()
     }
