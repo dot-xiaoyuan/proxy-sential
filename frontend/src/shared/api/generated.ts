@@ -6036,6 +6036,15 @@ export interface components {
             northbound_api_host: string;
             /** @default 6 */
             reconcile_interval_hours: number;
+            /** @description Only accepts HTTPS or a loopback request. Blank fields preserve stored credentials for unchanged endpoints. */
+            credentials?: {
+                database_username?: string;
+                /** Format: password */
+                database_password?: string;
+                /** Format: password */
+                redis_password?: string;
+                northbound_certificate?: string;
+            };
         };
         SRun4KIntegration: {
             connector_id: string;
@@ -6045,6 +6054,11 @@ export interface components {
             catalog_redis_host?: string;
             event_redis_host?: string;
             northbound_api_host?: string;
+            credentials?: {
+                database_configured: boolean;
+                redis_configured: boolean;
+                certificate_configured: boolean;
+            };
             authorization_ready?: boolean;
             /** Format: date-time */
             authorization_refreshed_at?: string;

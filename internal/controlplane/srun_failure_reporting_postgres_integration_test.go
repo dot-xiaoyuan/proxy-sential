@@ -30,6 +30,7 @@ func TestSRunFailureReportingNativeCancellationAndLock(t *testing.T) {
 		t.Fatal("dedicated acceptance database required")
 	}
 	for _, stmt := range []string{
+		`CREATE TABLE control_plane_settings(setting_key text PRIMARY KEY, setting_value jsonb NOT NULL)`,
 		`CREATE TABLE srun4k_integrations(connector_id text PRIMARY KEY,connection_state text,last_error text,last_tested_at timestamptz,last_synced_at timestamptz,event_channel_state text,updated_at timestamptz,last_test_result_order bigint NOT NULL DEFAULT 0,last_sync_result_order bigint NOT NULL DEFAULT 0,last_health_result_order bigint NOT NULL DEFAULT 0)`,
 		`CREATE TABLE audit_logs(audit_id text PRIMARY KEY,actor text,action text,target text,outcome text,created_at timestamptz)`,
 		`INSERT INTO srun4k_integrations VALUES('one','healthy','','2026-09-30 00:00:00Z','2026-09-30 01:00:00Z','waiting',now())`,

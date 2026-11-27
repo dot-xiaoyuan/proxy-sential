@@ -76,46 +76,49 @@ func (c SRun4KDefaults) normalized() SRun4KDefaults {
 }
 
 type srun4KIntegration struct {
-	ConnectorID                string            `json:"connector_id"`
-	Host                       string            `json:"host"`
-	AuthorizationDatabaseHost  string            `json:"authorization_database_host"`
-	OnlineRedisHost            string            `json:"online_redis_host"`
-	CatalogRedisHost           string            `json:"catalog_redis_host"`
-	EventRedisHost             string            `json:"event_redis_host,omitempty"`
-	NorthboundAPIHost          string            `json:"northbound_api_host"`
-	AuthorizationReady         bool              `json:"authorization_ready"`
-	Source                     string            `json:"source"`
-	SensorID                   string            `json:"sensor_id"`
-	ReconcileIntervalHours     int               `json:"reconcile_interval_hours"`
-	EventChannelState          string            `json:"event_channel_state"`
-	ConnectionState            string            `json:"connection_state"`
-	Channels                   map[string]string `json:"channels"`
-	LastError                  string            `json:"last_error,omitempty"`
-	LastTestedAt               *time.Time        `json:"last_tested_at,omitempty"`
-	LastSyncedAt               *time.Time        `json:"last_synced_at,omitempty"`
-	LastIdentityPollAt         *time.Time        `json:"last_identity_poll_at,omitempty"`
-	LastIdentityEventAt        *time.Time        `json:"last_identity_event_at,omitempty"`
-	AuthorizationRefreshedAt   *time.Time        `json:"authorization_refreshed_at,omitempty"`
-	AuthorizationDatabaseState string            `json:"-"`
-	OnlineRedisState           string            `json:"-"`
-	CatalogRedisState          string            `json:"-"`
-	EventRedisState            string            `json:"-"`
-	NorthboundAPIState         string            `json:"-"`
-	IdentityAccounts           int               `json:"identity_accounts"`
-	IdentitySessions           int               `json:"identity_sessions"`
-	Products                   int               `json:"products"`
-	Groups                     int               `json:"groups"`
-	Controls                   int               `json:"controls"`
+	ConnectorID                string                 `json:"connector_id"`
+	Host                       string                 `json:"host"`
+	AuthorizationDatabaseHost  string                 `json:"authorization_database_host"`
+	OnlineRedisHost            string                 `json:"online_redis_host"`
+	CatalogRedisHost           string                 `json:"catalog_redis_host"`
+	EventRedisHost             string                 `json:"event_redis_host,omitempty"`
+	NorthboundAPIHost          string                 `json:"northbound_api_host"`
+	AuthorizationReady         bool                   `json:"authorization_ready"`
+	Source                     string                 `json:"source"`
+	SensorID                   string                 `json:"sensor_id"`
+	ReconcileIntervalHours     int                    `json:"reconcile_interval_hours"`
+	EventChannelState          string                 `json:"event_channel_state"`
+	ConnectionState            string                 `json:"connection_state"`
+	Channels                   map[string]string      `json:"channels"`
+	LastError                  string                 `json:"last_error,omitempty"`
+	LastTestedAt               *time.Time             `json:"last_tested_at,omitempty"`
+	LastSyncedAt               *time.Time             `json:"last_synced_at,omitempty"`
+	LastIdentityPollAt         *time.Time             `json:"last_identity_poll_at,omitempty"`
+	LastIdentityEventAt        *time.Time             `json:"last_identity_event_at,omitempty"`
+	AuthorizationRefreshedAt   *time.Time             `json:"authorization_refreshed_at,omitempty"`
+	AuthorizationDatabaseState string                 `json:"-"`
+	OnlineRedisState           string                 `json:"-"`
+	CatalogRedisState          string                 `json:"-"`
+	EventRedisState            string                 `json:"-"`
+	NorthboundAPIState         string                 `json:"-"`
+	IdentityAccounts           int                    `json:"identity_accounts"`
+	IdentitySessions           int                    `json:"identity_sessions"`
+	Products                   int                    `json:"products"`
+	Groups                     int                    `json:"groups"`
+	Controls                   int                    `json:"controls"`
+	Credentials                srun4KCredentialStatus `json:"credentials"`
+	storedCredentials          srun4KStoredCredentials
 }
 
 type srun4KConnectionRequest struct {
-	Host                      string `json:"host,omitempty"`
-	AuthorizationDatabaseHost string `json:"authorization_database_host,omitempty"`
-	OnlineRedisHost           string `json:"online_redis_host,omitempty"`
-	CatalogRedisHost          string `json:"catalog_redis_host,omitempty"`
-	EventRedisHost            string `json:"event_redis_host,omitempty"`
-	NorthboundAPIHost         string `json:"northbound_api_host,omitempty"`
-	ReconcileIntervalHours    int    `json:"reconcile_interval_hours,omitempty"`
+	Host                      string                 `json:"host,omitempty"`
+	AuthorizationDatabaseHost string                 `json:"authorization_database_host,omitempty"`
+	OnlineRedisHost           string                 `json:"online_redis_host,omitempty"`
+	CatalogRedisHost          string                 `json:"catalog_redis_host,omitempty"`
+	EventRedisHost            string                 `json:"event_redis_host,omitempty"`
+	NorthboundAPIHost         string                 `json:"northbound_api_host,omitempty"`
+	ReconcileIntervalHours    int                    `json:"reconcile_interval_hours,omitempty"`
+	Credentials               srun4KCredentialsInput `json:"credentials,omitempty"`
 }
 
 func srun4KPath(path string) (id, operation string, collection bool, ok bool) {
@@ -288,7 +291,7 @@ func (s *Server) handleSRun4K(w http.ResponseWriter, r *http.Request, path strin
 
 func decodeSRunRequest(w http.ResponseWriter, r *http.Request) (srun4KConnectionRequest, error) {
 	var request srun4KConnectionRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 96<<10))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
 		return request, err
@@ -318,13 +321,21 @@ func decodeSRunRequest(w http.ResponseWriter, r *http.Request) (srun4KConnection
 	if !validSRunHost(request.AuthorizationDatabaseHost) || !validSRunHost(request.OnlineRedisHost) || !validSRunHost(request.CatalogRedisHost) || !validSRunHost(request.NorthboundAPIHost) || request.EventRedisHost != "" && !validSRunHost(request.EventRedisHost) || request.ReconcileIntervalHours < 1 || request.ReconcileIntervalHours > 168 {
 		return request, fmt.Errorf("请分别填写有效的授权数据库、在线Redis、目录Redis、北向API地址和1至168小时的校准周期")
 	}
-	return request, nil
+	return request, request.Credentials.validate()
 }
 
 func (s *Server) saveSRun4K(w http.ResponseWriter, r *http.Request, id string) {
 	request, err := decodeSRunRequest(w, r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_srun4k_configuration", err.Error())
+		return
+	}
+	if request.Credentials != (srun4KCredentialsInput{}) && !srun4KCredentialTransport(r) {
+		writeError(w, http.StatusForbidden, "srun4k_secure_connection_required", "请通过 HTTPS 或本机 SSH 隧道提交4K凭据")
+		return
+	}
+	if (request.Credentials.DatabasePassword != "" || request.Credentials.RedisPassword != "") && len(s.actionMasterKey) < 16 {
+		writeError(w, http.StatusConflict, "action_master_key_required", "4K凭据加密配置不可用，请联系系统管理员")
 		return
 	}
 	tx, err := s.operations.db.BeginTx(r.Context(), nil)
@@ -346,10 +357,16 @@ func (s *Server) saveSRun4K(w http.ResponseWriter, r *http.Request, id string) {
 	// the same connector when competing requests specify different hosts.
 	_, err = tx.ExecContext(r.Context(), `SELECT pg_advisory_xact_lock(hashtextextended($1,7141))`, id)
 	var previousHost, previousAuthHost, previousCatalogHost, previousEventHost, previousAPIHost, source, sensor string
+	var previousCredentials srun4KStoredCredentials
+	var rawCredentials []byte
 	if err == nil {
-		err = tx.QueryRowContext(r.Context(), `SELECT host,authorization_database_host,catalog_redis_host,event_redis_host,northbound_api_host,source,sensor_id FROM srun4k_integrations WHERE connector_id=$1 FOR UPDATE`, id).Scan(&previousHost, &previousAuthHost, &previousCatalogHost, &previousEventHost, &previousAPIHost, &source, &sensor)
+		err = tx.QueryRowContext(r.Context(), `SELECT host,authorization_database_host,catalog_redis_host,event_redis_host,northbound_api_host,source,sensor_id,
+			COALESCE((SELECT setting_value FROM control_plane_settings WHERE setting_key='`+srun4KCredentialsPrefix+`'||srun4k_integrations.connector_id),'{}'::jsonb)
+			FROM srun4k_integrations WHERE connector_id=$1 FOR UPDATE`, id).Scan(&previousHost, &previousAuthHost, &previousCatalogHost, &previousEventHost, &previousAPIHost, &source, &sensor, &rawCredentials)
 		if errors.Is(err, sql.ErrNoRows) {
 			source, sensor, err = "srun4k:"+id, "srun4k-direct:"+id, nil
+		} else if err == nil {
+			err = json.Unmarshal(rawCredentials, &previousCredentials)
 		}
 	}
 	if err != nil {
@@ -382,7 +399,15 @@ func (s *Server) saveSRun4K(w http.ResponseWriter, r *http.Request, id string) {
 		writeError(w, http.StatusBadRequest, "bad_srun4k_configuration", "请填写有效的上下线事件Redis地址")
 		return
 	}
-	endpointChanged := previousHost != "" && (onlineChanged || authorizationChanged || previousCatalogHost != request.CatalogRedisHost || previousEventHost != eventHost || previousAPIHost != request.NorthboundAPIHost)
+	redisChanged := previousHost != "" && (onlineChanged || previousCatalogHost != request.CatalogRedisHost || previousEventHost != eventHost)
+	apiChanged := previousAPIHost != "" && previousAPIHost != request.NorthboundAPIHost
+	endpointChanged := redisChanged || authorizationChanged || apiChanged
+	credentials, err := s.saveSRun4KCredentials(r.Context(), tx, id, request.Credentials, previousCredentials, authorizationChanged, redisChanged, apiChanged)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "srun4k_save_failed", "4K凭据保存失败")
+		return
+	}
+	credentialsChanged := credentials.Revision != previousCredentials.Revision
 	actionMapping, _ := json.Marshal(map[string]string{
 		"account_policy_v1":       "supported",
 		"session.disconnect":      "online-drop",
@@ -415,12 +440,24 @@ func (s *Server) saveSRun4K(w http.ResponseWriter, r *http.Request, id string) {
 			_, err = tx.ExecContext(r.Context(), `UPDATE enforcement_identity_sources SET public_config=jsonb_set(public_config,'{enabled}','false'::jsonb),config_version=config_version+1,state='pending',blocker='connector_host_changed',observed_at=NULL,updated_at=now() WHERE connector_id=$1`, id)
 		}
 	}
+	if err == nil && credentialsChanged {
+		northboundAuthorizationChanged := apiChanged || credentials.EncryptedDatabase != previousCredentials.EncryptedDatabase || credentials.NorthboundCertificate != previousCredentials.NorthboundCertificate
+		_, err = tx.ExecContext(r.Context(), `UPDATE srun4k_integrations SET connection_state='pending',last_error='',last_tested_at=NULL,
+			authorization_database_state='pending',online_redis_state='pending',catalog_redis_state='pending',
+			event_redis_state='pending',northbound_api_state='pending',
+			northbound_app_id=CASE WHEN $2 THEN '' ELSE northbound_app_id END,
+			encrypted_northbound_app_secret=CASE WHEN $2 THEN ''::bytea ELSE encrypted_northbound_app_secret END,
+			authorization_refreshed_at=CASE WHEN $2 THEN NULL ELSE authorization_refreshed_at END
+			WHERE connector_id=$1`, id, northboundAuthorizationChanged)
+	}
 	if err == nil {
 		outcome := "saved"
 		if onlineChanged {
 			outcome = "saved_new_identity_source"
 		} else if authorizationChanged {
 			outcome = "saved_authorization_source_changed"
+		} else if credentialsChanged {
+			outcome = "saved_credentials_changed"
 		}
 		_, err = tx.ExecContext(r.Context(), `INSERT INTO audit_logs(audit_id,actor,action,target,outcome,created_at) VALUES($1,$2,'integration.srun4k.save',$3,$4,now())`, "audit-srun4k-save-"+shortToken(16), sessionFromContext(r.Context()).User.ID, id, outcome)
 	}
@@ -443,7 +480,17 @@ func (s *Server) saveSRun4K(w http.ResponseWriter, r *http.Request, id string) {
 func (s *Server) loadSRun4K(ctx context.Context, id string) (srun4KIntegration, error) {
 	var item srun4KIntegration
 	var tested, synced, polled, eventAt, authAt sql.NullTime
-	err := s.operations.db.QueryRowContext(ctx, `SELECT connector_id,host,authorization_database_host,online_redis_host,catalog_redis_host,event_redis_host,northbound_api_host,source,sensor_id,reconcile_interval_hours,event_channel_state,connection_state,last_error,last_tested_at,last_synced_at,identity_accounts,identity_sessions,products,groups_count,controls,last_identity_poll_at,last_identity_event_at,authorization_refreshed_at,northbound_app_id<>'' AND octet_length(encrypted_northbound_app_secret)>0,authorization_database_state,online_redis_state,catalog_redis_state,event_redis_state,northbound_api_state FROM srun4k_integrations WHERE connector_id=$1`, id).Scan(&item.ConnectorID, &item.Host, &item.AuthorizationDatabaseHost, &item.OnlineRedisHost, &item.CatalogRedisHost, &item.EventRedisHost, &item.NorthboundAPIHost, &item.Source, &item.SensorID, &item.ReconcileIntervalHours, &item.EventChannelState, &item.ConnectionState, &item.LastError, &tested, &synced, &item.IdentityAccounts, &item.IdentitySessions, &item.Products, &item.Groups, &item.Controls, &polled, &eventAt, &authAt, &item.AuthorizationReady, &item.AuthorizationDatabaseState, &item.OnlineRedisState, &item.CatalogRedisState, &item.EventRedisState, &item.NorthboundAPIState)
+	var rawCredentials []byte
+	err := s.operations.db.QueryRowContext(ctx, `SELECT connector_id,host,authorization_database_host,online_redis_host,catalog_redis_host,event_redis_host,northbound_api_host,source,sensor_id,reconcile_interval_hours,event_channel_state,connection_state,last_error,last_tested_at,last_synced_at,identity_accounts,identity_sessions,products,groups_count,controls,last_identity_poll_at,last_identity_event_at,authorization_refreshed_at,northbound_app_id<>'' AND octet_length(encrypted_northbound_app_secret)>0,authorization_database_state,online_redis_state,catalog_redis_state,event_redis_state,northbound_api_state, COALESCE((SELECT setting_value FROM control_plane_settings WHERE setting_key='`+srun4KCredentialsPrefix+`'||srun4k_integrations.connector_id),'{}'::jsonb) FROM srun4k_integrations WHERE connector_id=$1`, id).Scan(&item.ConnectorID, &item.Host, &item.AuthorizationDatabaseHost, &item.OnlineRedisHost, &item.CatalogRedisHost, &item.EventRedisHost, &item.NorthboundAPIHost, &item.Source, &item.SensorID, &item.ReconcileIntervalHours, &item.EventChannelState, &item.ConnectionState, &item.LastError, &tested, &synced, &item.IdentityAccounts, &item.IdentitySessions, &item.Products, &item.Groups, &item.Controls, &polled, &eventAt, &authAt, &item.AuthorizationReady, &item.AuthorizationDatabaseState, &item.OnlineRedisState, &item.CatalogRedisState, &item.EventRedisState, &item.NorthboundAPIState, &rawCredentials)
+	if err == nil {
+		err = json.Unmarshal(rawCredentials, &item.storedCredentials)
+		defaults := s.srun4KDefaults
+		item.Credentials = srun4KCredentialStatus{
+			DatabaseConfigured:    item.storedCredentials.EncryptedDatabase != "" || (defaults.DatabaseUsername != "" && defaults.DatabasePassword != ""),
+			RedisConfigured:       item.storedCredentials.EncryptedRedis != "" || defaults.RedisPassword != "",
+			CertificateConfigured: item.storedCredentials.NorthboundCertificate != "" || defaults.APICertificatePEM != "",
+		}
+	}
 	if item.AuthorizationDatabaseHost == "" {
 		item.AuthorizationDatabaseHost = item.Host
 	}
@@ -553,6 +600,15 @@ func (s *Server) srunDatabase(ctx context.Context, item srun4KIntegration) (srun
 		databaseHost = item.Host
 	}
 	configured := srunapi.AuthorizationDatabase{Host: databaseHost, Port: defaults.DatabasePort, Database: defaults.DatabaseName, Username: defaults.DatabaseUsername, Password: defaults.DatabasePassword, TLS: defaults.DatabaseTLS}
+	if item.storedCredentials.EncryptedDatabase != "" {
+		configured.Username = item.storedCredentials.DatabaseUsername
+		var err error
+		configured.Password, err = s.decryptConnectorSecret(item.storedCredentials.EncryptedDatabase)
+		if err != nil {
+			return configured, fmt.Errorf("已保存的4K授权库密码无法读取，请重新录入")
+		}
+		return configured, nil
+	}
 	if defaults.DatabaseUsername != "" || defaults.DatabasePassword != "" {
 		if defaults.DatabaseUsername == "" || defaults.DatabasePassword == "" {
 			return configured, fmt.Errorf("4K授权库部署账号配置不完整")
@@ -606,6 +662,15 @@ func (s *Server) srunRedisOptions(item srun4KIntegration, host string, port int)
 		host = item.Host
 	}
 	options := &redis.Options{Addr: net.JoinHostPort(host, strconv.Itoa(port)), Password: defaults.RedisPassword, DialTimeout: 3 * time.Second, ReadTimeout: 8 * time.Second, WriteTimeout: 3 * time.Second, PoolSize: 4, MaxRetries: 1, ContextTimeoutEnabled: true}
+	if item.storedCredentials.EncryptedRedis != "" {
+		options.CredentialsProviderContext = func(context.Context) (string, string, error) {
+			password, err := s.decryptConnectorSecret(item.storedCredentials.EncryptedRedis)
+			if err != nil {
+				return "", "", errors.New("已保存的4K Redis密码无法读取，请重新录入")
+			}
+			return "", password, nil
+		}
+	}
 	if defaults.RedisTLS {
 		options.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	}
@@ -637,8 +702,12 @@ func (s *Server) srunClientWithCredentials(item srun4KIntegration, appID, secret
 	endpoint := (&url.URL{Scheme: defaults.APIScheme, Host: net.JoinHostPort(apiHost, strconv.Itoa(defaults.APIPort))}).String()
 	var httpClient *http.Client
 	var err error
-	if strings.TrimSpace(defaults.APICertificatePEM) != "" {
-		httpClient, err = srunapi.NewCertificatePinnedClient([]byte(defaults.APICertificatePEM))
+	certificate := item.storedCredentials.NorthboundCertificate
+	if certificate == "" {
+		certificate = defaults.APICertificatePEM
+	}
+	if strings.TrimSpace(certificate) != "" {
+		httpClient, err = srunapi.NewCertificatePinnedClient([]byte(certificate))
 		if err != nil {
 			return nil, fmt.Errorf("4K北向接口部署证书无效: %w", err)
 		}
@@ -654,6 +723,15 @@ func redisHostFromAddress(address string) string {
 	return strings.TrimSpace(address)
 }
 
+type srun4KAuthorizationError struct {
+	channel string
+	message string
+	cause   error
+}
+
+func (e *srun4KAuthorizationError) Error() string { return e.message }
+func (e *srun4KAuthorizationError) Unwrap() error { return e.cause }
+
 func (s *Server) refreshSRun4KAuthorization(ctx context.Context, id string) error {
 	item, err := s.loadSRun4K(ctx, id)
 	if err != nil {
@@ -661,25 +739,25 @@ func (s *Server) refreshSRun4KAuthorization(ctx context.Context, id string) erro
 	}
 	database, err := s.srunDatabase(ctx, item)
 	if err != nil {
-		return fmt.Errorf("4K授权数据库只读配置不可用: %w", err)
+		return &srun4KAuthorizationError{"authorization_database", "请配置4K授权数据库的只读账号和密码", err}
 	}
 	credentials, err := srunapi.ReadApplicationCredentials(ctx, database)
 	if err != nil {
-		return fmt.Errorf("4K授权记录读取失败")
+		return &srun4KAuthorizationError{"authorization_database", "4K授权库读取失败，请核对账号、密码和授权表读取权限", err}
 	}
 	client, err := s.srunClientWithCredentials(item, credentials.AppID, credentials.AppSecret)
 	if err != nil {
-		return err
+		return &srun4KAuthorizationError{"northbound_api", "4K北向接口配置无效，请核对地址和证书", err}
 	}
 	defer client.CloseIdleConnections()
 	if _, err = client.Groups(ctx); err != nil {
-		return fmt.Errorf("北向接口授权验证失败")
+		return &srun4KAuthorizationError{"northbound_api", "4K北向授权验证失败，请核对服务端证书和北向权限", err}
 	}
 	encrypted, err := s.encryptConnectorSecret(credentials.AppSecret)
 	if err != nil {
 		return fmt.Errorf("北向授权安全存储不可用")
 	}
-	result, err := s.operations.db.ExecContext(ctx, `UPDATE srun4k_integrations SET northbound_app_id=$2,encrypted_northbound_app_secret=$3,authorization_refreshed_at=now(),updated_at=now() WHERE connector_id=$1 AND authorization_database_host=$4 AND northbound_api_host=$5`, id, credentials.AppID, []byte(encrypted), item.AuthorizationDatabaseHost, item.NorthboundAPIHost)
+	result, err := s.operations.db.ExecContext(ctx, `UPDATE srun4k_integrations SET northbound_app_id=$2,encrypted_northbound_app_secret=$3,authorization_refreshed_at=now(),updated_at=now() WHERE connector_id=$1 AND authorization_database_host=$4 AND northbound_api_host=$5 AND `+srun4KCredentialsRevision+`=$6`, id, credentials.AppID, []byte(encrypted), item.AuthorizationDatabaseHost, item.NorthboundAPIHost, item.storedCredentials.Revision)
 	if err != nil {
 		return fmt.Errorf("北向授权保存失败")
 	}
@@ -750,6 +828,10 @@ func (s *Server) testSRun4KWithDatabaseCheck(ctx context.Context, id string, che
 	authorizationRefreshed := false
 	if !item.AuthorizationReady {
 		if err := s.refreshSRun4KAuthorization(ctx, id); err != nil {
+			var failure *srun4KAuthorizationError
+			if errors.As(err, &failure) {
+				return nil, s.recordSRunReadTestFailure(ctx, id, failure.message, failure.channel+": initial authorization failed", err)
+			}
 			return nil, s.recordSRunReadTestFailure(ctx, id, "4K授权读取或北向验证失败", "authorization_database: initial authorization failed", err)
 		}
 		item, err = s.loadSRun4K(ctx, id)
@@ -774,17 +856,17 @@ func (s *Server) testSRun4KWithDatabaseCheck(ctx context.Context, id string, che
 	redisClient := s.srunRedis(item)
 	defer redisClient.Close()
 	if err = redisClient.Ping(ctx).Err(); err != nil {
-		return nil, s.recordSRunReadTestFailure(ctx, id, "4K在线Redis只读连接失败", "online_redis: connection failed", err)
+		return nil, s.recordSRunReadTestFailure(ctx, id, "4K在线清单 Redis 检查失败，请核对地址、密码和访问权限", "online_redis: connection failed", err)
 	}
 	catalogClient := s.srunCatalogRedis(item)
 	defer catalogClient.Close()
 	if err = catalogClient.Ping(ctx).Err(); err != nil {
-		return nil, s.recordSRunReadTestFailure(ctx, id, "4K产品目录Redis只读连接失败", "catalog_redis: connection failed", err)
+		return nil, s.recordSRunReadTestFailure(ctx, id, "4K产品目录 Redis 检查失败，请核对地址、密码和访问权限", "catalog_redis: connection failed", err)
 	}
 	eventClient := redis.NewClient(s.srunRedisOptions(item, item.EventRedisHost, s.srun4KDefaults.normalized().EventRedisPort))
 	defer eventClient.Close()
 	if err = eventClient.Ping(ctx).Err(); err != nil {
-		return nil, s.recordSRunReadTestFailure(ctx, id, "4K上下线事件Redis只读连接失败", "event_redis: connection failed", err)
+		return nil, s.recordSRunReadTestFailure(ctx, id, "4K上下线事件 Redis 检查失败，请核对地址、密码和访问权限", "event_redis: connection failed", err)
 	}
 	online, err := client.OnlineTotal(ctx)
 	if err != nil {
@@ -816,7 +898,7 @@ func (s *Server) completeSRun4KTest(ctx context.Context, item srun4KIntegration,
 	if checkDatabase || authorizationRefreshed {
 		authorizationState = "healthy"
 	}
-	err = tx.QueryRowContext(commitCtx, `UPDATE srun4k_integrations SET connection_state='healthy',last_error='',last_tested_at=$2,last_test_result_order=$7,last_health_result_order=$7,authorization_database_state=$8,online_redis_state='healthy',catalog_redis_state='healthy',event_redis_state='healthy',northbound_api_state='healthy',updated_at=now() WHERE connector_id=$1 AND host=$3 AND source=$4 AND sensor_id=$5 AND reconcile_interval_hours=$6 AND last_test_result_order<=$7 AND last_health_result_order<=$7 RETURNING event_channel_state`, id, now, item.Host, item.Source, item.SensorID, item.ReconcileIntervalHours, order, authorizationState).Scan(&eventState)
+	err = tx.QueryRowContext(commitCtx, `UPDATE srun4k_integrations SET connection_state='healthy',last_error='',last_tested_at=$2,last_test_result_order=$7,last_health_result_order=$7,authorization_database_state=$8,online_redis_state='healthy',catalog_redis_state='healthy',event_redis_state='healthy',northbound_api_state='healthy',updated_at=now() WHERE connector_id=$1 AND host=$3 AND source=$4 AND sensor_id=$5 AND reconcile_interval_hours=$6 AND last_test_result_order<=$7 AND last_health_result_order<=$7 AND `+srun4KCredentialsRevision+`=$9 RETURNING event_channel_state`, id, now, item.Host, item.Source, item.SensorID, item.ReconcileIntervalHours, order, authorizationState, item.storedCredentials.Revision).Scan(&eventState)
 	if err != nil {
 		return nil, errSRunTestResultCommit
 	}
@@ -837,7 +919,7 @@ type srunOperationOrderKey struct{}
 func (s *Server) beginSRunOperation(ctx context.Context, item srun4KIntegration) (context.Context, error) {
 	if order, ok := ctx.Value(srunOperationOrderKey{}).(int64); ok {
 		bound, scoped := ctx.Value(srunOperationScopeKey{}).(srun4KIntegration)
-		if order <= 0 || !scoped || bound.ConnectorID != item.ConnectorID || bound.Host != item.Host || bound.Source != item.Source || bound.SensorID != item.SensorID || bound.ReconcileIntervalHours != item.ReconcileIntervalHours {
+		if order <= 0 || !scoped || bound.ConnectorID != item.ConnectorID || bound.Host != item.Host || bound.Source != item.Source || bound.SensorID != item.SensorID || bound.ReconcileIntervalHours != item.ReconcileIntervalHours || bound.storedCredentials.Revision != item.storedCredentials.Revision {
 			return ctx, errSRunTestResultCommit
 		}
 		return ctx, nil
@@ -877,8 +959,8 @@ func (s *Server) recordSRunOperationFailure(ctx context.Context, id, message, ac
 		item, scoped := ctx.Value(srunOperationScopeKey{}).(srun4KIntegration)
 		scoped = scoped && item.ConnectorID == id
 		if scoped {
-			query += ` AND host=$4 AND source=$5 AND sensor_id=$6 AND reconcile_interval_hours=$7`
-			args = append(args, item.Host, item.Source, item.SensorID, item.ReconcileIntervalHours)
+			query += ` AND host=$4 AND source=$5 AND sensor_id=$6 AND reconcile_interval_hours=$7 AND ` + srun4KCredentialsRevision + `=$8`
+			args = append(args, item.Host, item.Source, item.SensorID, item.ReconcileIntervalHours, item.storedCredentials.Revision)
 		}
 		outcome = "failed"
 		written, err := s.operations.db.ExecContext(reportCtx, query, args...)
@@ -1060,7 +1142,7 @@ func (s *Server) completeSRun4KSync(ctx context.Context, item srun4KIntegration,
 	}
 	defer tx.Rollback()
 	var eventState, connectionState string
-	err = tx.QueryRowContext(commitCtx, `UPDATE srun4k_integrations SET connection_state=CASE WHEN last_health_result_order<=$12 THEN 'healthy' ELSE connection_state END,last_error=CASE WHEN last_health_result_order<=$12 THEN '' ELSE last_error END,last_health_result_order=GREATEST(last_health_result_order,$12),last_sync_result_order=$12,last_synced_at=$2,identity_accounts=$3,identity_sessions=$4,products=$5,groups_count=$6,controls=$7,updated_at=now() WHERE connector_id=$1 AND host=$8 AND source=$9 AND sensor_id=$10 AND reconcile_interval_hours=$11 AND last_sync_result_order<=$12 RETURNING event_channel_state,connection_state`, id, now, stats.Accounts, stats.Sessions, products, groups, controls, item.Host, item.Source, item.SensorID, item.ReconcileIntervalHours, order).Scan(&eventState, &connectionState)
+	err = tx.QueryRowContext(commitCtx, `UPDATE srun4k_integrations SET connection_state=CASE WHEN last_health_result_order<=$12 THEN 'healthy' ELSE connection_state END,last_error=CASE WHEN last_health_result_order<=$12 THEN '' ELSE last_error END,last_health_result_order=GREATEST(last_health_result_order,$12),last_sync_result_order=$12,last_synced_at=$2,identity_accounts=$3,identity_sessions=$4,products=$5,groups_count=$6,controls=$7,updated_at=now() WHERE connector_id=$1 AND host=$8 AND source=$9 AND sensor_id=$10 AND reconcile_interval_hours=$11 AND last_sync_result_order<=$12 AND `+srun4KCredentialsRevision+`=$13 RETURNING event_channel_state,connection_state`, id, now, stats.Accounts, stats.Sessions, products, groups, controls, item.Host, item.Source, item.SensorID, item.ReconcileIntervalHours, order, item.storedCredentials.Revision).Scan(&eventState, &connectionState)
 	if err != nil {
 		return nil, errSRunSyncResultCommit
 	}

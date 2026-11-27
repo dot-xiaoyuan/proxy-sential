@@ -10,7 +10,9 @@
 
 ## 部署配置
 
-页面只保存各服务的主机地址和校准周期，不接收端口、协议、库名、数据库账号、Redis 密码或证书。它们由 Sentinel 部署配置提供：
+在 4K 接入对话框可填写授权库只读账号、密码、三个 Redis 通道共用的密码，以及北向服务端 PEM 证书。通过 HTTPS 或从本机经 SSH 隧道访问页面后提交凭据。密码加密保存在 PostgreSQL，读取接口仅返回配置状态。编辑时保持凭据字段为空可沿用同一目标的保存值，变更目标地址时应核对该目标对应的凭据。用“保存并测试”验证授权库、Redis 与北向 API，无须重启服务。独立认证桥仍从自己的受保护配置读取凭据。
+
+端口、协议和库名继续由部署配置管理。已有部署凭据作为未录入页面值时的回退。
 
 - `PROXY_SENTINEL_SRUN4K_DATABASE_PORT`，默认 `3506`
 - `PROXY_SENTINEL_SRUN4K_DATABASE_NAME`，默认 `srun4k`
@@ -31,7 +33,7 @@ MySQL 账号只需读取 `authorization` 所需字段；不应使用长期 root 
 
 在线清单和产品目录可使用不同的 4K Redis 实例；不是从在线实例的空产品清单判定产品全部停用。三个 Redis 通道共用受保护的部署凭据，但主机和端口互相独立，端口可由部署侧覆盖。用户组通过已验证的北向 API 按每页 100 条查询，避免 4K 拒绝超出上限的分页参数。
 
-Redis 密码通过 `PROXY_SENTINEL_SRUN4K_REDIS_PASSWORD` 注入，不硬编码到程序、前端或公开配置。30 当前使用独立的 `/opt/proxy-sentinel/config/srun4k-secrets.env`（权限 `0600`），由 control-plane 的 systemd `EnvironmentFile` 加载；更新程序不会覆盖此文件。修改密码后重启 control-plane 即可生效。北向 API 的证书也在部署侧提供，不跳过 TLS 校验。
+部署侧 Redis 密码可通过 `PROXY_SENTINEL_SRUN4K_REDIS_PASSWORD` 注入。30 当前使用独立的 `/opt/proxy-sentinel/config/srun4k-secrets.env`（权限 `0600`），由 control-plane 的 systemd `EnvironmentFile` 加载；更新程序不会覆盖此文件。修改密码后重启 control-plane 即可生效。需要固定北向证书时，由 4K 管理方通过可信渠道提供服务端 PEM，经页面或部署侧录入。
 
 旧版单地址接入迁移时，该地址回填到授权数据库、在线 Redis、目录 Redis 和北向 API 主机；事件 Redis 保留原有部署配置。旧的加密数据库配置仅作为兼容回退，新的授权数据库账号优先由部署侧提供。新增和读取接口、通道状态、审计与服务日志均不返回 MySQL 密码、AppSecret 或令牌。
 

@@ -6307,6 +6307,16 @@ components:
         event_redis_host: { type: string, minLength: 1, maxLength: 253, description: Optional until the event transport has been connected and accepted. }
         northbound_api_host: { type: string, minLength: 1, maxLength: 253 }
         reconcile_interval_hours: { type: integer, minimum: 1, maximum: 168, default: 6 }
+        credentials:
+          type: object
+          writeOnly: true
+          additionalProperties: false
+          description: Only accepts HTTPS or a loopback request. Blank fields preserve stored credentials for unchanged endpoints.
+          properties:
+            database_username: { type: string, maxLength: 128 }
+            database_password: { type: string, maxLength: 4096, format: password }
+            redis_password: { type: string, maxLength: 4096, format: password }
+            northbound_certificate: { type: string, maxLength: 65536 }
     SRun4KIntegration:
       type: object
       required: [connector_id, host, source, sensor_id, reconcile_interval_hours, event_channel_state, connection_state, channels, identity_accounts, identity_sessions, products, groups, controls]
@@ -6318,6 +6328,13 @@ components:
         catalog_redis_host: { type: string }
         event_redis_host: { type: string }
         northbound_api_host: { type: string }
+        credentials:
+          type: object
+          required: [database_configured, redis_configured, certificate_configured]
+          properties:
+            database_configured: { type: boolean }
+            redis_configured: { type: boolean }
+            certificate_configured: { type: boolean }
         authorization_ready: { type: boolean }
         authorization_refreshed_at: { type: string, format: date-time }
         source: { type: string }

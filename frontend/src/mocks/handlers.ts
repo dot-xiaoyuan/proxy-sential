@@ -1,3 +1,4 @@
+import type { SRun4KIntegrationRequest } from '../shared/api/types'
 import { auxiliaryPaginationHandlers } from './auxiliaryPagination'
 import { recognitionDimensionConflict } from '../entities/device/recognitionConflict'
 import { freshRecognition } from './freshRecognition'
@@ -616,10 +617,17 @@ export const handlers = [
     HttpResponse.json(mockSRun4KIntegration(String(params.connectorId))),
   ),
   http.post('/api/v1/integrations/srun4k', async ({ request }) => {
-    const value = (await request.json()) as Record<string, unknown>
+    const { credentials, ...value } = (await request.json()) as SRun4KIntegrationRequest
     return HttpResponse.json(
       mockSRun4KIntegration('srun4k-mock', {
         ...value,
+        ...(credentials && {
+          credentials: {
+            database_configured: !!credentials.database_password,
+            redis_configured: !!credentials.redis_password,
+            certificate_configured: !!credentials.northbound_certificate,
+          },
+        }),
         authorization_ready: false,
         connection_state: 'pending',
         last_synced_at: undefined,
@@ -632,9 +640,19 @@ export const handlers = [
     )
   }),
   http.put('/api/v1/integrations/srun4k/:connectorId', async ({ params, request }) => {
-    const value = (await request.json()) as Record<string, unknown>
+    const { credentials, ...value } = (await request.json()) as SRun4KIntegrationRequest
     return HttpResponse.json(
-      mockSRun4KIntegration(String(params.connectorId), { ...value, connection_state: 'pending' }),
+      mockSRun4KIntegration(String(params.connectorId), {
+        ...value,
+        ...(credentials && {
+          credentials: {
+            database_configured: !!credentials.database_password,
+            redis_configured: !!credentials.redis_password,
+            certificate_configured: !!credentials.northbound_certificate,
+          },
+        }),
+        connection_state: 'pending',
+      }),
     )
   }),
   http.post('/api/v1/integrations/srun4k/:connectorId/authorization', ({ params }) =>

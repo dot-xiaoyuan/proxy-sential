@@ -88,6 +88,43 @@ describe('4K channel configuration', () => {
     expect(requests.sync).not.toHaveBeenCalled()
   })
 
+  it('saves newly entered credentials once and then tests the persisted integration', async () => {
+    requests.update.mockResolvedValue({
+      ...initial,
+      credentials: {
+        database_configured: true,
+        redis_configured: true,
+        certificate_configured: false,
+      },
+    })
+    requests.test.mockResolvedValue({ channels: initial.channels, online_total: 81 })
+    render(<FourKDatabaseModal connectorId="isolated-controller" onClose={() => undefined} />)
+    const username = await screen.findByLabelText('授权数据库只读账号')
+    await waitFor(() => expect(username).toBeEnabled())
+    fireEvent.change(username, { target: { value: 'test-reader' } })
+    fireEvent.change(screen.getByLabelText('授权数据库密码'), { target: { value: 'db-password' } })
+    fireEvent.change(screen.getByLabelText('Redis 接入密码'), {
+      target: { value: 'redis-password' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存并测试' }))
+    await waitFor(() => expect(requests.test).toHaveBeenCalledWith('isolated-controller'))
+    expect(requests.update).toHaveBeenCalledWith(
+      'isolated-controller',
+      expect.objectContaining({
+        credentials: {
+          database_username: 'test-reader',
+          database_password: 'db-password',
+          redis_password: 'redis-password',
+        },
+      }),
+    )
+    expect(screen.getByLabelText('授权数据库密码')).toHaveValue('')
+    expect(screen.getByLabelText('Redis 接入密码')).toHaveValue('')
+    fireEvent.click(screen.getByRole('button', { name: '保存并测试' }))
+    await waitFor(() => expect(requests.update).toHaveBeenCalledTimes(2))
+    expect(requests.update.mock.calls[1][1]).not.toHaveProperty('credentials')
+  })
+
   it('refreshes the northbound authorization without showing secret material', async () => {
     requests.refresh.mockResolvedValueOnce({
       ...initial,

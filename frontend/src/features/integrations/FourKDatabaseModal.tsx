@@ -24,6 +24,7 @@ const channelLabels: Record<string, string> = {
 function stateLabel(value?: string) {
   if (value === 'healthy') return '正常'
   if (value === 'failed' || value === 'interrupted') return '连接失败'
+  if (value === 'pending') return '待测试'
   if (value === 'waiting') return '等待事件通道接入'
   return ''
 }
@@ -47,6 +48,9 @@ export function FourKDatabaseModal({
   onSaved?: () => void
 }) {
   const [form] = Form.useForm<ConnectionForm>()
+  const canEnterCredentials =
+    window.location.protocol === 'https:' ||
+    ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname)
   const watched = Form.useWatch([], form) as ConnectionForm | undefined
   const [integration, setIntegration] = useState<SRun4KIntegration>()
   const [check, setCheck] = useState<SRun4KTestResult>()
@@ -59,6 +63,7 @@ export function FourKDatabaseModal({
     watched?.online_redis_host?.trim() &&
     watched.online_redis_host.trim() !== integration.online_redis_host,
   )
+  const credentialsChanged = Object.values(watched?.credentials ?? {}).some(Boolean)
   const endpointChanged = Boolean(
     integration &&
     watched &&
@@ -66,7 +71,8 @@ export function FourKDatabaseModal({
       watched.online_redis_host !== integration.online_redis_host ||
       watched.catalog_redis_host !== integration.catalog_redis_host ||
       watched.event_redis_host !== integration.event_redis_host ||
-      watched.northbound_api_host !== integration.northbound_api_host),
+      watched.northbound_api_host !== integration.northbound_api_host ||
+      credentialsChanged),
   )
 
   useEffect(() => {
@@ -111,7 +117,13 @@ export function FourKDatabaseModal({
   }, [connectorId, form, initialHost])
 
   const save = async (synchronize: boolean) => {
-    const value = await form.validateFields()
+    const value = await form.validateFields().catch(() => undefined)
+    if (!value) return
+    const { credentials, ...addresses } = value
+    const request =
+      canEnterCredentials && Object.values(credentials ?? {}).some(Boolean)
+        ? { ...addresses, credentials }
+        : addresses
     setBusy(true)
     setError('')
     setCheck(undefined)
@@ -119,9 +131,17 @@ export function FourKDatabaseModal({
     let savedId: string | undefined
     try {
       const saved = connectorId
-        ? await api.updateSRun4KIntegration(connectorId, value)
-        : await api.createSRun4KIntegration(value)
+        ? await api.updateSRun4KIntegration(connectorId, request)
+        : await api.createSRun4KIntegration(request)
       setIntegration(saved)
+      form.setFieldsValue({
+        credentials: {
+          database_username: '',
+          database_password: '',
+          redis_password: '',
+          northbound_certificate: '',
+        },
+      })
       savedId = saved.connector_id
       onSaved?.()
       const tested = await api.testSRun4KIntegration(saved.connector_id)
@@ -175,7 +195,11 @@ export function FourKDatabaseModal({
         <Space wrap className="four-k-database-actions">
           <Button onClick={onClose}>关闭</Button>
           {integration && (
-            <Button disabled={loading} loading={busy} onClick={() => void refreshAuthorization()}>
+            <Button
+              disabled={loading || endpointChanged}
+              loading={busy}
+              onClick={() => void refreshAuthorization()}
+            >
               刷新北向授权
             </Button>
           )}
@@ -260,6 +284,74 @@ export function FourKDatabaseModal({
           </Form.Item>
           <Form.Item name="reconcile_interval_hours" label="全量校准周期（小时）">
             <InputNumber min={1} max={168} precision={0} />
+          </Form.Item>
+          {!canEnterCredentials && (
+            <p className="four-k-form-wide" role="status">
+              通过 HTTPS 或本机 SSH 隧道打开此页即可填写凭据。
+            </p>
+          )}
+          <Form.Item
+            name={['credentials', 'database_username']}
+            label="授权数据库只读账号"
+            dependencies={[['credentials', 'database_password']]}
+            rules={[
+              ({ getFieldValue }) => ({
+                validator: (_, value: string | undefined) =>
+                  !getFieldValue(['credentials', 'database_password']) || value?.trim()
+                    ? Promise.resolve()
+                    : Promise.reject(new Error('请输入只读账号')),
+              }),
+            ]}
+          >
+            <Input disabled={!canEnterCredentials} maxLength={128} autoComplete="off" />
+          </Form.Item>
+          <Form.Item
+            name={['credentials', 'database_password']}
+            label="授权数据库密码"
+            dependencies={[['credentials', 'database_username']]}
+            rules={[
+              ({ getFieldValue }) => ({
+                validator: (_, value: string | undefined) =>
+                  !getFieldValue(['credentials', 'database_username'])?.trim() || value
+                    ? Promise.resolve()
+                    : Promise.reject(new Error('请输入授权数据库密码')),
+              }),
+            ]}
+          >
+            <Input.Password
+              disabled={!canEnterCredentials}
+              maxLength={4096}
+              autoComplete="new-password"
+              placeholder={
+                integration?.credentials?.database_configured ? '已配置，留空沿用' : undefined
+              }
+            />
+          </Form.Item>
+          <Form.Item name={['credentials', 'redis_password']} label="Redis 接入密码">
+            <Input.Password
+              disabled={!canEnterCredentials}
+              maxLength={4096}
+              autoComplete="new-password"
+              placeholder={
+                integration?.credentials?.redis_configured ? '已配置，留空沿用' : undefined
+              }
+            />
+          </Form.Item>
+          <Form.Item
+            name={['credentials', 'northbound_certificate']}
+            label="北向服务端证书 PEM"
+            className="four-k-form-wide"
+          >
+            <Input.TextArea
+              disabled={!canEnterCredentials}
+              rows={3}
+              maxLength={65536}
+              placeholder={
+                integration?.credentials?.certificate_configured
+                  ? '已配置，留空沿用'
+                  : '自签名证书场景填写可信 PEM'
+              }
+            />
           </Form.Item>
         </Form>
         {integration && (

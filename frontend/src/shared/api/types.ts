@@ -153,6 +153,12 @@ export type FourKSyncResult = {
   capabilities: string[]
   directory_ready: boolean
 }
+export type SRun4KCredentials = {
+  database_username?: string
+  database_password?: string
+  redis_password?: string
+  northbound_certificate?: string
+}
 export type SRun4KIntegrationRequest = {
   authorization_database_host: string
   online_redis_host: string
@@ -160,6 +166,7 @@ export type SRun4KIntegrationRequest = {
   event_redis_host?: string
   northbound_api_host: string
   reconcile_interval_hours?: number
+  credentials?: SRun4KCredentials
 }
 export type SRun4KIntegration = {
   connector_id: string
@@ -169,6 +176,11 @@ export type SRun4KIntegration = {
   catalog_redis_host: string
   event_redis_host?: string
   northbound_api_host: string
+  credentials?: {
+    database_configured: boolean
+    redis_configured: boolean
+    certificate_configured: boolean
+  }
   authorization_ready: boolean
   authorization_refreshed_at?: string
   source: string

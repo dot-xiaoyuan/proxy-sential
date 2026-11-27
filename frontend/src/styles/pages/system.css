@@ -195,6 +195,10 @@
   column-gap: 14px;
 }
 
+.four-k-form-wide {
+  grid-column: 1 / -1;
+}
+
 .four-k-database-form.is-loading {
   display: none;
 }
